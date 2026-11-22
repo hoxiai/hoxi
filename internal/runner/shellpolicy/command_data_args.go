@@ -41,16 +41,6 @@ var dataArgInterpreters = setOf("sh", "bash", "zsh", "dash", "ksh", "fish", "eva
 var dataScriptInterpreters = setOf("python", "python3", "node", "perl", "ruby", "php", "awk", "sed")
 
 var (
-	rgValueFlags = setOf("-A", "-B", "-C", "-m", "-g", "-t", "-T", "-M", "-j", "-d", "-E", "-r",
-		"--glob", "--iglob", "--type", "--type-not", "--type-add", "--type-clear", "--max-count",
-		"--context", "--after-context", "--before-context", "--max-columns", "--threads",
-		"--max-depth", "--maxdepth", "--sort", "--sortr", "--color", "--colors", "--encoding",
-		"--replace", "--max-filesize", "--path-separator", "--context-separator", "--engine",
-		"--pre", "--pre-glob", "--dfa-size-limit", "--regex-size-limit", "--field-match-separator")
-	grepValueFlags = setOf("-A", "-B", "-C", "-m", "-d", "-D", "--include", "--exclude",
-		"--exclude-dir", "--exclude-from", "--max-count", "--context", "--after-context",
-		"--before-context", "--color", "--colour", "--label", "--binary-files", "--devices",
-		"--directories", "--group-separator")
 	echoOptionRe        = regexp.MustCompile(`^-[neE]+$`)
 	dataEnvAssignRe     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 	gitGlobalValueFlags = setOf("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path")
@@ -309,7 +299,13 @@ func tokenizeDataCommand(s string) ([]dataToken, bool) {
 				closed := false
 				for j < len(s) {
 					if s[j] == '\\' && j+1 < len(s) {
-						value.WriteByte(s[j+1])
+						next := s[j+1]
+						if !strings.ContainsRune("\\\"$`\n", rune(next)) {
+							value.WriteByte('\\')
+						}
+						if next != '\n' {
+							value.WriteByte(next)
+						}
 						j += 2
 						continue
 					}
@@ -393,10 +389,8 @@ func dataArgumentReplacements(seg []dataToken) []dataReplacement {
 		if len(seg) >= 2 && seg[1].value == "vitest" {
 			return flagValueReplacements(seg, 2, setOf("-t", "--testNamePattern"), false)
 		}
-	case "rg":
-		idxs = searchPatternArguments(seg, rgValueFlags)
-	case "grep", "egrep", "fgrep":
-		idxs = searchPatternArguments(seg, grepValueFlags)
+	case "rg", "grep", "egrep", "fgrep":
+		return searchDataArguments(seg)
 	}
 	var out []dataReplacement
 	for _, i := range idxs {
@@ -448,7 +442,7 @@ func gitDataArguments(seg []dataToken) []dataReplacement {
 	case "log", "shortlog":
 		return append(flagValueReplacements(seg, i+1, setOf("--grep", "-S", "-G"), false), gitFormatArguments(seg, i+1)...)
 	case "show", "diff":
-		return gitFormatArguments(seg, i+1)
+		return append(gitFormatArguments(seg, i+1), gitDiffSearchArguments(seg, i+1)...)
 	}
 	return nil
 }
@@ -492,45 +486,6 @@ func ghDataArguments(seg []dataToken) []dataReplacement {
 		return nil
 	}
 	return flagValueReplacements(seg, i+2, setOf("-t", "--title", "-b", "--body", "-n", "--notes"), false)
-}
-
-func searchPatternArguments(seg []dataToken, valueFlags map[string]bool) []int {
-	var explicit []int
-	positional := -1
-	usesPatternFile := false
-	endOfOptions := false
-	for j := 1; j < len(seg); j++ {
-		v := seg[j].value
-		if !endOfOptions && strings.HasPrefix(v, "-") && v != "-" {
-			switch {
-			case v == "--":
-				endOfOptions = true
-			case v == "-e" || v == "--regexp":
-				if j+1 < len(seg) {
-					explicit = append(explicit, j+1)
-					j++
-				}
-			case v == "-f" || v == "--file" || strings.HasPrefix(v, "--file="):
-				usesPatternFile = true
-				if v == "-f" || v == "--file" {
-					j++
-				}
-			case valueFlags[v]:
-				j++
-			}
-			continue
-		}
-		if positional < 0 {
-			positional = j
-		}
-	}
-	if len(explicit) > 0 || usesPatternFile {
-		return explicit
-	}
-	if positional > 0 {
-		return []int{positional}
-	}
-	return nil
 }
 
 var (

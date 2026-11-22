@@ -1,106 +1,64 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
   <defs>
-    <linearGradient id="sk-sky" x1="0" y1="0" x2="0.6" y2="1">
-      <stop offset="0%" stop-color="#581c87"/>
-      <stop offset="34%" stop-color="#be185d"/>
+    <linearGradient id="sk-sky" x1="0.05" y1="0" x2="0.65" y2="1">
+      <stop offset="0%" stop-color="#4a154b"/>
+      <stop offset="32%" stop-color="#9d174d"/>
       <stop offset="68%" stop-color="#fb7185"/>
       <stop offset="100%" stop-color="#fef08a"/>
     </linearGradient>
-    <radialGradient id="sk-sun" cx="44%" cy="76%" r="44%">
-      <stop offset="0%" stop-color="#fffbeb" stop-opacity="0.96"/>
-      <stop offset="42%" stop-color="#fda4af" stop-opacity="0.52"/>
+    <radialGradient id="sk-sun" cx="46%" cy="74%" r="46%">
+      <stop offset="0%" stop-color="#fffbeb" stop-opacity="0.95"/>
+      <stop offset="40%" stop-color="#fda4af" stop-opacity="0.5"/>
       <stop offset="100%" stop-color="#fb7185" stop-opacity="0"/>
     </radialGradient>
-    <linearGradient id="sk-hair" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#7c2d12"/>
-      <stop offset="48%" stop-color="#451a03"/>
-      <stop offset="100%" stop-color="#27120b"/>
-    </linearGradient>
-    <linearGradient id="sk-cardigan" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#fffbeb"/>
-      <stop offset="100%" stop-color="#fde2e4"/>
+    <radialGradient id="sk-aura" cx="76%" cy="38%" r="44%">
+      <stop offset="0%" stop-color="#fde68a" stop-opacity="0.34"/>
+      <stop offset="55%" stop-color="#f472b6" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#4a154b" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="sk-ridge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#581c4f" stop-opacity="0.68"/>
+      <stop offset="100%" stop-color="#2e1035" stop-opacity="0.9"/>
     </linearGradient>
   </defs>
 
   <!-- Golden-Hour Sakura Sunset Sky -->
   <rect width="1600" height="900" fill="url(#sk-sky)"/>
   <rect width="1600" height="900" fill="url(#sk-sun)"/>
-  <circle cx="695" cy="672" r="68" fill="#fffbeb" fill-opacity="0.92"/>
+  <rect width="1600" height="900" fill="url(#sk-aura)"/>
+  <circle cx="718" cy="666" r="64" fill="#fffbeb" fill-opacity="0.9"/>
 
-  <!-- Warm Sunset Clouds -->
-  <path d="M0 320 Q280 250 560 315 T1140 285 L1600 330 L1600 440 L0 440 Z" fill="#fda4af" fill-opacity="0.28"/>
-  <path d="M0 470 Q380 405 740 465 T1600 430 L1600 560 L0 560 Z" fill="#fed7aa" fill-opacity="0.32"/>
+  <!-- Layered Organic Twilight Sunset Clouds (No Harsh Horizontal Cutoffs) -->
+  <path d="M0 312 Q240 252 520 298 T1080 276 Q1360 302 1600 284 L1600 356 Q1320 384 1040 348 T480 364 Q220 382 0 352 Z" fill="#fda4af" fill-opacity="0.24"/>
+  <path d="M0 468 Q340 412 710 458 T1600 426 L1600 720 L0 720 Z" fill="#fed7aa" fill-opacity="0.22"/>
 
-  <!-- Distant Twilight Townscape -->
-  <path d="M0 735 L180 720 L180 695 L260 695 L260 725 L420 715 L420 680 L510 680 L510 725 L780 715 L980 730 L1600 710 L1600 900 L0 900 Z" fill="#4c1d4b" fill-opacity="0.58"/>
+  <!-- Distant Misty Hills & Twilight Townscape -->
+  <path d="M0 698 Q210 648 430 682 T890 668 Q1210 642 1600 676 L1600 900 L0 900 Z" fill="#6b215c" fill-opacity="0.42"/>
+  <path d="M0 738 L165 724 L165 698 L248 698 L248 728 L412 718 L412 686 L498 686 L498 726 L765 716 L985 730 L1600 712 L1600 900 L0 900 Z" fill="url(#sk-ridge)"/>
 
-  <!-- Rooftop Railing Perspective -->
-  <polygon points="790,900 960,645 1600,645 1600,900" fill="#3b1936" fill-opacity="0.34"/>
-  <line x1="780" y1="900" x2="965" y2="635" stroke="#fde68a" stroke-width="7" stroke-opacity="0.82"/>
-  <line x1="965" y1="635" x2="1600" y2="635" stroke="#fde68a" stroke-width="5" stroke-opacity="0.72"/>
-  <g stroke="#f9a8d4" stroke-width="3" stroke-opacity="0.55">
-    <line x1="855" y1="792" x2="855" y2="900"/>
-    <line x1="910" y1="715" x2="910" y2="900"/>
-    <line x1="965" y1="635" x2="965" y2="900"/>
+  <!-- Sunlit School Rooftop Railing (Framing Right Third) -->
+  <polygon points="798,900 968,642 1600,642 1600,900" fill="#2e1035" fill-opacity="0.36"/>
+  <line x1="788" y1="900" x2="972" y2="634" stroke="#fde68a" stroke-width="6.5" stroke-opacity="0.84"/>
+  <line x1="972" y1="634" x2="1600" y2="634" stroke="#fde68a" stroke-width="4.5" stroke-opacity="0.74"/>
+  <line x1="946" y1="672" x2="1600" y2="672" stroke="#fbcfe8" stroke-width="2" stroke-opacity="0.46"/>
+  <g stroke="#f9a8d4" stroke-width="2.6" stroke-opacity="0.52">
+    <line x1="858" y1="794" x2="858" y2="900"/>
+    <line x1="914" y1="714" x2="914" y2="900"/>
+    <line x1="972" y1="634" x2="972" y2="900"/>
+    <line x1="1096" y1="634" x2="1096" y2="900"/>
+    <line x1="1224" y1="634" x2="1224" y2="900"/>
+    <line x1="1352" y1="634" x2="1352" y2="900"/>
+    <line x1="1480" y1="634" x2="1480" y2="900"/>
   </g>
 
-  <!-- Anime Rooftop Girl (Right-Third Golden Ratio: Flowing Chestnut Hair & Cream Cardigan) -->
-  <g transform="translate(945, 136)">
-    <!-- Long Flowing Hair Blowing in Evening Breeze -->
-    <path d="M175 170 C145 270, 62 355, 22 442 C96 426, 152 385, 196 335 Z" fill="url(#sk-hair)"/>
-    <path d="M168 215 C124 335, 58 430, 38 518 C118 488, 174 432, 218 362 Z" fill="url(#sk-hair)"/>
-    <path d="M168 188 C162 84, 218 46, 286 46 C358 46, 408 102, 408 228 C408 358, 434 452, 468 525 C404 505, 366 446, 344 372 L198 355 Z" fill="url(#sk-hair)" stroke="#27120b" stroke-width="2.2"/>
-    <!-- Golden Sunset Rim Light on Hair -->
-    <path d="M170 165 C140 258, 72 342, 30 432" fill="none" stroke="#fde047" stroke-width="4" stroke-linecap="round" stroke-opacity="0.85"/>
-
-    <!-- Dark Pleated Skirt & Cream Cozy Cardigan -->
-    <path d="M188 612 L378 612 L408 764 L156 764 Z" fill="#3b1d38"/>
-    <path d="M164 368 C184 332, 232 322, 286 322 C342 322, 384 342, 398 392 L416 642 C345 658, 228 656, 148 632 Z" fill="url(#sk-cardigan)" stroke="#9d174d" stroke-width="2.2" stroke-opacity="0.55"/>
-    <!-- Inner Ribbon & Cardigan Opening -->
-    <path d="M245 326 L282 462 L316 326 Z" fill="#4c1d4b"/>
-    <polygon points="282,368 302,388 282,404 262,388" fill="#fb7185"/>
-    <line x1="282" y1="462" x2="278" y2="646" stroke="#f9a8d4" stroke-width="2.4"/>
-
-    <!-- Neck & Face -->
-    <rect x="262" y="286" width="44" height="52" fill="#ffe4e1"/>
-    <path d="M204 184 C204 130, 236 106, 280 106 C324 106, 354 132, 354 186 C354 250, 320 296, 278 296 C236 296, 204 248, 204 184 Z" fill="#fff1f2" stroke="#7c2d12" stroke-width="2"/>
-
-    <!-- Warm Sunset Blush -->
-    <ellipse cx="228" cy="234" rx="15" ry="7.5" fill="#fb7185" fill-opacity="0.45"/>
-    <ellipse cx="324" cy="234" rx="15" ry="7.5" fill="#fb7185" fill-opacity="0.45"/>
-
-    <!-- Rose-Amber Anime Eyes -->
-    <g>
-      <path d="M216 198 Q236 186 254 198" fill="none" stroke="#451a03" stroke-width="3.5" stroke-linecap="round"/>
-      <ellipse cx="236" cy="212" rx="12" ry="15" fill="#9f1239"/>
-      <ellipse cx="236" cy="216" rx="8.8" ry="10.5" fill="#fb7185"/>
-      <circle cx="236" cy="211" r="5" fill="#27120b"/>
-      <circle cx="241" cy="205" r="4" fill="#ffffff"/>
-      <circle cx="231" cy="220" r="2.2" fill="#fef08a"/>
-
-      <path d="M294 198 Q314 186 334 198" fill="none" stroke="#451a03" stroke-width="3.5" stroke-linecap="round"/>
-      <ellipse cx="313" cy="212" rx="12.5" ry="15" fill="#9f1239"/>
-      <ellipse cx="313" cy="216" rx="9" ry="10.5" fill="#fb7185"/>
-      <circle cx="313" cy="211" r="5" fill="#27120b"/>
-      <circle cx="318" cy="205" r="4" fill="#ffffff"/>
-      <circle cx="308" cy="220" r="2.2" fill="#fef08a"/>
-    </g>
-
-    <!-- Gentle Poetic Smile -->
-    <path d="M266 262 Q278 270 290 262" fill="none" stroke="#be123c" stroke-width="2.2" stroke-linecap="round"/>
-
-    <!-- Soft Flowing Bangs -->
-    <path d="M184 192 C192 104, 234 60, 284 60 C338 60, 382 104, 388 194 C368 152, 352 146, 336 190 C322 142, 304 142, 288 192 C272 142, 254 142, 238 190 C220 146, 202 152, 184 192 Z" fill="url(#sk-hair)" stroke="#27120b" stroke-width="2"/>
-  </g>
-
-  <!-- Drifting Sakura Cherry Blossom Petals Across Screen -->
-  <g fill="#ffd6e7" fill-opacity="0.88">
-    <path d="M310 210 C322 198, 338 204, 332 218 C326 230, 308 224, 310 210 Z"/>
-    <path d="M520 350 C534 338, 548 346, 540 360 C532 372, 514 364, 520 350 Z"/>
-    <path d="M740 245 C756 232, 772 242, 762 258 C752 270, 732 260, 740 245 Z"/>
-    <path d="M895 430 C912 418, 926 428, 916 444 C906 456, 888 446, 895 430 Z"/>
-    <path d="M1120 280 C1138 265, 1154 276, 1144 294 C1134 308, 1112 298, 1120 280 Z"/>
-    <path d="M1410 390 C1428 375, 1444 386, 1434 404 C1424 418, 1402 408, 1410 390 Z"/>
-    <path d="M1040 585 C1058 570, 1076 582, 1064 600 C1052 614, 1032 602, 1040 585 Z"/>
+  <!-- Crisp Vector Notched Sakura Cherry-Blossom Petals Drifting in Breeze -->
+  <g fill="#ffe4ef" fill-opacity="0.88">
+    <path d="M312 206 C320 194, 336 196, 338 208 C333 207, 331 210, 334 214 C326 224, 310 220, 312 206 Z"/>
+    <path d="M532 344 C542 332, 558 336, 558 348 C553 347, 551 350, 554 355 C544 364, 528 358, 532 344 Z"/>
+    <path d="M748 238 C760 225, 776 230, 776 244 C770 243, 768 246, 771 251 C760 262, 742 254, 748 238 Z"/>
+    <path d="M892 418 C904 405, 922 410, 920 424 C915 423, 912 426, 915 432 C904 442, 886 434, 892 418 Z"/>
+    <path d="M982 198 C994 184, 1012 190, 1010 204 C1004 203, 1002 206, 1005 212 C994 222, 976 214, 982 198 Z"/>
+    <path d="M1446 286 C1460 272, 1478 278, 1476 294 C1470 293, 1468 296, 1471 302 C1458 314, 1440 304, 1446 286 Z"/>
+    <path d="M1498 472 C1510 460, 1526 466, 1524 480 C1519 479, 1517 482, 1520 487 C1508 496, 1492 488, 1498 472 Z"/>
   </g>
 </svg>

@@ -73,3 +73,9 @@ export async function readDesktopClipboard(): Promise<string> {
   if (typeof navigator === "undefined" || !navigator.clipboard?.readText) throw new Error("Clipboard unavailable");
   return navigator.clipboard.readText();
 }
+
+export function fillDesktopComposer(text: string): void {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("hoxi:composer-fill", { detail: { text } }));
+  }
+}

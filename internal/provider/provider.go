@@ -28,6 +28,7 @@ type Service struct {
 	reloadPending        bool
 	reloadLoopRunning    bool
 	configPersistMu      sync.Mutex
+	mediaRolesMu         sync.Mutex
 	relayMu              sync.Mutex
 	relayPersistMu       sync.Mutex
 	relayBaseURL         string
@@ -50,7 +51,8 @@ type Service struct {
 	noReasoningEffort sync.Map
 	// noAnthropicMessages remembers custom OpenAI-compatible gateways that returned
 	// 404/405/501 on /v1/messages so subsequent Claude calls go straight to /v1/chat/completions.
-	noAnthropicMessages sync.Map
+	noAnthropicMessages    sync.Map
+	onProviderDisconnected func(string)
 }
 
 func NewService(openCodePort int, password, rootDir string, proxy http.Handler) *Service {
@@ -100,6 +102,7 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/provider/oauth/", s.handleProviderSubroutes)
 	mux.HandleFunc("/api/hoxi/provider/credentials", s.handleProviderAuth)
 	mux.HandleFunc("/api/hoxi/provider/credentials/", s.handleProviderAuth)
+	mux.HandleFunc("/api/hoxi/provider/disconnect", s.handleDisconnectProvider)
 	mux.HandleFunc("/api/hoxi/provider/config", s.handleGlobalConfigProxy)
 	mux.HandleFunc("/api/hoxi/provider/dispose", s.handleGlobalDispose)
 	mux.HandleFunc("/api/hoxi/models-config", s.handleModelsConfig)

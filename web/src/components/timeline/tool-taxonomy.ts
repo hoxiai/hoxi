@@ -94,6 +94,16 @@ export function isImageGenTool(tool: string): boolean {
   return name === "hoxi_image" || name === "generate_image";
 }
 
+export function isVideoGenTool(tool: string): boolean {
+  const name = lower(tool);
+  return name === "hoxi_video" || name === "generate_video";
+}
+
+export function isSpeechGenTool(tool: string): boolean {
+  const name = lower(tool);
+  return name === "hoxi_speech" || name === "generate_speech";
+}
+
 function isWebSearchTool(tool: string): boolean {
   return WEB_SEARCH_TOOLS.has(lower(tool));
 }
@@ -138,6 +148,8 @@ export function kiloToolIconName(tool: string): IconName {
   if (name === "plan_consent") return "checklist";
   if (isQuestionTool(name) || name === "agent_report") return "bubble-5";
   if (isImageGenTool(name)) return "photo";
+  if (isVideoGenTool(name)) return "video";
+  if (isSpeechGenTool(name)) return "speech-bubble";
   if (name === "hoxi_data" || name === "hoxi_remote") return "server";
   if (name === "agent_wait" || name === "agent_status") return "task";
   return "mcp";
@@ -164,6 +176,8 @@ export function formatToolDisplayName(tool: string, part?: ToolPart): string {
   if (name === "hoxi_tools") return t("toolCard.actionTools");
   if (name === "hoxi_data" || name === "hoxi_remote") return t("toolCard.actionData");
   if (isImageGenTool(name)) return t("toolCard.actionImage");
+  if (isVideoGenTool(name)) return t("toolCard.actionVideo");
+  if (isSpeechGenTool(name)) return t("toolCard.actionSpeech");
   if (name === "call_mcp_tool" || name === "mcp_call_tool" || name === "mcp_list_tools" || name.startsWith("mcp__")) {
     return t("toolCard.actionMcp");
   }

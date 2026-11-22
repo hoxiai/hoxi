@@ -14,6 +14,7 @@ import (
 )
 
 type CalleeHit struct {
+	Possible  bool   `json:"possible,omitempty"`
 	Path      string `json:"path"`
 	Symbol    string `json:"symbol"`
 	StartLine int    `json:"startLine"`
@@ -31,12 +32,13 @@ type CalleesResponse struct {
 }
 
 type ImpactHit struct {
-	Path    string `json:"path"`
-	Symbol  string `json:"symbol,omitempty"`
-	Line    int    `json:"line"`
-	Depth   int    `json:"depth"`
-	Via     string `json:"via"`
-	Snippet string `json:"snippet"`
+	Possible bool   `json:"possible,omitempty"`
+	Path     string `json:"path"`
+	Symbol   string `json:"symbol,omitempty"`
+	Line     int    `json:"line"`
+	Depth    int    `json:"depth"`
+	Via      string `json:"via"`
+	Snippet  string `json:"snippet"`
 }
 
 type ImpactResponse struct {
@@ -84,6 +86,7 @@ var ignoredCallKeywords = map[string]bool{
 }
 
 type symbolDecl struct {
+	Receiver  string
 	Path      string
 	Symbol    string
 	StartLine int
@@ -106,6 +109,12 @@ func buildWorkspaceSymbolMap(index *Index) map[string][]symbolDecl {
 			continue
 		}
 		rec := index.Files[relPath]
+		for _, method := range rec.Methods {
+			key := fmt.Sprintf("%s:%s:%d", relPath, method.Symbol, method.StartLine)
+			seen[key] = struct{}{}
+			lower := strings.ToLower(method.Symbol)
+			byLower[lower] = append(byLower[lower], method)
+		}
 		for _, ch := range rec.Chunks {
 			lines := strings.Split(ch.Text, "\n")
 			for i, line := range lines {
@@ -128,6 +137,7 @@ func buildWorkspaceSymbolMap(index *Index) map[string][]symbolDecl {
 				}
 				lower := strings.ToLower(sym)
 				byLower[lower] = append(byLower[lower], symbolDecl{
+					Receiver:  goReceiverName(line),
 					Path:      relPath,
 					Symbol:    sym,
 					StartLine: declLine,
@@ -340,7 +350,7 @@ func (s *Service) locateSymbolSpan(directory string, c *cachedIndex, relPath, sy
 	if symbol == "" {
 		return cleanRel, lines, 1, minInt(len(lines), 40), "", nil
 	}
-	symStart, symEnd, matchedSym, ok := findSymbolInLines(lines, symbol)
+	symStart, symEnd, matchedSym, ok := findFileSymbolInLines(cleanRel, lines, symbol)
 	if !ok {
 		return "", nil, 0, 0, "", fmt.Errorf("symbol %q not found in %s", symbol, cleanRel)
 	}
@@ -400,37 +410,40 @@ func (s *Service) Callees(directory, symbol, relPath string, limit int) (Callees
 			if ident == "" || ignoredCallKeywords[ident] {
 				continue
 			}
-			if lineNo == symStart && strings.EqualFold(ident, resolvedSym) {
+			if lineNo == symStart && strings.EqualFold(ident, shortSymbolName(resolvedSym)) {
 				continue
 			}
-			if strings.EqualFold(ident, resolvedSym) && receiver == "" {
+			if strings.EqualFold(ident, shortSymbolName(resolvedSym)) && receiver == "" {
 				continue
 			}
 			cands := symDir[strings.ToLower(ident)]
-			decl, ok := pickBestSymbolDecl(cands, cleanRel, ident, receiver, imports)
-			if !ok {
-				continue
+			targets, possible := calleeCandidates(c, cleanRel, lineNo, ident, receiver, cands, imports)
+			for _, decl := range targets {
+				if decl.Path == cleanRel && decl.StartLine == symStart {
+					continue
+				}
+				targetKey := fmt.Sprintf("%s:%s:%d", decl.Path, decl.Symbol, decl.StartLine)
+				if _, exists := seenTarget[targetKey]; exists {
+					continue
+				}
+				seenTarget[targetKey] = struct{}{}
+				snippet := strings.TrimSpace(rawLine)
+				if len(snippet) > 200 {
+					snippet = snippet[:200] + "..."
+				}
+				callees = append(callees, CalleeHit{
+					Possible:  possible,
+					Path:      decl.Path,
+					Symbol:    decl.Symbol,
+					StartLine: decl.StartLine,
+					EndLine:   decl.EndLine,
+					CallLine:  lineNo,
+					Snippet:   snippet,
+				})
+				if len(callees) >= limit {
+					break
+				}
 			}
-			if decl.Path == cleanRel && decl.StartLine == symStart {
-				continue
-			}
-			targetKey := fmt.Sprintf("%s:%s:%d", decl.Path, decl.Symbol, decl.StartLine)
-			if _, exists := seenTarget[targetKey]; exists {
-				continue
-			}
-			seenTarget[targetKey] = struct{}{}
-			snippet := strings.TrimSpace(rawLine)
-			if len(snippet) > 200 {
-				snippet = snippet[:200] + "..."
-			}
-			callees = append(callees, CalleeHit{
-				Path:      decl.Path,
-				Symbol:    decl.Symbol,
-				StartLine: decl.StartLine,
-				EndLine:   decl.EndLine,
-				CallLine:  lineNo,
-				Snippet:   snippet,
-			})
 			if len(callees) >= limit {
 				break
 			}
@@ -517,7 +530,7 @@ func (s *Service) Impact(directory, symbol, relPath string, depth, limit int) (I
 		seenProdKey[key] = true
 		affectedSet[hit.Path] = struct{}{}
 		sym := strings.TrimSpace(hit.Symbol)
-		if sym != "" && !visitedSymbols[strings.ToLower(sym)] {
+		if !hit.Possible && sym != "" && !visitedSymbols[strings.ToLower(sym)] {
 			visitedSymbols[strings.ToLower(sym)] = true
 			frontier = append(frontier, frontierNode{
 				symbol: sym,
@@ -553,16 +566,17 @@ func (s *Service) Impact(directory, symbol, relPath string, depth, limit int) (I
 					affectedSet[hit.Path] = struct{}{}
 					if len(transitive) < limit {
 						transitive = append(transitive, ImpactHit{
-							Path:    hit.Path,
-							Symbol:  hit.Symbol,
-							Line:    hit.Line,
-							Depth:   d,
-							Via:     node.chain,
-							Snippet: hit.Snippet,
+							Path:     hit.Path,
+							Symbol:   hit.Symbol,
+							Line:     hit.Line,
+							Depth:    d,
+							Via:      node.chain,
+							Snippet:  hit.Snippet,
+							Possible: hit.Possible,
 						})
 					}
 					sym := strings.TrimSpace(hit.Symbol)
-					if sym != "" && !visitedSymbols[strings.ToLower(sym)] {
+					if !hit.Possible && sym != "" && !visitedSymbols[strings.ToLower(sym)] {
 						visitedSymbols[strings.ToLower(sym)] = true
 						nextFrontier = append(nextFrontier, frontierNode{
 							symbol: sym,

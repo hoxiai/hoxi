@@ -1,6 +1,8 @@
 package app
 
 import (
+	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -198,5 +200,55 @@ func TestLaunchURLsPicksOnlyHoxiLinks(t *testing.T) {
 	}
 	if got := launchURLs(nil); len(got) != 0 {
 		t.Fatalf("launchURLs(nil) = %q, want none", got)
+	}
+}
+
+func TestParseAppProtocolDeepLinks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "report.pdf")
+	for _, tc := range []struct{ raw, action, key, value string }{
+		{"hoxi://app/demo.app/overview?store=store-1", gateway.DesktopIntentActionOpenApp, "store", "store-1"},
+		{"hoxi://run?prompt=Review+this&mode=confirm", gateway.DesktopIntentActionRunDraft, "prompt", "Review this"},
+		{"hoxi://browser/open?url=https%3A%2F%2Fexample.com", gateway.DesktopIntentActionOpenBrowser, "mode", "readonly"},
+		{"hoxi://doc/preview?path=" + url.QueryEscape(path), gateway.DesktopIntentActionPreviewDoc, "path", path},
+		{"hoxi://settings/app-grants", gateway.DesktopIntentActionSettings, "section", "app-grants"},
+		{"hoxi://connect?requestId=con_123", gateway.DesktopIntentActionConnectApp, "", ""},
+	} {
+		if got, ok := ParseDeepLink(tc.raw); !ok || got.Action != tc.action || got.Params[tc.key] != tc.value {
+			t.Errorf("unexpected intent for %q: %+v, %v", tc.raw, got, ok)
+		}
+	}
+	for _, raw := range []string{"hoxi://run?prompt=test&mode=silent", "hoxi://run?prompt=" + strings.Repeat("a", 4097), "hoxi://app/demo.app/tab/extra", "hoxi://browser/open?url=javascript%3Aalert(1)",
+		"hoxi://doc/preview?path=" + url.QueryEscape(filepath.Join(filepath.Dir(path), ".env")),
+		"hoxi://doc/preview?path=" + url.QueryEscape(filepath.Join(filepath.Dir(path), ".hoxi", "models.json")),
+		"hoxi://doc/preview?path=" + url.QueryEscape(filepath.Join(filepath.Dir(path), "app-grants.json"))} {
+		if _, ok := ParseDeepLink(raw); ok {
+			t.Errorf("unexpectedly accepted %q", raw)
+		}
+	}
+}
+
+func TestConnectDeepLinkQueuesDesktopConsent(t *testing.T) {
+	gw := gateway.New(0, "test", t.TempDir(), nil, nil)
+	t.Cleanup(gw.CloseBrowser)
+	app := &DesktopApp{gateway: gw}
+	q := url.Values{"appId": {"demo.app"}, "name": {"Demo"}, "scopes": {"llm:models,notify:send"}, "redirectUri": {"http://127.0.0.1:3211/cb"}, "codeChallenge": {"E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"}, "codeChallengeMethod": {"S256"}}
+	raw := "hoxi://connect?" + q.Encode()
+	in, ok := ParseConnectDeepLink(raw)
+	if !ok || in.AppID != "demo.app" || len(in.Scopes) != 2 || in.Mode != "redirect" {
+		t.Fatal("did not parse connect fields")
+	}
+	app.onURLOpen(raw)
+	intent, ok := gw.ConsumeDesktopIntent()
+	if !ok || intent.Action != gateway.DesktopIntentActionConnectApp || !app.revealOnStartup {
+		t.Fatal("did not wake desktop for consent")
+	}
+	pending := gw.AppBridge().ListPendingConnects()
+	if len(pending) != 1 || pending[0].RequestID != intent.RequestID || pending[0].Status != "pending" {
+		t.Fatal("did not queue pending consent")
+	}
+	q.Set("redirectUri", "https://example.com/cb")
+	app.onURLOpen("hoxi://connect?" + q.Encode())
+	if len(gw.AppBridge().ListPendingConnects()) != 1 {
+		t.Fatal("queued an untrusted redirect")
 	}
 }

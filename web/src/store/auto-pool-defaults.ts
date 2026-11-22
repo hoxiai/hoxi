@@ -203,7 +203,7 @@ const MEDIA_IMAGE_GEN_MODEL_RE =
 const MULTIMODAL_IMAGE_EDIT_MODEL_RE =
   /nano-banana|gemini[\w./-]*(?:-image|_image|\/image|image-generation|image-preview)|gpt-image|chatgpt-image|gpt-4o-image|flux-kontext|seedream|qwen-image-edit/i;
 const MEDIA_VIDEO_GEN_MODEL_RE =
-  /seedance|kling|veo-|veo2|veo3|sora|wanx|wan2|cogvideo|hailuo|luma-|runway/i;
+  /seedance|kling|veo-|veo2|veo3|sora|wanx|wan2|cogvideo|hailuo|luma-|runway|vidu/i;
 const MEDIA_AUDIO_GEN_MODEL_RE =
   /tts|speech|elevenlabs|fishaudio|cosyvoice|suno|udio/i;
 const NON_CHAT_UTILITY_MODEL_RE =
@@ -249,6 +249,112 @@ export function isImageGenerationModel(
     if (mInfo.category === "image") return true;
     if (Array.isArray(mInfo.modalities?.output) && mInfo.modalities.output.includes("image")) {
       return true;
+    }
+  }
+  return false;
+}
+
+export function isVideoGenerationModel(
+  providerID?: string | null,
+  modelID?: string | null
+): boolean {
+  const mid = (modelID || "").trim();
+  if (!mid) return false;
+  if (inferDedicatedMediaModality(mid) === "video") return true;
+  const pid = (providerID || "").trim();
+  if (!pid) return false;
+  const hoxiModel = workspace.hoxiProviders?.[pid]?.models?.[mid];
+  if (hoxiModel && typeof hoxiModel === "object") {
+    if (hoxiModel.category === "video") return true;
+    if (Array.isArray(hoxiModel.modalities?.output) && hoxiModel.modalities.output.includes("video")) {
+      return true;
+    }
+  }
+  const prov = workspace.providers.find((p) => p.id === pid);
+  const mInfo = prov?.models?.[mid] as Record<string, any> | undefined;
+  if (mInfo && typeof mInfo === "object") {
+    if (mInfo.category === "video") return true;
+    if (Array.isArray(mInfo.modalities?.output) && mInfo.modalities.output.includes("video")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function hasConfiguredImageGenerationModel(): boolean {
+  for (const prov of workspace.providers) {
+    if (!prov || prov.id === AUTO_PROVIDER_ID) continue;
+    for (const mid of Object.keys(prov.models || {})) {
+      if (isImageGenerationModel(prov.id, mid)) return true;
+    }
+  }
+  for (const [pid, pVal] of Object.entries(workspace.hoxiProviders || {})) {
+    if (!pid || pid === AUTO_PROVIDER_ID || !pVal) continue;
+    for (const mid of Object.keys(pVal.models || {})) {
+      if (isImageGenerationModel(pid, mid)) return true;
+    }
+  }
+  return false;
+}
+
+export function hasConfiguredVideoGenerationModel(): boolean {
+  for (const prov of workspace.providers) {
+    if (!prov || prov.id === AUTO_PROVIDER_ID) continue;
+    for (const mid of Object.keys(prov.models || {})) {
+      if (isVideoGenerationModel(prov.id, mid)) return true;
+    }
+  }
+  for (const [pid, pVal] of Object.entries(workspace.hoxiProviders || {})) {
+    if (!pid || pid === AUTO_PROVIDER_ID || !pVal) continue;
+    for (const mid of Object.keys(pVal.models || {})) {
+      if (isVideoGenerationModel(pid, mid)) return true;
+    }
+  }
+  return false;
+}
+
+export function isSpeechSynthesisModel(
+  providerID?: string | null,
+  modelID?: string | null
+): boolean {
+  const mid = (modelID || "").trim();
+  if (!mid) return false;
+  if (inferDedicatedMediaModality(mid) === "audio") return true;
+  const pid = (providerID || "").trim();
+  if (!pid) return false;
+  const hoxiModel = workspace.hoxiProviders?.[pid]?.models?.[mid];
+  if (hoxiModel && typeof mCategory(hoxiModel) === "string") {
+    if (mCategory(hoxiModel) === "tts") return true;
+    if (Array.isArray(hoxiModel.modalities?.output) && hoxiModel.modalities.output.includes("audio")) {
+      return true;
+    }
+  }
+  const prov = workspace.providers.find((p) => p.id === pid);
+  const mInfo = prov?.models?.[mid] as Record<string, any> | undefined;
+  if (mInfo && typeof mInfo === "object") {
+    if (mInfo.category === "tts") return true;
+    if (Array.isArray(mInfo.modalities?.output) && mInfo.modalities.output.includes("audio")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function mCategory(m: Record<string, any>): string {
+  return typeof m?.category === "string" ? m.category.trim().toLowerCase() : "";
+}
+
+export function hasConfiguredSpeechModel(): boolean {
+  for (const prov of workspace.providers) {
+    if (!prov || prov.id === AUTO_PROVIDER_ID) continue;
+    for (const mid of Object.keys(prov.models || {})) {
+      if (isSpeechSynthesisModel(prov.id, mid)) return true;
+    }
+  }
+  for (const [pid, pVal] of Object.entries(workspace.hoxiProviders || {})) {
+    if (!pid || pid === AUTO_PROVIDER_ID || !pVal) continue;
+    for (const mid of Object.keys(pVal.models || {})) {
+      if (isSpeechSynthesisModel(pid, mid)) return true;
     }
   }
   return false;
@@ -359,6 +465,7 @@ export function evaluatePromptModalityIntent(
   const combined = `${raw} ${opts?.skillName || ""} ${opts?.categoryId || ""} ${opts?.chipId || ""}`;
 
   if (VIDEO_INTENT_RE.test(combined)) {
+    const hasLocalVideo = hasConfiguredVideoGenerationModel();
     return {
       kind: "video_gen",
       requiresVisionBrain: true,
@@ -366,8 +473,9 @@ export function evaluatePromptModalityIntent(
       logicalMediaModelID: "hoxi-video-seedance",
       mediaModality: "video",
       defaultAspectRatio: "9:16",
-      mediaRoutingDirective:
-        "[Modality Router: Video & Storyboard Generation]\n- Keep the session orchestrator on a tool-calling Vision chat model.\n- Structure shot lists and `.srt` captions in the workspace, and invoke `hoxi_tools` video synthesis endpoints when external video rendering is requested.",
+      mediaRoutingDirective: hasLocalVideo
+        ? "[Modality Router: Video & Storyboard Generation]\n- Keep the session orchestrator on a tool-calling Vision chat model.\n- Invoke `hoxi_video` (checks the active model's native video capability first, then configured local video models) to render and save video to disk; fall back to `hoxi_tools` only if local rendering is unavailable."
+        : "[Modality Router: Video & Storyboard Generation]\n- Keep the session orchestrator on a tool-calling Vision chat model.\n- Structure shot lists and `.srt` captions in the workspace; invoke `hoxi_video` if a local video model is configured, otherwise invoke `hoxi_tools` video synthesis endpoints when external video rendering is requested.",
     };
   }
 
@@ -387,6 +495,7 @@ export function evaluatePromptModalityIntent(
   if (IMAGE_INTENT_RE.test(combined)) {
     const isVertical = VERTICAL_ASPECT_RE.test(combined);
     const ratio = isVertical ? "3:4" : "1:1";
+    const hasLocalImage = hasConfiguredImageGenerationModel();
     return {
       kind: "image_gen",
       requiresVisionBrain: true,
@@ -394,12 +503,14 @@ export function evaluatePromptModalityIntent(
       logicalMediaModelID: "hoxi-image-pro",
       mediaModality: "image",
       defaultAspectRatio: ratio,
-      mediaRoutingDirective:
-        "[Modality Router: Image & Visual Asset Generation]\n- Do NOT treat a text-only chat response as the final visual deliverable.\n- Invoke `hoxi_image` (or generate deterministic SVG assets in the workspace) to save the visual output to disk.",
+      mediaRoutingDirective: hasLocalImage
+        ? "[Modality Router: Image & Visual Asset Generation]\n- Do NOT treat a text-only chat response as the final visual deliverable.\n- Invoke `hoxi_image` (checks the active model's native capability first, then configured local image models) to save the visual output to disk."
+        : "[Modality Router: Image & Visual Asset Generation]\n- Do NOT treat a text-only chat response as the final visual deliverable.\n- Invoke `hoxi_image` (or generate deterministic SVG assets in the workspace, or fall back to `hoxi_tools` when no local raster image model is configured) to save the visual output to disk.",
     };
   }
 
   if (AUDIO_INTENT_RE.test(combined)) {
+    const hasLocalSpeech = hasConfiguredSpeechModel();
     return {
       kind: "audio_tts",
       requiresVisionBrain: Boolean(opts?.hasImageAttachment),
@@ -407,8 +518,9 @@ export function evaluatePromptModalityIntent(
       logicalMediaModelID: "hoxi-audio-tts",
       mediaModality: "audio",
       defaultAspectRatio: "9:16",
-      mediaRoutingDirective:
-        "[Modality Router: Voiceover & Subtitle Alignment]\n- Generate time-aligned `.srt` subtitles in the workspace and invoke `hoxi_tools` (`elevenlabs` / `fishaudio`) when audio synthesis is requested.",
+      mediaRoutingDirective: hasLocalSpeech
+        ? "[Modality Router: Voiceover & Subtitle Alignment]\n- Generate time-aligned `.srt` subtitles in the workspace and invoke `hoxi_speech` (checks the active model's native audio capability first, then configured local TTS models) to save spoken audio to disk; fall back to `hoxi_tools` only if unavailable."
+        : "[Modality Router: Voiceover & Subtitle Alignment]\n- Generate time-aligned `.srt` subtitles in the workspace; invoke `hoxi_speech` if a local TTS model is configured, otherwise invoke `hoxi_tools` (`elevenlabs` / `fishaudio`) when audio synthesis is requested.",
     };
   }
 

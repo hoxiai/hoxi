@@ -286,6 +286,38 @@ func mergeOpenCodeProviderDefinition(dst, src map[string]interface{}) bool {
 	return changed
 }
 
+func overwriteOpenCodeProviderDefinition(dst, src map[string]interface{}) bool {
+	if dst == nil || src == nil {
+		return false
+	}
+	if name := strings.TrimSpace(asString(src["name"])); name != "" {
+		dst["name"] = name
+	}
+	if npm := strings.TrimSpace(asString(src["npm"])); npm != "" {
+		dst["npm"] = npm
+	}
+	if srcOpts, ok := src["options"].(map[string]interface{}); ok && len(srcOpts) > 0 {
+		dstOpts, _ := dst["options"].(map[string]interface{})
+		nextOpts := map[string]interface{}{}
+		if dstOpts != nil {
+			if k := strings.TrimSpace(asString(dstOpts["apiKey"])); k != "" {
+				nextOpts["apiKey"] = k
+			}
+			if h, ok := dstOpts["headers"]; ok && h != nil {
+				nextOpts["headers"] = h
+			}
+		}
+		for k, v := range srcOpts {
+			nextOpts[k] = v
+		}
+		dst["options"] = nextOpts
+	}
+	if srcModels, ok := src["models"].(map[string]interface{}); ok && len(srcModels) > 0 {
+		dst["models"] = cloneStringAnyMap(srcModels)
+	}
+	return true
+}
+
 func lowerKeyLookup(m map[string]interface{}) map[string]string {
 	out := make(map[string]string, len(m))
 	// Deterministic iteration order: prefer the lexicographically first exact key
@@ -539,6 +571,10 @@ func (g *Service) fetchLiveOpenCodeProviderModels(providerID string) (defaultMod
 // importOpenCodeCLIProvider merges providers/models from the standalone OpenCode
 // CLI config into Hoxi and copies its credentials into the managed engine.
 func (g *Service) importOpenCodeCLIProvider() LocalCLIImportResponse {
+	return g.importOpenCodeCLIProviderWithOptions(false)
+}
+
+func (g *Service) importOpenCodeCLIProviderWithOptions(overwrite bool) LocalCLIImportResponse {
 	provDefs := readExternalOpenCodeConfigProviders()
 	authMap := readExternalOpenCodeAuth()
 	consoleState := ocstate.ReadExternalConsoleState()
@@ -605,7 +641,13 @@ func (g *Service) importOpenCodeCLIProvider() LocalCLIImportResponse {
 				target = map[string]interface{}{}
 				exists = false
 			}
-			if mergeOpenCodeProviderDefinition(target, def) || !exists {
+			applied := false
+			if overwrite {
+				applied = overwriteOpenCodeProviderDefinition(target, def)
+			} else {
+				applied = mergeOpenCodeProviderDefinition(target, def)
+			}
+			if applied || !exists {
 				provMap[targetID] = target
 				mutated = true
 			}
@@ -615,7 +657,7 @@ func (g *Service) importOpenCodeCLIProvider() LocalCLIImportResponse {
 					if opts == nil {
 						opts = map[string]interface{}{}
 					}
-					if strings.TrimSpace(asString(opts["apiKey"])) == "" {
+					if overwrite || strings.TrimSpace(asString(opts["apiKey"])) == "" {
 						opts["apiKey"] = key
 						target["options"] = opts
 						mutated = true
@@ -669,6 +711,17 @@ func (g *Service) importOpenCodeCLIProvider() LocalCLIImportResponse {
 	}); err != nil {
 		return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolOpenCode), Error: err.Error()}
 	}
+	var restoreIDs []string
+	for pid := range provDefs {
+		restoreIDs = appendUniqueString(restoreIDs, resolveOpenCodeProviderID(pid, authMap, g.loadHoxiProvidersMap()))
+	}
+	for pid := range authMap {
+		restoreIDs = appendUniqueString(restoreIDs, pid)
+	}
+	if consoleState != nil {
+		restoreIDs = appendUniqueString(restoreIDs, "opencode-go", "opencode")
+	}
+	g.clearDismissedExternalProviders(restoreIDs...)
 	if !mutated && (len(authMap) > 0 || consoleState != nil) {
 		g.reloadOpenCodeGlobalConfig()
 	}

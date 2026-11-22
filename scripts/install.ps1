@@ -134,27 +134,35 @@ if ($SetupAsset -and -not $Portable) {
       throw "Extracted archive did not contain Hoxi.exe"
     }
 
-    # Create Start Menu & Desktop shortcuts
-    $WshShell = New-Object -ComObject WScript.Shell
-    $StartMenuShortcut = Join-Path ([Environment]::GetFolderPath("Programs")) "Hoxi.lnk"
-    $DesktopShortcut   = Join-Path ([Environment]::GetFolderPath("Desktop")) "Hoxi.lnk"
-    foreach ($ShortcutPath in @($StartMenuShortcut, $DesktopShortcut)) {
-      $Shortcut = $WshShell.CreateShortcut($ShortcutPath)
-      $Shortcut.TargetPath = $ExePath
-      $Shortcut.WorkingDirectory = $InstallDir
-      $Shortcut.IconLocation = "$ExePath,0"
-      $Shortcut.Description = "Hoxi — Native AI Engineering Command Center"
-      $Shortcut.Save()
-    }
+    if ($Portable) {
+      $PortableMarker = Join-Path $InstallDir ".portable"
+      if (-not (Test-Path $PortableMarker)) {
+        Set-Content -Path $PortableMarker -Value "portable" -Encoding Ascii
+      }
+      Write-Host "==> Configured portable installation (.portable) without modifying registry, shortcuts, or user PATH" -ForegroundColor Green
+    } else {
+      # Create Start Menu & Desktop shortcuts
+      $WshShell = New-Object -ComObject WScript.Shell
+      $StartMenuShortcut = Join-Path ([Environment]::GetFolderPath("Programs")) "Hoxi.lnk"
+      $DesktopShortcut   = Join-Path ([Environment]::GetFolderPath("Desktop")) "Hoxi.lnk"
+      foreach ($ShortcutPath in @($StartMenuShortcut, $DesktopShortcut)) {
+        $Shortcut = $WshShell.CreateShortcut($ShortcutPath)
+        $Shortcut.TargetPath = $ExePath
+        $Shortcut.WorkingDirectory = $InstallDir
+        $Shortcut.IconLocation = "$ExePath,0"
+        $Shortcut.Description = "Hoxi — Native AI Engineering Command Center"
+        $Shortcut.Save()
+      }
 
-    # Register hoxi:// custom URL scheme under HKCU
-    $ProtoKey = "HKCU:\Software\Classes\hoxi"
-    New-Item -Path "$ProtoKey\DefaultIcon" -Force | Out-Null
-    New-Item -Path "$ProtoKey\shell\open\command" -Force | Out-Null
-    Set-ItemProperty -Path $ProtoKey -Name "(Default)" -Value "URL:Hoxi Protocol"
-    Set-ItemProperty -Path $ProtoKey -Name "URL Protocol" -Value ""
-    Set-ItemProperty -Path "$ProtoKey\DefaultIcon" -Name "(Default)" -Value "`"$ExePath`",0"
-    Set-ItemProperty -Path "$ProtoKey\shell\open\command" -Name "(Default)" -Value "`"$ExePath`" `"%1`""
+      # Register hoxi:// custom URL scheme under HKCU
+      $ProtoKey = "HKCU:\Software\Classes\hoxi"
+      New-Item -Path "$ProtoKey\DefaultIcon" -Force | Out-Null
+      New-Item -Path "$ProtoKey\shell\open\command" -Force | Out-Null
+      Set-ItemProperty -Path $ProtoKey -Name "(Default)" -Value "URL:Hoxi Protocol"
+      Set-ItemProperty -Path $ProtoKey -Name "URL Protocol" -Value ""
+      Set-ItemProperty -Path "$ProtoKey\DefaultIcon" -Name "(Default)" -Value "`"$ExePath`",0"
+      Set-ItemProperty -Path "$ProtoKey\shell\open\command" -Name "(Default)" -Value "`"$ExePath`" `"%1`""
+    }
   } finally {
     Remove-Item -Recurse -Force $Downloaded.TempDir -ErrorAction SilentlyContinue
   }
@@ -162,7 +170,9 @@ if ($SetupAsset -and -not $Portable) {
   throw "No Windows release asset found for Hoxi v$Ver"
 }
 
-Add-UserPathEntry -Dir $InstallDir
+if (-not $Portable) {
+  Add-UserPathEntry -Dir $InstallDir
+}
 
 $InstalledExe = Join-Path $InstallDir "Hoxi.exe"
 Write-Host "==> Hoxi v$Ver installed to $InstallDir" -ForegroundColor Green

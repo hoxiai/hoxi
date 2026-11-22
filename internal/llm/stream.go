@@ -73,6 +73,26 @@ func (p ModelPricing) ComputeUSD(inTokens, outTokens, reasoningTokens, cacheRead
 	return total
 }
 
+// TokenUsage contains disjoint billing buckets for one request or a sum of requests.
+type TokenUsage struct {
+	Input       int     `json:"input"`
+	Output      int     `json:"output"`
+	Reasoning   int     `json:"reasoning"`
+	CacheRead   int     `json:"cacheRead"`
+	CacheWrite  int     `json:"cacheWrite"`
+	CostUSD     float64 `json:"costUSD"`
+	ServiceTier string  `json:"serviceTier,omitempty"`
+}
+
+func (u *TokenUsage) Add(v TokenUsage) {
+	u.Input += v.Input
+	u.Output += v.Output
+	u.Reasoning += v.Reasoning
+	u.CacheRead += v.CacheRead
+	u.CacheWrite += v.CacheWrite
+	u.CostUSD += v.CostUSD
+}
+
 // StreamTarget describes a resolved model endpoint for streaming agent turns.
 // Credentials remain encapsulated inside the provider implementation.
 type StreamTarget struct {
@@ -100,6 +120,10 @@ type StreamHTTPRequest struct {
 	Target       StreamTarget
 	Body         []byte
 	ExtraHeaders map[string]string
+	// SessionID is an optional conversation identifier used to populate default
+	// gateway prompt-cache affinity headers (x-session-affinity / X-Session-Id)
+	// when not overridden by user-configured provider headers.
+	SessionID string
 }
 
 // StreamClient opens authenticated streaming HTTP responses against user-configured

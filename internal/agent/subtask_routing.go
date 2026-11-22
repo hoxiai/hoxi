@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -104,7 +106,23 @@ func (e *Engine) runSubtask(
 	req SubtaskRequest,
 	parentEmit func(EngineEvent),
 ) (SubtaskResult, error) {
+	var resumed *savedSubtaskState
+	subtaskID := strings.TrimSpace(req.ResumeID)
+	if subtaskID != "" {
+		saved, ok := loadSessionSubtask(parent.SessionID, subtaskID, parent.WorktreeDir)
+		if !ok {
+			err := fmt.Errorf("subagent %q is not available in this session; omit resume to start a fresh subagent", subtaskID)
+			return SubtaskResult{Summary: err.Error(), SubagentType: strings.TrimSpace(req.SubagentType), ReadOnly: true}, err
+		}
+		resumed = &saved
+	} else {
+		subtaskID = nextSubtaskID()
+	}
+
 	subType := strings.TrimSpace(req.SubagentType)
+	if resumed != nil && strings.TrimSpace(resumed.SubagentType) != "" {
+		subType = resumed.SubagentType
+	}
 	if subType == "" {
 		subType = "explore"
 	}
@@ -126,6 +144,9 @@ func (e *Engine) runSubtask(
 		childReadOnly = spec.ReadOnly
 	} else if strings.EqualFold(subType, "general") {
 		childReadOnly = false
+	}
+	if resumed != nil && resumed.ReadOnly {
+		childReadOnly = true
 	}
 	if strings.EqualFold(parentEffectiveMode, "plan") {
 		childReadOnly = true
@@ -154,7 +175,14 @@ func (e *Engine) runSubtask(
 		}
 	}
 
-	childProv, childModel, routeSource := e.resolveSubtaskModel(parent, subType, spec, hasSpec, req.Model, cfgDoc)
+	modelOverride := req.Model
+	if strings.TrimSpace(modelOverride) == "" && resumed != nil && resumed.ProviderID != "" && resumed.ModelID != "" {
+		modelOverride = resumed.ProviderID + "/" + resumed.ModelID
+	}
+	childProv, childModel, routeSource := e.resolveSubtaskModel(parent, subType, spec, hasSpec, modelOverride, cfgDoc)
+	if resumed != nil && strings.TrimSpace(req.Model) == "" && routeSource == "call_override" {
+		routeSource = "resumed"
+	}
 	res := SubtaskResult{
 		SubagentType: subType,
 		ProviderID:   childProv,
@@ -177,7 +205,7 @@ func (e *Engine) runSubtask(
 	defer releaseSlot()
 
 	childMode := "plan"
-	childEffort := parent.Effort
+	childEffort := resolveSubtaskEffort(parent.Effort, childReadOnly)
 	if !childReadOnly {
 		childMode = "build"
 	}
@@ -185,7 +213,9 @@ func (e *Engine) runSubtask(
 	if hasSpec && spec.Steps > 0 {
 		childMaxSteps = spec.Steps
 	}
-	childSystem := buildSubtaskSystemPrompt(subType, req.Description, spec, childReadOnly, parent.System)
+	childSystem := buildSubtaskSystemPrompt(spec, childReadOnly, parent.System)
+	childSystemSuffix := formatSubtaskRoleSuffix(subType, req.Description)
+	childCacheKey := buildSubtaskCacheKey(parent, req, subType)
 
 	startMeta := map[string]any{
 		"subagent_type": subType,
@@ -194,6 +224,9 @@ func (e *Engine) runSubtask(
 		"routing":       routeSource,
 		"readOnly":      childReadOnly,
 		"mode":          childMode,
+	}
+	if childEffort != "" {
+		startMeta["effort"] = childEffort
 	}
 	if childProv != "" && childModel != "" {
 		startMeta["model"] = childProv + "/" + childModel
@@ -209,28 +242,42 @@ func (e *Engine) runSubtask(
 	}
 
 	var latestText string
-	var childMutated bool
+	var childMutated, completedMutation bool
 	var childTruncated bool
+	var capturedMsgs []Message
 	var mu sync.Mutex
+	var childHistory []Message
+	if resumed != nil {
+		childHistory = resumed.Messages
+	}
 	childRevisions := parent.FileRevisions.NewChildTracker()
 	childReq := TurnRequest{
 		SessionID:      parent.SessionID,
+		CacheKey:       childCacheKey,
 		WorktreeDir:    parent.WorktreeDir,
 		Mode:           childMode,
 		ProviderID:     childProv,
 		ModelID:        childModel,
 		Effort:         childEffort,
 		System:         childSystem,
+		SystemSuffix:   childSystemSuffix,
+		History:        childHistory,
 		UserPrompt:     req.Prompt,
 		MaxSteps:       childMaxSteps,
 		SubtaskDepth:   parent.SubtaskDepth + 1,
 		FileRevisions:  childRevisions,
 		PermissionHook: parent.PermissionHook,
+		RepoMap:        parent.RepoMap,
 		CodeSearch:     parent.CodeSearch,
 		SymbolInspect:  parent.SymbolInspect,
 		ImpactInspect:  parent.ImpactInspect,
 		MCPConfig:      parent.MCPConfig,
-		HostInvoke:     parent.HostInvoke,
+		onFinalMessages: func(final []Message) {
+			mu.Lock()
+			capturedMsgs = cloneMessagesForSubtask(final)
+			mu.Unlock()
+		},
+		HostInvoke: parent.HostInvoke,
 		Sink: EventSinkFunc(func(evt EngineEvent) {
 			switch evt.Kind {
 			case EngineTextEnd:
@@ -252,6 +299,8 @@ func (e *Engine) runSubtask(
 				if isSubtaskToolMutating(evt.ToolName, evt.Input) {
 					mu.Lock()
 					childMutated = true
+					partial, _ := evt.Metadata["completedMutation"].(bool)
+					completedMutation = completedMutation || evt.Kind == EngineToolCompleted || (evt.ToolName == "apply_patch" && partial)
 					mu.Unlock()
 				}
 				if parentEmit != nil && req.ParentCallID != "" {
@@ -264,7 +313,7 @@ func (e *Engine) runSubtask(
 					childTruncated = true
 					mu.Unlock()
 				}
-			case EngineTurnUsage:
+			case EngineTurnUsage, EngineSummaryUsage:
 				if evt.Usage != nil && parentEmit != nil {
 					evt.ParentCallID = req.ParentCallID
 					parentEmit(evt)
@@ -287,6 +336,7 @@ func (e *Engine) runSubtask(
 	}
 	mu.Lock()
 	res.Mutated = childMutated
+	res.CompletedMutation = completedMutation
 	wasTruncated := childTruncated
 	summary := strings.TrimSpace(latestText)
 	mu.Unlock()
@@ -321,6 +371,20 @@ func (e *Engine) runSubtask(
 	} else if wasTruncated {
 		summary += "\n\n[Note: subagent response reached output token limit and may be truncated]"
 	}
+	mu.Lock()
+	savedCopy := capturedMsgs
+	mu.Unlock()
+	if saveSessionSubtask(parent.SessionID, savedSubtaskState{
+		ID:           subtaskID,
+		SubagentType: subType,
+		ReadOnly:     childReadOnly,
+		ProviderID:   childProv,
+		ModelID:      childModel,
+		WorktreeDir:  parent.WorktreeDir,
+		Messages:     savedCopy,
+	}) {
+		res.SubtaskID = subtaskID
+	}
 	res.Summary = summary
 	return res, nil
 }
@@ -329,7 +393,7 @@ func isSubtaskToolMutating(toolName string, input map[string]any) bool {
 	lower := strings.ToLower(strings.TrimSpace(toolName))
 	switch lower {
 	case "", "read", "glob", "grep", "hoxi_code_index", "code_search", "symbol_inspect", "impact_analysis",
-		"todoread", "todowrite", "question", "plan_consent", "webfetch", "mcp_list_tools", "skill", "goal_report", "task":
+		"todoread", "todowrite", "question", "plan_consent", "webfetch", "websearch", "mcp_list_tools", "load_host_tool", "skill", "goal_report", "task":
 		return false
 	case "bash":
 		act, _ := input["action"].(string)
@@ -371,7 +435,52 @@ func isSubtaskToolMutating(toolName string, input map[string]any) bool {
 	}
 }
 
-func buildSubtaskSystemPrompt(subType, description string, spec llm.AgentSpec, readOnly bool, parentSystem string) string {
+func resolveSubtaskEffort(parentEffort string, readOnly bool) string {
+	eff := strings.TrimSpace(parentEffort)
+	if !readOnly {
+		return eff
+	}
+	switch strings.ToLower(eff) {
+	case "xhigh", "max":
+		return "high"
+	default:
+		return eff
+	}
+}
+
+// buildSubtaskCacheKey scopes cache/session affinity per (parent session, subagent type)
+// so sibling subagents of the same role share the same upstream KV-cache shard and
+// relay sticky account (maximizing hit rate on shared tools + static system + AGENTS.md)
+// while remaining isolated from the parent conversation and other subagent toolsets.
+func buildSubtaskCacheKey(parent TurnRequest, _ SubtaskRequest, subType string) string {
+	base := strings.TrimSpace(parent.CacheKey)
+	if base == "" {
+		base = strings.TrimSpace(parent.SessionID)
+	}
+	if base == "" {
+		return ""
+	}
+	part := strings.ToLower(strings.TrimSpace(subType))
+	if part == "" {
+		part = "subagent"
+	}
+	candidate := base + ":sub:" + part
+	if len(candidate) <= 64 {
+		return candidate
+	}
+	sum := sha256.Sum256([]byte(candidate))
+	return "hoxi_sub_" + hex.EncodeToString(sum[:24])
+}
+
+func formatSubtaskRoleSuffix(subType, description string) string {
+	desc := strings.TrimSpace(description)
+	if desc == "" {
+		return ""
+	}
+	return fmt.Sprintf("Subagent role: %s (%s).", subType, desc)
+}
+
+func buildSubtaskSystemPrompt(spec llm.AgentSpec, readOnly bool, parentSystem string) string {
 	base := strings.TrimSpace(spec.Prompt)
 	if base == "" {
 		if readOnly {
@@ -381,9 +490,6 @@ func buildSubtaskSystemPrompt(subType, description string, spec llm.AgentSpec, r
 		}
 	}
 	out := base
-	if strings.TrimSpace(description) != "" {
-		out = fmt.Sprintf("%s\n\nSubagent role: %s (%s).", out, subType, strings.TrimSpace(description))
-	}
 	if inherited := extractInheritedSubtaskConstraints(parentSystem, readOnly); inherited != "" {
 		out += "\n\n" + inherited
 	}
@@ -400,8 +506,14 @@ func (e *Engine) isParallelSafeCall(call ToolCall, parentMode string, agentMap m
 	var args struct {
 		SubagentType string `json:"subagent_type"`
 		Agent        string `json:"agent"`
+		Resume       string `json:"resume"`
 	}
 	_ = json.Unmarshal(call.Input, &args)
+	// Always serialize resumed subagents to avoid concurrent writes to the same
+	// saved transcript or accidental parallel execution of a mutating subagent.
+	if strings.TrimSpace(args.Resume) != "" {
+		return false
+	}
 	subType := strings.ToLower(strings.TrimSpace(args.SubagentType))
 	if subType == "" {
 		subType = strings.ToLower(strings.TrimSpace(args.Agent))

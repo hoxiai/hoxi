@@ -15,6 +15,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get commonCancel => '取消';
 
   @override
+  String get commonCopy => '复制';
+
+  @override
+  String get commonRetry => '重试';
+
+  @override
   String get commonRefresh => '刷新';
 
   @override
@@ -1205,4 +1211,13 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get chatActionPickGallery => '从相册选择图片';
+
+  @override
+  String get commonCopied => '已复制';
+
+  @override
+  String get chatReportAction => '举报';
+
+  @override
+  String get chatReportedBadge => '已举报';
 }

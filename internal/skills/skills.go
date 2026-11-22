@@ -78,11 +78,13 @@ type ListResponse struct {
 }
 
 type RequestContext struct {
-	SessionID    string
-	Runtime      string
-	Directory    string
-	ProjectRoot  string
-	AllowedRoots []string
+	SessionID      string
+	Runtime        string
+	Directory      string
+	ProjectRoot    string
+	AllowedRoots    []string
+	ExtraSkillDirs  []string
+	ExtraMCPServers []string
 	// Surface is "work" for Work workspaces, where Hoxi-managed workflow
 	// skills stay in the automatic catalog; anything else is a code project.
 	Surface string
@@ -348,7 +350,7 @@ func (s *Service) resolveContext(ctx context.Context, directory, sessionID, requ
 }
 
 func catalogCacheKey(rc RequestContext) string {
-	return rc.Runtime + "\x00" + rc.Directory + "\x00" + rc.SessionID + "\x00" + rc.Surface
+	return rc.Runtime + "\x00" + rc.Directory + "\x00" + rc.SessionID + "\x00" + rc.Surface + "\x00" + strings.Join(rc.ExtraSkillDirs, "\x1f") + "\x00" + strings.Join(rc.ExtraMCPServers, "\x1f")
 }
 
 func (s *Service) loadOpenCodeCatalog(ctx context.Context, rc RequestContext, forceRefresh bool) ([]cachedSkillEntry, error) {
@@ -371,9 +373,13 @@ func (s *Service) loadOpenCodeCatalog(ctx context.Context, rc RequestContext, fo
 		rawItems, err = s.fetchOpenCodeSkills(ctx, rc.Directory)
 	}
 	if rc.Runtime == "native" || err != nil {
-		rawItems, err = scanLocalSkills(rc.Directory, rc.ProjectRoot)
+		rawItems, err = scanLocalSkills(rc.Directory, rc.ProjectRoot, rc.ExtraSkillDirs...)
 		if err != nil {
 			return nil, err
+		}
+	} else if len(rc.ExtraSkillDirs) > 0 {
+		if extraItems, extraErr := scanExtraSkillRoots(rc.ExtraSkillDirs); extraErr == nil && len(extraItems) > 0 {
+			rawItems = append(extraItems, rawItems...)
 		}
 	}
 
@@ -394,6 +400,16 @@ func (s *Service) loadOpenCodeCatalog(ctx context.Context, rc RequestContext, fo
 			engineCfg.mcpServers[name] = enabled
 		}
 		engineCfg.rules = append(engineCfg.rules, layer.rules...)
+	}
+	if len(rc.ExtraMCPServers) > 0 {
+		if engineCfg.mcpServers == nil {
+			engineCfg.mcpServers = make(map[string]bool, len(rc.ExtraMCPServers))
+		}
+		for _, srv := range rc.ExtraMCPServers {
+			if key := strings.ToLower(strings.TrimSpace(srv)); key != "" {
+				engineCfg.mcpServers[key] = true
+			}
+		}
 	}
 	hoxiDir := canonicalizeDir(DefaultUserDir())
 	entries := make([]cachedSkillEntry, 0, len(rawItems))

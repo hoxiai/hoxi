@@ -180,3 +180,124 @@ func TestGeminiCLIImportRefreshesStaleAgyModelsCache(t *testing.T) {
 		t.Fatalf("expected import to force-refresh agy models and include gemini-4-carbon-high, got %v", impResp.Models)
 	}
 }
+
+func TestCodexCLIImportAndStartupSyncLatestCatalog(t *testing.T) {
+	workspaceDir := t.TempDir()
+	_ = setupSyntheticCLIHome(t, workspaceDir)
+	port, _, closeSrv := setupMockOpenCodeServerAndDB(t)
+	defer closeSrv()
+
+	bundledFile := filepath.Join(t.TempDir(), "codex_bundled.json")
+	if err := os.WriteFile(bundledFile, []byte(`{
+		"models": [
+			{
+				"slug": "gpt-6-astra",
+				"display_name": "GPT-6-Astra",
+				"supported_reasoning_levels": [{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"},{"effort":"max"},{"effort":"ultra"}],
+				"visibility": "list",
+				"priority": 2
+			},
+			{
+				"slug": "gpt-6.1-sol",
+				"display_name": "GPT-6.1-Sol",
+				"supported_reasoning_levels": [{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"},{"effort":"max"},{"effort":"ultra"}],
+				"visibility": "list",
+				"priority": 1
+			},
+			{
+				"slug": "codex-auto-review",
+				"display_name": "Codex Auto Review",
+				"visibility": "hide",
+				"priority": 43
+			}
+		]
+	}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	verFile := filepath.Join(t.TempDir(), "codex_ver.txt")
+	if err := os.WriteFile(verFile, []byte("codex-cli 0.169.0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TEST_CODEX_MODELS_FILE", bundledFile)
+	t.Setenv("TEST_CODEX_VER_FILE", verFile)
+
+	codexBin := execstub.Write(t, t.TempDir(), "codex", `
+if [ "$1" = "--version" ]; then
+  cat "$TEST_CODEX_VER_FILE"
+  exit 0
+fi
+if [ "$1" = "debug" ] && [ "$2" = "models" ]; then
+  cat "$TEST_CODEX_MODELS_FILE"
+  exit 0
+fi
+exit 1
+`)
+	t.Setenv("HOXI_CODEX_BIN", codexBin)
+
+	provSvc := provider.NewService(port, "testpass", workspaceDir, nil)
+	svc := NewService(port, "testpass", workspaceDir, provSvc)
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+
+	// Seed a legacy imported Codex provider in .hoxi/models.json and verify startup sync upgrades it.
+	if err := provSvc.UpdateHoxiConfigDoc(func(doc map[string]interface{}) error {
+		doc["provider"] = map[string]interface{}{
+			"openai": map[string]interface{}{
+				"name": "OpenAI Codex (Local)",
+				"npm":  "@ai-sdk/openai",
+				"models": map[string]interface{}{
+					"gpt-5-codex": map[string]interface{}{"name": "gpt-5-codex (Codex)"},
+				},
+			},
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	svc.SetWSBaseURL("wss://127.0.0.1:7099")
+	t.Cleanup(svc.StopCredentialSync)
+
+	openaiProv, _ := svc.loadHoxiProvidersMap()["openai"].(map[string]interface{})
+	syncedModels, _ := openaiProv["models"].(map[string]interface{})
+	if syncedModels["gpt-6.1-sol"] == nil || syncedModels["gpt-6-astra"] == nil {
+		t.Fatalf("expected startup sync to populate gpt-6.1-sol and gpt-6-astra, got %+v", syncedModels)
+	}
+	if syncedModels["gpt-5-codex"] != nil || syncedModels["codex-auto-review"] != nil {
+		t.Fatalf("expected stale/hidden models to be pruned on sync, got %+v", syncedModels)
+	}
+	opts, _ := openaiProv["options"].(map[string]interface{})
+	if gotDef := asString(opts["defaultModel"]); gotDef != "gpt-6.1-sol" {
+		t.Fatalf("expected defaultModel=gpt-6.1-sol, got %q", gotDef)
+	}
+
+	// Simulate `codex update` adding gpt-6.2-sol while Hoxi is running, then trigger manual sync/import.
+	if err := os.WriteFile(verFile, []byte("codex-cli 0.171.0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bundledFile, []byte(`{
+		"models": [
+			{"slug": "gpt-6.2-sol", "display_name": "GPT-6.2-Sol", "visibility": "list", "priority": 1},
+			{"slug": "gpt-6.1-sol", "display_name": "GPT-6.1-Sol", "visibility": "list", "priority": 2}
+		]
+	}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	bCodex, _ := json.Marshal(LocalCLIImportRequest{ToolID: ExternalToolCodex})
+	recImp := httptest.NewRecorder()
+	mux.ServeHTTP(recImp, httptest.NewRequest(http.MethodPost, "/api/hoxi/local-cli/import", bytes.NewReader(bCodex)))
+	var impResp LocalCLIImportResponse
+	if err := json.Unmarshal(recImp.Body.Bytes(), &impResp); err != nil {
+		t.Fatalf("unmarshal codex import: %v", err)
+	}
+	if !impResp.OK || len(impResp.Models) != 2 || impResp.Models[0] != "gpt-6.2-sol" || impResp.Models[1] != "gpt-6.1-sol" {
+		t.Fatalf("expected force-refreshed codex models [gpt-6.2-sol, gpt-6.1-sol], got %+v", impResp)
+	}
+	afterProv, _ := svc.loadHoxiProvidersMap()["openai"].(map[string]interface{})
+	afterModels, _ := afterProv["models"].(map[string]interface{})
+	solEntry, _ := afterModels["gpt-6.2-sol"].(map[string]interface{})
+	if gotName := asString(solEntry["name"]); gotName != "GPT-6.2-Sol (Codex)" {
+		t.Fatalf("expected display_name preserved as 'GPT-6.2-Sol (Codex)', got %q", gotName)
+	}
+}

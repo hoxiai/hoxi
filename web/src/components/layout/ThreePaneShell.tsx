@@ -4,6 +4,7 @@ import type { CommandPaletteMode } from "./CommandPalette";
 import UpdateDrainNotice from "./UpdateDrainNotice";
 import UpdateWatcher from "./UpdateWatcher";
 import LeftNav from "./LeftNav";
+import { AppLinkConfirmation } from "../settings/AppLinkConfirmation";
 import WallpaperBackdrop from "./WallpaperBackdrop";
 import CompanionCornerDock from "../companion/CompanionCornerDock";
 import CompanionWelcomeStage from "../companion/CompanionWelcomeStage";
@@ -19,6 +20,7 @@ import {
   companionState,
   DEFAULT_LEFT_WIDTH,
   DEFAULT_RIGHT_WIDTH,
+  documentViewerOpen,
   imageViewerOpen,
   isWorkSurfacePath,
   isUpdateModalOpen,
@@ -45,6 +47,7 @@ const InspectorPane = lazy(() => import("../inspector/InspectorPane"));
 const CommandPalette = lazy(() => import("./CommandPalette"));
 const UpdateModal = lazy(() => import("./UpdateModal"));
 const ImagePreviewOverlay = lazy(() => import("../preview/ImagePreviewOverlay"));
+const DocumentPreviewOverlay = lazy(() => import("../preview/DocumentPreviewOverlay"));
 const WorkspaceModal = lazy(() => import("./WorkspaceModal"));
 const ExternalHandoffModal = lazy(() => import("../handoff/ExternalHandoffModal"));
 const SettingsModal = lazy(() => import("../settings/SettingsModal"));
@@ -68,6 +71,7 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
   const [paletteMode, setPaletteMode] = createSignal<CommandPaletteMode | null>(null);
   const inspectorEverOpened = useEverOpened(() => workspace.inspectorOpen);
   const imageViewerEverOpened = useEverOpened(imageViewerOpen);
+  const documentViewerEverOpened = useEverOpened(documentViewerOpen);
   const paletteEverOpened = useEverOpened(() => paletteMode() !== null);
   const updateModalEverOpened = useEverOpened(isUpdateModalOpen);
   const workspaceModalEverOpened = useEverOpened(() => workspace.workspaceModalMode !== null);
@@ -170,7 +174,7 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
     // Deep-link navigation (pending lifecycle, workspace switching, desktop
     // intents) lives in the store; the shell only feeds it hash changes.
     const focusFromLocationHash = () => openSessionDeepLink(parseSessionHashLink(window.location.hash));
-    const stopDeepLinks = startDeepLinkNavigation();
+    const stopDeepLinks = startDeepLinkNavigation(surfaceExtension.openAppIntent);
     focusFromLocationHash();
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("hashchange", focusFromLocationHash);
@@ -462,11 +466,15 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
         hiddenByStage={isWorkSurface() || (isNewConversation() && companionState.showWelcomeStage)}
       />
       <UpdateWatcher />
+      <AppLinkConfirmation />
 
       {/* On-demand overlays, Workspace, Session Handoff & Full-Screen Settings Control Center */}
       <Suspense>
         <Show when={imageViewerEverOpened()}>
           <ImagePreviewOverlay />
+        </Show>
+        <Show when={documentViewerEverOpened()}>
+          <DocumentPreviewOverlay />
         </Show>
         <Show when={paletteEverOpened()}>
           <CommandPalette mode={paletteMode()} onClose={() => setPaletteMode(null)} />

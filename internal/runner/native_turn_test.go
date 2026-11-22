@@ -8,11 +8,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
+	"github.com/hoxiai/hoxi/internal/runner/memstore"
 	"github.com/hoxiai/hoxi/internal/sandbox"
 )
 
@@ -105,6 +108,9 @@ func TestStartNativeTurnWiresHooksAndMultimodal(t *testing.T) {
 	if ckpt.Info.Role != "assistant" || len(ckpt.Parts) != 2 || ckpt.Parts[0].Type != "compaction" || !strings.Contains(ckpt.Parts[1].Text, "Compacted Context Summary") {
 		t.Fatalf("expected appended assistant compaction checkpoint, got: %+v", ckpt)
 	}
+	if u := ckpt.Info.Tokens; u == nil || u.Context == 0 || u.Output != 0 || u.Summary != nil {
+		t.Fatalf("unmetered checkpoint should estimate context only: %+v", u)
+	}
 	projected := svc.projectCanonicalNativeHistory(after.Turns, "openai", "gpt-5")
 	if len(projected) != 2 || !strings.Contains(projected[0].Content[0].Text, "<context_checkpoint>") {
 		t.Fatalf("expected canonical history to project from after_turn checkpoint, got: %+v", projected)
@@ -193,7 +199,7 @@ func TestNativeCommandAndDiagnostics(t *testing.T) {
 		if err := os.WriteFile(goFile, []byte(goodCode), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if clean := diagFn(context.Background(), workspace, goFile); clean != "" {
+		if clean := diagFn(context.Background(), workspace, goFile); clean != "Passed: go vet." {
 			t.Fatalf("expected clean diagnostic after fix, got:\n%s", clean)
 		}
 	}
@@ -553,5 +559,76 @@ func TestNativeTurnPropagatesCostSeedsTodosAndPermissions(t *testing.T) {
 	gotCost := after.Turns[3].Info.Cost
 	if gotCost < 0.049999 || gotCost > 0.050001 {
 		t.Fatalf("expected accumulated parent+subagent Cost=0.0500, got %.6f", gotCost)
+	}
+}
+
+func TestNativeTurnsReplayStablePrefixAndDeliverHandoffMemory(t *testing.T) {
+	ws := t.TempDir()
+	p := hoxipaths.ProjectMemoryFile(ws)
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("Always preserve integer rounding"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(ws, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
+	defer svc.CloseAll()
+	eng := &captureNativeEngine{gotReq: make(chan NativeTurnRequest, 1)}
+	svc.SetNativeEngine(eng)
+	session := createSandboxSession(t, svc, string(RuntimeNative), ws, "local")
+	ch, unsub := svc.Subscribe(session.ID)
+	defer unsub()
+	var firstSystem string
+	var previous []NativeMessage
+	for i, prompt := range []string{"Inspect arithmetic helpers", "Check division", "Explain rounding", "Continue handoff", "Check receipt", "Read my note", "Check it again"} {
+		const note = "Always use half-even rounding for this service"
+		if i == 5 {
+			if _, _, err := memstore.SaveMemoryDocument(ws, "session", session.ID, note); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if i == 3 {
+			_, ok, err := svc.store.UpdateMetadata(session.ID, func(r *SessionMetadata) { r.ContextPending = true })
+			if err != nil || !ok {
+				t.Fatalf("mark handoff pending: %v", err)
+			}
+		}
+		code, err := svc.startPrompt(context.Background(), session.ID, ws, PromptRequest{Text: prompt, Model: &PromptModel{ProviderID: "offline", ModelID: "offline"}})
+		if err != nil || code != http.StatusOK {
+			t.Fatalf("start: %d %v", code, err)
+		}
+		select {
+		case req := <-eng.gotReq:
+			if i == 0 {
+				firstSystem = req.System
+			}
+			if req.System != firstSystem || !strings.Contains(req.System, "Always preserve integer rounding") || strings.Contains(req.System, "<session_handoff_memory>") {
+				t.Fatal("native system prefix changed or project guidance is missing")
+			}
+			if len(req.UserBlocks) == 0 || req.UserBlocks[len(req.UserBlocks)-1].Text != prompt {
+				t.Fatalf("user prompt lost: %+v", req.UserBlocks)
+			}
+			if len(req.History) != 2*i {
+				t.Fatalf("turn %d: lost history", i+1)
+			}
+			if i == 3 {
+				if len(req.UserBlocks) != 2 || !strings.Contains(req.UserBlocks[0].Text, "<session_handoff_memory>") {
+					t.Fatal("missing handoff")
+				}
+			} else if len(req.UserBlocks) != 1 {
+				t.Fatalf("turn %d repeated an automatic checkpoint", i+1)
+			}
+			if i >= 5 && (len(req.History[0].Content) != 2 || !strings.Contains(req.History[0].Content[0].Text, note)) {
+				t.Fatal("missing authored note on the first historical user message")
+			}
+			if ((i > 0 && i <= 3) || i == 6) && !reflect.DeepEqual(previous, req.History[:len(previous)]) {
+				t.Fatalf("turn %d changed its predecessor's request prefix", i+1)
+			}
+			previous = append(append([]NativeMessage(nil), req.History...), NativeMessage{Role: "user", Content: req.UserBlocks})
+
+		case <-time.After(4 * time.Second):
+			t.Fatal("turn did not start")
+		}
+		waitForRunnerSessionIdle(t, ch)
 	}
 }

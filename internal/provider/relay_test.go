@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -444,5 +446,74 @@ func TestRelayKeyCacheInvalidatesOnExternalDiskChangeAndTelemetryDeleteResetsDeg
 	}
 	if len(degradedHistory) != 2 || degradedHistory[1] {
 		t.Fatalf("expected telemetry delete to clear degraded state, got %v", degradedHistory)
+	}
+}
+
+func TestRelayAnthropicAndResponsesURLNormalization(t *testing.T) {
+	var anthPath, respPath string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/messages"):
+			anthPath = r.URL.Path
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+		case strings.HasSuffix(r.URL.Path, "/responses"):
+			respPath = r.URL.Path
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"resp_1","object":"response","output_text":"ok"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	_, dir := setupIsolatedEnv(t)
+	cfgPath := filepath.Join(dir, ".hoxi", "models.json")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `{
+		"provider": {
+			"anth-nov1": {
+				"npm": "@ai-sdk/anthropic",
+				"options": {"baseURL": "` + upstream.URL + `", "apiKey": "sk-ant-test"},
+				"models": {"claude-sonnet-4-5": {"name": "Claude"}}
+			},
+			"resp-full": {
+				"npm": "@ai-sdk/openai",
+				"options": {"baseURL": "` + upstream.URL + `/codex/responses", "apiKey": "sk-oa-test"},
+				"models": {"gpt-5": {"name": "GPT-5"}}
+			}
+		}
+	}`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(0, "", dir, nil)
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+	mux.HandleFunc(relayChatPath, svc.ServeRelay)
+	mux.HandleFunc(relayResponsesPath, svc.ServeRelay)
+	_, token, err := svc.CreateRelayKey("url-norm")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec1 := doRelayReq(t, mux, http.MethodPost, "/v1/chat/completions", token,
+		`{"model":"anth-nov1/claude-sonnet-4-5","messages":[{"role":"user","content":"hello"}]}`)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("anthropic relay status=%d body=%s", rec1.Code, rec1.Body.String())
+	}
+	if anthPath != "/v1/messages" {
+		t.Fatalf("expected /v1/messages for baseURL without /v1, got %q", anthPath)
+	}
+
+	rec2 := doRelayReq(t, mux, http.MethodPost, "/v1/responses", token,
+		`{"model":"resp-full/gpt-5","input":"hello"}`)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("responses relay status=%d body=%s", rec2.Code, rec2.Body.String())
+	}
+	if respPath != "/codex/responses" {
+		t.Fatalf("expected /codex/responses without double suffix, got %q", respPath)
 	}
 }

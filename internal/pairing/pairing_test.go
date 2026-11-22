@@ -1,7 +1,10 @@
 package pairing
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func newTestService(t *testing.T, host string) (*Service, string) {
@@ -325,4 +329,142 @@ func codeTokenString(t *testing.T, path string) string {
 		t.Fatalf("unmarshal token: %v", err)
 	}
 	return rec.Token
+}
+
+type handlerRoundTripper struct {
+	handler    http.Handler
+	remoteAddr string
+}
+
+func (h handlerRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	clone := r.Clone(r.Context())
+	if h.remoteAddr != "" {
+		clone.RemoteAddr = h.remoteAddr
+	} else {
+		clone.RemoteAddr = "127.0.0.1:54321"
+	}
+	rec := httptest.NewRecorder()
+	h.handler.ServeHTTP(rec, clone)
+	return rec.Result(), nil
+}
+
+func TestShortCodeExchangeLifecycleAndLimits(t *testing.T) {
+	now := time.Date(2026, 11, 19, 14, 0, 0, 0, time.UTC)
+	ex := NewShortCodeExchange(func() time.Time { return now })
+
+	pubID, err := NewShortCodeRequestID(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ticketPayload := `{"type":"hoxi","host":"studio"}`
+	code1, cancel1, exp1, err := ex.Publish("peer-a", pubID, ticketPayload, now.Add(5*time.Minute).UnixMilli())
+	if err != nil {
+		t.Fatalf("Publish failed: %v", err)
+	}
+	if !ValidShortCode(code1) || code1 == ReservedDemoShortCode {
+		t.Fatalf("unexpected allocated code %q", code1)
+	}
+	if exp1 > now.Add(MaxShortCodeTTL).UnixMilli() {
+		t.Fatalf("TTL exceeded 60s cap: %d", exp1)
+	}
+	codeRetry, cancelRetry, expRetry, err := ex.Publish("peer-a", pubID, ticketPayload, exp1)
+	if err != nil || codeRetry != code1 || cancelRetry != cancel1 || expRetry != exp1 {
+		t.Fatalf("idempotent retry mismatch: %s %s %d err=%v", codeRetry, cancelRetry, expRetry, err)
+	}
+	if _, _, _, err := ex.Publish("peer-a", pubID, `{"type":"hoxi","host":"other"}`, exp1); !errors.Is(err, ErrShortCodeConflict) {
+		t.Fatalf("expected ErrShortCodeConflict, got %v", err)
+	}
+
+	winnerID, _ := NewShortCodeRequestID(now)
+	gotTicket, _, err := ex.Redeem("peer-b", winnerID, code1)
+	if err != nil || gotTicket != ticketPayload {
+		t.Fatalf("winner redeem failed: %q err=%v", gotTicket, err)
+	}
+	if gotRetry, _, err := ex.Redeem("peer-b", winnerID, code1); err != nil || gotRetry != ticketPayload {
+		t.Fatalf("winner retry failed: %q err=%v", gotRetry, err)
+	}
+	loserID, _ := NewShortCodeRequestID(now)
+	if _, _, err := ex.Redeem("peer-c", loserID, code1); !errors.Is(err, ErrShortCodeUnavailable) {
+		t.Fatalf("expected second claimant rejected, got %v", err)
+	}
+	demoID, _ := NewShortCodeRequestID(now)
+	if _, _, err := ex.Redeem("peer-d", demoID, ReservedDemoShortCode); !errors.Is(err, ErrInvalidShortCode) {
+		t.Fatalf("expected 888888 rejected, got %v", err)
+	}
+	if err := ex.Cancel("peer-a", code1, cancel1); err != nil {
+		t.Fatalf("Cancel failed: %v", err)
+	}
+	if _, _, err := ex.Redeem("peer-b", winnerID, code1); !errors.Is(err, ErrShortCodeUnavailable) {
+		t.Fatalf("expected cancelled code unavailable, got %v", err)
+	}
+
+	now = now.Add(2 * time.Minute)
+	for i := 0; i < shortCodePublishPerMinLimit; i++ {
+		id, _ := NewShortCodeRequestID(now)
+		if _, _, _, err := ex.Publish("peer-rate", id, ticketPayload, 0); err != nil {
+			t.Fatalf("publish %d failed: %v", i, err)
+		}
+	}
+	id7, _ := NewShortCodeRequestID(now)
+	if _, _, _, err := ex.Publish("peer-rate", id7, ticketPayload, 0); !errors.Is(err, ErrShortCodeRateLimited) {
+		t.Fatalf("expected ErrShortCodeRateLimited, got %v", err)
+	}
+}
+
+func TestServiceShortCodeDesktopFlowStripsE2EEKey(t *testing.T) {
+	now := time.Now().UTC()
+	ex := NewShortCodeExchange(func() time.Time { return now })
+	svc, _ := newTestService(t, "192.168.1.42")
+	svc.SetRelayURL(func() string { return "https://relay.hoxi.example" })
+	svc.SetShortCodeTransportForTest(handlerRoundTripper{handler: ex.Handler()})
+
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/hoxi/pairing/short-code", bytes.NewReader([]byte(`{"relayUrl":"https://link.hoxi.example"}`)))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST short-code = %d %s", rec.Code, rec.Body.String())
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Fatalf("expected Cache-Control: no-store, got %q", cc)
+	}
+	var pub PublishedShortCode
+	if err := json.Unmarshal(rec.Body.Bytes(), &pub); err != nil {
+		t.Fatal(err)
+	}
+
+	mobile, err := NewShortCodeClient("https://link.hoxi.example", handlerRoundTripper{handler: ex.Handler(), remoteAddr: "127.0.0.1:4444"}, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim := &ShortCodeClaim{}
+	if !strings.Contains(claim.String(), "REDACTED") {
+		t.Fatalf("expected redacted claim string, got %q", claim.String())
+	}
+	rawTicket, _, err := mobile.Redeem(context.Background(), pub.Code, claim)
+	if err != nil {
+		t.Fatalf("Redeem failed: %v", err)
+	}
+	e2eeKey, err := svc.E2EEKey()
+	if err != nil || e2eeKey == "" {
+		t.Fatalf("E2EEKey failed: %v", err)
+	}
+	if strings.Contains(rawTicket, e2eeKey) || strings.Contains(strings.ToLower(rawTicket), "e2eekey") {
+		t.Fatalf("e2eeKey must never appear in short-code ticket: %s", rawTicket)
+	}
+	var decoded ShortCodeTicket
+	if err := json.Unmarshal([]byte(rawTicket), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.KEX != KEXAlgorithm || decoded.Relay != "https://relay.hoxi.example" || decoded.RelayToken == "" {
+		t.Fatalf("unexpected decoded ticket: %+v", decoded)
+	}
+
+	delRec := httptest.NewRecorder()
+	mux.ServeHTTP(delRec, httptest.NewRequest(http.MethodDelete, "/api/hoxi/pairing/short-code", nil))
+	if delRec.Code != http.StatusNoContent {
+		t.Fatalf("DELETE short-code = %d %s", delRec.Code, delRec.Body.String())
+	}
 }

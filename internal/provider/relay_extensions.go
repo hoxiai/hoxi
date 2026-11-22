@@ -185,118 +185,6 @@ func extractRelayInputImagesAndText(content any) (string, []llm.ImageInput) {
 	}
 }
 
-func (s *Service) serveTranslatedRelayChat(
-	w http.ResponseWriter,
-	r *http.Request,
-	providerID, modelID, baseURL, authSecret string,
-	headers map[string]string,
-	proto string,
-	payload map[string]any,
-) {
-	stream, _ := payload["stream"].(bool)
-	started := time.Now()
-	elapsedMs := func() int64 {
-		ms := time.Since(started).Milliseconds()
-		if ms <= 0 {
-			return 1
-		}
-		return ms
-	}
-
-	var replyText string
-	var promptToks, completionToks int
-	var status int
-	var rawErr []byte
-	var err error
-
-	if proto == "google" {
-		replyText, promptToks, completionToks, status, rawErr, err = s.callRelayGoogleChat(
-			r.Context(), baseURL, authSecret, headers, modelID, payload,
-		)
-	} else {
-		replyText, promptToks, completionToks, status, rawErr, err = s.callRelayAnthropicChat(
-			r.Context(), baseURL, authSecret, headers, modelID, payload,
-		)
-	}
-
-	if err != nil {
-		s.recordBreakerFailure(providerID, modelID, classifyCandidateFailure(0, err, nil), 0, elapsedMs(), err.Error())
-		recordRelayFailure(providerID, modelID, 0, started)
-		writeJSON(w, http.StatusBadGateway, map[string]any{
-			"error": map[string]any{"message": "upstream request failed: " + err.Error(), "type": "upstream_error"},
-		})
-		return
-	}
-	if status < 200 || status >= 300 {
-		s.recordBreakerFailure(providerID, modelID, classifyCandidateFailure(status, nil, rawErr), status, elapsedMs(), string(rawErr))
-		recordRelayFailure(providerID, modelID, status, started)
-		writeRelayUpstreamError(w, status, rawErr)
-		return
-	}
-
-	s.recordBreakerSuccess(providerID, modelID, elapsedMs())
-	nowSec := time.Now().Unix()
-	completionID := fmt.Sprintf("chatcmpl-hoxi-%d", time.Now().UnixNano())
-
-	if stream {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.WriteHeader(http.StatusOK)
-		chunk := map[string]any{
-			"id":      completionID,
-			"object":  "chat.completion.chunk",
-			"created": nowSec,
-			"model":   providerID + "/" + modelID,
-			"choices": []map[string]any{{
-				"index":         0,
-				"delta":         map[string]any{"role": "assistant", "content": replyText},
-				"finish_reason": nil,
-			}},
-		}
-		stopChunk := map[string]any{
-			"id":      completionID,
-			"object":  "chat.completion.chunk",
-			"created": nowSec,
-			"model":   providerID + "/" + modelID,
-			"choices": []map[string]any{{
-				"index":         0,
-				"delta":         map[string]any{},
-				"finish_reason": "stop",
-			}},
-			"usage": map[string]int{
-				"prompt_tokens":     promptToks,
-				"completion_tokens": completionToks,
-				"total_tokens":      promptToks + completionToks,
-			},
-		}
-		b1, _ := json.Marshal(chunk)
-		b2, _ := json.Marshal(stopChunk)
-		_, _ = fmt.Fprintf(w, "data: %s\n\ndata: %s\n\ndata: [DONE]\n\n", b1, b2)
-		_ = http.NewResponseController(w).Flush()
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"id":      completionID,
-		"object":  "chat.completion",
-		"created": nowSec,
-		"model":   providerID + "/" + modelID,
-		"choices": []map[string]any{{
-			"index": 0,
-			"message": map[string]any{
-				"role":    "assistant",
-				"content": replyText,
-			},
-			"finish_reason": "stop",
-		}},
-		"usage": map[string]int{
-			"prompt_tokens":     promptToks,
-			"completion_tokens": completionToks,
-			"total_tokens":      promptToks + completionToks,
-		},
-	})
-}
-
 func extractRelayMaxTokens(payload map[string]any) int {
 	for _, k := range []string{"max_completion_tokens", "max_tokens", "max_output_tokens"} {
 		if v, ok := payload[k].(float64); ok && int(v) > 0 {
@@ -403,7 +291,13 @@ func (s *Service) callRelayAnthropicChat(
 	modelID string,
 	payload map[string]any,
 ) (string, int, int, int, []byte, error) {
-	targetURL := strings.TrimRight(strings.TrimSpace(baseURL), "/") + "/messages"
+	trimmedBase := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	targetURL := trimmedBase + "/v1/messages"
+	if strings.HasSuffix(trimmedBase, "/v1") {
+		targetURL = trimmedBase + "/messages"
+	} else if strings.HasSuffix(trimmedBase, "/messages") {
+		targetURL = trimmedBase
+	}
 	var sysTexts []string
 	var messages []map[string]any
 	if msgs, ok := payload["messages"].([]any); ok {
@@ -701,7 +595,7 @@ func (s *Service) serveRelayResponses(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	baseURL, authSecret, npm, headers := s.resolveProviderConnection(providerID, "", "")
+	baseURL, authSecret, npm, headers := s.resolveEffectiveProviderConnection(providerID, "", "")
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	proto := effectiveProviderProtocol(providerID, npm, baseURL)
 	if proto != "openai" {
@@ -754,8 +648,15 @@ func (s *Service) serveRelayResponses(w http.ResponseWriter, r *http.Request) {
 	}
 
 	payload["model"] = modelID
+	if isCodexChatGPTBackendURL(baseURL) {
+		normalizeCodexBackendResponsesMap(payload)
+	}
 	body, _ := json.Marshal(payload)
-	outReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, baseURL+"/responses", bytes.NewReader(body))
+	respURL := baseURL + "/responses"
+	if strings.HasSuffix(strings.ToLower(baseURL), "/responses") {
+		respURL = baseURL
+	}
+	outReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, respURL, bytes.NewReader(body))
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return

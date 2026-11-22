@@ -261,3 +261,124 @@ func TestLoadAgentsAndTaskPermissions(t *testing.T) {
 		t.Fatal("expected disabled scout subagent to be blocked")
 	}
 }
+
+func TestRegisterBuiltinAgentIsolatedUntilMounted(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("HOXI_HOME", filepath.Join(home, ".hoxi"))
+	wsDir := t.TempDir()
+
+	UnregisterBuiltinAgent("ext-mode-test")
+	t.Cleanup(func() { UnregisterBuiltinAgent("ext-mode-test") })
+
+	_, defaultMap := LoadAgents(wsDir, nil)
+	if _, exists := defaultMap["ext-mode-test"]; exists {
+		t.Fatal("expected extension agent to be absent when no host extension is mounted")
+	}
+
+	RegisterBuiltinAgent(AgentSpec{
+		Name:        "ext-mode-test",
+		Description: "Optional desktop extension mode",
+		Mode:        "primary",
+		Prompt:      "Follow extension bundle rules strictly.",
+	})
+
+	cfgDoc := map[string]any{
+		"agent": map[string]any{
+			"ext-mode-test": map[string]any{
+				"model": "anthropic/claude-sonnet-4-6",
+			},
+		},
+	}
+	active, byKey := LoadAgents(wsDir, cfgDoc)
+	spec, ok := byKey["ext-mode-test"]
+	if !ok || !spec.BuiltIn || !spec.Extension || spec.Mode != "primary" {
+		t.Fatalf("expected registered extension mode in LoadAgents, got ok=%v spec=%+v", ok, spec)
+	}
+	if spec.Model != "anthropic/claude-sonnet-4-6" || spec.Prompt != "Follow extension bundle rules strictly." {
+		t.Fatalf("expected user model override to preserve built-in prompt, got %+v", spec)
+	}
+
+	foundAfterDebug := false
+	for i, item := range active {
+		if item.Name == "ext-mode-test" {
+			foundAfterDebug = i >= 4
+			break
+		}
+	}
+	if !foundAfterDebug {
+		t.Fatalf("expected extension primary mode after core primary modes, got %+v", active)
+	}
+
+	UnregisterBuiltinAgent("ext-mode-test")
+	_, cleanMap := LoadAgents(wsDir, nil)
+	if _, exists := cleanMap["ext-mode-test"]; exists {
+		t.Fatal("expected UnregisterBuiltinAgent to restore clean open-source agent set")
+	}
+}
+
+func TestHasAnyAllowedSubagent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("HOXI_HOME", filepath.Join(home, ".hoxi"))
+	wsDir := t.TempDir()
+
+	_, defaultMap := LoadAgents(wsDir, nil)
+	if !HasAnyAllowedSubagent("build", defaultMap, nil) {
+		t.Fatal("expected default policy to allow subagents")
+	}
+	if HasAnyAllowedSubagent("build", defaultMap, map[string]any{"permission": map[string]any{"task": "deny"}}) {
+		t.Fatal("expected global permission.task=deny to disallow all subagents")
+	}
+	if !HasAnyAllowedSubagent("build", defaultMap, map[string]any{"permission": map[string]any{"task": "ask"}}) {
+		t.Fatal("expected global permission.task=ask to keep task tool available")
+	}
+
+	perPrimaryDeny := map[string]any{
+		"agent": map[string]any{
+			"plan": map[string]any{
+				"permission": map[string]any{"task": "deny"},
+			},
+			"reviewer": map[string]any{
+				"mode": "primary",
+				"permission": map[string]any{
+					"task": map[string]any{
+						"*":       "deny",
+						"explore": "allow",
+					},
+				},
+			},
+			"strict": map[string]any{
+				"mode": "primary",
+				"permission": map[string]any{
+					"task": map[string]any{"*": "deny"},
+				},
+			},
+		},
+	}
+	_, policyMap := LoadAgents(wsDir, perPrimaryDeny)
+	if HasAnyAllowedSubagent("plan", policyMap, perPrimaryDeny) {
+		t.Fatal("expected plan with permission.task=deny to report no allowed subagents")
+	}
+	if !HasAnyAllowedSubagent("build", policyMap, perPrimaryDeny) {
+		t.Fatal("expected build to keep subagents allowed when only plan denies task")
+	}
+	if !HasAnyAllowedSubagent("reviewer", policyMap, perPrimaryDeny) {
+		t.Fatal("expected reviewer allowlist including explore to allow task")
+	}
+	if HasAnyAllowedSubagent("strict", policyMap, perPrimaryDeny) {
+		t.Fatal("expected strict map {'*':'deny'} to disallow all subagents")
+	}
+
+	allDisabledCfg := map[string]any{
+		"agent": map[string]any{
+			"general": map[string]any{"disable": true},
+			"explore": map[string]any{"disable": true},
+			"scout":   map[string]any{"disable": true},
+		},
+	}
+	_, disabledMap := LoadAgents(wsDir, allDisabledCfg)
+	if HasAnyAllowedSubagent("build", disabledMap, allDisabledCfg) {
+		t.Fatal("expected disabling every subagent to report no allowed subagents")
+	}
+}

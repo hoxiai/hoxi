@@ -1,6 +1,10 @@
 import { reconcile, unwrap } from "solid-js/store";
 import type { SessionInfo } from "../services/sse-types";
-import { compareSessionRunning, partitionSessionHistory } from "../components/layout/session-history";
+import {
+  compareSessionRunning,
+  partitionSessionHistory,
+  slicePaginatedSessions,
+} from "../components/layout/session-history";
 import {
   collectStatusDirectories,
   reconcileSessionsInPlace,
@@ -82,6 +86,30 @@ describe("Sidebar session history", () => {
     const recent = { ...options, minimum: 1, activityTime: () => now - 3_600_000 };
     assertEqual(partitionSessionHistory(sessions, recent).older.length, 0);
     assertEqual(partitionSessionHistory(sessions, { ...recent, now: now + 1 }).older.length, 11);
+  });
+
+  it("caps burst recent sessions at maximum while exempting protected sessions and paging older drawers", () => {
+    const burst = Array.from({ length: 28 }, (_, index) => ({
+      id: String(index),
+      title: String(index),
+      time: { created: now - index * 10_000, updated: now - index * 10_000 },
+    } as SessionInfo));
+    const capped = partitionSessionHistory(burst, {
+      ...options,
+      maximum: 15,
+      activityTime: (s) => s.time.updated,
+      protectedSession: (s) => s.id === "25",
+    });
+    assertEqual(capped.visible.length, 16);
+    assertEqual(capped.visible[15].id, "25");
+    assertEqual(capped.older.length, 12);
+
+    const firstPage = slicePaginatedSessions(burst, 20);
+    assertEqual(firstPage.items.length, 20);
+    assertEqual(firstPage.remainingCount, 8);
+    const secondPage = slicePaginatedSessions(burst, 40);
+    assertEqual(secondPage.items.length, 28);
+    assertEqual(secondPage.remainingCount, 0);
   });
 
   it("preserves SolidJS store proxy identity across replaceSession and reconcileSessionsInPlace", () => {

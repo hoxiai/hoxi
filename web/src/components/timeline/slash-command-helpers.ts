@@ -160,6 +160,7 @@ export function getBuiltinFrontendCommands(): CommandInfo[] {
     { name: "new", description: t("commandPalette.slashNewDesc"), source: "command" },
     { name: "plan", description: t("commandPalette.slashPlanDesc"), source: "command", hints: ["[prompt]"], agent: "plan" },
     { name: "build", description: t("commandPalette.slashBuildDesc"), source: "command", hints: ["[prompt]"], agent: "build" },
+    { name: "fast", description: t("commandPalette.slashFastDesc"), source: "command", hints: ["[on|off]"] },
     { name: "diff", description: t("commandPalette.slashDiffDesc"), source: "command" },
     { name: "undo", description: t("commandPalette.slashUndoDesc"), source: "command" },
     { name: "goal", description: t("timeline.goalSlashDescription"), source: "command", hints: ["<objective>"] },

@@ -49,7 +49,7 @@ var (
 		`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?(?:\.config/opencode|\.local/share/opencode)/`,
 		`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.(?:netrc|npmrc|git-credentials|credentials\.json)(?:$|[\s;&|)'"*?])`,
 		`\.claude/\.credentials\.json`,
-		`\.hoxi/(?:models|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|work-apps|dataprofiles|approval-policy|hoxi)\.(?:json|db)`,
+		`\.hoxi/(?:models|media-roles|intake|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|work-apps|dataprofiles|approval-policy|hoxi)\.(?:json|db)`,
 		`\.docker/config\.json`,
 		// .env / .env.* / .envrc and private key files
 		envFilePattern,
@@ -62,7 +62,7 @@ var (
 		`\bterraform\s+(?:destroy|apply)\b`,
 		`\bkubectl\s+delete\b`,
 		`\bdocker\s+(?:system\s+prune|rm|rmi)\b`,
-		`/api/hoxi/(?:tools/run|dataprofiles\b|computer/(?:action|grant|pause|stop))\b`,
+		`/api/hoxi/(?:tools/run|dataprofiles\b|intake\b|computer/(?:action|grant|pause|stop))\b`,
 	}, "|"))
 
 	// Git option abbreviations (`--forc`, `--har`), combined short flags
@@ -125,7 +125,7 @@ var (
 	goUnsafeFlags = setOf("exec", "toolexec", "vettool", "o", "ldflags", "gccgoflags",
 		"coverprofile", "cpuprofile", "memprofile", "blockprofile", "mutexprofile", "trace", "outputdir")
 	goEnvWriteFlags          = setOf("w", "u")
-	hoxiCodeIndexSubcommands = setOf("search", "inspect", "callers", "callees", "impact", "context", "explore", "refresh", "status")
+	hoxiCodeIndexSubcommands = setOf("map", "search", "inspect", "callers", "callees", "impact", "context", "explore", "refresh", "status")
 	hoxiDocReadSubcommands   = setOf("inspect", "read")
 
 	extSafeHoxiMu      sync.RWMutex

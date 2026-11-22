@@ -371,10 +371,83 @@ interface SubagentDrawerOverride {
 }
 
 const MAX_SUBAGENT_DRAWER_OVERRIDES = 512;
+export const DEFAULT_VISIBLE_SUBAGENTS = 10;
 
 const [subagentDrawerOverrides, setSubagentDrawerOverrides] = createSignal<
   Record<string, SubagentDrawerOverride>
 >({});
+
+const [subagentDrawerLimits, setSubagentDrawerLimits] = createSignal<
+  Record<string, number>
+>({});
+
+function resetSubagentDrawerLimit(sessionID: string): void {
+  setSubagentDrawerLimits((prev) => {
+    if (!(sessionID in prev)) return prev;
+    const next = { ...prev };
+    delete next[sessionID];
+    return next;
+  });
+}
+
+export function getSubagentVisibleLimit(sessionID: string): number {
+  return subagentDrawerLimits()[sessionID] || DEFAULT_VISIBLE_SUBAGENTS;
+}
+
+export function loadMoreSubagents(
+  sessionID: string,
+  step = DEFAULT_VISIBLE_SUBAGENTS,
+): void {
+  if (!sessionID) return;
+  setSubagentDrawerLimits((prev) => {
+    const current = prev[sessionID] || DEFAULT_VISIBLE_SUBAGENTS;
+    const next: Record<string, number> = { ...prev };
+    delete next[sessionID];
+    const keys = Object.keys(next);
+    if (keys.length >= MAX_SUBAGENT_DRAWER_OVERRIDES) {
+      delete next[keys[0]!];
+    }
+    next[sessionID] = current + Math.max(1, step);
+    return next;
+  });
+}
+
+export function partitionVisibleSubagents(
+  subagents: readonly SessionInfo[],
+  limit: number,
+  pendingSessions: ReadonlySet<string>,
+  activeSessionID: string | null,
+): { visible: SessionInfo[]; hiddenCount: number } {
+  const cap = Math.max(1, limit);
+  if (subagents.length <= cap) {
+    return { visible: subagents as SessionInfo[], hiddenCount: 0 };
+  }
+  const protectedIDs = new Set<string>();
+  for (const sub of subagents) {
+    if (
+      sub.id === activeSessionID ||
+      isSessionBusy(sub.id) ||
+      pendingSessions.has(sub.id)
+    ) {
+      protectedIDs.add(sub.id);
+    }
+  }
+  const maxUnprotected = Math.max(0, cap - protectedIDs.size);
+  let unprotectedKept = 0;
+  const visible: SessionInfo[] = [];
+  for (const sub of subagents) {
+    if (protectedIDs.has(sub.id)) {
+      visible.push(sub);
+    } else if (unprotectedKept < maxUnprotected) {
+      visible.push(sub);
+      unprotectedKept++;
+    }
+  }
+  return {
+    visible,
+    hiddenCount: Math.max(0, subagents.length - visible.length),
+  };
+}
 
 export function isSubagentDrawerExpanded(
   sessionID: string,
@@ -403,6 +476,7 @@ export function setSubagentDrawerExpanded(
   autoExpand: boolean,
 ): void {
   if (!sessionID) return;
+  if (!expanded) resetSubagentDrawerLimit(sessionID);
   setSubagentDrawerOverrides((prev) => {
     const next: Record<string, SubagentDrawerOverride> = { ...prev };
     delete next[sessionID];
@@ -417,6 +491,7 @@ export function setSubagentDrawerExpanded(
 
 export function clearSubagentDrawerOverride(sessionID: string): void {
   if (!sessionID) return;
+  resetSubagentDrawerLimit(sessionID);
   setSubagentDrawerOverrides((prev) => {
     if (!(sessionID in prev)) return prev;
     const next = { ...prev };

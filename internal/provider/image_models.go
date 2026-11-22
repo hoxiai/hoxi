@@ -18,8 +18,8 @@ func (s *Service) isProviderUsableForLocalMedia(providerID string) bool {
 	if s.disabledProvidersSet()[pid] {
 		return false
 	}
-	baseURL, apiKey, _, headers := s.resolveProviderConnection(pid, "", "")
-	if !isHTTPEndpoint(baseURL) {
+	baseURL, apiKey, _, headers := s.resolveEffectiveProviderConnection(pid, "", "")
+	if !isHTTPEndpoint(baseURL) || isCodexChatGPTBackendURL(baseURL) {
 		return false
 	}
 	if apiKey != "" || len(headers) > 0 || isLoopbackURL(baseURL) {
@@ -184,6 +184,53 @@ func (s *Service) ResolveImageModel(preferredProviderID, preferredModelID string
 		return list[0].ProviderID, list[0].ModelID, true
 	}
 	return "", "", false
+}
+
+// ResolveImageModelForSession performs a 3-step self-check:
+//  1. Explicit caller providerID/modelID override ("explicit")
+//  2. Active session model's own native image output capability ("session_self")
+//  3. Best configured local image generation model ("configured_model", breaking
+//     score ties in favor of the active session's provider)
+func (s *Service) ResolveImageModelForSession(
+	preferredProviderID, preferredModelID, sessionProviderID, sessionModelID string,
+) (string, string, string, bool) {
+	if strings.TrimSpace(preferredProviderID) != "" || strings.TrimSpace(preferredModelID) != "" {
+		pid, mid, ok := s.ResolveImageModel(preferredProviderID, preferredModelID)
+		if !ok {
+			return "", "", "", false
+		}
+		return pid, mid, "explicit", true
+	}
+	sessPID := strings.TrimSpace(sessionProviderID)
+	sessMID := strings.TrimSpace(sessionModelID)
+	if sessPID != "" && sessMID != "" && s.CanModelGenerateImage(sessPID, sessMID) {
+		if conn, err := s.resolveImageConnection(sessPID, sessMID); err == nil && isHTTPEndpoint(conn.BaseURL) && (conn.APIKey != "" || len(conn.Headers) > 0 || isLoopbackURL(conn.BaseURL)) {
+			return sessPID, sessMID, "session_self", true
+		}
+	}
+	if defPID, defMID := splitMediaRoleSpec(s.LoadMediaRolePrefs().ImageModel); defPID != "" && defMID != "" {
+		if s.isProviderUsableForLocalMedia(defPID) && s.CanModelGenerateImage(defPID, defMID) {
+			return defPID, defMID, "role_default", true
+		}
+	}
+	list := s.ListImageModels()
+	if len(list) == 0 {
+		return "", "", "", false
+	}
+	best := list[0]
+	if sessPID != "" && best.ProviderID != sessPID {
+		bestScore := scoreImageModelPreference(best.ModelID)
+		for _, item := range list[1:] {
+			if scoreImageModelPreference(item.ModelID) < bestScore {
+				break
+			}
+			if item.ProviderID == sessPID {
+				best = item
+				break
+			}
+		}
+	}
+	return best.ProviderID, best.ModelID, "configured_model", true
 }
 
 func normalizeAspectRatio(raw string) string {

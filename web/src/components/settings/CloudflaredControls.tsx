@@ -11,7 +11,7 @@ import {
   enableCloudflared,
   loadCloudflaredStatus,
 } from "../../store/workspace";
-import { SettingGroup } from "./setting-controls";
+import { HelpTip, SettingGroup } from "./setting-controls";
 import { confirmAction } from "./confirm-dialog";
 
 const inputClass =
@@ -76,6 +76,11 @@ export function CloudflaredControls() {
           <div class="flex min-w-0 items-center gap-2 text-[13px]">
             <span class={`h-2 w-2 shrink-0 rounded-full ${stateDotClass()}`} />
             <span class="font-medium text-[var(--text-primary)]">{stateLabel()}</span>
+            <HelpTip
+              text={t("cloudflared.ingressHint", {
+                url: cloudflared.status.ingressUrl ?? "http://127.0.0.1:5418",
+              })}
+            />
             <Show when={cloudflared.status.hostname}>
               <span class="truncate font-mono text-[12px] text-[var(--text-muted)]">
                 {cloudflared.status.hostname}
@@ -96,10 +101,6 @@ export function CloudflaredControls() {
         <Show when={cloudflared.status.state === "offline" && cloudflared.status.message}>
           <p class="text-[12px] text-amber-600">{cloudflared.status.message}</p>
         </Show>
-
-        <p class="text-[12px] text-[var(--text-muted)]">
-          {t("cloudflared.ingressHint", { url: cloudflared.status.ingressUrl ?? "http://127.0.0.1:5418" })}
-        </p>
 
         <Show when={!cloudflared.status.enabled}>
           <form class="grid gap-3 sm:grid-cols-2" onSubmit={(event) => void onEnable(event)}>

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
@@ -53,6 +54,14 @@ func (g *Gateway) isRegisteredWorkspaceOrSandbox(dir string, allowedRoots []stri
 			return cDir, root, true
 		}
 	}
+	// Allow Scheme C per-app default workspace subdirectories directly under ~/.hoxi/workspaces/default/<appId>.
+	if defDir, ok := canonicalDirectory(hoxipaths.DefaultWorkspaceDir()); ok && defDir != "" {
+		if rel, err := filepath.Rel(defDir, cDir); err == nil && rel != "." && rel != ".." &&
+			!strings.HasPrefix(rel, ".."+string(filepath.Separator)) &&
+			!strings.Contains(filepath.ToSlash(rel), "/") {
+			return cDir, defDir, true
+		}
+	}
 	return "", "", false
 }
 
@@ -96,13 +105,27 @@ func (g *Gateway) resolveSkillContext(ctx context.Context, directory, sessionID,
 				if reqRT := strings.TrimSpace(requestedRuntime); reqRT != "" && (reqRT == "opencode" || runner.IsValidRuntime(reqRT)) {
 					rt = reqRT
 				}
+				var extraSkillDirs []string
+				if bundle, bErr := g.runner.ResolveSessionBundle(sessionID, effDir); bErr == nil && len(bundle.ExtraSkillDirs) > 0 {
+					extraSkillDirs = bundle.ExtraSkillDirs
+				}
+				var extraMCPServers []string
+				if dynMCP := g.extensionSessionMCPServers(sessionID, effDir); len(dynMCP) > 0 {
+					extraMCPServers = make([]string, 0, len(dynMCP))
+					for name := range dynMCP {
+						extraMCPServers = append(extraMCPServers, name)
+					}
+					sort.Strings(extraMCPServers)
+				}
 				return skills.RequestContext{
-					SessionID:    sessionID,
-					Runtime:      rt,
-					Directory:    effDir,
-					ProjectRoot:  projDir,
-					AllowedRoots: allowedRoots,
-					Surface:      g.skillSurface(projDir, effDir),
+					SessionID:       sessionID,
+					Runtime:         rt,
+					Directory:       effDir,
+					ProjectRoot:     projDir,
+					AllowedRoots:    allowedRoots,
+					ExtraSkillDirs:  extraSkillDirs,
+					ExtraMCPServers: extraMCPServers,
+					Surface:         g.skillSurface(projDir, effDir),
 				}, nil
 			}
 		}
@@ -153,12 +176,21 @@ func (g *Gateway) resolveSkillContext(ctx context.Context, directory, sessionID,
 		rt = reqRT
 	}
 
+	surface := g.skillSurface(projRoot, cDir)
+	var extraSkillDirs []string
+	if surface == "work" && g.runner != nil {
+		if bundle, bErr := g.runner.ResolveSessionBundle("", cDir); bErr == nil && len(bundle.ExtraSkillDirs) > 0 {
+			extraSkillDirs = bundle.ExtraSkillDirs
+		}
+	}
+
 	return skills.RequestContext{
-		Runtime:      rt,
-		Directory:    cDir,
-		ProjectRoot:  projRoot,
-		AllowedRoots: allowedRoots,
-		Surface:      g.skillSurface(projRoot, cDir),
+		Runtime:        rt,
+		Directory:      cDir,
+		ProjectRoot:    projRoot,
+		AllowedRoots:   allowedRoots,
+		ExtraSkillDirs: extraSkillDirs,
+		Surface:        surface,
 	}, nil
 }
 

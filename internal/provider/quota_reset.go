@@ -40,3 +40,22 @@ func quotaResetCooldown(class breakerClass, reason string, now time.Time) (break
 	}
 	return class, at, true
 }
+
+// applyRetryAfterCooldown turns an authoritative HTTP Retry-After or
+// X-Ratelimit-Reset duration into a bounded cooldown timestamp for rate-limit
+// and quota failures.
+func applyRetryAfterCooldown(class breakerClass, retryAfter time.Duration, now time.Time) (breakerClass, time.Time, bool) {
+	if retryAfter <= 0 {
+		return class, time.Time{}, false
+	}
+	if class != breakerClassRateLimit && class != breakerClassQuota {
+		return class, time.Time{}, false
+	}
+	if retryAfter > quotaResetMaxWait {
+		retryAfter = quotaResetMaxWait
+	}
+	if retryAfter >= quotaResetQuotaAfter {
+		class = breakerClassQuota
+	}
+	return class, now.Add(retryAfter), true
+}

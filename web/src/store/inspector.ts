@@ -2,6 +2,11 @@
 // Inspector panel navigation (files / diffs / browser) and per-session review comments.
 import { hoxiAPI, type SpreadsheetSheetPreview } from "../services/api";
 import { openExternalBrowserURL } from "../services/desktop-events";
+import {
+  getLoopbackHTTPBase,
+  resolveDesktopLoopbackURL,
+  setLoopbackHTTPBase,
+} from "../services/http";
 import { locale } from "../i18n";
 import type { SnapshotFileDiff } from "../services/sse-types";
 import { extractFileSuffix, getResolvedFilePath, normalizeCandidatePath } from "./file-links";
@@ -89,13 +94,67 @@ export function openFileInInspector(filePath: string, line?: number | null, diff
 }
 
 export function openAttachmentInInspector(url: string, filename?: string): boolean {
-  const m = String(url || "").match(/\/api\/hoxi\/attachments\/(att_[A-Za-z0-9_-]+)(?:\/([^/?#]+))?/);
+  const raw = String(url || "");
+  if (raw.startsWith("/api/hoxi/file/content?")) {
+    try {
+      const parsed = new URL(raw, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+      const stagedPath = (parsed.searchParams.get("path") || "").trim();
+      if (stagedPath) {
+        openFileInInspector(stagedPath, null, null);
+        return true;
+      }
+    } catch {
+      /* ignore invalid URL */
+    }
+    return false;
+  }
+  const m = raw.match(/\/api\/hoxi\/attachments\/(att_[A-Za-z0-9_-]+)(?:\/([^/?#]+))?/);
   if (!m) return false;
   const attID = m[1];
   const fallbackName = m[2] && m[2] !== "content" ? decodeURIComponent(m[2]) : "attachment";
   const cleanName = (filename || fallbackName).trim().replace(/[\\/]+/g, "_");
   openFileInInspector(`.hoxi/attachments/${attID}_${cleanName}`, null, null);
   return true;
+}
+
+export function resolveMediaPlaybackURL(url: string): string {
+  const raw = String(url || "").trim();
+  if (!raw || !raw.startsWith("/")) return raw;
+  const wsBase = (workspace.wsBaseURL || "").trim();
+  if (wsBase) {
+    setLoopbackHTTPBase(wsBase);
+  }
+  return resolveDesktopLoopbackURL(raw);
+}
+
+export function isLoopbackMediaURL(url: string): boolean {
+  const base = getLoopbackHTTPBase();
+  return Boolean(base && url.startsWith(`${base}/`));
+}
+
+export function openStagedMediaExternally(
+  url: string,
+  action: "open" | "reveal" = "open"
+): boolean {
+  const raw = String(url || "").trim();
+  if (!raw) return false;
+  try {
+    const parsed = new URL(
+      raw,
+      typeof window !== "undefined" ? window.location.origin : "http://localhost"
+    );
+    if (parsed.pathname === "/api/hoxi/file/content") {
+      const stagedPath = (parsed.searchParams.get("path") || "").trim();
+      const dir = (parsed.searchParams.get("directory") || "").trim() || undefined;
+      if (stagedPath) {
+        void openExternalFile(stagedPath, { directory: dir, action });
+        return true;
+      }
+    }
+  } catch {
+    /* ignore invalid URL */
+  }
+  return false;
 }
 
 export function updateInspectedSpreadsheetCells(input: {

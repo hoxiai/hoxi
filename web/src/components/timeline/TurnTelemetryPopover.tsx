@@ -9,7 +9,7 @@ import {
   Show,
 } from "solid-js";
 import { Presence } from "../motion/Presence";
-import { AlertTriangle } from "lucide-solid";
+import { AlertTriangle, Zap } from "lucide-solid";
 import { t } from "../../i18n";
 import { formatCompactNumber as formatCompactTokens } from "../../i18n/format";
 import { computeProviderHealth, workspace } from "../../store/workspace";
@@ -35,7 +35,9 @@ export default function TurnTelemetryPopover(props: {
   outputTokens: number;
   reasoningTokens: number;
   cacheReadTokens: number;
+  summaryTokens: number;
   cost: number;
+  serviceTier?: string;
 }) {
   const [open, setOpen] = createSignal(false);
   const popoverID = createUniqueId();
@@ -161,6 +163,9 @@ export default function TurnTelemetryPopover(props: {
             : "text-[var(--text-faint)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-secondary)]"
         }`}
       >
+        <Show when={props.serviceTier === "fast"}>
+          <Zap size={10} class="fill-current text-amber-500 shrink-0" />
+        </Show>
         <span>{props.durationLabel}</span>
       </button>
 
@@ -227,8 +232,14 @@ export default function TurnTelemetryPopover(props: {
             </div>
 
             <div class="rounded-lg border border-[var(--border-subtle)]/70 bg-[var(--bg-inset)]/65 px-2.5 py-1.5">
-              <div class="text-[11px] text-[var(--text-muted)]">
-                {t("timeline.turnSpeedLabel")}
+              <div class="flex items-center justify-between gap-1 text-[11px] text-[var(--text-muted)]">
+                <span>{t("timeline.turnSpeedLabel")}</span>
+                <Show when={props.serviceTier === "fast"}>
+                  <span class="inline-flex items-center gap-0.5 rounded bg-amber-500/15 px-1 py-[1px] font-sans text-[10px] font-semibold text-amber-500">
+                    <Zap size={9} class="fill-current" />
+                    {t("timeline.turnFastTierBadge")}
+                  </span>
+                </Show>
               </div>
               <div class="font-mono text-[12px] font-semibold text-[var(--text-primary)] tabular-nums">
                 {effectiveTps() ? `${effectiveTps()} tok/s` : "—"}
@@ -270,6 +281,12 @@ export default function TurnTelemetryPopover(props: {
                   </span>
                 </Show>
               </div>
+            </div>
+          </Show>
+
+          <Show when={props.summaryTokens > 0}>
+            <div class="text-[11px] text-[var(--text-muted)]">
+              {t("timeline.turnSummaryTokens", { tokens: formatCompactTokens(props.summaryTokens) })}
             </div>
           </Show>
 

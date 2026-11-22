@@ -36,8 +36,15 @@ import type {
   SystemStorageCleanResult,
   SystemStorageStats,
 } from "./api-types";
-import { getGatewayToken, requestJSON, setGatewayToken, withDir } from "./http";
-import { authAPI, leaderboardAPI, officialChannelAPI, providerMcpOAuthAPI, updaterAPI } from "./platform-api";
+import {
+  getGatewayToken,
+  requestJSON,
+  resolveDesktopLoopbackURL,
+  setGatewayToken,
+  setLoopbackHTTPBase,
+  withDir,
+} from "./http";
+import { authAPI, cliLinkAPI, leaderboardAPI, officialChannelAPI, providerMcpOAuthAPI, updaterAPI, type CliLinkStatus } from "./platform-api";
 import { providerAndAssistAPI } from "./provider-api";
 import {
   forgetRunnerSession,
@@ -56,8 +63,10 @@ import { fileAndPtyAPI, worktreeAndWorkspaceAPI } from "./worktree-api";
 export * from "./api-types";
 export * from "./skills-types";
 export { skillsAPI } from "./skills";
+export type { CliLinkStatus };
 export {
   authAPI,
+  cliLinkAPI,
   createClientRequestID,
   getGatewayToken,
   inferRunnerRuntimeFromSessionID,
@@ -101,6 +110,9 @@ export const hoxiAPI = {
     const info = await requestJSON<BootstrapInfo>("/api/hoxi/bootstrap");
     if (info?.gatewayToken) {
       setGatewayToken(info.gatewayToken);
+    }
+    if (info?.wsBaseURL) {
+      setLoopbackHTTPBase(info.wsBaseURL);
     }
     return info;
   },
@@ -197,6 +209,51 @@ export const hoxiAPI = {
     });
   },
 
+  async stageWorkspaceFile(
+    directory: string,
+    file: File
+  ): Promise<{
+    ok: boolean;
+    path?: string;
+    url?: string;
+    filename?: string;
+    mime?: string;
+    size?: number;
+    error?: string;
+  }> {
+    const params = new URLSearchParams({
+      directory,
+      filename: file.name || "media.bin",
+      expectedSize: String(file.size),
+    });
+    const token = getGatewayToken();
+    const stageUrl = resolveDesktopLoopbackURL(`/api/hoxi/file/stage?${params.toString()}`);
+    const resp = await fetch(stageUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        ...(token ? { "X-Hoxi-Token": token } : {}),
+      },
+      body: file,
+    });
+    const data = (await resp.json().catch(() => null)) as {
+      ok?: boolean;
+      path?: string;
+      url?: string;
+      filename?: string;
+      mime?: string;
+      size?: number;
+      error?: string;
+    } | null;
+    if (!resp.ok || !data?.ok || !data.path) {
+      return {
+        ok: false,
+        error: data?.error || `Failed to stage ${file.name}`,
+      };
+    }
+    return { ...data, ok: true };
+  },
+
   getGitDailyPulse(
     directory?: string,
     sessionID?: string,
@@ -283,6 +340,7 @@ export const hoxiAPI = {
     if (!action && !sessionID) return null;
     return {
       action,
+      appID: intent.appID, tab: intent.tab, requestID: intent.requestID, params: intent.params,
       sessionID,
       messageID: typeof intent.messageID === "string" && intent.messageID.trim() ? intent.messageID.trim() : undefined,
       directory: typeof intent.directory === "string" && intent.directory.trim() ? intent.directory.trim() : undefined,
@@ -405,6 +463,7 @@ export const hoxiAPI = {
       agent?: "build" | "plan" | string;
       model?: { providerID: string; modelID: string };
       variant?: string;
+      fastMode?: boolean;
       directory?: string;
       system?: string;
       attachments?: PromptAttachment[];
@@ -434,6 +493,7 @@ export const hoxiAPI = {
           ...(options?.model ? { model: options.model } : {}),
           ...(options?.imageOptions ? { imageOptions: options.imageOptions } : {}),
           ...(options?.variant ? { variant: options.variant } : {}),
+          ...(options?.fastMode ? { fastMode: true } : {}),
           ...(options?.system ? { system: options.system } : {}),
           ...(options?.skillSelection ? { skillSelection: options.skillSelection } : {}),
           ...(options?.continueTask ? { continueTask: true } : {}),

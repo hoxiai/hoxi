@@ -2,8 +2,10 @@
 import type { MessagePart, SessionInfo } from "../services/sse-types";
 import {
   buildTaskOverview,
+  dismissTaskOverviewNode,
   forgetSessionTaskOverview,
   isTaskNodeExpanded,
+  restoreTaskOverviewNode,
   toggleTaskNodeExpanded,
 } from "../store/task-overview";
 import {
@@ -16,6 +18,7 @@ import {
   parseSubtaskPlanBlock,
   parseSubtasksCommand,
   setWorkspace,
+  workspace,
   type ConvoyPlan,
 } from "../store/workspace";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
@@ -41,6 +44,71 @@ function convoyPlan(overrides: Partial<ConvoyPlan> & Pick<ConvoyPlan, "id" | "st
 }
 
 describe("unified task overview", () => {
+  it("removes only the selected finished convoy attempt, keeping dependencies and retry results", () => {
+    const root = "ses_dismiss_convoy";
+    setWorkspace({ activeSessionID: root, sessions: [session(root)], statusBySession: {} });
+    const plan = convoyPlan({
+      id: "plan_dismiss",
+      parentSessionID: root,
+      status: "running",
+      tasks: [
+        { id: "a", prompt: "First task", status: "failed", endedAt: 2 },
+        { id: "b", prompt: "Second task", status: "running", dependsOn: ["a"] },
+      ],
+    });
+    const plans = () => buildTaskOverview([plan])[0].nodes;
+    const [parent] = plans();
+    assertEqual(dismissTaskOverviewNode(parent), undefined);
+    assertEqual(dismissTaskOverviewNode(parent.children[1]), undefined);
+    const key = dismissTaskOverviewNode(parent.children[0])!;
+    assertTrue(Boolean(key));
+    try {
+      assertDeepEqual(plans()[0].children.map((child) => child.detail), ["b"]);
+      assertDeepEqual(plans()[0].children[0].dependsOn, ["a"]);
+      assertEqual(plan.tasks.length, 2);
+
+      const withOnlyFirstTask = () => buildTaskOverview([{ ...plan, status: "failed", tasks: [plan.tasks[0]] }])[0].nodes;
+      assertEqual(withOnlyFirstTask().length, 0, "an empty finished plan is hidden as well");
+      plan.tasks[0].status = "queued";
+      assertEqual(plans()[0].children.length, 2, "queued retries must be visible");
+      plan.tasks[0].status = "failed";
+      plan.tasks[0].endedAt = 3;
+      assertEqual(plans()[0].children.length, 2, "a new attempt gets a new result row");
+    } finally {
+      restoreTaskOverviewNode(key);
+    }
+  });
+
+  it("restores a dismissed child session and never hides its descendants or running work", () => {
+    const root = "ses_dismiss_root";
+    const child = "ses_dismiss_child";
+    const grandchild = "ses_dismiss_grandchild";
+    setWorkspace({
+      activeSessionID: root,
+      sessions: [session(root), session(child, root), session(grandchild, child)],
+      messagesBySession: {},
+      statusBySession: { [grandchild]: { type: "busy" } },
+      interruptedBySession: {},
+    });
+    const nodes = () => buildTaskOverview([])[1].nodes;
+    const [childNode] = nodes();
+    const key = dismissTaskOverviewNode(childNode)!;
+    assertTrue(Boolean(key));
+    try {
+      assertDeepEqual(nodes().map((node) => node.sessionID), [grandchild]);
+      assertEqual(dismissTaskOverviewNode(nodes()[0]), undefined);
+      assertEqual(workspace.sessions.find((item) => item.id === child)?.parentID, root);
+      setWorkspace("statusBySession", child, { type: "busy" });
+      assertEqual(nodes()[0].sessionID, child);
+      assertEqual(dismissTaskOverviewNode(childNode), undefined, "a stale row cannot dismiss a now busy session");
+      setWorkspace("statusBySession", child, { type: "idle" });
+      assertEqual(nodes()[0].sessionID, grandchild);
+    } finally {
+      restoreTaskOverviewNode(key);
+    }
+    assertEqual(nodes()[0].sessionID, child);
+  });
+
   it("maps a convoy containing the active session and nests its tasks", () => {
     setWorkspace({
       activeSessionID: "ses_task_root",
@@ -266,7 +334,10 @@ describe("unified task overview", () => {
     assertDeepEqual(parseSubtasksCommand("/subtask"), { kind: "usage" });
     assertEqual(parseSubtasksCommand("normal prompt"), null);
 
-    assertTrue(buildProposeSubtasksPrompt("Build X").includes("```hoxi-subtasks"));
+    const proposePrompt = buildProposeSubtasksPrompt("Build X");
+    assertTrue(proposePrompt.includes("```hoxi-subtasks"));
+    assertTrue(proposePrompt.includes("fewest cohesive, self-contained subtasks"));
+    assertEqual(proposePrompt.includes("Prefer 2–6"), false);
     const summaryPrompt = buildConvoyCompletionSummaryPrompt(
       convoyPlan({
         id: "plan_done",
@@ -287,8 +358,19 @@ describe("unified task overview", () => {
     toggleTaskNodeExpanded("subagent:ses_cleanup", 1);
     assertEqual(isTaskNodeExpanded("todo:ses_cleanup:prt_1:0", 1), true);
     assertEqual(isTaskNodeExpanded("subagent:ses_cleanup", 1), true);
+    setWorkspace({
+      activeSessionID: "ses_cleanup_parent",
+      sessions: [session("ses_cleanup_parent"), session("ses_cleanup", "ses_cleanup_parent")],
+      messagesBySession: {},
+      statusBySession: {},
+      interruptedBySession: {},
+    });
+    const cleanupNode = buildTaskOverview([])[1].nodes[0];
+    assertTrue(Boolean(dismissTaskOverviewNode(cleanupNode)));
+    assertEqual(buildTaskOverview([])[1].nodes.length, 0);
     forgetSessionTaskOverview(["ses_cleanup"]);
     assertEqual(isTaskNodeExpanded("todo:ses_cleanup:prt_1:0", 1), false);
     assertEqual(isTaskNodeExpanded("subagent:ses_cleanup", 1), false);
+    assertEqual(buildTaskOverview([])[1].nodes.length, 1, "forgetSessionTaskOverview clears dismissed entry");
   });
 });

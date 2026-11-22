@@ -245,3 +245,53 @@ func TestClaudeOnUnifiedOpenAIGatewayPromotesToAnthropicMessagesExceptOpenAIOnly
 		t.Fatalf("expected OpenRouter host to stay ProtocolOpenAI, got %+v", openRouterClaude)
 	}
 }
+
+func TestOpenStreamRetryAfterUpdatesBreakerCooldownWithoutPollutingLatency(t *testing.T) {
+	_, workspace := setupIsolatedEnv(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "600")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"message":"rate limit"}}`))
+	}))
+	defer srv.Close()
+
+	cfgPath := filepath.Join(workspace, ".hoxi", "models.json")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `{"provider":{"rl-breaker":{"npm":"@ai-sdk/openai","options":{"baseURL":"` + srv.URL + `","apiKey":"sk-test"},"models":{"gpt-fast":{}}}}}`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewService(0, "", workspace, nil)
+	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	svc.breaker.nowFn = func() time.Time { return now }
+	// Seed a healthy 200ms baseline so failure EWMA blending is active.
+	svc.breaker.RecordSuccess("rl-breaker", "gpt-fast", 200)
+
+	target := svc.ResolveStreamTarget("rl-breaker", "gpt-fast")
+	resp, err := svc.OpenStream(context.Background(), llm.StreamHTTPRequest{
+		Target: target,
+		Body:   []byte(`{"model":"gpt-fast"}`),
+	})
+	if resp != nil {
+		_ = resp.Body.Close()
+		t.Fatal("expected nil response on 429")
+	}
+	if err == nil {
+		t.Fatal("expected error on 429")
+	}
+	lat := svc.breaker.LatencyMs("rl-breaker", "gpt-fast")
+	if lat > 2000 {
+		t.Fatalf("Retry-After polluted breaker LatencyEwmaMs: got %.1fms (baseline was 200ms)", lat)
+	}
+	rec := svc.breaker.items[breakerKey("rl-breaker", "gpt-fast")]
+	if rec == nil || rec.Phase != breakerOpen {
+		t.Fatalf("expected breaker to open on 429, got %+v", rec)
+	}
+	wantUntil := now.Add(600 * time.Second).UnixMilli()
+	if rec.OpenUntil != wantUntil {
+		t.Fatalf("expected OpenUntil=%d (now + 600s Retry-After), got %d", wantUntil, rec.OpenUntil)
+	}
+}

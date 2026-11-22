@@ -87,11 +87,6 @@ export function WorkspaceGitSettingsTab() {
                 label: () => t("leftNav.singleProject"),
                 tip: () => t("settings.sidebarSingleDesc"),
               },
-              {
-                id: "recent",
-                label: () => t("leftNav.recentTasks"),
-                tip: () => t("leftNav.recentTasks"),
-              },
             ]}
             onChange={(val) => setSidebarProjectMode(val)}
           />

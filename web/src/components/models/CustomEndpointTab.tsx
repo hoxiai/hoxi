@@ -1,6 +1,6 @@
 // web/src/components/models/CustomEndpointTab.tsx
 import { createEffect, createMemo, createSignal, For, Show, untrack } from "solid-js";
-import { ArrowLeft, Check, Eye, EyeOff, LoaderCircle, Lock, Plus, RefreshCw, Trash2 } from "lucide-solid";
+import { ArrowLeft, Check, Eye, EyeOff, LoaderCircle, Lock, Plus, RefreshCw } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import {
   disconnectProvider,
@@ -14,8 +14,10 @@ import {
   type CustomProviderModelDraft,
 } from "../../store/workspace";
 import { t } from "../../i18n";
+import { HelpTip } from "../settings/setting-controls";
 import CustomProviderModelSection from "./CustomProviderModelSection";
 import ProviderQualityCard from "./ProviderQualityCard";
+import ProviderDisconnectButton from "./provider-disconnect-button";
 import {
   extractCustomProviderFormState,
   inferProviderNpmFromEndpoint,
@@ -260,17 +262,15 @@ export default function CustomEndpointTab() {
 
         {/* Clean Single-Line Header + Compact Switcher */}
         <div class="flex items-center justify-between gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/50 px-3.5 py-2.5">
-          <div class="min-w-0">
-            <div class="text-[13px] font-semibold text-[var(--text-primary)]">
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="text-[13px] font-semibold text-[var(--text-primary)] truncate">
               {isReadOnlyImported()
                 ? t("models.viewImportedEndpoint")
                 : isEditing()
                 ? t("models.editCustomEndpoint")
                 : t("models.addCustomEndpoint")}
-            </div>
-            <div class="text-[11px] text-[var(--text-muted)] truncate">
-              {t("models.customEndpointIntro")}
-            </div>
+            </span>
+            <HelpTip text={t("models.customEndpointIntro")} />
           </div>
 
           <Show when={existingCustomProviders().length > 0}>
@@ -407,9 +407,12 @@ export default function CustomEndpointTab() {
             />
           </div>
           <div class="col-span-4">
-            <label class="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">
-              {t("models.apiKeyOptional")}
-            </label>
+            <div class="flex items-center gap-1.5 mb-1">
+              <label class="text-[12px] font-medium text-[var(--text-secondary)]">
+                {t("models.apiKeyOptional")}
+              </label>
+              <HelpTip text={t("models.multiKeyHint")} size={13} />
+            </div>
             <div class="relative">
               <input
                 type={showApiKey() ? "text" : "password"}
@@ -454,10 +457,6 @@ export default function CustomEndpointTab() {
           </div>
         </div>
 
-        <p class="text-[11px] text-[var(--text-muted)]">
-          {t("models.multiKeyHint")}
-        </p>
-
         <CustomProviderModelSection
           models={models}
           setModels={setModels}
@@ -488,19 +487,34 @@ export default function CustomEndpointTab() {
       <div class="border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)]/30 px-6 sm:px-8 py-3.5">
         <div class="mx-auto flex w-full max-w-5xl items-center justify-between">
           <div class="flex items-center gap-3">
-            <Show when={isEditing() && !isReadOnlyImported()}>
-              <button
-                type="button"
-                disabled={saving() || deleting()}
-                onClick={() => void onDeleteProvider()}
-                aria-busy={deleting()}
-                class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3 py-1.5 text-[12px] font-medium text-[var(--danger-text)] hover:opacity-90 disabled:opacity-60 disabled:cursor-default cursor-pointer"
-              >
-                <Show when={!deleting()} fallback={<LoaderCircle size={13} class="animate-spin" />}>
-                  <Trash2 size={13} />
-                </Show>
-                {t("common.delete")}
-              </button>
+            <Show when={isEditing()}>
+              <ProviderDisconnectButton
+                variant="button"
+                align="start"
+                providerName={displayName().trim() || providerID().trim()}
+                label={
+                  isReadOnlyImported()
+                    ? t("models.removeImportedProvider")
+                    : t("models.deleteProvider")
+                }
+                confirmTitle={
+                  isReadOnlyImported()
+                    ? t("models.removeImportedConfirmTitle", {
+                        name: displayName().trim() || providerID().trim(),
+                      })
+                    : t("models.deleteProviderConfirmTitle", {
+                        name: displayName().trim() || providerID().trim(),
+                      })
+                }
+                confirmBody={
+                  isReadOnlyImported()
+                    ? t("models.removeImportedConfirmBody")
+                    : t("models.deleteProviderConfirmBody")
+                }
+                disabled={saving()}
+                loading={deleting()}
+                onConfirm={() => void onDeleteProvider()}
+              />
             </Show>
             <span class="font-mono text-[11px] text-[var(--text-faint)]">
               {isReadOnlyImported() ? t("models.openCodeReadonlyNote") : t("models.hoxiConfigNote")}

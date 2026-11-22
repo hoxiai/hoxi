@@ -2,8 +2,10 @@ package runner
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -318,6 +320,115 @@ func (s *Service) prepareTurnAttachmentsForModel(
 			continue
 		}
 
+		// Staged workspace media/files served via /api/hoxi/file/content?path=...&raw=1.
+		// Keep the playable file part in storedFiles for the timeline UI; pass the
+		// workspace path to the model, and inline native multimodal media only when
+		// the target model supports it and the file is within the 20 MiB inline cap.
+		if rawURL := strings.TrimSpace(part.URL); strings.HasPrefix(rawURL, "/api/hoxi/file/content?") {
+			storedPart := part
+			storedPart.ID = partID
+			storedPart.SessionID, storedPart.MessageID = rec.ID, userMsgID
+			storedFiles = append(storedFiles, storedPart)
+
+			localPath, relPath := resolveStagedWorkspaceFilePath(rawURL, rec.WorktreePath)
+			fname := strings.TrimSpace(part.Filename)
+			if fname == "" && relPath != "" {
+				fname = filepath.Base(relPath)
+			}
+			mimeType := strings.TrimSpace(part.Mime)
+			if mimeType == "" && localPath != "" {
+				mimeType = attachment.DetectFileMimeType(localPath, nil)
+			}
+			lowerMime := strings.ToLower(mimeType)
+			ext := strings.ToLower(filepath.Ext(fname))
+			var kind attachment.Kind
+			label := "File"
+			switch {
+			case strings.HasPrefix(lowerMime, "video/") || ext == ".mp4" || ext == ".mov" || ext == ".webm" || ext == ".mkv" || ext == ".avi" || ext == ".m4v":
+				kind = attachment.KindVideo
+				label = "Video"
+			case strings.HasPrefix(lowerMime, "audio/") || ext == ".mp3" || ext == ".wav" || ext == ".m4a" || ext == ".aac" || ext == ".ogg" || ext == ".oga" || ext == ".opus" || ext == ".flac":
+				kind = attachment.KindAudio
+				label = "Audio"
+			case strings.HasPrefix(lowerMime, "image/") || ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".webp" || ext == ".gif":
+				kind = attachment.KindImage
+				label = "Image"
+			case lowerMime == "application/pdf" || ext == ".pdf":
+				kind = attachment.KindPDF
+				label = "PDF"
+			}
+			if localPath != "" {
+				cliMediaNotes = append(cliMediaNotes, fmt.Sprintf("[Attached %s: %s]", label, localPath))
+			}
+
+			nativeInlined := false
+			const maxStagedNativeInlineBytes = 20 << 20
+			if !isImageTurn && localPath != "" && (kind == attachment.KindImage || s.runtimeSupportsNativeAttachment(rec, targetProviderID, targetModelID, kind)) {
+				if fi, statErr := os.Stat(localPath); statErr == nil && !fi.IsDir() && fi.Size() > 0 && fi.Size() <= maxStagedNativeInlineBytes {
+					if rawBytes, rErr := os.ReadFile(localPath); rErr == nil && len(rawBytes) > 0 {
+						inlineMime := mimeType
+						if inlineMime == "" {
+							inlineMime = attachment.DetectFileMimeType(localPath, rawBytes)
+						}
+						deliveryFiles = append(deliveryFiles, MessagePart{
+							ID:        partID,
+							SessionID: rec.ID,
+							MessageID: userMsgID,
+							Type:      "file",
+							Mime:      inlineMime,
+							Filename:  fname,
+							URL:       "data:" + inlineMime + ";base64," + base64.StdEncoding.EncodeToString(rawBytes),
+						})
+						nativeInlined = true
+					}
+				}
+			}
+
+			var transcript string
+			var transcribedBy string
+			if !nativeInlined && kind == attachment.KindAudio && localPath != "" && s.audioClient != nil && s.audioClient.HasAudioTranscriber() {
+				const maxStagedAudioTranscribeBytes = 25 << 20
+				if fi, statErr := os.Stat(localPath); statErr == nil && !fi.IsDir() && fi.Size() > 0 && fi.Size() <= maxStagedAudioTranscribeBytes {
+					if rawAudio, rErr := os.ReadFile(localPath); rErr == nil && len(rawAudio) > 0 {
+						tCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+						tRes, tErr := s.audioClient.TranscribeAudio(tCtx, llm.AudioTranscribeRequest{
+							Filename: fname,
+							Mime:     mimeType,
+							Data:     rawAudio,
+						})
+						cancel()
+						if tErr == nil && strings.TrimSpace(tRes.Text) != "" {
+							transcript = strings.TrimSpace(tRes.Text)
+							transcribedBy = strings.Trim(tRes.ProviderID+"/"+tRes.ModelID, "/")
+						}
+					}
+				}
+			}
+			header := fmt.Sprintf(`<attached_file name=%q mime=%q`, fname, mimeType)
+			if localPath != "" {
+				header += fmt.Sprintf(` path=%q`, localPath)
+			}
+			if nativeInlined {
+				header += ` native_multimodal="true"`
+			}
+			if transcribedBy != "" {
+				header += fmt.Sprintf(` transcribed_by=%q`, transcribedBy)
+			}
+			header += ">"
+			if transcript != "" {
+				if idx := len(storedFiles) - 1; idx >= 0 {
+					storedFiles[idx].Metadata = map[string]interface{}{
+						"transcript":    transcript,
+						"transcribedBy": transcribedBy,
+					}
+				}
+				docBlocks = append(docBlocks, header+"\n[Audio Transcript]\n"+transcript+"\n</attached_file>")
+			} else {
+				docBlocks = append(docBlocks, header+"</attached_file>")
+			}
+			continue
+		}
+
 		// Fallback if attachment store is unavailable or URL is external
 		storedPart := part
 		storedPart.ID = partID
@@ -447,6 +558,28 @@ func materializeTurnAttachments(worktreePath string, now int64, seq int64, parts
 		}
 	}
 	return saved
+}
+
+func resolveStagedWorkspaceFilePath(rawURL, fallbackWorktree string) (localPath, relPath string) {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return "", ""
+	}
+	relPath = strings.TrimSpace(parsed.Query().Get("path"))
+	dirParam := strings.TrimSpace(parsed.Query().Get("directory"))
+	if relPath == "" {
+		return "", ""
+	}
+	if filepath.IsAbs(relPath) {
+		return filepath.Clean(relPath), relPath
+	}
+	if dirParam != "" {
+		return filepath.Join(filepath.Clean(dirParam), filepath.FromSlash(relPath)), relPath
+	}
+	if strings.TrimSpace(fallbackWorktree) != "" {
+		return filepath.Join(filepath.Clean(fallbackWorktree), filepath.FromSlash(relPath)), relPath
+	}
+	return relPath, relPath
 }
 
 func (s *Service) MaterializeAttachmentToDir(id, targetDir string) (string, error) {

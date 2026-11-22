@@ -522,7 +522,8 @@ func detectOpenCodeCLIStatus(g *Service) LocalCLIStatusItem {
 
 	connected := len(provDefs)+len(authMap) > 0 || consoleState != nil
 	for pid := range provDefs {
-		if _, ok := hoxiMap[resolveOpenCodeProviderID(pid, authMap, hoxiMap)]; !ok {
+		resolved := resolveOpenCodeProviderID(pid, authMap, hoxiMap)
+		if _, ok := hoxiMap[resolved]; !ok || (g != nil && g.isExternalProviderDismissed(resolved)) {
 			connected = false
 			break
 		}
@@ -530,13 +531,13 @@ func detectOpenCodeCLIStatus(g *Service) LocalCLIStatusItem {
 	if connected {
 		engineAuth := engineOpenCodeAuthIDs()
 		for pid := range authMap {
-			if _, ok := engineAuth[pid]; !ok {
+			if _, ok := engineAuth[pid]; !ok || (g != nil && g.isExternalProviderDismissed(pid)) {
 				connected = false
 				break
 			}
 		}
 	}
-	if connected && consoleState != nil && !ocstate.IsConsoleStateSynced(consoleState) {
+	if connected && consoleState != nil && (!ocstate.IsConsoleStateSynced(consoleState) || (g != nil && g.isExternalProviderDismissed("opencode-go"))) {
 		connected = false
 	}
 

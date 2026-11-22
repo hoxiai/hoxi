@@ -15,7 +15,7 @@ import {
   type CompanionPersona,
 } from "../../store/workspace";
 import { CompanionAvatar } from "../companion/companion-art";
-import { SettingGroup, SettingRow, ToggleSwitch } from "./setting-controls";
+import { HelpTip, SettingGroup, SettingRow, ToggleSwitch } from "./setting-controls";
 
 const PERSONA_CARDS: Array<{ id: CompanionPersona; labelKey: TxKey }> = [
   { id: "hoxi-chan", labelKey: "companion.personaHoxiChan" },
@@ -103,20 +103,16 @@ export function CompanionSettingsSection() {
         {/* Custom Transparent Standee Upload */}
         <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)]/70 p-3.5 space-y-2.5">
           <div class="flex flex-wrap items-center justify-between gap-2">
-            <div class="min-w-0">
-              <div class="flex items-center gap-2">
-                <span class="text-[13px] font-medium text-[var(--text-primary)]">
-                  {t("companion.customStandeeTitle")}
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="text-[13px] font-medium text-[var(--text-primary)] truncate">
+                {t("companion.customStandeeTitle")}
+              </span>
+              <HelpTip text={t("companion.customStandeeDesc")} />
+              <Show when={Boolean(companionState.customAvatarObjectUrl)}>
+                <span class="shrink-0 rounded-full border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--accent-text)]">
+                  {t("companion.customStandeeActive")}
                 </span>
-                <Show when={Boolean(companionState.customAvatarObjectUrl)}>
-                  <span class="rounded-full border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--accent-text)]">
-                    {t("companion.customStandeeActive")}
-                  </span>
-                </Show>
-              </div>
-              <div class="text-[11.5px] text-[var(--text-muted)]">
-                {t("companion.customStandeeDesc")}
-              </div>
+              </Show>
             </div>
 
             <div class="flex items-center gap-2 shrink-0">

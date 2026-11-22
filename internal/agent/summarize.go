@@ -27,6 +27,10 @@ When merging checkpoints, retain their facts and chronology; later explicit user
 // their checkpoints. Nothing is discarded before the model sees it. A failed
 // chunk or non-converging reduction fails the operation without a partial summary.
 func (e *Engine) Summarize(ctx context.Context, providerID, modelID, transcript string) (string, error) {
+	return e.SummarizeWithUsage(ctx, providerID, modelID, transcript, nil)
+}
+
+func (e *Engine) SummarizeWithUsage(ctx context.Context, providerID, modelID, transcript string, record func(TokenUsage)) (string, error) {
 	if e.stream == nil {
 		return "", fmt.Errorf("native stream client is not configured")
 	}
@@ -49,7 +53,7 @@ func (e *Engine) Summarize(ctx context.Context, providerID, modelID, transcript 
 	maxOut = min(maxOut, contextLimit/4)
 	// One byte per input token is deliberately conservative for arbitrary code
 	// and multilingual text. Reserve space for the prompt and response framing.
-	chunkBytes := min(48000, contextLimit-maxOut-2048)
+	chunkBytes := min(100000, contextLimit-maxOut-2048)
 	if chunkBytes < 1024 || maxOut <= 0 {
 		return "", fmt.Errorf("model context window is too small for summarization")
 	}
@@ -68,7 +72,7 @@ func (e *Engine) Summarize(ctx context.Context, providerID, modelID, transcript 
 			if err := ctx.Err(); err != nil {
 				return "", err
 			}
-			summary, err := e.summarizeChunk(ctx, target, drv, maxOut, chunk)
+			summary, err := e.summarizeChunk(ctx, target, drv, maxOut, chunk, record)
 			calls++
 			if err != nil {
 				return "", fmt.Errorf("summarize segment %d/%d: %w", i+1, len(chunks), err)
@@ -107,7 +111,7 @@ func splitSummaryTranscript(text string, maxBytes int) []string {
 	return chunks
 }
 
-func (e *Engine) summarizeChunk(ctx context.Context, target llm.StreamTarget, drv ModelDriver, maxOut int, transcript string) (string, error) {
+func (e *Engine) summarizeChunk(ctx context.Context, target llm.StreamTarget, drv ModelDriver, maxOut int, transcript string, record func(TokenUsage)) (string, error) {
 	httpReq, err := drv.BuildRequest(ModelRequest{
 		Target:    target,
 		System:    compactionSystemPrompt,
@@ -136,6 +140,10 @@ func (e *Engine) summarizeChunk(ctx context.Context, target llm.StreamTarget, dr
 	var finishReason string
 	if err := drv.ParseSSE(ctx, resp.Body, func(se StreamEvent) {
 		switch se.Kind {
+		case EventUsage:
+			if se.Usage != nil && record != nil {
+				record(pricedUsage(target, *se.Usage))
+			}
 		case EventTextDelta:
 			if se.Delta != "" {
 				out.WriteString(se.Delta)
@@ -191,6 +199,7 @@ func (e *Engine) compactContextOverflow(
 	msgs []Message,
 	historyLen int,
 	currentStep int,
+	emit func(EngineEvent),
 ) ([]Message, *compactionCheckpointInfo, bool) {
 	if len(msgs) == 0 {
 		return nil, nil, false
@@ -212,7 +221,12 @@ func (e *Engine) compactContextOverflow(
 	if tailStart >= 2 {
 		transcript := renderOverflowTranscript(msgs[:tailStart])
 		if transcript != "" {
-			if summary, err := e.Summarize(ctx, providerID, modelID, transcript); err == nil && strings.TrimSpace(summary) != "" {
+			record := func(u TokenUsage) {
+				if emit != nil {
+					emit(EngineEvent{Kind: EngineSummaryUsage, Step: currentStep, Usage: &u})
+				}
+			}
+			if summary, err := e.SummarizeWithUsage(ctx, providerID, modelID, transcript, record); err == nil && strings.TrimSpace(summary) != "" {
 				trimmedSummary := strings.TrimSpace(summary)
 				checkpoint := Message{
 					Role: RoleUser,

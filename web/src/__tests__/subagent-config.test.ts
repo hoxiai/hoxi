@@ -1,5 +1,6 @@
 // web/src/__tests__/subagent-config.test.ts
 import { describe, it, assertDeepEqual, assertEqual } from "./test-harness";
+import { setWorkspace, workspace } from "../store/workspace";
 import {
   buildDelegationTaskValue,
   effectiveAllowedSubagents,
@@ -91,5 +92,27 @@ describe("subagent config", () => {
       assertEqual(isReservedAgentID(id), true, `expected ${id} to be reserved`);
     }
     assertEqual(isReservedAgentID("custom-reviewer"), false);
+  });
+
+  it("excludes primary-only workspace agents from readSubagents when only model is configured", () => {
+    const prevAgents = workspace.agents;
+    try {
+      setWorkspace("agents", [
+        ...prevAgents,
+        { name: "custom-primary-mode", mode: "primary", builtIn: true },
+      ]);
+      const list = readSubagents({
+        agent: {
+          "custom-primary-mode": { model: "anthropic/claude-sonnet-4-6" },
+        },
+      });
+      assertEqual(
+        list.some((item) => item.id === "custom-primary-mode"),
+        false,
+        "primary-only mode with model override must not leak into subagents"
+      );
+    } finally {
+      setWorkspace("agents", prevAgents);
+    }
   });
 });

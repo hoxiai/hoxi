@@ -3,16 +3,19 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
 
 const (
-	compactTriggerPercent       = 75
-	compactHardCapPercent       = 90
-	compactMinKeepRecentMsgs    = 6
-	compactMediumKeepRecentMsgs = 14
-	compactLargeKeepRecentMsgs  = 20
+	compactTriggerPercent          = 75
+	compactHardCapPercent          = 90
+	maxRegularCompactTriggerTokens = 150000
+	maxRegularCompactHardCapTokens = 180000
+	compactMinKeepRecentMsgs       = 6
+	compactMediumKeepRecentMsgs    = 14
+	compactLargeKeepRecentMsgs     = 20
 	// compactChunkStride quantizes the pruning cutoff to fixed message-index
 	// boundaries so rebuilt turn histories keep a byte-identical prefix across
 	// consecutive steps and turns instead of shifting cutoff by +1/+2 each turn
@@ -38,11 +41,25 @@ func estimateTextWeight(s string) int {
 
 func estimateTokens(msgs []Message, system string) int {
 	chars := estimateTextWeight(system)
-	for _, m := range msgs {
+	activeTurnStart := lastPlainUserMessageIndex(msgs)
+	for msgIdx, m := range msgs {
+		inActiveTurn := activeTurnStart < 0 || msgIdx >= activeTurnStart
 		for _, b := range m.Content {
-			chars += estimateTextWeight(b.Text) + len(b.Input) + 16
-			if b.Type == ContentMedia && b.Data != "" {
-				chars += 768
+			switch b.Type {
+			case ContentThinking:
+				// Unsigned prior-turn thinking is stripped on OpenAI chat relays and
+				// not replayed on Anthropic; signed blocks carry encrypted signature cost.
+				if inActiveTurn || b.Signature != "" || b.Data != "" {
+					chars += estimateTextWeight(b.Text) + len(b.Signature)/2 + len(b.Data)/2 + 16
+				}
+			case ContentMedia:
+				chars += estimateTextWeight(b.Text) + 16
+				if b.Data != "" {
+					// Realistic multimodal token budget (~1600 tokens) for images/PDFs.
+					chars += 4800
+				}
+			default:
+				chars += estimateTextWeight(b.Text) + len(b.Input) + 16
 			}
 		}
 	}
@@ -69,16 +86,7 @@ func effectiveCompactContextLimit(contextLimit int, specs []ToolSpec) int {
 	if contextLimit <= 0 {
 		contextLimit = 128000
 	}
-	if contextLimit < 16000 || len(specs) == 0 {
-		return contextLimit
-	}
-	schemaTokens := estimateToolSpecsTokens(specs)
-	adjusted := contextLimit - schemaTokens
-	floor := contextLimit / 2
-	if adjusted < floor {
-		return floor
-	}
-	return adjusted
+	return max(1, contextLimit-estimateToolSpecsTokens(specs))
 }
 
 func preferredKeepRecentMsgs(contextLimit int) int {
@@ -123,8 +131,8 @@ func pruneOldToolResultsInWorkspace(msgs []Message, system, worktreeDir string, 
 	if contextLimit <= 0 {
 		contextLimit = 128000
 	}
-	triggerTokens := contextLimit * compactTriggerPercent / 100
-	hardCapTokens := contextLimit * compactHardCapPercent / 100
+	triggerTokens := min(contextLimit*compactTriggerPercent/100, maxRegularCompactTriggerTokens)
+	hardCapTokens := min(contextLimit*compactHardCapPercent/100, maxRegularCompactHardCapTokens)
 	if estimateTokens(msgs, system) <= triggerTokens {
 		return msgs
 	}
@@ -144,7 +152,12 @@ func pruneOldToolResultsInWorkspace(msgs []Message, system, worktreeDir string, 
 	if rawCutoff > 0 {
 		quantizedCutoff := (rawCutoff / compactChunkStride) * compactChunkStride
 		if quantizedCutoff <= 0 {
-			pruned = pruneToolOutputsBeforeWithNorm(msgs, rawCutoff, minToolLen, richPreview, norm)
+			const smallStride = 4
+			if smallCutoff := (rawCutoff / smallStride) * smallStride; smallCutoff > 0 {
+				pruned = pruneToolOutputsBeforeWithNorm(msgs, smallCutoff, minToolLen, richPreview, norm)
+			} else {
+				pruned = pruneToolOutputsBeforeWithNorm(msgs, rawCutoff, minToolLen, richPreview, norm)
+			}
 		} else {
 			for stride := compactChunkStride; stride <= quantizedCutoff; stride += compactChunkStride {
 				pruned = pruneToolOutputsBeforeWithNorm(msgs, stride, minToolLen, richPreview, norm)
@@ -166,6 +179,39 @@ func pruneOldToolResultsInWorkspace(msgs []Message, system, worktreeDir string, 
 		}
 	}
 	return pruned
+}
+
+const minProactiveCompactContextLimit = 16000
+
+func compactHardCapTokens(contextLimit int) int {
+	if contextLimit <= 0 {
+		contextLimit = 128000
+	}
+	return min(contextLimit*compactHardCapPercent/100, maxRegularCompactHardCapTokens)
+}
+
+// shouldProactivelyCompact reports whether post-pruning context still exceeds
+// the 90% hard cap on a real-sized context window and has substantial older
+// history before the trailing anchor, allowing the engine to summarize
+// proactively before hitting an upstream HTTP 400 context-overflow error.
+func shouldProactivelyCompact(msgs []Message, fullSystem string, rawContextLimit, compactLimit, historyLen, currentStep int) bool {
+	if rawContextLimit < minProactiveCompactContextLimit || len(msgs) < 4 {
+		return false
+	}
+	hardCap := compactHardCapTokens(compactLimit)
+	if estimateTokens(msgs, fullSystem) <= hardCap {
+		return false
+	}
+	tailStart := len(msgs) - 1
+	if currentStep <= 1 && historyLen >= 2 && historyLen < len(msgs) {
+		tailStart = historyLen
+	} else if hasToolResultBlocks(msgs[tailStart]) && tailStart > 0 && msgs[tailStart-1].Role == RoleAssistant {
+		tailStart--
+	}
+	if tailStart < 2 {
+		return false
+	}
+	return estimateTokens(msgs[:tailStart], "") >= max(1024, hardCap/4)
 }
 
 func sanitizeMessagesUTF8(msgs []Message) []Message {
@@ -253,9 +299,7 @@ func indexPruneToolExchanges(msgs []Message, cutoff int, norm *prunePathNormaliz
 				if !b.IsError && len(use.Input) > 0 {
 					switch tName {
 					case "read":
-						if !strings.HasPrefix(b.Text, "[tool output pruned:") {
-							ex.readSpan = parsePruneReadSpan(use.Input, b.Text, norm)
-						}
+						ex.readSpan = parsePruneReadSpan(use.Input, b.Text, norm)
 					case "write", "edit", "multiedit":
 						if key, _ := extractSingleFileInputKey(use.Input, norm); key != "" {
 							ex.mutatedKeys = map[string]bool{key: true}
@@ -273,6 +317,15 @@ func indexPruneToolExchanges(msgs []Message, cutoff int, norm *prunePathNormaliz
 }
 
 func parsePruneReadSpan(raw json.RawMessage, resultText string, norm *prunePathNormalizer) pruneReadSpan {
+	// References, pruned previews, directory listings and EOF notices do not
+	// supply a replacement for numbered source lines.
+	first, _, _ := strings.Cut(resultText, ": ")
+	if len(first) == 0 || len(first) > 20 {
+		return pruneReadSpan{}
+	}
+	if n, err := strconv.Atoi(first); err != nil || n < 1 {
+		return pruneReadSpan{}
+	}
 	var args struct {
 		FilePath string `json:"filePath"`
 		Path     string `json:"path"`
@@ -300,7 +353,7 @@ func parsePruneReadSpan(raw json.RawMessage, resultText string, norm *prunePathN
 		displayPath: disp,
 		startLine:   start,
 		endLine:     start + limit - 1,
-		truncated:   strings.Contains(resultText, " bytes truncated] ..."),
+		truncated:   strings.Contains(resultText, " bytes truncated] ...") || strings.Contains(resultText, " bytes truncated at line boundary") || strings.Contains(resultText, " bytes omitted on line "),
 	}
 }
 
@@ -327,11 +380,11 @@ func extractPatchMutatedKeys(raw json.RawMessage, norm *prunePathNormalizer) map
 	if json.Unmarshal(raw, &args) != nil {
 		return nil
 	}
-	patchText := strings.TrimSpace(args.Patch)
-	if patchText == "" {
-		patchText = strings.TrimSpace(args.Diff)
+	patchText := args.Patch
+	if strings.TrimSpace(patchText) == "" {
+		patchText = args.Diff
 	}
-	if patchText == "" {
+	if strings.TrimSpace(patchText) == "" {
 		return nil
 	}
 	ops, err := parseMultiFilePatch(patchText)
@@ -439,6 +492,23 @@ func pruneToolOutputsBeforeWithNorm(msgs []Message, cutoff, minToolLen int, rich
 	out := make([]Message, len(msgs))
 	copy(out, msgs)
 	for i := 0; i < cutoff; i++ {
+		if out[i].Role == RoleAssistant {
+			changed := false
+			blocks := append([]ContentBlock(nil), out[i].Content...)
+			for j := range blocks {
+				if blocks[j].Type != ContentToolUse || len(blocks[j].Input) <= minToolLen {
+					continue
+				}
+				if compacted, ok := compactOldToolUseInput(blocks[j].Name, blocks[j].Input); ok {
+					blocks[j].Input = compacted
+					changed = true
+				}
+			}
+			if changed {
+				out[i].Content = blocks
+			}
+			continue
+		}
 		if out[i].Role != RoleUser {
 			continue
 		}
@@ -496,6 +566,66 @@ func pruneToolOutputsBeforeWithNorm(msgs []Message, cutoff, minToolLen int, rich
 		}
 	}
 	return out
+}
+
+func compactOldToolUseInput(toolName string, raw json.RawMessage) (json.RawMessage, bool) {
+	if len(raw) == 0 || strings.Contains(string(raw), `"_prunedInput"`) {
+		return nil, false
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err != nil || len(obj) == 0 {
+		return nil, false
+	}
+	summary := map[string]any{
+		"_prunedInput": fmt.Sprintf("[tool input pruned: %d chars]", len(raw)),
+	}
+	lower := strings.ToLower(strings.TrimSpace(toolName))
+	switch lower {
+	case "write", "edit", "multiedit":
+		for _, key := range []string{"filePath", "path"} {
+			if s, ok := obj[key].(string); ok && strings.TrimSpace(s) != "" {
+				summary[key] = s
+			}
+		}
+	case "apply_patch":
+		patchText, _ := obj["patch"].(string)
+		if strings.TrimSpace(patchText) == "" {
+			patchText, _ = obj["diff"].(string)
+		}
+		if ops, err := parseMultiFilePatch(patchText); err == nil && len(ops) > 0 {
+			files := make([]string, 0, len(ops))
+			for _, op := range ops {
+				if op.moveTo != "" && op.moveTo != op.path {
+					files = append(files, op.path+" -> "+op.moveTo)
+				} else if op.path != "" {
+					files = append(files, op.path)
+				}
+			}
+			if len(files) > 0 {
+				summary["files"] = files
+			}
+		}
+	default:
+		for _, key := range []string{"filePath", "path", "action", "server", "tool", "pattern", "query"} {
+			if s, ok := obj[key].(string); ok && strings.TrimSpace(s) != "" {
+				if len(s) > 160 {
+					s = utf8Prefix(s, 160) + "..."
+				}
+				summary[key] = s
+			}
+		}
+		if cmd, ok := obj["command"].(string); ok && strings.TrimSpace(cmd) != "" {
+			if len(cmd) > 160 {
+				cmd = utf8Prefix(cmd, 160) + "..."
+			}
+			summary["command"] = cmd
+		}
+	}
+	marshaled, err := json.Marshal(summary)
+	if err != nil || len(marshaled) >= len(raw)/2 {
+		return nil, false
+	}
+	return json.RawMessage(marshaled), true
 }
 
 func summarizePrunedToolOutput(s string, richPreview bool) string {

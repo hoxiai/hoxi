@@ -34,12 +34,12 @@ const (
 func (s *Service) nativeCommandRunner(rec SessionRecord, ap *activeProcess) func(ctx context.Context, dir, command string) (string, int, error) {
 	streamFn := s.nativeStreamCommandRunner(rec, ap)
 	return func(ctx context.Context, dir, command string) (string, int, error) {
-		return streamFn(ctx, dir, command, nil)
+		return streamFn(ctx, dir, command, nil, nil)
 	}
 }
 
-func (s *Service) nativeStreamCommandRunner(rec SessionRecord, ap *activeProcess) func(ctx context.Context, dir, command string, onOutput func(string)) (string, int, error) {
-	return func(ctx context.Context, dir, command string, onOutput func(string)) (string, int, error) {
+func (s *Service) nativeStreamCommandRunner(rec SessionRecord, ap *activeProcess) func(ctx context.Context, dir, command string, capture io.Writer, onOutput func(string)) (string, int, error) {
+	return func(ctx context.Context, dir, command string, capture io.Writer, onOutput func(string)) (string, int, error) {
 		onDemandProfile := ""
 		if s.gate != nil {
 			onDemandProfile = s.gate.consumeNativeOnDemand(rec.ID, command)
@@ -53,7 +53,7 @@ func (s *Service) nativeStreamCommandRunner(rec SessionRecord, ap *activeProcess
 			return err.Error(), 1, err
 		}
 		shellBin, shellArgs := nativeShellCommand(command)
-		out, code, err := s.execNativeConfinedWithProfile(ctx, rec, ap, workDir, shellBin, shellArgs, command, nativeCmdMaxOutputBytes, onDemandProfile, onOutput)
+		out, code, err := s.execNativeConfinedWithProfile(ctx, rec, ap, workDir, shellBin, shellArgs, command, nativeCmdMaxOutputBytes, onDemandProfile, capture, onOutput)
 		if onDemandProfile != "" {
 			out = appendOnDemandSandboxNote(out)
 		}
@@ -70,7 +70,7 @@ func (s *Service) execNativeConfined(
 	ownedLabel string,
 	maxBytes int,
 ) (string, int, error) {
-	return s.execNativeConfinedWithProfile(ctx, rec, ap, workDir, rawBin, rawArgs, ownedLabel, maxBytes, "", nil)
+	return s.execNativeConfinedWithProfile(ctx, rec, ap, workDir, rawBin, rawArgs, ownedLabel, maxBytes, "", nil, nil)
 }
 
 func (s *Service) execNativeConfinedWithProgress(
@@ -83,7 +83,7 @@ func (s *Service) execNativeConfinedWithProgress(
 	maxBytes int,
 	onProgress func(string),
 ) (string, int, error) {
-	return s.execNativeConfinedWithProfile(ctx, rec, ap, workDir, rawBin, rawArgs, ownedLabel, maxBytes, "", onProgress)
+	return s.execNativeConfinedWithProfile(ctx, rec, ap, workDir, rawBin, rawArgs, ownedLabel, maxBytes, "", nil, onProgress)
 }
 
 func (s *Service) execNativeConfinedWithProfile(
@@ -95,6 +95,7 @@ func (s *Service) execNativeConfinedWithProfile(
 	ownedLabel string,
 	maxBytes int,
 	onDemandProfile string,
+	capture io.Writer,
 	onProgress func(string),
 ) (string, int, error) {
 	bin, args, err := s.confineNativeCommandWithOnDemand(rec, onDemandProfile, rawBin, rawArgs)
@@ -104,7 +105,7 @@ func (s *Service) execNativeConfinedWithProfile(
 
 	cmd := subproc.Command(bin, args...)
 	cmd.Dir = workDir
-	cmd.Env = nativeSubprocessEnv(rec)
+	cmd.Env = s.applySessionBundleEnv(rec, nativeSubprocessEnv(rec))
 	cmd.WaitDelay = orphanDrainGrace
 	setProcessGroup(cmd)
 
@@ -138,7 +139,7 @@ func (s *Service) execNativeConfinedWithProfile(
 		s.ownedProcs.Record(rec.ID, cmd.Process.Pid, ownedLabel)
 	}
 
-	writer := &nativeLimitedWriter{limit: maxBytes, onProgress: onProgress}
+	writer := &nativeLimitedWriter{limit: maxBytes, capture: capture, onProgress: onProgress}
 	readerDone := make(chan struct{})
 	go func() {
 		defer close(readerDone)
@@ -360,6 +361,7 @@ func resolveNativeToolBinary(rec SessionRecord, toolName string) string {
 }
 
 type nativeLimitedWriter struct {
+	capture    io.Writer
 	limit      int
 	onProgress func(string)
 	lastEmit   time.Time
@@ -411,6 +413,9 @@ func trimTrailingIncompleteUTF8(raw []byte) []byte {
 func (w *nativeLimitedWriter) Write(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
+	}
+	if w.capture != nil {
+		_, _ = w.capture.Write(p)
 	}
 	if w.limit <= 0 {
 		_, _ = w.head.Write(p)

@@ -6,6 +6,9 @@ import {
   checkFile,
   extractFilePathFromHref,
   getCachedFileCheck,
+  isRichDocumentPreviewPath,
+  isTesterPortalMode,
+  openDocumentPreview,
   openExternalURL,
   openFileInInspector,
   openURLInInspector,
@@ -59,6 +62,13 @@ function isExternalOrAnchorHref(href: string): boolean {
   return false;
 }
 
+export function isSafeNonHttpLinkHref(href: string): boolean {
+  const trimmed = href.trim();
+  if (!trimmed || trimmed === "#") return false;
+  if (trimmed.startsWith("#")) return true;
+  return /^(?:mailto|tel):/i.test(trimmed);
+}
+
 function scrollToHeadingAnchor(e: MouseEvent, rawHref: string) {
   const anchor = rawHref.trim().replace(/^#+/, "");
   if (!anchor || typeof document === "undefined") return;
@@ -101,7 +111,7 @@ function InlineCodeSpan(props: { text: string; unclosed?: boolean }) {
   const checkKey = () => `${directory()}\n${effectivePath()}`;
   const [checked, setChecked] = createSignal<{ key: string; exists: boolean }>();
   const verified = createMemo(() => {
-    if (props.unclosed) return false;
+    if (props.unclosed || isTesterPortalMode()) return false;
     const result = checked();
     const known =
       getCachedFileCheck(effectivePath(), directory()) ??
@@ -114,7 +124,7 @@ function InlineCodeSpan(props: { text: string; unclosed?: boolean }) {
     const raw = effectivePath();
     const dir = directory();
     const key = checkKey();
-    if (props.unclosed || !isLikelyFilePath(props.text)) return;
+    if (props.unclosed || isTesterPortalMode() || !isLikelyFilePath(props.text)) return;
     if (getCachedFileCheck(raw, dir) !== undefined) return;
     // Only query backend when connected or when we have a rootDir
     if (!workspace.connected && !dir) return;
@@ -128,8 +138,15 @@ function InlineCodeSpan(props: { text: string; unclosed?: boolean }) {
     });
   });
 
-  const handleActivate = () => {
-    if (verified()) openFileInInspector(effectivePath());
+  const isRichDoc = createMemo(() => verified() && isRichDocumentPreviewPath(cleanPath()));
+
+  const handleActivate = (e?: MouseEvent) => {
+    if (!verified()) return;
+    if (isRichDoc() && !(e && (e.metaKey || e.ctrlKey))) {
+      openDocumentPreview({ kind: "file", path: cleanPath(), title: props.text });
+      return;
+    }
+    openFileInInspector(effectivePath());
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -147,7 +164,13 @@ function InlineCodeSpan(props: { text: string; unclosed?: boolean }) {
       tabIndex={verified() ? 0 : undefined}
       onClick={handleActivate}
       onKeyDown={handleKeyDown}
-      title={verified() ? t("timeline.openInInspectorTooltip") : undefined}
+      title={
+        verified()
+          ? isRichDoc()
+            ? t("timeline.previewDocumentTooltip")
+            : t("timeline.openInInspectorTooltip")
+          : undefined
+      }
       class={`rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--text-primary)] ${
         verified()
           ? "inline-flex items-center gap-1.5 hover:border-[var(--accent-border)] hover:bg-[var(--accent-surface)] hover:text-[var(--accent-text)] transition-colors cursor-pointer align-baseline"
@@ -206,8 +229,9 @@ export default function MarkdownInline(props: { text: string }) {
               const codeText = () => (span() as Extract<InlineSpan, { type: "code" }>).text;
               const handleOpen = (e: MouseEvent) => {
                 e.preventDefault();
-                const target =
-                  e.metaKey || e.ctrlKey
+                const target = isTesterPortalMode()
+                  ? "external"
+                  : e.metaKey || e.ctrlKey
                     ? appSettings.linkOpenTarget === "external"
                       ? "inspector"
                       : "external"
@@ -227,7 +251,7 @@ export default function MarkdownInline(props: { text: string }) {
                     type="button"
                     onClick={handleOpen}
                     title={
-                      appSettings.linkOpenTarget === "external"
+                      isTesterPortalMode() || appSettings.linkOpenTarget === "external"
                         ? t("timeline.openInExternalBrowserTooltip")
                         : t("timeline.openInBrowserTooltip")
                     }
@@ -346,8 +370,9 @@ export default function MarkdownInline(props: { text: string }) {
               });
               const handleHttpOpen = (e: MouseEvent) => {
                 e.preventDefault();
-                const target =
-                  e.metaKey || e.ctrlKey
+                const target = isTesterPortalMode()
+                  ? "external"
+                  : e.metaKey || e.ctrlKey
                     ? appSettings.linkOpenTarget === "external"
                       ? "inspector"
                       : "external"
@@ -366,43 +391,89 @@ export default function MarkdownInline(props: { text: string }) {
                   <Show
                     when={!isLocalFile()}
                     fallback={
-                      <button
-                        ref={inlineRevealRef}
-                        type="button"
-                        onClick={() => openFileInInspector(resolvedLocalClickTarget())}
-                        title={t("timeline.openInInspectorTooltip")}
-                        class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-surface)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--text-primary)] hover:text-[var(--accent-text)] transition-colors cursor-pointer align-baseline"
+                      <Show
+                        when={!isTesterPortalMode()}
+                        fallback={
+                          <code
+                            ref={inlineRevealRef}
+                            class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--text-primary)] align-baseline"
+                          >
+                            <FileIcon
+                              node={{ path: iconPath(), type: "file" }}
+                              class="w-3.5 h-3.5 shrink-0"
+                            />
+                            <span>{labelText()}</span>
+                          </code>
+                        }
                       >
-                        <FileIcon
-                          node={{ path: iconPath(), type: "file" }}
-                          class="w-3.5 h-3.5 shrink-0"
-                        />
-                        <span>{labelText()}</span>
-                      </button>
+                        <button
+                          ref={inlineRevealRef}
+                          type="button"
+                          onClick={(e) => {
+                            const target = resolvedLocalClickTarget();
+                            const cleanTarget = stripFileLineSuffix(target);
+                            if (isRichDocumentPreviewPath(cleanTarget) && !(e.metaKey || e.ctrlKey)) {
+                              openDocumentPreview({
+                                kind: "file",
+                                path: cleanTarget,
+                                title: labelText() || cleanTarget,
+                              });
+                              return;
+                            }
+                            openFileInInspector(target);
+                          }}
+                          title={
+                            isRichDocumentPreviewPath(stripFileLineSuffix(resolvedLocalClickTarget()))
+                              ? t("timeline.previewDocumentTooltip")
+                              : t("timeline.openInInspectorTooltip")
+                          }
+                          class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-surface)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--text-primary)] hover:text-[var(--accent-text)] transition-colors cursor-pointer align-baseline"
+                        >
+                          <FileIcon
+                            node={{ path: iconPath(), type: "file" }}
+                            class="w-3.5 h-3.5 shrink-0"
+                          />
+                          <span>{labelText()}</span>
+                        </button>
+                      </Show>
                     }
                   >
                     <Show
                       when={isHttp()}
                       fallback={
-                        <a
-                          ref={inlineRevealRef}
-                          href={linkSpan().href}
-                          target={isAnchorHref() ? undefined : "_blank"}
-                          rel={isAnchorHref() ? undefined : "noreferrer"}
-                          onClick={(e) => {
-                            if (isAnchorHref()) {
-                              scrollToHeadingAnchor(e, linkSpan().href);
-                            }
-                          }}
-                          class="text-[var(--accent-primary)] underline decoration-[var(--accent-border)] underline-offset-2 hover:opacity-85 break-all cursor-pointer"
+                        <Show
+                          when={isSafeNonHttpLinkHref(linkSpan().href)}
+                          fallback={
+                            <span ref={inlineRevealRef}>
+                              <Show
+                                when={hasNestedInlineSyntax(linkSpan().text)}
+                                fallback={<StreamRevealText text={linkSpan().text} />}
+                              >
+                                <MarkdownInline text={linkSpan().text} />
+                              </Show>
+                            </span>
+                          }
                         >
-                          <Show
-                            when={hasNestedInlineSyntax(linkSpan().text)}
-                            fallback={<StreamRevealText text={linkSpan().text} />}
+                          <a
+                            ref={inlineRevealRef}
+                            href={linkSpan().href}
+                            target={isAnchorHref() ? undefined : "_blank"}
+                            rel={isAnchorHref() ? undefined : "noreferrer"}
+                            onClick={(e) => {
+                              if (isAnchorHref()) {
+                                scrollToHeadingAnchor(e, linkSpan().href);
+                              }
+                            }}
+                            class="text-[var(--accent-primary)] underline decoration-[var(--accent-border)] underline-offset-2 hover:opacity-85 break-all cursor-pointer"
                           >
-                            <MarkdownInline text={linkSpan().text} />
-                          </Show>
-                        </a>
+                            <Show
+                              when={hasNestedInlineSyntax(linkSpan().text)}
+                              fallback={<StreamRevealText text={linkSpan().text} />}
+                            >
+                              <MarkdownInline text={linkSpan().text} />
+                            </Show>
+                          </a>
+                        </Show>
                       }
                     >
                       <span
@@ -414,7 +485,7 @@ export default function MarkdownInline(props: { text: string }) {
                           target="_blank"
                           rel="noreferrer"
                           title={
-                            appSettings.linkOpenTarget === "external"
+                            isTesterPortalMode() || appSettings.linkOpenTarget === "external"
                               ? t("timeline.openInExternalBrowserTooltip")
                               : t("timeline.openInBrowserTooltip")
                           }

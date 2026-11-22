@@ -34,7 +34,7 @@ import {
   type ReasoningEffort,
   type SelectedModel,
 } from "./workspace-state";
-import { sessionAIConfig } from "./session-ai";
+import { resolveEffectiveFastMode, sessionAIConfig } from "./session-ai";
 import { loadSessionMessages } from "./workspace-sessions";
 import { isSessionBusy, isSessionDeleted, sessionDirectory } from "./session-query";
 import { pauseSessionGoal } from "./session-goal-state";
@@ -133,6 +133,7 @@ export async function rerouteRetryingTurnToModel(
     promptText: prev.promptText,
     agent: prev.agent,
     effort: nextEffort || undefined,
+    fastMode: resolveEffectiveFastMode(effectiveModel, cfg.fastMode ?? prev.fastMode) || undefined,
     attachments: prev.attachments,
     skillSelection: prev.skillSelection,
     system: prev.system,
@@ -181,6 +182,7 @@ export async function rerouteRetryingTurnToModel(
       agent: nextState.agent,
       model: effectiveModel,
       variant: nextState.effort || undefined,
+      fastMode: nextState.fastMode || undefined,
       directory: dir,
       attachments: nextState.attachments,
       skillSelection: nextState.skillSelection,
@@ -382,6 +384,7 @@ export async function handleSessionErrorEvent(
         agent: autoState.agent,
         model: nextStep.target,
         variant: autoState.effort || undefined,
+        fastMode: resolveEffectiveFastMode(nextStep.target, autoState.fastMode) || undefined,
         directory: sessionDirectory(sessionID),
         attachments: autoState.attachments,
         skillSelection: autoState.skillSelection,

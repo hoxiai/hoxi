@@ -219,3 +219,134 @@ func TestWithUserBinPathAddsPATHWhenMissing(t *testing.T) {
 		t.Fatalf("expected mixed-case Path= to be updated in place, got %#v", winGot)
 	}
 }
+
+func TestCodexCatalogDiscoveryPriorityVisibilityAndUpgrade(t *testing.T) {
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+
+	// Stale on-disk cache (0.42.0) + retired model in config.toml + section model noise.
+	if err := os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(
+		"# user comment\nmodel = \"gpt-5-codex\" # legacy selection\n\n[profiles.legacy]\nmodel = \"o4-mini\"\n",
+	), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(codexHome, "models_cache.json"), []byte(
+		`{"client_version":"0.42.0","models":[{"slug":"gpt-5-codex"},{"slug":"o3"}]}`,
+	), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	bundledFile := filepath.Join(t.TempDir(), "bundled.json")
+	if err := os.WriteFile(bundledFile, []byte(`{
+		"models": [
+			{
+				"slug": "gpt-6-astra",
+				"display_name": "GPT-6-Astra",
+				"default_reasoning_level": "low",
+				"supported_reasoning_levels": [{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"},{"effort":"max"},{"effort":"ultra"}],
+				"visibility": "list",
+				"priority": 2,
+				"context_window": 272000,
+				"max_context_window": 872000,
+				"input_modalities": ["text", "image"]
+			},
+			{
+				"slug": "gpt-6.1-sol",
+				"display_name": "GPT-6.1-Sol",
+				"default_reasoning_level": "low",
+				"supported_reasoning_levels": [{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"},{"effort":"max"},{"effort":"ultra"}],
+				"visibility": "list",
+				"priority": 1,
+				"context_window": 272000,
+				"max_context_window": 872000,
+				"input_modalities": ["text", "image"]
+			},
+			{
+				"slug": "gpt-5.5",
+				"display_name": "GPT-5.5",
+				"default_reasoning_level": "medium",
+				"supported_reasoning_levels": [{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"}],
+				"visibility": "list",
+				"priority": 13,
+				"upgrade": {"model": "gpt-6-sol"}
+			},
+			{
+				"slug": "codex-auto-review",
+				"display_name": "Codex Auto Review",
+				"visibility": "hide",
+				"priority": 43
+			}
+		]
+	}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TEST_CODEX_BUNDLED_JSON", bundledFile)
+	binDir := t.TempDir()
+	codexStub := execstub.Write(t, binDir, "codex", `
+if [ "$1" = "--version" ]; then
+  printf 'codex-cli 0.169.0\n'
+  exit 0
+fi
+if [ "$1" = "debug" ] && [ "$2" = "models" ] && [ "$3" = "--bundled" ]; then
+  mkdir -p "$CODEX_HOME/tmp"
+  cat "$TEST_CODEX_BUNDLED_JSON"
+  exit 0
+fi
+exit 1
+`)
+	t.Setenv("HOXI_CODEX_BIN", codexStub)
+
+	snap := DiscoverCodexCatalog(true)
+	if snap.Version != "0.169.0" {
+		t.Fatalf("expected version 0.169.0, got %q", snap.Version)
+	}
+	// Retired config.toml model ("gpt-5-codex") must promote to priority-1 "gpt-6.1-sol",
+	// stale 0.42.0 cache models and hidden models must be excluded.
+	if snap.DefaultModel != "gpt-6.1-sol" {
+		t.Fatalf("expected DefaultModel=gpt-6.1-sol, got %q", snap.DefaultModel)
+	}
+	if len(snap.Models) != 3 || snap.Models[0].Slug != "gpt-6.1-sol" || snap.Models[1].Slug != "gpt-6-astra" || snap.Models[2].Slug != "gpt-5.5" {
+		t.Fatalf("expected priority-ordered visible models [gpt-6.1-sol, gpt-6-astra, gpt-5.5], got %+v", snap.Models)
+	}
+	if len(snap.Models[0].Efforts) != 5 || snap.Models[0].Efforts[4] != "max" {
+		t.Fatalf("expected ultra mapped into low..max efforts, got %v", snap.Models[0].Efforts)
+	}
+	// Verify real $CODEX_HOME was never polluted with $CODEX_HOME/tmp.
+	if _, err := os.Stat(filepath.Join(codexHome, "tmp")); !os.IsNotExist(err) {
+		t.Fatalf("expected probeCodexBundledCatalog to isolate CODEX_HOME and never write to user codexHome")
+	}
+
+	// Deprecated model with explicit `upgrade` in config.toml also promotes to priority-1 model.
+	if err := os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte("model = \"gpt-5.5\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := DiscoverCodexCatalog(false).DefaultModel; got != "gpt-6.1-sol" {
+		t.Fatalf("expected deprecated gpt-5.5 config to promote to gpt-6.1-sol, got %q", got)
+	}
+
+	// Active non-deprecated model in config.toml is preserved.
+	if err := os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte("model = \"gpt-6-astra\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := DiscoverCodexCatalog(false).DefaultModel; got != "gpt-6-astra" {
+		t.Fatalf("expected active gpt-6-astra config to stay DefaultModel, got %q", got)
+	}
+
+	// Server-refreshed models_cache.json with >= client_version takes precedence and surfaces new server models.
+	if err := os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(codexHome, "models_cache.json"), []byte(`{
+		"client_version": "0.170.0",
+		"models": [
+			{"slug": "gpt-6.2-sol", "display_name": "GPT-6.2-Sol", "visibility": "list", "priority": 1},
+			{"slug": "gpt-6-astra", "display_name": "GPT-6-Astra", "visibility": "list", "priority": 2}
+		]
+	}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	serverSnap := DiscoverCodexCatalog(false)
+	if serverSnap.Version != "0.170.0" || serverSnap.DefaultModel != "gpt-6.2-sol" || serverSnap.Models[0].Slug != "gpt-6.2-sol" {
+		t.Fatalf("expected newer server models_cache.json to lead with gpt-6.2-sol, got %+v", serverSnap)
+	}
+}

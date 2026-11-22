@@ -6,8 +6,15 @@ import {
   computeSmartDefaultCandidates,
   detectRequiredAttachmentModalities,
   dispatchSessionPrompt,
+  evaluatePromptModalityIntent,
+  getMediaRoleModelGroups,
+  hasConfiguredSpeechModel,
+  hasConfiguredVideoGenerationModel,
   inferDedicatedMediaModality,
   isImageGenerationModel,
+  isSpeechSynthesisModel,
+  isVideoGenerationModel,
+  mediaRolePrefs,
   modelSupportsImageInput,
   modelSupportsModalityInput,
   recommendEconomySubagentModel,
@@ -16,6 +23,7 @@ import {
   setSelectedImageAspectRatio,
   setSelectedImageSize,
   setWorkspace,
+  updateMediaRolePrefs,
   type MessageTurn,
 } from "../store/workspace";
 import {
@@ -424,6 +432,102 @@ describe("Gemini custom endpoint & session image generation support", () => {
       assertEqual(gpt6Draft.pdf, true);
     } finally {
       (hoxiAPI as any).saveAutoPoolConfig = origSavePool;
+    }
+  });
+
+  it("self-checks native/configured video capability before routing to hoxi_video vs hoxi_tools and preserves explicit video model in chat", async () => {
+    const origSend = hoxiAPI.sendPromptAsync;
+    let capturedModel: { providerID: string; modelID: string } | undefined;
+    (hoxiAPI as any).sendPromptAsync = async (
+      _sid: string,
+      _text: string,
+      opts?: { model?: { providerID: string; modelID: string } }
+    ) => {
+      capturedModel = opts?.model;
+      return { ok: true, messageID: "msg_vid_1" };
+    };
+
+    try {
+      setWorkspace("providers", [
+        {
+          id: "openai",
+          name: "OpenAI",
+          models: {
+            "gpt-5": { id: "gpt-5", name: "GPT-5", capabilities: { toolcall: true } },
+          },
+        },
+      ]);
+      setWorkspace("hoxiProviders", {} as any);
+      assertEqual(hasConfiguredVideoGenerationModel(), false);
+      const noLocalVid = evaluatePromptModalityIntent("generate video of ocean waves");
+      assertEqual(noLocalVid.kind, "video_gen");
+      assertEqual(Boolean(noLocalVid.mediaRoutingDirective?.includes("hoxi_tools")), true);
+
+      setWorkspace("providers", [
+        {
+          id: "google",
+          name: "Google Gemini",
+          models: {
+            "gemini-2.5-pro": { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", capabilities: { toolcall: true } },
+            "veo-3.0-generate-001": { id: "veo-3.0-generate-001", name: "Veo 3" },
+          },
+        },
+      ]);
+      assertEqual(isVideoGenerationModel("google", "veo-3.0-generate-001"), true);
+      assertEqual(hasConfiguredVideoGenerationModel(), true);
+      const withLocalVid = evaluatePromptModalityIntent("generate video of ocean waves");
+      assertEqual(Boolean(withLocalVid.mediaRoutingDirective?.includes("Invoke `hoxi_video`")), true);
+
+      // Explicitly selected video model in chat must NOT be hijacked to fallbackBrain
+      const sid = "ses_vid_direct_test";
+      setWorkspace("sessions", [
+        { id: sid, title: "Video Test", directory: "/tmp", runtime: "native", time: { created: 1, updated: 1 } } as any,
+      ]);
+      setWorkspace("messagesBySession", sid, []);
+      setWorkspace("statusBySession", sid, { type: "idle" });
+      setWorkspace("aiBySession", sid, {
+        agent: "build",
+        model: { providerID: "google", modelID: "veo-3.0-generate-001" },
+      } as any);
+
+      await dispatchSessionPrompt("generate video of ocean waves", sid, { followTimeline: false });
+      assertDeepEqual(capturedModel, { providerID: "google", modelID: "veo-3.0-generate-001" });
+
+      // Speech synthesis detection & media role groups / prefs round-trip
+      setWorkspace("providers", [
+        {
+          id: "openai",
+          name: "OpenAI",
+          models: {
+            "gpt-4o-mini-tts": { id: "gpt-4o-mini-tts", name: "GPT-4o Mini TTS" },
+            "whisper-1": { id: "whisper-1", name: "Whisper 1" },
+          },
+        },
+      ]);
+      assertEqual(isSpeechSynthesisModel("openai", "gpt-4o-mini-tts"), true);
+      assertEqual(hasConfiguredSpeechModel(), true);
+      const speechIntent = evaluatePromptModalityIntent("generate voiceover tts audio");
+      assertEqual(Boolean(speechIntent.mediaRoutingDirective?.includes("invoke `hoxi_speech`")), true);
+      assertEqual(
+        Boolean(speechIntent.mediaRoutingDirective?.includes("configured local TTS models")),
+        true
+      );
+      assertEqual(getMediaRoleModelGroups("speech").length, 1);
+      assertEqual(getMediaRoleModelGroups("transcribe").length, 1);
+
+      const origUpdateRoles = hoxiAPI.updateMediaRoles;
+      (hoxiAPI as any).updateMediaRoles = async (patch: Record<string, string | null>) => ({
+        ok: true,
+        roles: { speechModel: patch.speechModel || "" },
+      });
+      try {
+        await updateMediaRolePrefs({ speechModel: "openai/gpt-4o-mini-tts" });
+        assertEqual(mediaRolePrefs().speechModel, "openai/gpt-4o-mini-tts");
+      } finally {
+        (hoxiAPI as any).updateMediaRoles = origUpdateRoles;
+      }
+    } finally {
+      (hoxiAPI as any).sendPromptAsync = origSend;
     }
   });
 });

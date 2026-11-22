@@ -36,6 +36,7 @@ import {
   workspace,
 } from "../../store/workspace";
 import { ProviderIcon } from "../icons";
+import { HelpTip } from "../settings/setting-controls";
 import { t } from "../../i18n";
 import { ProviderConnectView, ProviderSelectAllView } from "./ProviderConnectSubView";
 import { ProviderHealthBadge } from "./ProviderQualityCard";
@@ -274,13 +275,11 @@ export default function ProviderCatalogTab() {
               <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-surface)] text-[var(--accent-primary)]">
                 <Server size={17} />
               </div>
-              <div class="min-w-0">
-                <div class="text-[13px] font-semibold text-[var(--text-primary)]">
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="text-[13px] font-semibold text-[var(--text-primary)] truncate">
                   {t("models.customProviderCardTitle")}
-                </div>
-                <div class="text-[12px] text-[var(--text-secondary)] line-clamp-1">
-                  {t("models.customProviderCardDesc")}
-                </div>
+                </span>
+                <HelpTip text={t("models.customProviderCardDesc")} />
               </div>
             </div>
             <button
@@ -408,9 +407,28 @@ export default function ProviderCatalogTab() {
                           >
                             <Ban size={13} />
                           </button>
-                          <Show when={!isImported() && item.source !== "runner"}>
+                          <Show when={item.source !== "runner"}>
                             <ProviderDisconnectButton
-                              providerName={item.name}
+                              providerName={item.name || item.id}
+                              label={
+                                isImported()
+                                  ? t("models.removeImportedProvider")
+                                  : t("models.deleteProvider")
+                              }
+                              confirmTitle={
+                                isImported()
+                                  ? t("models.removeImportedConfirmTitle", {
+                                      name: item.name || item.id,
+                                    })
+                                  : t("models.deleteProviderConfirmTitle", {
+                                      name: item.name || item.id,
+                                    })
+                              }
+                              confirmBody={
+                                isImported()
+                                  ? t("models.removeImportedConfirmBody")
+                                  : t("models.deleteProviderConfirmBody")
+                              }
                               disabled={busyID() === item.id}
                               loading={disconnectingID() === item.id}
                               onConfirm={() => void onDisconnect(item.id)}
@@ -449,9 +467,7 @@ export default function ProviderCatalogTab() {
                   <h3 class="text-[12px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                     {t("models.recommendedSectionTitle")}
                   </h3>
-                  <span class="text-[11px] text-[var(--text-faint)] hidden sm:inline">
-                    · {t("models.recommendedSectionSubtitle")}
-                  </span>
+                  <HelpTip text={t("models.recommendedSectionSubtitle")} size={13} />
                 </div>
               </div>
 
@@ -497,6 +513,9 @@ export default function ProviderCatalogTab() {
                                       {gw.priceLabel}
                                     </span>
                                   </Show>
+                                  <Show when={gw.caveat}>
+                                    <HelpTip text={gw.caveat!} size={13} />
+                                  </Show>
                                 </div>
                                 <div class="font-mono text-[11px] text-[var(--text-faint)] truncate">
                                   {gw.domain} · {gw.uptime} · ~{gw.latencyMs}ms
@@ -504,12 +523,6 @@ export default function ProviderCatalogTab() {
                               </div>
                             </div>
                           </div>
-
-                          <Show when={gw.caveat}>
-                            <p class="text-[11px] text-[var(--text-secondary)] line-clamp-2">
-                              {gw.caveat}
-                            </p>
-                          </Show>
 
                           <Show when={gw.recommendedModels?.length}>
                             <div class="flex items-center gap-1 flex-wrap">
@@ -683,7 +696,10 @@ export default function ProviderCatalogTab() {
       <Show when={subView() === "connect"}>
         <ProviderConnectView
           provider={targetProvider()}
-          connected={connectedSet().has(targetID())}
+          connected={
+            connectedSet().has(targetID()) ||
+            Boolean(workspace.globalConfig?.provider?.[targetID()])
+          }
           onBack={() => setSubView("list")}
         />
       </Show>

@@ -1,7 +1,6 @@
 // web/src/store/task-overview.ts
-// Unified, read-only task tree for the active session: convoy tasks, subagent
-// child sessions and the latest todo plan. No new backend entity; every node is
-// derived from state that already exists on the session plane.
+// Unified task tree for the active session. Removing a row is a local display
+// preference; it never modifies a convoy, a child session or a todo plan.
 import { createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 import {
@@ -18,7 +17,7 @@ import {
   normalizeTodoItems,
   type NormalizedTodoItem,
 } from "./task-progress";
-import { workspace, type MessageTurn } from "./workspace-state";
+import { readStorageArray, workspace, writeStorageJSON, type MessageTurn } from "./workspace-state";
 
 export type TaskNodeStatus = ConvoyTaskStatus | "pending";
 export type TaskNodeKind = "convoy" | "subagent" | "todo";
@@ -32,6 +31,7 @@ export interface TaskOverviewNode {
   detail?: string;
   sessionID?: string;
   dependsOn?: string[];
+  dismissalKey?: string;
   children: TaskOverviewNode[];
 }
 
@@ -46,6 +46,39 @@ export function isConvoyPlanTerminal(status: ConvoyTaskStatus): boolean {
   return TERMINAL_PLAN_STATUSES.has(status);
 }
 
+const DISMISSED_TASKS_KEY = "hoxi.task-overview.dismissed:v1";
+const MAX_DISMISSED_TASKS = 2048;
+const [dismissedTasks, setDismissedTasks] = createSignal<ReadonlySet<string>>(new Set(
+  readStorageArray(DISMISSED_TASKS_KEY, (key): key is string => typeof key === "string")
+    .slice(-MAX_DISMISSED_TASKS)
+));
+
+export function canDismissTaskOverviewNode(node: TaskOverviewNode): boolean {
+  return Boolean(node.dismissalKey) && node.status !== "pending" && isConvoyPlanTerminal(node.status)
+    && !isSessionBusy(node.sessionID ?? null);
+}
+
+export function dismissTaskOverviewNode(node: TaskOverviewNode): string | undefined {
+  const key = node.dismissalKey;
+  if (!key || !canDismissTaskOverviewNode(node)) return;
+  saveDismissedTasks([...dismissedTasks(), key]);
+  return key;
+}
+
+export function restoreTaskOverviewNode(key: string): void {
+  saveDismissedTasks([...dismissedTasks()].filter((entry) => entry !== key));
+}
+
+function saveDismissedTasks(keys: string[]): void {
+  const bounded = Array.from(new Set(keys)).slice(-MAX_DISMISSED_TASKS);
+  setDismissedTasks(new Set(bounded));
+  writeStorageJSON(DISMISSED_TASKS_KEY, bounded);
+}
+
+function isTaskOverviewNodeDismissed(node: TaskOverviewNode, dismissed: ReadonlySet<string>): boolean {
+  return node.dismissalKey !== undefined && dismissed.has(node.dismissalKey) && canDismissTaskOverviewNode(node);
+}
+
 export function buildTaskOverview(plans: ConvoyPlan[]): TaskOverviewGroup[] {
   const activeSessionID = workspace.activeSessionID;
   if (!activeSessionID) {
@@ -55,6 +88,7 @@ export function buildTaskOverview(plans: ConvoyPlan[]): TaskOverviewGroup[] {
       { id: "todos", nodes: [] },
     ];
   }
+  const dismissed = dismissedTasks();
   const relatedSessions = new Set(collectAncestorSessionIDs(activeSessionID));
   const relevantPlans = plans
     .filter(
@@ -65,8 +99,8 @@ export function buildTaskOverview(plans: ConvoyPlan[]): TaskOverviewGroup[] {
     )
     .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   return [
-    { id: "convoy", nodes: relevantPlans.slice(0, 5).map(convoyPlanNode) },
-    { id: "subagents", nodes: subagentNodes(activeSessionID, new Set([activeSessionID]), 0) },
+    { id: "convoy", nodes: visibleConvoyNodes(relevantPlans, dismissed) },
+    { id: "subagents", nodes: subagentNodes(activeSessionID, new Set([activeSessionID]), 0, dismissed) },
     { id: "todos", nodes: todoNodes(activeSessionID) },
   ];
 }
@@ -85,6 +119,18 @@ export function collectAncestorSessionIDs(sessionID: string | null | undefined):
   return ids;
 }
 
+function visibleConvoyNodes(plans: ConvoyPlan[], dismissed: ReadonlySet<string>): TaskOverviewNode[] {
+  const nodes: TaskOverviewNode[] = [];
+  for (const plan of plans) {
+    const node = convoyPlanNode(plan);
+    node.children = node.children.filter((child) => !isTaskOverviewNodeDismissed(child, dismissed));
+    if (!node.children.length && plan.tasks.length && isConvoyPlanTerminal(plan.status)) continue;
+    nodes.push(node);
+    if (nodes.length === 5) break;
+  }
+  return nodes;
+}
+
 function convoyPlanNode(plan: ConvoyPlan): TaskOverviewNode {
   return {
     id: `convoy:${plan.id}`,
@@ -98,28 +144,36 @@ function convoyPlanNode(plan: ConvoyPlan): TaskOverviewNode {
       status: task.status,
       detail: task.id,
       sessionID: task.sessionID,
+      // A retry starts a new attempt; do not apply the old attempt's dismissal.
+      dismissalKey: JSON.stringify([plan.id, task.id, task.sessionID ?? "", task.endedAt ?? 0]),
       dependsOn: task.dependsOn,
       children: [],
     })),
   };
 }
 
-function subagentNodes(parentID: string, seen: Set<string>, depth: number): TaskOverviewNode[] {
+function subagentNodes(
+  parentID: string, seen: Set<string>, depth: number, dismissed: ReadonlySet<string>
+): TaskOverviewNode[] {
   if (depth >= 8) return [];
   const nodes: TaskOverviewNode[] = [];
   for (const id of collectChildSubagentSessionIDs(parentID)) {
     if (seen.has(id)) continue;
     seen.add(id);
     const session = workspace.sessions.find((item) => item.id === id);
-    nodes.push({
+    const node: TaskOverviewNode = {
       id: `subagent:${id}`,
       kind: "subagent",
       title: session?.title?.trim() || id,
       status: subagentStatus(id),
       detail: id,
       sessionID: id,
-      children: subagentNodes(id, seen, depth + 1),
-    });
+      dismissalKey: `subagent:${id}`,
+      children: subagentNodes(id, seen, depth + 1, dismissed),
+    };
+    // Hide only the selected row; its descendants remain visible.
+    if (isTaskOverviewNodeDismissed(node, dismissed)) nodes.push(...node.children);
+    else nodes.push(node);
   }
   nodes.sort((a, b) => sessionCreatedAt(a.sessionID) - sessionCreatedAt(b.sessionID));
   return nodes;
@@ -305,8 +359,19 @@ export function toggleTaskNodeExpanded(nodeID: string, depth: number): void {
 }
 
 export function forgetSessionTaskOverview(sessionIDs: readonly string[]): void {
-  if (sessionIDs.length === 0 || taskNodeExpansionOrder.length === 0) return;
+  if (sessionIDs.length === 0) return;
   const targets = new Set(sessionIDs);
+  const remainingDismissed: string[] = [];
+  let dismissedChanged = false;
+  for (const key of dismissedTasks()) {
+    if (key.startsWith("subagent:") && targets.has(key.slice(9))) {
+      dismissedChanged = true;
+      continue;
+    }
+    remainingDismissed.push(key);
+  }
+  if (dismissedChanged) saveDismissedTasks(remainingDismissed);
+  if (taskNodeExpansionOrder.length === 0) return;
   for (let i = taskNodeExpansionOrder.length - 1; i >= 0; i--) {
     const key = taskNodeExpansionOrder[i];
     if (key.startsWith("todo:")) {

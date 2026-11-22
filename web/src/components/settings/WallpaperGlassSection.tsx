@@ -29,7 +29,7 @@ import {
   type WallpaperMaterialMode,
   type WallpaperPresetID,
 } from "../../store/workspace";
-import { SegmentedPills, SettingGroup, SettingRow, ToggleSwitch } from "./setting-controls";
+import { HelpTip, SegmentedPills, SettingGroup, SettingRow, ToggleSwitch } from "./setting-controls";
 
 const PRESET_LABEL_KEYS: Record<WallpaperPresetID, TxKey> = {
   "academy-sky": "settings.wallpaperPresetAcademy",
@@ -188,20 +188,16 @@ export function WallpaperGlassSection() {
         {/* Custom Local Upload & URL */}
         <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)]/70 p-3.5 space-y-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
-            <div class="min-w-0">
-              <div class="flex items-center gap-2">
-                <span class="text-[13px] font-medium text-[var(--text-primary)]">
-                  {t("settings.wallpaperCustomLabel")}
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="text-[13px] font-medium text-[var(--text-primary)] truncate">
+                {t("settings.wallpaperCustomLabel")}
+              </span>
+              <HelpTip text={t("settings.wallpaperCustomDesc")} />
+              <Show when={wallpaperState.source === "custom" && Boolean(wallpaperState.customObjectUrl)}>
+                <span class="shrink-0 rounded-full border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--accent-text)]">
+                  {t("settings.wallpaperCustomActiveBadge")}
                 </span>
-                <Show when={wallpaperState.source === "custom" && Boolean(wallpaperState.customObjectUrl)}>
-                  <span class="rounded-full border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--accent-text)]">
-                    {t("settings.wallpaperCustomActiveBadge")}
-                  </span>
-                </Show>
-              </div>
-              <div class="text-[11.5px] text-[var(--text-muted)]">
-                {t("settings.wallpaperCustomDesc")}
-              </div>
+              </Show>
             </div>
 
             <div class="flex items-center gap-2 shrink-0">

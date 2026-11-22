@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/llm"
+	"github.com/hoxiai/hoxi/internal/runner/memstore"
 )
 
 // NativeEngine is the narrow contract injected by internal/gateway so runner
@@ -27,6 +31,7 @@ type NativeTurnRequest struct {
 	ProviderID          string
 	ModelID             string
 	Effort              string
+	FastMode            bool
 	System              string
 	History             []NativeMessage
 	InitialTodos        []NativeTodoItem
@@ -34,11 +39,13 @@ type NativeTurnRequest struct {
 	UserBlocks          []NativeContentBlock
 	SteerDrain          func() []string
 	SteerDrainItems     func() []NativeSteerItem
+	SteerHasPending     func() bool
+	SteerNotify         func() <-chan struct{}
 	PermissionHook      func(ctx context.Context, req NativePermissionRequest) error
 	CoordinateFileEdit  func(ctx context.Context, paths []string, onWait func(waitedPath string)) (NativeFileEditCoordination, error)
 	RecordFileEdit      func(paths []string)
 	CommandRunner       func(ctx context.Context, dir, command string) (output string, exitCode int, err error)
-	StreamCommandRunner func(ctx context.Context, dir, command string, onOutput func(string)) (output string, exitCode int, err error)
+	StreamCommandRunner func(ctx context.Context, dir, command string, capture io.Writer, onOutput func(string)) (output string, exitCode int, err error)
 	BackgroundManager   NativeBackgroundManager
 	Diagnostics         func(ctx context.Context, dir, filePath string) string
 	AskQuestion         func(ctx context.Context, callID, rawJSON string) (output string, metadata map[string]any, err error)
@@ -56,14 +63,7 @@ type NativePermissionRequest struct {
 }
 
 // NativeTokenUsage captures token usage reported by NativeEngine.
-type NativeTokenUsage struct {
-	Input      int
-	Output     int
-	Reasoning  int
-	CacheRead  int
-	CacheWrite int
-	CostUSD    float64
-}
+type NativeTokenUsage = llm.TokenUsage
 
 // NativeEvent carries streaming text, reasoning, tool lifecycle, and usage updates.
 type NativeEvent struct {
@@ -95,6 +95,7 @@ const (
 	NativeEventToolRunning            = "tool_running"
 	NativeEventToolCompleted          = "tool_completed"
 	NativeEventToolError              = "tool_error"
+	NativeEventSummaryUsage           = "summary_usage"
 	NativeEventTurnUsage              = "turn_usage"
 	NativeEventTurnFinish             = "turn_finish"
 	NativeEventContextCompacted       = "context_compacted"
@@ -116,8 +117,9 @@ func (s *Service) SetNativeEngine(eng NativeEngine) {
 }
 
 type nativeSteerQueue struct {
-	mu    sync.Mutex
-	items []NativeSteerItem
+	mu     sync.Mutex
+	items  []NativeSteerItem
+	notify chan struct{}
 }
 
 func (q *nativeSteerQueue) Push(text string) {
@@ -134,6 +136,10 @@ func (q *nativeSteerQueue) Push(text string) {
 func (q *nativeSteerQueue) PushItem(item NativeSteerItem) {
 	q.mu.Lock()
 	q.items = append(q.items, item)
+	if q.notify != nil {
+		close(q.notify)
+		q.notify = nil
+	}
 	q.mu.Unlock()
 }
 
@@ -220,6 +226,20 @@ func (s *Service) launchNativeTurn(
 
 	history := s.projectCanonicalNativeHistory(rec.Turns, rec.ProviderID, modelID)
 	userBlocks := buildNativeUserBlocks(promptText, deliveryParts)
+	projectMemory, handoffMemory := memstore.NativeMemoryBlocks(rec, resumeFromHistory)
+	if projectMemory != "" && !strings.Contains(systemPrompt, "<project_memory>") {
+		systemPrompt = strings.TrimSpace(systemPrompt + "\n\n" + projectMemory)
+	}
+	if handoffMemory != "" && !strings.Contains(systemPrompt, "<session_handoff_memory>") {
+		block := NativeContentBlock{Type: "text", Text: strings.TrimSpace(handoffMemory)}
+		if rec.ContextPending || resumeFromHistory || len(history) == 0 {
+			userBlocks = append([]NativeContentBlock{block}, userBlocks...)
+		} else if history[0].Role == "user" {
+			history[0].Content = append([]NativeContentBlock{block}, history[0].Content...)
+		} else {
+			history = append([]NativeMessage{{Role: "user", Content: []NativeContentBlock{block}}}, history...)
+		}
+	}
 
 	tr := NewTurnTranslator(rec.ID, string(RuntimeNative), asstMsgID, userInfo.ID, rec.ProviderID, modelID, mode, "")
 	tr.CreateChild = s.childSessionFactory(rec, modelID, "plan")
@@ -255,7 +275,7 @@ func (s *Service) launchNativeTurn(
 			close(ap.done)
 		}()
 
-		var totalUsage NativeTokenUsage
+		var totalUsage, summaryUsage NativeTokenUsage
 		var latestParentStep NativeTokenUsage
 		turnFinish := "stop"
 		partStartTimes := make(map[string]int64)
@@ -272,6 +292,12 @@ func (s *Service) launchNativeTurn(
 				oldAsstID := curAsstMsgID
 				hadParts := emittedAnyPart
 				prevInfo := tr.MsgInfo
+				hadUsage := totalUsage != (NativeTokenUsage{})
+				if hadUsage {
+					prevInfo.Tokens = buildNativeMessageTokens(totalUsage, latestParentStep, summaryUsage)
+					prevInfo.Cost = totalUsage.CostUSD
+				}
+				totalUsage, latestParentStep, summaryUsage = NativeTokenUsage{}, NativeTokenUsage{}, NativeTokenUsage{}
 				nextAsstID := s.nextNativeAssistantMessageID(nowMs)
 				curUserMsgID = last.UserMsgID
 				curAsstMsgID = nextAsstID
@@ -290,7 +316,7 @@ func (s *Service) launchNativeTurn(
 				tr.AdvanceMessage(nextAsstID, curUserMsgID, newInfo)
 				activeMu.Unlock()
 
-				if !hadParts {
+				if !hadParts && !hadUsage {
 					s.pruneEmptyAssistantTurn(rec.ID, oldAsstID)
 				} else {
 					prevInfo.Time.Completed = nowMs
@@ -316,15 +342,13 @@ func (s *Service) launchNativeTurn(
 			asstID := curAsstMsgID
 			activeMu.Unlock()
 			if strings.TrimSpace(evt.ParentCallID) != "" {
-				if evt.Kind == NativeEventTurnUsage {
+				if evt.Kind == NativeEventTurnUsage || evt.Kind == NativeEventSummaryUsage {
 					if evt.Usage != nil {
 						activeMu.Lock()
-						totalUsage.Input += evt.Usage.Input
-						totalUsage.Output += evt.Usage.Output
-						totalUsage.Reasoning += evt.Usage.Reasoning
-						totalUsage.CacheRead += evt.Usage.CacheRead
-						totalUsage.CacheWrite += evt.Usage.CacheWrite
-						totalUsage.CostUSD += evt.Usage.CostUSD
+						totalUsage.Add(*evt.Usage)
+						if evt.Kind == NativeEventSummaryUsage {
+							summaryUsage.Add(*evt.Usage)
+						}
 						activeMu.Unlock()
 					}
 					return
@@ -573,19 +597,21 @@ func (s *Service) launchNativeTurn(
 				}})
 			case NativeEventThinkingSignatureReset:
 				s.clearSessionThinkingSignatures(rec.ID)
-			case NativeEventTurnUsage:
+			case NativeEventTurnUsage, NativeEventSummaryUsage:
 				if evt.Usage != nil {
 					activeMu.Lock()
-					totalUsage.Input += evt.Usage.Input
-					totalUsage.Output += evt.Usage.Output
-					totalUsage.Reasoning += evt.Usage.Reasoning
-					totalUsage.CacheRead += evt.Usage.CacheRead
-					totalUsage.CacheWrite += evt.Usage.CacheWrite
-					totalUsage.CostUSD += evt.Usage.CostUSD
-					if nativeStepContextTokens(*evt.Usage) > 0 {
+					totalUsage.Add(*evt.Usage)
+					if evt.Kind == NativeEventSummaryUsage {
+						summaryUsage.Add(*evt.Usage)
+					}
+					if evt.Usage.ServiceTier != "" {
+						totalUsage.ServiceTier = evt.Usage.ServiceTier
+						tr.MsgInfo.ServiceTier = evt.Usage.ServiceTier
+					}
+					if evt.Kind == NativeEventTurnUsage && nativeStepContextTokens(*evt.Usage) > 0 {
 						latestParentStep = *evt.Usage
 					}
-					liveTokens := buildNativeMessageTokens(totalUsage, latestParentStep)
+					liveTokens := buildNativeMessageTokens(totalUsage, latestParentStep, summaryUsage)
 					liveInfo := tr.MsgInfo
 					liveInfo.Tokens = liveTokens
 					if totalUsage.CostUSD > 0 {
@@ -613,6 +639,7 @@ func (s *Service) launchNativeTurn(
 			ProviderID:      rec.ProviderID,
 			ModelID:         modelID,
 			Effort:          effort,
+			FastMode:        userInfo.ServiceTier == "fast",
 			System:          systemPrompt,
 			History:         history,
 			InitialTodos:    extractLatestSessionTodos(rec.Turns),
@@ -620,13 +647,15 @@ func (s *Service) launchNativeTurn(
 			UserBlocks:      userBlocks,
 			SteerDrain:      steerQ.Drain,
 			SteerDrainItems: drainSteerItems,
+			SteerHasPending: steerQ.HasPending,
+			SteerNotify:     steerQ.NotifyCh,
 			PermissionHook: func(pCtx context.Context, pr NativePermissionRequest) error {
 				return s.nativePermissionHook(rec, currentAsstID())(pCtx, pr)
 			},
 			CoordinateFileEdit:  s.nativeCoordinateFileEdit(rec, ap),
 			RecordFileEdit:      s.nativeRecordFileEdit(rec),
-			CommandRunner:       s.nativeCommandRunner(rec, ap),
-			StreamCommandRunner: s.nativeStreamCommandRunner(rec, ap),
+			CommandRunner:       s.nativePromotableCommandRunner(rec, ap),
+			StreamCommandRunner: s.nativePromotableStreamCommandRunner(rec, ap),
 			BackgroundManager:   s.nativeBackgroundManager(rec),
 			Diagnostics:         s.nativeDiagnostics(rec),
 			AskQuestion: func(qCtx context.Context, callID, rawJSON string) (string, map[string]any, error) {
@@ -637,11 +666,12 @@ func (s *Service) launchNativeTurn(
 
 		nowCompleted := time.Now().UnixMilli()
 		activeMu.Lock()
-		finalTokens := buildNativeMessageTokens(totalUsage, latestParentStep)
+		finalTokens := buildNativeMessageTokens(totalUsage, latestParentStep, summaryUsage)
 		finalCost := totalUsage.CostUSD
 		resolvedFinish := turnFinish
 		finalAsstID := curAsstMsgID
 		hadParts := emittedAnyPart
+		hadUsage := totalUsage != (NativeTokenUsage{})
 		activeMu.Unlock()
 		if resolvedFinish == "" {
 			resolvedFinish = "stop"
@@ -660,7 +690,7 @@ func (s *Service) launchNativeTurn(
 			userCancelled := ap.wasAborted() && stallErr == nil
 			s.settleSessionInFlightParts(rec.ID, nowCompleted, userCancelled)
 			if userCancelled {
-				if !hadParts {
+				if !hadParts && !hadUsage {
 					s.pruneEmptyAssistantTurn(rec.ID, finalAsstID)
 				} else {
 					tr.MsgInfo.Finish = "aborted"
@@ -682,6 +712,9 @@ func (s *Service) launchNativeTurn(
 			return
 		}
 
+		if rec.ContextPending {
+			s.markContextDelivered(rec.ID)
+		}
 		tr.MsgInfo.Finish = resolvedFinish
 		s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": tr.MsgInfo}})
 		terminalEvts = append(terminalEvts,
@@ -727,10 +760,10 @@ func nativeStepContextTokens(u NativeTokenUsage) int {
 // buildNativeMessageTokens keeps cumulative billing buckets across all steps
 // and subagents in Input/Output/Reasoning/Cache while setting Total & Context
 // strictly to the latest parent step's real context-window occupancy.
-func buildNativeMessageTokens(total, latestParent NativeTokenUsage) *MessageTokens {
+func buildNativeMessageTokens(total, latestParent, summary NativeTokenUsage) *MessageTokens {
 	ctxTokens := nativeStepContextTokens(latestParent)
 	if ctxTokens <= 0 {
-		ctxTokens = nativeStepContextTokens(total)
+		ctxTokens = nativeStepContextTokens(total) - nativeStepContextTokens(summary)
 	}
 	tok := &MessageTokens{
 		Total:     ctxTokens,
@@ -738,6 +771,9 @@ func buildNativeMessageTokens(total, latestParent NativeTokenUsage) *MessageToke
 		Input:     total.Input,
 		Output:    total.Output,
 		Reasoning: total.Reasoning,
+	}
+	if summary != (NativeTokenUsage{}) {
+		tok.Summary = &summary
 	}
 	tok.Cache.Read = total.CacheRead
 	tok.Cache.Write = total.CacheWrite

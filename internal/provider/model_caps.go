@@ -261,6 +261,22 @@ func IsImageGenerationModel(modelID, explicitCategory, modality string) bool {
 	return inferModelCategory(modelID, explicitCategory, modality) == "image"
 }
 
+// IsVideoGenerationModel reports whether modelID (or explicit metadata) is a
+// dedicated video generation model.
+func IsVideoGenerationModel(modelID, explicitCategory, modality string) bool {
+	return inferModelCategory(modelID, explicitCategory, modality) == "video"
+}
+
+// supportsVideoImageInput reports whether a video generation model accepts a
+// reference frame image (image-to-video) alongside a text prompt.
+func supportsVideoImageInput(modelID string) bool {
+	id := strings.ToLower(strings.TrimSpace(modelID))
+	if id == "" || strings.Contains(id, "-t2v") || strings.Contains(id, "_t2v") {
+		return false
+	}
+	return IsVideoGenerationModel(id, "", "") || strings.Contains(id, "i2v")
+}
+
 // normalizeModelCategory normalizes an explicit model category from hoxi.ai or AINode.
 // Supported categories: chat | coding | tts | realtime | asr | image | video | embedding.
 func normalizeModelCategory(raw string) string {
@@ -380,6 +396,10 @@ func hasImageOutputModality(mObj map[string]interface{}) bool {
 	return hasModalityEntry(mObj, "output", "image")
 }
 
+func hasVideoOutputModality(mObj map[string]interface{}) bool {
+	return hasModalityEntry(mObj, "output", "video")
+}
+
 func ensureImageInputModality(mObj map[string]interface{}) {
 	modMap, _ := mObj["modalities"].(map[string]interface{})
 	if modMap == nil {
@@ -406,6 +426,22 @@ func ensureImageOutputModality(mObj map[string]interface{}, allowImageInput bool
 	}
 	if !hasImageOutputModality(mObj) {
 		modMap["output"] = []string{"text", "image"}
+	}
+	mObj["modalities"] = modMap
+}
+
+func ensureVideoOutputModality(mObj map[string]interface{}, allowImageInput bool) {
+	modMap, _ := mObj["modalities"].(map[string]interface{})
+	if modMap == nil {
+		modMap = map[string]interface{}{}
+	}
+	if allowImageInput {
+		modMap["input"] = []string{"text", "image"}
+	} else if _, hasIn := modMap["input"]; !hasIn {
+		modMap["input"] = []string{"text"}
+	}
+	if !hasVideoOutputModality(mObj) {
+		modMap["output"] = []string{"video"}
 	}
 	mObj["modalities"] = modMap
 }
@@ -441,7 +477,11 @@ func normalizeGoogleBaseURL(rawBaseURL string) string {
 
 func providerRequiresOpenAIResponsesSDK(providerID, baseURL string, pObj map[string]interface{}) bool {
 	pid := strings.ToLower(strings.TrimSpace(providerID))
-	if pid != "openai" && !isOfficialOpenAIHost(baseURL) {
+	trimmedBase := strings.TrimSpace(baseURL)
+	if trimmedBase != "" && !isOfficialOpenAIHost(trimmedBase) && !isCodexChatGPTBackendURL(trimmedBase) {
+		return false
+	}
+	if pid != "openai" && !isOfficialOpenAIHost(trimmedBase) && !isCodexChatGPTBackendURL(trimmedBase) {
 		return false
 	}
 	mMap, _ := pObj["models"].(map[string]interface{})
@@ -545,9 +585,12 @@ func normalizeDocModelVariants(doc map[string]interface{}) {
 				continue
 			}
 			explicitCat, _ := mObj["category"].(string)
+			normExplicitCat := normalizeModelCategory(explicitCat)
+			explicitConversational := normExplicitCat == "chat" || normExplicitCat == "coding"
 			cat := inferModelCategory(mid, explicitCat, "")
-			isImageGen := cat == "image" || hasImageOutputModality(mObj)
-			isChat := !isImageGen && isConversationalCategory(cat)
+			isImageGen := !explicitConversational && (cat == "image" || hasImageOutputModality(mObj))
+			isVideoGen := !explicitConversational && !isImageGen && (cat == "video" || hasVideoOutputModality(mObj))
+			isChat := !isImageGen && !isVideoGen && isConversationalCategory(cat)
 			if isChat {
 				ensureModelTokenLimit(mObj, mid)
 			}
@@ -560,13 +603,21 @@ func normalizeDocModelVariants(doc map[string]interface{}) {
 				}
 			}
 
-			if isImageGen {
+			if isImageGen || isVideoGen {
 				if !hasExplicitAttachment {
-					attachBool = hasImageInputModality(mObj) || supportsMultimodalImageEditInput(mid)
+					if isImageGen {
+						attachBool = hasImageInputModality(mObj) || supportsMultimodalImageEditInput(mid)
+					} else {
+						attachBool = hasImageInputModality(mObj) || supportsVideoImageInput(mid)
+					}
 					mObj["attachment"] = attachBool
 				}
-				ensureImageOutputModality(mObj, attachBool || hasImageInputModality(mObj))
-				// Clean up legacy auto-injected thinking variants on image models
+				if isImageGen {
+					ensureImageOutputModality(mObj, attachBool || hasImageInputModality(mObj))
+				} else {
+					ensureVideoOutputModality(mObj, attachBool || hasImageInputModality(mObj))
+				}
+				// Clean up legacy auto-injected thinking variants on dedicated media models
 				// that reject thinkingConfig / reasoning_effort with HTTP 400.
 				isReasoning, _ := mObj["reasoning"].(bool)
 				if vMap, hasV := mObj["variants"].(map[string]interface{}); hasV && hasAutoInjectedThinkingVariants(vMap) {

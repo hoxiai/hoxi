@@ -30,6 +30,18 @@ func (s *Service) OwnsSession(id string) bool {
 	return false
 }
 
+// SessionModel returns the persisted providerID and modelID for a session.
+func (s *Service) SessionModel(id string) (providerID, modelID string) {
+	if s == nil || s.store == nil {
+		return "", ""
+	}
+	rec, ok := s.store.Meta(strings.TrimSpace(id))
+	if !ok {
+		return "", ""
+	}
+	return strings.TrimSpace(rec.ProviderID), strings.TrimSpace(rec.ModelID)
+}
+
 func (s *Service) openCodeRaw(ctx context.Context, method, path string, query url.Values, body []byte) (int, []byte, error) {
 	return s.openCode.Raw(ctx, method, path, query, body)
 }
@@ -332,6 +344,108 @@ func (s *Service) conversationStatuses(ctx context.Context, projectID, directory
 	return out
 }
 
+// ListSessionsByScope returns non-archived Hoxi sessions matching any explicit
+// sessionID or residing in any of the given project directories (including
+// isolated worktrees under those directories), along with descendant child
+// sessions of matched parents and a live busy status map.
+func (s *Service) ListSessionsByScope(sessionIDs []string, directories []string) ([]SessionInfo, map[string]string) {
+	if s == nil || s.store == nil {
+		return []SessionInfo{}, map[string]string{}
+	}
+	sidSet := make(map[string]bool, len(sessionIDs))
+	for _, id := range sessionIDs {
+		if trimmed := strings.TrimSpace(id); trimmed != "" {
+			sidSet[trimmed] = true
+		}
+	}
+	var normDirs []string
+	seenDir := make(map[string]bool, len(directories))
+	for _, dir := range directories {
+		if norm := normalizeComparePath(dir); norm != "" && !seenDir[norm] {
+			seenDir[norm] = true
+			normDirs = append(normDirs, norm)
+		}
+	}
+	if len(sidSet) == 0 && len(normDirs) == 0 {
+		return []SessionInfo{}, map[string]string{}
+	}
+
+	metas, _ := s.store.SnapshotMetas()
+	byID := make(map[string]SessionRecord, len(metas))
+	for _, rec := range metas {
+		if rec.ID != "" {
+			byID[rec.ID] = rec
+		}
+	}
+
+	directMatch := func(rec SessionRecord) bool {
+		if sidSet[rec.ID] {
+			return true
+		}
+		for _, normDir := range normDirs {
+			if sessionMatchesDirectory(rec, normDir) {
+				return true
+			}
+		}
+		return false
+	}
+
+	matched := make(map[string]SessionRecord)
+	for _, rec := range metas {
+		if rec.ID == "" || rec.ArchivedAt > 0 {
+			continue
+		}
+		if directMatch(rec) {
+			matched[rec.ID] = rec
+			continue
+		}
+		// Walk parent chain so subagents of a matched root session are included.
+		seenAnc := map[string]bool{rec.ID: true}
+		cur := strings.TrimSpace(rec.ParentID)
+		for cur != "" && !seenAnc[cur] {
+			seenAnc[cur] = true
+			parent, ok := byID[cur]
+			if !ok {
+				break
+			}
+			if parent.ArchivedAt == 0 && directMatch(parent) {
+				matched[rec.ID] = rec
+				break
+			}
+			cur = strings.TrimSpace(parent.ParentID)
+		}
+	}
+
+	records := make([]SessionRecord, 0, len(matched))
+	for _, rec := range matched {
+		records = append(records, rec)
+	}
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].UpdatedAt != records[j].UpdatedAt {
+			return records[i].UpdatedAt > records[j].UpdatedAt
+		}
+		return records[i].ID < records[j].ID
+	})
+
+	items := make([]SessionInfo, len(records))
+	for i, rec := range records {
+		items[i] = rec.ToSessionInfo()
+	}
+
+	statuses := make(map[string]string)
+	for _, id := range s.busySessionIDs() {
+		if _, ok := matched[id]; ok {
+			statuses[id] = "busy"
+		}
+	}
+	for id := range s.stalledSessions() {
+		if _, ok := matched[id]; ok {
+			statuses[id] = "busy"
+		}
+	}
+	return items, statuses
+}
+
 // handleConversationCreate creates a Hoxi-owned SessionRecord for all runtimes.
 // When the runtime is OpenCode, it also creates an OpenCode session as the
 // backing execution handle and records it in OpenCodeIDs.
@@ -416,7 +530,7 @@ func (s *Service) CreateConversation(ctx context.Context, body CreateSessionRequ
 	}
 	var engineInfo SessionInfo
 	if err := s.openCodeJSON(ctx, http.MethodPost, "/session", rec.WorktreePath, payload, &engineInfo); err != nil || strings.TrimSpace(engineInfo.ID) == "" {
-		if !s.IsImageModel(rec.ProviderID, rec.ModelID) {
+		if !s.IsDedicatedMediaModel(rec.ProviderID, rec.ModelID) {
 			if rec.SandboxMode == "worktree" {
 				_ = s.worktrees.ForDirectory(rec.ProjectDir).RemoveWithOptions(rec.ID, true, false)
 			}

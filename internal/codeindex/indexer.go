@@ -46,12 +46,13 @@ type Chunk struct {
 }
 
 type FileRecord struct {
-	Path    string   `json:"path"`
-	ModTime int64    `json:"modTime"`
-	Size    int64    `json:"size"`
-	Hash    string   `json:"hash"`
-	Imports []string `json:"imports,omitempty"`
-	Chunks  []Chunk  `json:"chunks"`
+	Methods []symbolDecl `json:"methods,omitempty"`
+	Path    string       `json:"path"`
+	ModTime int64        `json:"modTime"`
+	Size    int64        `json:"size"`
+	Hash    string       `json:"hash"`
+	Imports []string     `json:"imports,omitempty"`
+	Chunks  []Chunk      `json:"chunks"`
 }
 
 type Index struct {
@@ -237,8 +238,8 @@ func chunkFile(path, content string, cfg Config) []Chunk {
 				}
 			}
 		}
-		text := strings.TrimSpace(strings.Join(lines[start:end], "\n"))
-		if text != "" {
+		text := strings.Join(lines[start:end], "\n")
+		if strings.TrimSpace(text) != "" {
 			chunks = append(chunks, Chunk{
 				Path:      path,
 				Symbol:    symbolAt(lines, start, end),
@@ -470,7 +471,7 @@ func (s *Service) build(ctx context.Context, directory string, previous *Index) 
 		chunks := chunkFile(rel, contentStr, cfg)
 		imports := extractFileImports(contentStr)
 		index.Files[rel] = &FileRecord{
-			Path: rel, ModTime: info.ModTime().UnixMilli(), Size: info.Size(), Hash: hash, Imports: imports, Chunks: chunks,
+			Path: rel, ModTime: info.ModTime().UnixMilli(), Size: info.Size(), Hash: hash, Imports: imports, Chunks: chunks, Methods: typeScriptMethods(rel, contentStr),
 		}
 		return nil
 	})

@@ -70,7 +70,7 @@ func (s *Service) ResolveEconomyModel(providerID, currentModelID string) (string
 	}
 	collectFrom(importedMap)
 	collectFrom(hoxiMap)
-	if len(mergedModels) == 0 && keep == nil && unrevokedAuthProviderIDs()[pid] {
+	if len(mergedModels) == 0 && keep == nil && s.unrevokedAuthProviderIDs()[pid] {
 		if tplMap, _, hasTpl := builtinProviderConfigMap(pid); hasTpl {
 			collectFrom(map[string]interface{}{pid: tplMap})
 		}

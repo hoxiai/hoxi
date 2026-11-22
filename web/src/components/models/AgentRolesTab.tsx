@@ -28,11 +28,17 @@ import {
   updateGlobalModelConfig,
   workspace,
 } from "../../store/workspace";
-import { t } from "../../i18n";
+import { locale, t } from "../../i18n";
+import { surfaceExtension } from "../layout/surface-extension";
+import { HelpTip } from "../settings/setting-controls";
 import { getConnectedProviderModelGroups } from "./model-selector-utils";
 import ModelRolePicker from "./ModelRolePicker";
 
 function agentIcon(name: string) {
+  if (surfaceExtension.enabled && surfaceExtension.renderModeIcon) {
+    const extIcon = surfaceExtension.renderModeIcon(name, 16);
+    if (extIcon) return extIcon;
+  }
   const lower = name.toLowerCase();
   if (lower === "build") return <Hammer size={16} class="shrink-0" />;
   if (lower === "plan") return <Compass size={16} class="shrink-0" />;
@@ -105,7 +111,10 @@ export default function AgentRolesTab() {
       .toLowerCase()
       .replace(/[^a-z0-9_-]/g, "-");
     const prompt = newAgentPrompt().trim();
-    if (!id || isReservedAgentID(id) || !prompt || creating()) return;
+    const isExtensionModeId =
+      surfaceExtension.enabled &&
+      Boolean(surfaceExtension.extraPrimaryModes?.().some((m) => m.name.toLowerCase() === id));
+    if (!id || isReservedAgentID(id) || isExtensionModeId || !prompt || creating()) return;
     setCreating(true);
     setFormFeedback(null);
     try {
@@ -220,12 +229,28 @@ export default function AgentRolesTab() {
       model: workspace.globalConfig?.agent?.debug?.model || "",
     });
 
+    if (surfaceExtension.enabled && surfaceExtension.extraPrimaryModes) {
+      for (const extMode of surfaceExtension.extraPrimaryModes()) {
+        const extId = extMode.name;
+        list.push({
+          id: extId,
+          name: surfaceExtension.formatModeLabel?.(extId, locale()) || extId,
+          isBuiltin: true,
+          description:
+            surfaceExtension.formatModeDescription?.(extId, locale()) ||
+            extMode.description ||
+            "",
+          model: workspace.globalConfig?.agent?.[extId]?.model || "",
+        });
+      }
+    }
+
     // Custom Agents from globalConfig.agent and file-defined Markdown agents
     const seenIds = new Set<string>(list.map((a) => a.id.toLowerCase()));
     const cfgAgent = workspace.globalConfig?.agent || {};
     for (const [key, val] of Object.entries(cfgAgent)) {
       const lower = key.toLowerCase();
-      if (BUILTIN_MODE_IDS.has(lower) || SUBAGENT_ONLY_IDS.has(lower)) continue;
+      if (seenIds.has(lower) || BUILTIN_MODE_IDS.has(lower) || SUBAGENT_ONLY_IDS.has(lower)) continue;
       if (val && typeof val === "object") {
         const item = val as Record<string, any>;
         if (item.mode === "subagent") continue;
@@ -268,25 +293,21 @@ export default function AgentRolesTab() {
           <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-surface)] text-[var(--accent-primary)]">
             <Bot size={16} />
           </div>
-          <div>
-            <h3 class="text-[13px] font-semibold text-[var(--text-primary)]">
+          <div class="flex items-center gap-2 min-w-0">
+            <h3 class="text-[13px] font-semibold text-[var(--text-primary)] truncate">
               {t("models.agentsTitle")}
             </h3>
-            <p class="text-[12px] text-[var(--text-secondary)]">
-              {t("models.agentsSubtitle")}
-            </p>
+            <HelpTip text={t("models.agentsSubtitle")} />
           </div>
         </div>
 
         {/* Global Custom Instructions */}
         <section class="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 p-4 space-y-2.5">
-          <div>
+          <div class="flex items-center gap-2">
             <h4 class="text-[13px] font-semibold text-[var(--text-primary)]">
               {t("settings.sectionCustomInstructionsTitle")}
             </h4>
-            <p class="text-[12px] text-[var(--text-muted)]">
-              {t("settings.sectionCustomInstructionsDesc")}
-            </p>
+            <HelpTip text={t("settings.sectionCustomInstructionsDesc")} />
           </div>
           <textarea
             rows={3}
@@ -309,71 +330,62 @@ export default function AgentRolesTab() {
               return (
                 <div class="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 p-4 transition-colors">
                   <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div class="flex items-start gap-3 min-w-0">
-                      <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--bg-panel)] text-[var(--accent-primary)] border border-[var(--border-subtle)] mt-0.5">
+                    <div class="flex items-center gap-3 min-w-0">
+                      <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--bg-panel)] text-[var(--accent-primary)] border border-[var(--border-subtle)]">
                         {agentIcon(agent.id)}
                       </div>
-                      <div class="min-w-0 space-y-0.5">
-                        <div class="flex items-center gap-2 flex-wrap">
-                          <span class="text-[13px] font-semibold capitalize text-[var(--text-primary)]">
-                            {agent.name}
-                          </span>
-                          <span class="rounded font-mono text-[11px] px-1.5 py-0.5 bg-[var(--bg-inset)] text-[var(--text-muted)]">
-                            {agent.id}
-                          </span>
-                          <span
-                            class={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                              agent.isBuiltin
-                                ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
-                                : "bg-emerald-500/10 text-emerald-400"
-                            }`}
-                          >
-                            {agent.isBuiltin ? t("models.builtinBadge") : t("models.customBadge")}
-                          </span>
-                        </div>
-                        <Show when={!isEditing()}>
-                          <p class="text-[12px] text-[var(--text-muted)] leading-relaxed">
-                            {agent.description}
-                          </p>
+                      <div class="flex items-center gap-2 flex-wrap min-w-0">
+                        <span class="text-[13px] font-semibold capitalize text-[var(--text-primary)]">
+                          {agent.name}
+                        </span>
+                        <span class="rounded font-mono text-[11px] px-1.5 py-0.5 bg-[var(--bg-inset)] text-[var(--text-muted)]">
+                          {agent.id}
+                        </span>
+                        <span
+                          class={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                            agent.isBuiltin
+                              ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                              : "bg-emerald-500/10 text-emerald-400"
+                          }`}
+                        >
+                          {agent.isBuiltin ? t("models.builtinBadge") : t("models.customBadge")}
+                        </span>
+                        <Show when={!isEditing() && agent.description}>
+                          <HelpTip text={agent.description} />
                         </Show>
                       </div>
                     </div>
 
                     {/* Dedicated Model Selector */}
                     <div class="flex items-center gap-2 shrink-0 self-end sm:self-auto">
-                      <div class="flex flex-col items-end">
-                        <span class="text-[11px] font-medium uppercase tracking-wider text-[var(--text-faint)] mb-1">
-                          {t("models.agentDedicatedModelLabel")}
-                        </span>
-                        <div class="flex items-center gap-1.5">
-                          <ModelRolePicker
-                            value={agent.model || ""}
-                            groups={connectedGroups()}
-                            allowEmpty
-                            emptyLabel={t("models.agentModelFollowDefault")}
-                            triggerClass="w-[240px]"
-                            onChange={(val) => void applyAgentModel(agent.id, val)}
-                          />
+                      <div class="flex items-center gap-1.5">
+                        <ModelRolePicker
+                          value={agent.model || ""}
+                          groups={connectedGroups()}
+                          allowEmpty
+                          emptyLabel={t("models.agentModelFollowDefault")}
+                          triggerClass="w-[240px]"
+                          onChange={(val) => void applyAgentModel(agent.id, val)}
+                        />
 
-                          <Show when={agent.model}>
-                            <button
-                              type="button"
-                              onClick={() => void applyAgentModel(agent.id, "")}
-                              class="rounded-lg p-1.5 text-[var(--text-faint)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-                              title={t("models.agentModelFollowDefault")}
-                            >
-                              <RotateCcw size={13} />
-                            </button>
+                        <Show when={agent.model}>
+                          <button
+                            type="button"
+                            onClick={() => void applyAgentModel(agent.id, "")}
+                            class="rounded-lg p-1.5 text-[var(--text-faint)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                            title={t("models.agentModelFollowDefault")}
+                          >
+                            <RotateCcw size={13} />
+                          </button>
+                        </Show>
+
+                        <div class="w-4 flex items-center justify-center">
+                          <Show when={savingKey() === agent.id}>
+                            <LoaderCircle size={13} class="animate-spin text-[var(--accent-primary)]" />
                           </Show>
-
-                          <div class="w-4 flex items-center justify-center">
-                            <Show when={savingKey() === agent.id}>
-                              <LoaderCircle size={13} class="animate-spin text-[var(--accent-primary)]" />
-                            </Show>
-                            <Show when={savedKey() === agent.id}>
-                              <Check size={13} class="text-[var(--ok)]" />
-                            </Show>
-                          </div>
+                          <Show when={savedKey() === agent.id}>
+                            <Check size={13} class="text-[var(--ok)]" />
+                          </Show>
                         </div>
                       </div>
 
@@ -477,14 +489,12 @@ export default function AgentRolesTab() {
 
         {/* Add Custom Agent Section */}
         <div class="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 p-5 space-y-4">
-          <div class="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h4 class="text-[13px] font-semibold text-[var(--text-primary)]">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex items-center gap-2 min-w-0">
+              <h4 class="text-[13px] font-semibold text-[var(--text-primary)] truncate">
                 {t("models.customAgentsTitle")}
               </h4>
-              <p class="text-[12px] text-[var(--text-muted)]">
-                {t("models.customAgentsSubtitle")}
-              </p>
+              <HelpTip text={t("models.customAgentsSubtitle")} />
             </div>
             <button
               type="button"

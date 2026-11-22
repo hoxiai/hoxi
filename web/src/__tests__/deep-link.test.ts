@@ -3,6 +3,7 @@ import { buildMessageLink } from "../components/timeline/session-export";
 import { DESKTOP_INTENT_EVENT, onDesktopIntent } from "../services/desktop-events";
 import {
   appSettings,
+  appLinkConfirmation,
   applyDesktopIntent,
   clearPendingDeepLink,
   closeHandoffModal,
@@ -12,6 +13,7 @@ import {
   openSessionDeepLink,
   pendingDeepLink,
   resolvePendingDeepLink,
+  resolveAppLinkConfirmation,
   setLeftNavOpen,
   setWorkspace,
   workspace,
@@ -127,6 +129,25 @@ describe("session deep links", () => {
       closeSettingsModal();
       closeHandoffModal();
       setLeftNavOpen(savedNav);
+      setWorkspace(reconcile(saved));
+    }
+  });
+
+  it("opens app consent separately and never navigates a browser link without confirmation", () => {
+    const saved = structuredClone(unwrap(workspace));
+    try {
+      applyDesktopIntent({ action: "connect-app", requestID: "con_123" });
+      assertEqual(appSettings.activeTab, "app-grants");
+      setWorkspace({ rootDir: "/repo-a", inspectedBrowserURL: null });
+      applyDesktopIntent({ action: "open-browser", params: { url: "https://example.com" } });
+      assertEqual(Boolean(appLinkConfirmation()), true);
+      assertEqual(workspace.inspectedBrowserURL, null);
+      setWorkspace("rootDir", "/repo-b");
+      resolveAppLinkConfirmation(true);
+      assertEqual(workspace.inspectedBrowserURL, null);
+    } finally {
+      resolveAppLinkConfirmation(false);
+      closeSettingsModal();
       setWorkspace(reconcile(saved));
     }
   });

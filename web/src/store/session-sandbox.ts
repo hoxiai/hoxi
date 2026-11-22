@@ -12,7 +12,7 @@ import {
 import type { SessionInfo } from "../services/sse-types";
 import { appSettings, updateAppSetting } from "./settings";
 import { setWorkspace, workspace } from "./workspace-state";
-import { initializeSessionAI } from "./session-ai";
+import { initializeSessionAI, setFastMode } from "./session-ai";
 import {
   getComposerSkill,
   revalidateSkillForTargetDirectory,
@@ -46,6 +46,7 @@ const pendingSandboxChanges = new Map<string, Promise<void>>();
 
 export function startNewThreadDraft(): void {
   setComposerSkillNotice(null, null);
+  setFastMode(false, null);
   setWorkspace({ activeSessionID: null, sessionSetupError: null,
     newThreadRequest: workspace.newThreadRequest + 1 });
 }

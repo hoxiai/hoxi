@@ -591,6 +591,9 @@ func isDestructivePermissionRequest(item map[string]interface{}) bool {
 		candidates = append(candidates, metadataFilePaths(meta)...)
 		candidates = append(candidates, toolArgPaths(meta["args"])...)
 		readOnlyTool := perm == "tool" && !editToolNames[tool] && (readToolNames[tool] || isReadOnlyTaskStatusItem(item))
+		if readOnlyTool && HasRiskySearchSelector(tool, parseToolArgs(meta["args"])) {
+			return true
+		}
 		for _, p := range candidates {
 			risky := isProtectedRelPath(p) || isSensitiveExternalPath(p)
 			if readOnlyTool {

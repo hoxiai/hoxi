@@ -25,8 +25,8 @@ func newDriverFactory() *ProtocolFactory {
 		constructors: make(map[llm.StreamProtocol]DriverConstructor),
 	}
 	f.Register(llm.ProtocolAnthropic, func() ModelDriver { return newAnthropicDriver() })
-	f.Register(llm.ProtocolOpenAI, func() ModelDriver { return newOpenAIDriver(false) })
-	f.Register(llm.ProtocolOpenAIResponses, func() ModelDriver { return newOpenAIDriver(true) })
+	f.Register(llm.ProtocolOpenAI, func() ModelDriver { return withOpenAIFastMode(newOpenAIDriver(false)) })
+	f.Register(llm.ProtocolOpenAIResponses, func() ModelDriver { return withOpenAIFastMode(newOpenAIDriver(true)) })
 	f.Register(llm.ProtocolGoogle, func() ModelDriver { return newGeminiDriver() })
 	return f
 }

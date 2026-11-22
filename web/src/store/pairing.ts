@@ -1,22 +1,62 @@
 // web/src/store/pairing.ts
 import { createStore } from "solid-js/store";
 import { t } from "../i18n";
-import { pairingAPI, type PairingCode } from "../services/pairing";
+import { errorMessageOf } from "../services/http";
+import { pairingAPI, type PairingCode, type PublishedShortCode } from "../services/pairing";
+
+const SHORT_CODE_RELAY_STORAGE_KEY = "hoxi.pairing.relayUrl";
+
+function readStoredRelayUrl(): string {
+  try {
+    if (typeof localStorage === "undefined") return "";
+    return (localStorage.getItem(SHORT_CODE_RELAY_STORAGE_KEY) || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function writeStoredRelayUrl(url: string): void {
+  try {
+    if (typeof localStorage === "undefined") return;
+    if (url) {
+      localStorage.setItem(SHORT_CODE_RELAY_STORAGE_KEY, url);
+    } else {
+      localStorage.removeItem(SHORT_CODE_RELAY_STORAGE_KEY);
+    }
+  } catch {
+    /* ignore storage failures */
+  }
+}
 
 export const [pairing, setPairing] = createStore<{
   code: PairingCode | null;
   loaded: boolean;
   busy: boolean;
   error: string;
+  shortCode: PublishedShortCode | null;
+  shortCodeRelayUrl: string;
+  shortCodeBusy: boolean;
+  shortCodeError: string;
 }>({
   code: null,
   loaded: false,
   busy: false,
   error: "",
+  shortCode: null,
+  shortCodeRelayUrl: readStoredRelayUrl(),
+  shortCodeBusy: false,
+  shortCodeError: "",
 });
 
 let pairingGen = 0;
+let shortCodeGen = 0;
 let rotating = false;
+
+export function setPairingShortCodeRelayUrl(url: string): void {
+  const next = url.trim();
+  setPairing({ shortCodeRelayUrl: next, shortCodeError: "" });
+  writeStoredRelayUrl(next);
+}
 
 // Fetches the current LAN pairing code. The QR is regenerated on every call so
 // the displayed address follows the machine's network.
@@ -27,7 +67,13 @@ export async function loadPairingCode(): Promise<void> {
   try {
     const code = await pairingAPI.getCode();
     if (gen !== pairingGen) return;
-    setPairing({ code, loaded: true, error: "" });
+    const defaultRelay = (code.shortCodeRelayUrl || "").trim();
+    setPairing({
+      code,
+      loaded: true,
+      error: "",
+      ...(pairing.shortCodeRelayUrl || !defaultRelay ? {} : { shortCodeRelayUrl: defaultRelay }),
+    });
   } catch {
     if (gen !== pairingGen) return;
     setPairing({ loaded: true, error: t("pairing.loadError") });
@@ -44,11 +90,18 @@ export async function rotatePairingToken(): Promise<void> {
   if (rotating) return;
   rotating = true;
   const gen = ++pairingGen;
-  setPairing({ busy: true, error: "" });
+  shortCodeGen++;
+  setPairing({ busy: true, error: "", shortCode: null, shortCodeError: "" });
   try {
     const code = await pairingAPI.rotate();
     if (gen === pairingGen) {
-      setPairing({ code, loaded: true, error: "" });
+      const defaultRelay = (code.shortCodeRelayUrl || "").trim();
+      setPairing({
+        code,
+        loaded: true,
+        error: "",
+        ...(pairing.shortCodeRelayUrl || !defaultRelay ? {} : { shortCodeRelayUrl: defaultRelay }),
+      });
     }
   } catch {
     if (gen === pairingGen) {
@@ -59,5 +112,54 @@ export async function rotatePairingToken(): Promise<void> {
     if (gen === pairingGen) {
       setPairing("busy", false);
     }
+  }
+}
+
+// Publishes a 60-second zero-knowledge 6-digit pairing code to the configured relay.
+export async function publishPairingShortCode(relayUrlOverride?: string): Promise<void> {
+  const relayUrl = (relayUrlOverride ?? pairing.shortCodeRelayUrl).trim();
+  if (!relayUrl) {
+    setPairing("shortCodeError", t("pairing.shortCodeRelayRequired"));
+    return;
+  }
+  setPairingShortCodeRelayUrl(relayUrl);
+  const gen = ++shortCodeGen;
+  setPairing({ shortCodeBusy: true, shortCodeError: "" });
+  try {
+    const published = await pairingAPI.publishShortCode(relayUrl);
+    if (gen !== shortCodeGen) return;
+    setPairing({ shortCode: published, shortCodeError: "" });
+  } catch (err) {
+    if (gen !== shortCodeGen) return;
+    setPairing("shortCodeError", errorMessageOf(err, t("pairing.shortCodePublishError")));
+  } finally {
+    if (gen === shortCodeGen) {
+      setPairing("shortCodeBusy", false);
+    }
+  }
+}
+
+// Revokes the active 6-digit pairing code on the relay and clears local state.
+export async function cancelPairingShortCode(): Promise<void> {
+  const gen = ++shortCodeGen;
+  setPairing({ shortCodeBusy: true, shortCodeError: "" });
+  try {
+    await pairingAPI.cancelShortCode();
+    if (gen !== shortCodeGen) return;
+    setPairing({ shortCode: null, shortCodeError: "" });
+  } catch (err) {
+    if (gen !== shortCodeGen) return;
+    setPairing("shortCodeError", errorMessageOf(err, t("pairing.shortCodeCancelError")));
+  } finally {
+    if (gen === shortCodeGen) {
+      setPairing("shortCodeBusy", false);
+    }
+  }
+}
+
+export function clearExpiredPairingShortCode(): void {
+  if (!pairing.shortCode) return;
+  if (Date.now() >= pairing.shortCode.expiresAtMs) {
+    setPairing("shortCode", null);
   }
 }

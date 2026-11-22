@@ -313,7 +313,7 @@ export function buildProposeSubtasksPrompt(goal?: string, planContext?: string):
     '{"title":"Short plan title","concurrency":3,"tasks":[{"id":"task-1","prompt":"Self-contained instructions, file scope, constraints, and verification command","dependsOn":[]}]}',
     "```",
     "Rules:",
-    "1. Prefer 2–6 self-contained subtasks. Each subtask runs in its own isolated Git worktree and cannot see the other subtasks' prompts.",
+    "1. Use the fewest cohesive, self-contained subtasks needed (at most 6; keep it as 1 subtask if the work is small or tightly coupled rather than artificially splitting it). Each subtask runs in its own isolated Git worktree and cannot see the other subtasks' prompts.",
     "2. Put independent tasks in parallel (`dependsOn: []`); only add `dependsOn` when a task genuinely requires an earlier task's merged changes.",
   ].join("\n");
 }

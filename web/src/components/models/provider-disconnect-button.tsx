@@ -3,11 +3,17 @@ import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { LoaderCircle, Trash2 } from "lucide-solid";
 import { Presence } from "../motion/Presence";
-import { useAnchoredPopover } from "../layout/anchored-popover";
+import { useAnchoredPopover, type AnchoredAlign } from "../layout/anchored-popover";
 import { t } from "../../i18n";
 
 export default function ProviderDisconnectButton(props: {
   providerName: string;
+  variant?: "icon" | "button";
+  label?: string;
+  confirmTitle?: string;
+  confirmBody?: string;
+  confirmActionLabel?: string;
+  align?: AnchoredAlign;
   disabled?: boolean;
   loading: boolean;
   onConfirm: () => void;
@@ -18,8 +24,14 @@ export default function ProviderDisconnectButton(props: {
   const anchored = useAnchoredPopover({
     anchor: () => buttonRef,
     panel: () => (open() ? panelRef() : undefined),
-    align: "end",
+    align: props.align ?? "end",
   });
+
+  const actionLabel = () => props.label || t("models.deleteProvider");
+  const dialogTitle = () =>
+    props.confirmTitle || t("models.deleteProviderConfirmTitle", { name: props.providerName });
+  const dialogBody = () => props.confirmBody || t("models.deleteProviderConfirmBody");
+  const confirmBtnText = () => props.confirmActionLabel || actionLabel();
 
   createEffect(() => {
     if (props.disabled || props.loading) setOpen(false);
@@ -52,14 +64,22 @@ export default function ProviderDisconnectButton(props: {
         type="button"
         disabled={props.disabled || props.loading}
         onClick={() => setOpen((v) => !v)}
-        class="rounded-lg p-1.5 text-[var(--text-faint)] hover:bg-[var(--danger-surface)] hover:text-[var(--danger-text)] transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-default"
-        title={t("models.disconnect")}
+        class={
+          props.variant === "button"
+            ? "inline-flex items-center gap-1.5 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3 py-1.5 text-[12px] font-medium text-[var(--danger-text)] hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-60 disabled:cursor-default"
+            : "rounded-lg p-1.5 text-[var(--text-muted)] hover:bg-[var(--danger-surface)] hover:text-[var(--danger-text)] transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-default"
+        }
+        title={actionLabel()}
+        aria-label={actionLabel()}
         aria-haspopup="dialog"
         aria-expanded={open()}
         aria-busy={props.loading}
       >
         <Show when={!props.loading} fallback={<LoaderCircle size={13} class="animate-spin" />}>
           <Trash2 size={13} />
+        </Show>
+        <Show when={props.variant === "button"}>
+          <span>{actionLabel()}</span>
         </Show>
       </button>
 
@@ -70,15 +90,18 @@ export default function ProviderDisconnectButton(props: {
               ref={setPanelRef}
               data-state={state()}
               role="dialog"
-              aria-label={t("models.disconnect")}
-              class="hoxi-popover fixed z-[120] w-64 max-w-[calc(100vw-16px)] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-3 shadow-[var(--composer-shadow)]"
-              style={{ ...anchored.positionStyle(), "--hoxi-origin": "top right" }}
+              aria-label={actionLabel()}
+              class="hoxi-popover fixed z-[120] w-68 max-w-[calc(100vw-16px)] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-3 shadow-[var(--composer-shadow)]"
+              style={{
+                ...anchored.positionStyle(),
+                "--hoxi-origin": (props.align ?? "end") === "start" ? "top left" : "top right",
+              }}
             >
               <div class="text-[12.5px] font-semibold text-[var(--text-primary)]">
-                {t("models.disconnectConfirmTitle", { name: props.providerName })}
+                {dialogTitle()}
               </div>
               <p class="mt-1 text-[11.5px] leading-relaxed text-[var(--text-secondary)]">
-                {t("models.disconnectConfirmBody")}
+                {dialogBody()}
               </p>
               <div class="mt-3 flex justify-end gap-1.5">
                 <button
@@ -96,7 +119,7 @@ export default function ProviderDisconnectButton(props: {
                   }}
                   class="hoxi-press rounded-lg bg-[var(--danger-surface)] px-2.5 py-1 text-[12px] font-semibold text-[var(--danger-text)] border border-[var(--danger-border)] hover:opacity-90 transition-opacity cursor-pointer"
                 >
-                  {t("models.disconnect")}
+                  {confirmBtnText()}
                 </button>
               </div>
             </div>

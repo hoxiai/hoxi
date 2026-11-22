@@ -1,6 +1,6 @@
 // web/src/components/timeline/message-stream-parts.tsx
-import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
-import { Terminal } from "lucide-solid";
+import { createEffect, createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
+import { AlertCircle, ExternalLink, Terminal } from "lucide-solid";
 import ThoughtBox from "./ThoughtBox";
 import ToolCard from "./ToolCard";
 import MarkdownView from "./MarkdownView";
@@ -23,8 +23,11 @@ import ContextActivityGroupComponent, {
 import type { MessageInfo, MessagePart } from "../../services/sse-types";
 import {
   defaultWorkspaceDir,
+  isLoopbackMediaURL,
   openAttachmentInInspector,
   openImagePreview,
+  openStagedMediaExternally,
+  resolveMediaPlaybackURL,
   sessionDirectory,
   workspace,
 } from "../../store/workspace";
@@ -226,7 +229,7 @@ export function isVideoFilePart(fp: { mime?: string; url?: string; filename?: st
   return (
     m.startsWith("video/") ||
     /^data:video\//i.test(fp.url || "") ||
-    /\.(mp4|mov|webm|mkv|avi)$/i.test(fp.filename || "")
+    /\.(mp4|mov|webm|mkv|avi|m4v)$/i.test(fp.filename || "")
   );
 }
 
@@ -236,6 +239,14 @@ export function MediaAttachmentPlayer(props: {
 }) {
   const audio = createMemo(() => isAudioFilePart(props.part));
   const video = createMemo(() => !audio() && isVideoFilePart(props.part));
+  const mediaSrc = createMemo(() => resolveMediaPlaybackURL(props.part.url));
+  const corsMode = createMemo(() => (isLoopbackMediaURL(mediaSrc()) ? "anonymous" : undefined));
+  const [videoError, setVideoError] = createSignal(false);
+
+  createEffect(() => {
+    void mediaSrc();
+    setVideoError(false);
+  });
 
   return (
     <Switch>
@@ -251,7 +262,7 @@ export function MediaAttachmentPlayer(props: {
               {props.part.filename || "audio"}
             </span>
             <a
-              href={props.part.url}
+              href={mediaSrc()}
               download={props.part.filename || "audio"}
               class="shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
               title={props.part.filename || "audio"}
@@ -259,7 +270,13 @@ export function MediaAttachmentPlayer(props: {
               <Icon name="download" size="small" />
             </a>
           </div>
-          <audio controls preload="metadata" src={props.part.url} class="h-8 w-full" />
+          <audio
+            controls
+            preload="metadata"
+            crossOrigin={corsMode()}
+            src={mediaSrc()}
+            class="h-8 w-full"
+          />
         </div>
       </Match>
       <Match when={video()}>
@@ -269,21 +286,45 @@ export function MediaAttachmentPlayer(props: {
             props.compact ? "max-w-[280px]" : "max-w-[460px]"
           }`}
         >
-          <video
-            controls
-            preload="metadata"
-            playsinline
-            src={props.part.url}
-            class={`block w-full bg-black/85 object-contain ${
-              props.compact ? "max-h-48" : "max-h-[340px]"
-            }`}
-          />
+          <Show
+            when={!videoError()}
+            fallback={
+              <div class="flex flex-col items-center justify-center gap-2 bg-[var(--bg-inset)] px-3 py-4 text-center">
+                <AlertCircle size={16} class="text-amber-500" />
+                <span class="text-[11px] leading-snug text-[var(--text-secondary)]">
+                  {t("timeline.videoPlaybackFailed")}
+                </span>
+                <Show when={(props.part.url || "").startsWith("/api/hoxi/file/content?")}>
+                  <button
+                    type="button"
+                    onClick={() => openStagedMediaExternally(props.part.url, "open")}
+                    class="inline-flex items-center gap-1 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
+                  >
+                    <ExternalLink size={11} />
+                    <span>{t("inspector.files.openInDefaultApp")}</span>
+                  </button>
+                </Show>
+              </div>
+            }
+          >
+            <video
+              controls
+              preload="metadata"
+              playsinline
+              crossOrigin={corsMode()}
+              src={mediaSrc()}
+              onError={() => setVideoError(true)}
+              class={`block w-full bg-black/85 object-contain ${
+                props.compact ? "max-h-48" : "max-h-[340px]"
+              }`}
+            />
+          </Show>
           <div class="flex items-center justify-between gap-2 px-2.5 py-1.5 text-[11px]">
             <span class="truncate font-mono text-[var(--text-secondary)]">
               {props.part.filename || "video"}
             </span>
             <a
-              href={props.part.url}
+              href={mediaSrc()}
               download={props.part.filename || "video"}
               class="shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
               title={props.part.filename || "video"}

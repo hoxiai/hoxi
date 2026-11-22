@@ -14,12 +14,15 @@ import {
   isDesktopUpdateInstalling,
   isSelfUpdateActive,
   recordUpdateDownloadSample,
+  fetchCliLinkStatus,
+  installCliLink,
   refreshDesktopUpdateStatus,
   resetUpdateDownloadMetrics,
   setDesktopUpdater,
   startDesktopUpdate,
+  uninstallCliLink,
 } from "../store/updater-state";
-import { updaterAPI, type NativeUpdateStatus } from "../services/platform-api";
+import { cliLinkAPI, updaterAPI, type NativeUpdateStatus } from "../services/platform-api";
 import { assertEqual, describe, it } from "./test-harness";
 
 describe("desktop update re-check policy", () => {
@@ -232,5 +235,66 @@ describe("desktop update notification policy", () => {
     assertEqual(shouldNotifyUpdate(false, "0.3.0", "", false, true), false);
     assertEqual(shouldNotifyUpdate(true, "   ", "", false, true), false);
     assertEqual(shouldNotifyUpdate(true, "0.3.0", "", false, false), false);
+  });
+
+  it("defers self-update and surfaces upgradeCommand when managed by Homebrew/Scoop/WinGet", async () => {
+    const oldStatus = updaterAPI.nativeStatus;
+    const oldInstall = updaterAPI.install;
+    const saved = { ...desktopUpdater };
+    let installCalls = 0;
+    try {
+      updaterAPI.nativeStatus = async () => ({
+        available: false,
+        draining: false,
+        managedBy: "Homebrew Cask",
+        upgradeCommand: "brew upgrade --cask hoxi",
+      });
+      updaterAPI.install = async () => {
+        installCalls++;
+        return { started: true };
+      };
+      await refreshDesktopUpdateStatus();
+      assertEqual(desktopUpdater.nativeAvailable, false);
+      assertEqual(desktopUpdater.managedBy, "Homebrew Cask");
+      assertEqual(desktopUpdater.upgradeCommand, "brew upgrade --cask hoxi");
+      await startDesktopUpdate();
+      assertEqual(installCalls, 0);
+    } finally {
+      updaterAPI.nativeStatus = oldStatus;
+      updaterAPI.install = oldInstall;
+      setDesktopUpdater(saved);
+    }
+  });
+
+  it("delegates CLI symlink status, install, and uninstall through store actions", async () => {
+    const oldGet = cliLinkAPI.getStatus;
+    const oldInstall = cliLinkAPI.install;
+    const oldUninstall = cliLinkAPI.uninstall;
+    const calls: string[] = [];
+    try {
+      cliLinkAPI.getStatus = async () => {
+        calls.push("get");
+        return { installed: false, current: false, inPath: false, suggestedDir: "/usr/local/bin" };
+      };
+      cliLinkAPI.install = async () => {
+        calls.push("install");
+        return { installed: true, current: true, inPath: true, linkPath: "/usr/local/bin/hoxi" };
+      };
+      cliLinkAPI.uninstall = async () => {
+        calls.push("uninstall");
+        return { installed: false, current: false, inPath: false };
+      };
+      const st0 = await fetchCliLinkStatus();
+      assertEqual(st0.installed, false);
+      const st1 = await installCliLink();
+      assertEqual(st1.installed && st1.current, true);
+      const st2 = await uninstallCliLink();
+      assertEqual(st2.installed, false);
+      assertEqual(calls.join(","), "get,install,uninstall");
+    } finally {
+      cliLinkAPI.getStatus = oldGet;
+      cliLinkAPI.install = oldInstall;
+      cliLinkAPI.uninstall = oldUninstall;
+    }
   });
 });

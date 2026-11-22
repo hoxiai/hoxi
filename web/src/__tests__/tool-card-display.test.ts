@@ -12,6 +12,7 @@ import {
   repairWindowsMojibake,
   resolveToolMediaAttachments,
 } from "../components/timeline/tool-card-helpers";
+import { resolveMissingMediaCapability } from "../components/timeline/ToolMissingMediaCard";
 import {
   analyzeShellCommand,
   groupVisibleActivitySteps,
@@ -473,12 +474,18 @@ describe("localized tool labels for CLI runtimes", () => {
   it("formats native host tool names, icons, subtitles, and mediaAttachments", () => {
     setLocale("zh-CN");
     assertEqual(formatToolDisplayName("hoxi_image"), "\u751f\u6210\u56fe\u7247");
+    assertEqual(formatToolDisplayName("hoxi_video"), "\u751f\u6210\u89c6\u9891");
+    assertEqual(formatToolDisplayName("hoxi_speech"), "\u8bed\u97f3\u5408\u6210");
     assertEqual(formatToolDisplayName("hoxi_data"), "\u6570\u636e\u63a5\u53e3");
     setLocale("en-US");
     assertEqual(formatToolDisplayName("hoxi_image"), "Image");
+    assertEqual(formatToolDisplayName("hoxi_video"), "Video");
+    assertEqual(formatToolDisplayName("hoxi_speech"), "Speech");
     assertEqual(formatToolDisplayName("hoxi_data"), "Data API");
     setLocale("zh-CN");
     assertEqual(kiloToolIconName("hoxi_image"), "photo");
+    assertEqual(kiloToolIconName("hoxi_video"), "video");
+    assertEqual(kiloToolIconName("hoxi_speech"), "speech-bubble");
     assertEqual(kiloToolIconName("hoxi_data"), "server");
     assertEqual(kiloToolIconName("hoxi_code_index"), "magnifying-glass-menu");
 
@@ -507,16 +514,36 @@ describe("localized tool labels for CLI runtimes", () => {
     assertEqual(extractDescription(mkPart("hoxi_tools", { action: "run", provider: "apify", endpoint: "/v2/acts" })), "run apify /v2/acts");
     assertEqual(extractDescription(mkPart("hoxi_data", { action: "http_request", method: "post", profile: "shopify", endpoint: "/orders" })), "POST shopify /orders");
     assertEqual(extractDescription(mkPart("hoxi_image", { prompt: "Minimal geometric app icon" })), "Minimal geometric app icon");
+    assertEqual(extractDescription(mkPart("hoxi_video", { prompt: "Ocean cliff aerial shot", outputPath: "public/intro.mp4" })), "public/intro.mp4");
+    assertEqual(extractDescription(mkPart("hoxi_speech", { text: "Welcome to Hoxi studio" })), "Welcome to Hoxi studio");
 
     const imgPart = mkPart("hoxi_image", { prompt: "icon" }, {
       mediaAttachments: [
         { url: "/api/hoxi/attachments/att_1", mime: "image/png", filename: "icon.png" },
         { url: "/api/hoxi/attachments/att_1", mime: "image/png", filename: "dup.png" },
+        { url: "/api/hoxi/attachments/att_v1", mime: "video/mp4", filename: "intro.mp4" },
+        { url: "/api/hoxi/attachments/att_a1", mime: "audio/mpeg", filename: "voice.mp3" },
       ],
     });
     const atts = resolveToolMediaAttachments(imgPart.state);
-    assertEqual(atts.length, 1);
+    assertEqual(atts.length, 3);
     assertEqual(atts[0].url, "/api/hoxi/attachments/att_1");
+    assertEqual(atts[1].mime, "video/mp4");
+    assertEqual(atts[2].mime, "audio/mpeg");
+
+    // Non-modal missing media capability detection: positive on unconfigured, null on rate-limit
+    const mkErrPart = (tool: string, error: string, metadata?: Record<string, unknown>): ToolPart => ({
+      id: "prt_err_1",
+      sessionID: "ses_1",
+      messageID: "msg_1",
+      type: "tool",
+      tool,
+      callID: "call_err_1",
+      state: { status: "error", input: {}, error, metadata: metadata ?? {}, time: { start: 1, end: 2 } },
+    });
+    assertEqual(resolveMissingMediaCapability(mkErrPart("hoxi_video", "unconfigured", { missingCapability: "video" })), "video");
+    assertEqual(resolveMissingMediaCapability(mkErrPart("hoxi_speech", "neither the active model nor any configured local provider supports speech synthesis")), "speech");
+    assertEqual(resolveMissingMediaCapability(mkErrPart("hoxi_image", "HTTP 429 rate limit exceeded")), null);
 
     const errShotState: ToolState = {
       status: "error",
@@ -528,6 +555,47 @@ describe("localized tool labels for CLI runtimes", () => {
       time: { start: 1, end: 2 },
     };
     assertEqual(resolveToolMediaAttachments(errShotState).length, 1);
+
+    // Promoted media outputs: hoxi_image / hoxi_video / hoxi_speech promote outside activity-group,
+    // hoxi_browser screenshots stay inside, and URLs already embedded in Markdown text are deduplicated.
+    const browserShotPart = mkPart("hoxi_browser", { action: "screenshot" }, {
+      mediaAttachments: [{ url: "/api/hoxi/attachments/att_shot/content", mime: "image/jpeg", filename: "shot.jpg" }],
+    });
+    const promotedItems = groupAssistantParts([
+      browserShotPart,
+      imgPart,
+      {
+        id: "prt_txt_1",
+        sessionID: "ses_1",
+        messageID: "msg_1",
+        type: "text",
+        text: "Here is your icon:\n\n![icon](/api/hoxi/attachments/att_1)",
+      },
+    ]);
+    // Activity group + promoted video & audio (image att_1 deduplicated because already in Markdown text; browser screenshot stays in group) + final text
+    assertEqual(promotedItems.length, 4);
+    assertEqual(promotedItems[0].kind, "activity-group");
+    assertEqual(promotedItems[1].kind, "single");
+    assertEqual(promotedItems[2].kind, "single");
+    assertEqual(promotedItems[3].kind, "single");
+    if (promotedItems[1].kind === "single" && promotedItems[1].part.type === "file") {
+      assertEqual(promotedItems[1].part.url, "/api/hoxi/attachments/att_v1");
+    }
+    if (promotedItems[2].kind === "single" && promotedItems[2].part.type === "file") {
+      assertEqual(promotedItems[2].part.url, "/api/hoxi/attachments/att_a1");
+    }
+
+    // Without Markdown duplication, hoxi_image promotes its image directly after the activity group
+    const imgOnlyTool = mkPart("hoxi_image", { prompt: "logo" }, {
+      mediaAttachments: [{ url: "/api/hoxi/attachments/att_logo/content", mime: "image/png", filename: "logo.png" }],
+    });
+    const imgOnlyGrouped = groupAssistantParts([imgOnlyTool]);
+    assertEqual(imgOnlyGrouped.length, 2);
+    assertEqual(imgOnlyGrouped[0].kind, "activity-group");
+    assertEqual(imgOnlyGrouped[1].kind, "single");
+    if (imgOnlyGrouped[1].kind === "single" && imgOnlyGrouped[1].part.type === "file") {
+      assertEqual(imgOnlyGrouped[1].part.url, "/api/hoxi/attachments/att_logo/content");
+    }
   });
 
   it("resolves inline diffs and target files for native apply_patch and multiedit", () => {

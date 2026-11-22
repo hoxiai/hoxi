@@ -69,18 +69,35 @@ func requiresToolReasoningField(target llm.StreamTarget, msgs []Message) bool {
 		strings.HasSuffix(lowerMod, ":thinking")
 }
 
+func assistantMediaSummaryText(b ContentBlock) string {
+	label := strings.TrimSpace(b.Filename)
+	if label == "" {
+		label = strings.TrimSpace(b.MimeType)
+	}
+	if label == "" {
+		label = "attachment"
+	}
+	return "[Generated media: " + label + "]"
+}
+
 func (d *openaiDriver) buildChatCompletionsRequest(req ModelRequest) (llm.StreamHTTPRequest, error) {
 	allowReasoningContent := !isStrictOpenAIChatHost(req.Target)
-	forceToolReasoning := allowReasoningContent && requiresToolReasoningField(req.Target, req.Messages)
+	activeTurnStart := lastPlainUserMessageIndex(req.Messages)
+	activeMsgs := req.Messages
+	if activeTurnStart >= 0 && activeTurnStart < len(req.Messages) {
+		activeMsgs = req.Messages[activeTurnStart:]
+	}
+	forceToolReasoning := allowReasoningContent && requiresToolReasoningField(req.Target, activeMsgs)
 
 	msgs := make([]map[string]any, 0, len(req.Messages)+1)
-	if strings.TrimSpace(req.System) != "" {
-		msgs = append(msgs, map[string]any{"role": "system", "content": req.System})
+	if fullSystem := appendSystemPromptSuffix(req.System, req.SystemSuffix); strings.TrimSpace(fullSystem) != "" {
+		msgs = append(msgs, map[string]any{"role": "system", "content": fullSystem})
 	}
-	for _, m := range req.Messages {
+	for msgIdx, m := range req.Messages {
 		if m.Role == RoleSystem {
 			continue
 		}
+		inActiveTurn := activeTurnStart < 0 || msgIdx >= activeTurnStart
 		var thinkingParts []string
 		var textParts []string
 		var contentItems []map[string]any
@@ -90,7 +107,7 @@ func (d *openaiDriver) buildChatCompletionsRequest(req ModelRequest) (llm.Stream
 		for _, b := range m.Content {
 			switch b.Type {
 			case ContentThinking:
-				if b.Text != "" {
+				if inActiveTurn && b.Text != "" {
 					thinkingParts = append(thinkingParts, b.Text)
 				}
 			case ContentText:
@@ -100,6 +117,12 @@ func (d *openaiDriver) buildChatCompletionsRequest(req ModelRequest) (llm.Stream
 				}
 			case ContentMedia:
 				if b.Data == "" || b.MimeType == "" {
+					continue
+				}
+				if m.Role != RoleUser {
+					summary := assistantMediaSummaryText(b)
+					textParts = append(textParts, summary)
+					contentItems = append(contentItems, map[string]any{"type": "text", "text": summary})
 					continue
 				}
 				hasMedia = true
@@ -151,7 +174,7 @@ func (d *openaiDriver) buildChatCompletionsRequest(req ModelRequest) (llm.Stream
 			} else {
 				msg["content"] = ""
 			}
-			if m.Role == RoleAssistant && allowReasoningContent {
+			if m.Role == RoleAssistant && allowReasoningContent && inActiveTurn {
 				if len(thinkingParts) > 0 {
 					msg["reasoning_content"] = strings.Join(thinkingParts, "\n")
 				} else if len(toolCalls) > 0 && forceToolReasoning {
@@ -171,6 +194,12 @@ func (d *openaiDriver) buildChatCompletionsRequest(req ModelRequest) (llm.Stream
 		"messages":       msgs,
 		"stream":         true,
 		"stream_options": map[string]any{"include_usage": true},
+	}
+	cacheKey := effectiveModelCacheKey(req)
+	if !allowReasoningContent {
+		if cacheKey != "" {
+			payload["prompt_cache_key"] = cacheKey
+		}
 	}
 	if req.MaxTokens > 0 {
 		payload["max_completion_tokens"] = req.MaxTokens
@@ -194,20 +223,27 @@ func (d *openaiDriver) buildChatCompletionsRequest(req ModelRequest) (llm.Stream
 	if err != nil {
 		return llm.StreamHTTPRequest{}, err
 	}
-	return llm.StreamHTTPRequest{Target: req.Target, Body: raw}, nil
+	return llm.StreamHTTPRequest{Target: req.Target, Body: raw, SessionID: cacheKey}, nil
+}
+
+func isCodexBackendTarget(target llm.StreamTarget) bool {
+	return llm.IsCodexBackendURL(target.BaseURL)
 }
 
 func (d *openaiDriver) buildResponsesRequest(req ModelRequest) (llm.StreamHTTPRequest, error) {
+	codexBackend := isCodexBackendTarget(req.Target)
 	inputItems := make([]map[string]any, 0, len(req.Messages))
 	for _, m := range req.Messages {
 		if m.Role == RoleSystem {
 			continue
 		}
-		hasMedia := false
-		for _, b := range m.Content {
-			if b.Type == ContentMedia && b.Data != "" && b.MimeType != "" {
-				hasMedia = true
-				break
+		hasUserMedia := false
+		if m.Role == RoleUser {
+			for _, b := range m.Content {
+				if b.Type == ContentMedia && b.Data != "" && b.MimeType != "" {
+					hasUserMedia = true
+					break
+				}
 			}
 		}
 		var userMulti []map[string]any
@@ -226,14 +262,25 @@ func (d *openaiDriver) buildResponsesRequest(req ModelRequest) (llm.StreamHTTPRe
 				}
 			case ContentText:
 				if strings.TrimSpace(b.Text) != "" {
-					if hasMedia && m.Role == RoleUser {
+					if hasUserMedia {
 						userMulti = append(userMulti, map[string]any{"type": "input_text", "text": b.Text})
+					} else if codexBackend {
+						inputItems = append(inputItems, llm.BuildCodexTextMessage(string(m.Role), b.Text))
 					} else {
 						inputItems = append(inputItems, map[string]any{"role": string(m.Role), "content": b.Text})
 					}
 				}
 			case ContentMedia:
 				if b.Data == "" || b.MimeType == "" {
+					continue
+				}
+				if m.Role != RoleUser {
+					summary := assistantMediaSummaryText(b)
+					if codexBackend {
+						inputItems = append(inputItems, llm.BuildCodexTextMessage(string(m.Role), summary))
+					} else {
+						inputItems = append(inputItems, map[string]any{"role": string(m.Role), "content": summary})
+					}
 					continue
 				}
 				dataURI := "data:" + b.MimeType + ";base64," + b.Data
@@ -267,20 +314,35 @@ func (d *openaiDriver) buildResponsesRequest(req ModelRequest) (llm.StreamHTTPRe
 			}
 		}
 		if len(userMulti) > 0 {
-			inputItems = append(inputItems, map[string]any{"role": "user", "content": userMulti})
+			msgItem := map[string]any{"role": "user", "content": userMulti}
+			if codexBackend {
+				msgItem["type"] = "message"
+			}
+			inputItems = append(inputItems, msgItem)
 		}
 	}
 	payload := map[string]any{
 		"model": req.Target.ModelID, "input": inputItems, "stream": true, "store": false,
 	}
-	if strings.TrimSpace(req.System) != "" {
-		payload["instructions"] = req.System
+	cacheKey := effectiveModelCacheKey(req)
+	if cacheKey != "" {
+		payload["prompt_cache_key"] = cacheKey
 	}
-	if req.MaxTokens > 0 {
+	if fullSystem := appendSystemPromptSuffix(req.System, req.SystemSuffix); strings.TrimSpace(fullSystem) != "" {
+		payload["instructions"] = fullSystem
+	}
+	if req.MaxTokens > 0 && !codexBackend {
 		payload["max_output_tokens"] = req.MaxTokens
 	}
 	if eff := strings.TrimSpace(req.Effort); eff != "" && eff != "none" {
-		payload["reasoning"] = map[string]string{"effort": eff}
+		rMap := map[string]string{"effort": eff}
+		if codexBackend {
+			rMap["summary"] = "auto"
+		}
+		payload["reasoning"] = rMap
+		payload["include"] = []string{"reasoning.encrypted_content"}
+	} else if codexBackend {
+		payload["include"] = []string{"reasoning.encrypted_content"}
 	}
 	if len(req.Tools) > 0 {
 		tools := make([]map[string]any, 0, len(req.Tools))
@@ -291,11 +353,14 @@ func (d *openaiDriver) buildResponsesRequest(req ModelRequest) (llm.StreamHTTPRe
 		}
 		payload["tools"] = tools
 	}
+	if codexBackend {
+		llm.NormalizeCodexResponsesMap(payload)
+	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return llm.StreamHTTPRequest{}, err
 	}
-	return llm.StreamHTTPRequest{Target: req.Target, Body: raw}, nil
+	return llm.StreamHTTPRequest{Target: req.Target, Body: raw, SessionID: cacheKey}, nil
 }
 
 func (d *openaiDriver) ParseSSE(ctx context.Context, body io.Reader, emit func(StreamEvent)) error {
@@ -412,7 +477,11 @@ func parseOpenAIChatSSE(ctx context.Context, body io.Reader, emit func(StreamEve
 				}
 				if fn, ok := tc["function"].(map[string]any); ok {
 					if name, _ := fn["name"].(string); name != "" {
-						acc.name += name
+						if acc.name == "" {
+							acc.name = name
+						} else if name != acc.name {
+							acc.name += name
+						}
 					}
 					if args, _ := fn["arguments"].(string); args != "" {
 						acc.args.WriteString(args)
@@ -441,6 +510,7 @@ func parseOpenAIChatSSE(ctx context.Context, body io.Reader, emit func(StreamEve
 			c := calls[idx]
 			if strings.TrimSpace(c.id) == "" || strings.TrimSpace(c.name) == "" {
 				if truncatedByLength {
+					emit(StreamEvent{Kind: EventTruncatedTool})
 					continue
 				}
 				return fmt.Errorf("incomplete tool call identity: %w", ErrIncompleteStream)
@@ -450,6 +520,7 @@ func parseOpenAIChatSSE(ctx context.Context, body io.Reader, emit func(StreamEve
 				return vErr
 			}
 			if !keep {
+				emit(StreamEvent{Kind: EventTruncatedTool})
 				continue
 			}
 			emit(StreamEvent{
@@ -479,6 +550,31 @@ func parseOpenAIResponsesSSE(ctx context.Context, body io.Reader, emit func(Stre
 	var terminal bool
 	var incomplete bool
 	finishReason := "stop"
+	reasoningBlockIdx := 0
+	reasoningActive := false
+	hasReasoningDelta := false
+	needReasoningBreak := false
+	lastSummaryIdx := -1
+	ensureReasoningBlock := func() {
+		if reasoningActive {
+			return
+		}
+		reasoningBlockIdx++
+		reasoningActive = true
+		hasReasoningDelta = false
+		needReasoningBreak = false
+		lastSummaryIdx = -1
+	}
+	sealReasoningBlock := func() {
+		if !reasoningActive {
+			return
+		}
+		emit(StreamEvent{Kind: EventThinkingEnd, BlockIndex: reasoningBlockIdx})
+		reasoningActive = false
+		hasReasoningDelta = false
+		needReasoningBreak = false
+		lastSummaryIdx = -1
+	}
 
 	err := readSSEFrames(ctx, body, func(frame sseRawFrame) error {
 		data := strings.TrimSpace(frame.Data)
@@ -498,19 +594,50 @@ func parseOpenAIResponsesSSE(ctx context.Context, body io.Reader, emit func(Stre
 			return fmt.Errorf("openai responses stream error: %s", data)
 		case "response.output_text.delta":
 			if d, _ := raw["delta"].(string); d != "" {
+				sealReasoningBlock()
 				emit(StreamEvent{Kind: EventTextDelta, Delta: d})
+			}
+		case "response.reasoning_summary_part.added":
+			ensureReasoningBlock()
+			if hasReasoningDelta {
+				needReasoningBreak = true
+			}
+			if _, ok := raw["summary_index"]; ok {
+				lastSummaryIdx = intFromAny(raw["summary_index"])
 			}
 		case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
 			if d, _ := raw["delta"].(string); d != "" {
-				emit(StreamEvent{Kind: EventThinkingDelta, Delta: d})
+				ensureReasoningBlock()
+				if eventType == "response.reasoning_summary_text.delta" {
+					if _, ok := raw["summary_index"]; ok {
+						idx := intFromAny(raw["summary_index"])
+						if hasReasoningDelta && lastSummaryIdx >= 0 && idx != lastSummaryIdx {
+							needReasoningBreak = true
+						}
+						lastSummaryIdx = idx
+					}
+				}
+				if needReasoningBreak {
+					emit(StreamEvent{Kind: EventThinkingDelta, BlockIndex: reasoningBlockIdx, Delta: "\n\n"})
+					needReasoningBreak = false
+				}
+				hasReasoningDelta = true
+				emit(StreamEvent{Kind: EventThinkingDelta, BlockIndex: reasoningBlockIdx, Delta: d})
 			}
 		case "response.output_item.added":
-			if item, ok := raw["item"].(map[string]any); ok && item["type"] == "function_call" {
-				itemID, _ := item["id"].(string)
-				callID, _ := item["call_id"].(string)
-				name, _ := item["name"].(string)
-				if itemID != "" {
-					calls[itemID] = &respCall{callID: callID, name: name}
+			if item, ok := raw["item"].(map[string]any); ok {
+				switch item["type"] {
+				case "reasoning":
+					sealReasoningBlock()
+					ensureReasoningBlock()
+				case "function_call":
+					sealReasoningBlock()
+					itemID, _ := item["id"].(string)
+					callID, _ := item["call_id"].(string)
+					name, _ := item["name"].(string)
+					if itemID != "" {
+						calls[itemID] = &respCall{callID: callID, name: name}
+					}
 				}
 			}
 		case "response.function_call_arguments.delta":
@@ -528,8 +655,10 @@ func parseOpenAIResponsesSSE(ctx context.Context, body io.Reader, emit func(Stre
 			switch item["type"] {
 			case "reasoning":
 				if enc, _ := item["encrypted_content"].(string); enc != "" {
-					emit(StreamEvent{Kind: EventSignatureDelta, Delta: enc})
+					ensureReasoningBlock()
+					emit(StreamEvent{Kind: EventSignatureDelta, BlockIndex: reasoningBlockIdx, Delta: enc})
 				}
+				sealReasoningBlock()
 			case "function_call":
 				itemID, _ := item["id"].(string)
 				callID, _ := item["call_id"].(string)
@@ -550,6 +679,7 @@ func parseOpenAIResponsesSSE(ctx context.Context, body io.Reader, emit func(Stre
 				}
 				if callID == "" || name == "" {
 					if itemIncomplete {
+						emit(StreamEvent{Kind: EventTruncatedTool})
 						return nil
 					}
 					return fmt.Errorf("incomplete responses tool call identity: %w", ErrIncompleteStream)
@@ -558,7 +688,11 @@ func parseOpenAIResponsesSSE(ctx context.Context, body io.Reader, emit func(Stre
 				if vErr != nil {
 					return vErr
 				}
-				if keep && !emittedCalls[callID] {
+				if !keep {
+					emit(StreamEvent{Kind: EventTruncatedTool})
+					return nil
+				}
+				if !emittedCalls[callID] {
 					emittedCalls[callID] = true
 					emit(StreamEvent{
 						Kind:     EventToolCallReady,
@@ -608,8 +742,11 @@ func parseOpenAIResponsesSSE(ctx context.Context, body io.Reader, emit func(Stre
 		return ErrIncompleteStream
 	}
 	// Any buffered function_call that never reached output_item.done without length truncation is corrupt.
-	if len(calls) > 0 && !incomplete {
-		return fmt.Errorf("unfinished responses tool call stream: %w", ErrIncompleteStream)
+	if len(calls) > 0 {
+		if !incomplete {
+			return fmt.Errorf("unfinished responses tool call stream: %w", ErrIncompleteStream)
+		}
+		emit(StreamEvent{Kind: EventTruncatedTool})
 	}
 	emit(StreamEvent{Kind: EventFinish, Finish: finishReason})
 	return nil

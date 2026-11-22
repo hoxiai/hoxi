@@ -35,7 +35,9 @@ import {
   type SubagentEntry,
   type TaskPermissionMode,
 } from "../../store/workspace";
-import { t } from "../../i18n";
+import { locale, t } from "../../i18n";
+import { resolveSurfacePrimaryModes, surfaceExtension } from "../layout/surface-extension";
+import { HelpTip } from "../settings/setting-controls";
 import { getConnectedProviderModelGroups } from "./model-selector-utils";
 import ModelRolePicker from "./ModelRolePicker";
 
@@ -80,7 +82,7 @@ export default function SubagentSettingsTab() {
   const connectedGroups = createMemo(() => getConnectedProviderModelGroups());
   const subagents = createMemo(() => readSubagents(workspace.globalConfig));
   const subagentIDs = createMemo(() => subagents().map((entry) => entry.id));
-  const primaryAgents = createMemo(() => workspace.agents.filter((agent) => agent.name));
+  const primaryAgents = createMemo(() => resolveSurfacePrimaryModes(workspace.agents));
   const globalPolicy = createMemo(() => readGlobalTaskPolicy(workspace.globalConfig));
   const legacyModel = createMemo(() => legacySubagentModel(workspace.globalConfig));
 
@@ -168,7 +170,13 @@ export default function SubagentSettingsTab() {
       .replace(/[^a-z0-9_-]/g, "-");
     const prompt = newPrompt().trim();
     if (!id || !prompt || creating()) return;
-    if (isReservedAgentID(id) || subagentIDs().includes(id)) return;
+    if (
+      isReservedAgentID(id) ||
+      subagentIDs().includes(id) ||
+      primaryAgents().some((a) => a.name.toLowerCase() === id)
+    ) {
+      return;
+    }
     setCreating(true);
     try {
       await createSubagent({
@@ -246,26 +254,24 @@ export default function SubagentSettingsTab() {
           <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-surface)] text-[var(--accent-primary)]">
             <Users size={16} />
           </div>
-          <div>
-            <h3 class="text-[13px] font-semibold text-[var(--text-primary)]">
+          <div class="flex items-center gap-2 min-w-0">
+            <h3 class="text-[13px] font-semibold text-[var(--text-primary)] truncate">
               {t("models.subagentsTitle")}
             </h3>
-            <p class="text-[12px] text-[var(--text-secondary)]">
-              {t("models.subagentsSubtitle")}
-            </p>
+            <HelpTip
+              text={`${t("models.subagentsSubtitle")}\n\n• ${t("models.subagentsWorktreeNote")}\n• ${t("models.subagentsIsolatedNote")}\n• ${t("models.subagentsReadOnlyNote")}`}
+            />
           </div>
         </div>
 
         <Show when={legacyModel() && !legacyDismissed()}>
           <div class="rounded-2xl border border-[var(--warning-border,var(--border-strong))] bg-[var(--bg-inset)] px-4 py-3">
-            <div class="flex items-start justify-between gap-3">
-              <div class="min-w-0 space-y-1">
-                <div class="text-[13px] font-semibold text-[var(--text-primary)]">
-                  {t("models.subagentsLegacyTitle")}
+            <div class="flex items-center justify-between gap-3">
+              <div class="min-w-0 space-y-0.5">
+                <div class="flex items-center gap-2 text-[13px] font-semibold text-[var(--text-primary)]">
+                  <span>{t("models.subagentsLegacyTitle")}</span>
+                  <HelpTip text={t("models.subagentsLegacyDesc")} />
                 </div>
-                <p class="text-[12px] text-[var(--text-muted)]">
-                  {t("models.subagentsLegacyDesc")}
-                </p>
                 <p class="font-mono text-[11px] text-[var(--text-faint)]">{legacyModel()}</p>
               </div>
               <div class="flex shrink-0 items-center gap-1.5">
@@ -291,13 +297,11 @@ export default function SubagentSettingsTab() {
 
         <div class="space-y-3">
           <div class="flex items-center justify-between gap-3">
-            <div>
-              <h4 class="text-[13px] font-semibold text-[var(--text-primary)]">
+            <div class="flex items-center gap-2 min-w-0">
+              <h4 class="text-[13px] font-semibold text-[var(--text-primary)] truncate">
                 {t("models.subagentsDelegationTitle")}
               </h4>
-              <p class="text-[12px] text-[var(--text-muted)]">
-                {t("models.subagentsDelegationDesc")}
-              </p>
+              <HelpTip text={t("models.subagentsDelegationDesc")} />
             </div>
             {saveIcon("global")}
           </div>
@@ -328,13 +332,11 @@ export default function SubagentSettingsTab() {
           </div>
 
           <div class="space-y-2">
-            <div>
+            <div class="flex items-center gap-2 px-0.5">
               <h5 class="text-[12px] font-semibold text-[var(--text-primary)]">
                 {t("models.subagentsPerAgentTitle")}
               </h5>
-              <p class="text-[11px] text-[var(--text-muted)]">
-                {t("models.subagentsPerAgentDesc")}
-              </p>
+              <HelpTip text={t("models.subagentsPerAgentDesc")} />
             </div>
 
             <For each={primaryAgents()}>
@@ -355,7 +357,9 @@ export default function SubagentSettingsTab() {
                       <div class="flex items-center gap-2 min-w-0">
                         <Bot size={14} class="shrink-0 text-[var(--accent-primary)]" />
                         <span class="truncate text-[12px] font-semibold text-[var(--text-primary)]">
-                          {agent.name}
+                          {(surfaceExtension.enabled &&
+                            surfaceExtension.formatModeLabel?.(agent.name, locale())) ||
+                            agent.name}
                         </span>
                         <Show when={allowed()}>
                           <span class="shrink-0 rounded-full bg-[var(--bg-inset)] px-1.5 py-0.5 text-[10px] text-[var(--text-muted)]">
@@ -391,10 +395,8 @@ export default function SubagentSettingsTab() {
 
                     <Show when={isAllowlist()}>
                       <div class="space-y-1.5 border-t border-[var(--border-subtle)] pt-2">
-                        <div class="text-[11px] text-[var(--text-muted)]">
-                          {t("models.subagentsAllowlistHint")}
-                        </div>
-                        <div class="flex flex-wrap gap-1.5">
+                        <div class="flex items-center flex-wrap gap-1.5">
+                          <HelpTip text={t("models.subagentsAllowlistHint")} />
                           <For each={subagents()}>
                             {(entry) => {
                               const checked = () => allowItems().includes(entry.id);
@@ -428,13 +430,11 @@ export default function SubagentSettingsTab() {
 
         <div class="border-t border-[var(--border-subtle)] pt-5 space-y-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h4 class="text-[13px] font-semibold text-[var(--text-primary)]">
+            <div class="flex items-center gap-2 min-w-0">
+              <h4 class="text-[13px] font-semibold text-[var(--text-primary)] truncate">
                 {t("models.subagentsRosterTitle")}
               </h4>
-              <p class="text-[12px] text-[var(--text-muted)]">
-                {t("models.subagentsRosterDesc")}
-              </p>
+              <HelpTip text={t("models.subagentsRosterDesc")} />
             </div>
             <Show when={recommendEconomySubagentModel()}>
               {(recModel) => (
@@ -492,6 +492,9 @@ export default function SubagentSettingsTab() {
                             {t("models.subagentsDisabledLabel")}
                           </span>
                         </Show>
+                        <Show when={entry.description}>
+                          <HelpTip text={entry.description} />
+                        </Show>
                       </div>
                       <div class="flex shrink-0 items-center gap-1.5">
                         {saveIcon(entry.id)}
@@ -516,10 +519,6 @@ export default function SubagentSettingsTab() {
                       </div>
                     </div>
 
-                    <Show when={entry.description}>
-                      <p class="text-[12px] text-[var(--text-muted)]">{entry.description}</p>
-                    </Show>
-
                     <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div class="space-y-1">
                         <span class="text-[11px] font-medium uppercase tracking-wider text-[var(--text-faint)]">
@@ -536,9 +535,12 @@ export default function SubagentSettingsTab() {
                       </div>
 
                       <div class="space-y-1">
-                        <span class="text-[11px] font-medium uppercase tracking-wider text-[var(--text-faint)]">
-                          {t("models.subagentsStepsLabel")}
-                        </span>
+                        <div class="flex items-center gap-1.5">
+                          <span class="text-[11px] font-medium uppercase tracking-wider text-[var(--text-faint)]">
+                            {t("models.subagentsStepsLabel")}
+                          </span>
+                          <HelpTip text={t("models.subagentsStepsHint")} size={12} />
+                        </div>
                         <div class="flex items-center gap-2">
                           <input
                             type="number"
@@ -551,11 +553,8 @@ export default function SubagentSettingsTab() {
                               const steps = Number.isFinite(raw) && raw > 0 ? Math.min(200, Math.floor(raw)) : 0;
                               void saveEntry(entry.id, { steps: steps || null });
                             }}
-                            class="w-28 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                            class="w-32 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
                           />
-                          <span class="text-[11px] text-[var(--text-muted)]">
-                            {t("models.subagentsStepsHint")}
-                          </span>
                         </div>
                       </div>
                     </div>
@@ -571,7 +570,7 @@ export default function SubagentSettingsTab() {
                           class="rounded accent-[var(--accent-primary)] cursor-pointer"
                         />
                         <span>{t("models.subagentsReadOnlyLabel")}</span>
-                        <span class="text-[var(--text-faint)]">· {t("models.subagentsReadOnlyHint")}</span>
+                        <HelpTip text={t("models.subagentsReadOnlyHint")} size={12} />
                       </label>
 
                       <label class="inline-flex items-center gap-1.5 text-[11px] text-[var(--text-secondary)] cursor-pointer select-none">
@@ -664,13 +663,11 @@ export default function SubagentSettingsTab() {
         </div>
 
         <div class="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 p-5 space-y-4">
-          <div>
+          <div class="flex items-center gap-2">
             <h4 class="text-[13px] font-semibold text-[var(--text-primary)]">
               {t("models.subagentsAddTitle")}
             </h4>
-            <p class="text-[12px] text-[var(--text-muted)]">
-              {t("models.subagentsAddSubtitle")}
-            </p>
+            <HelpTip text={t("models.subagentsAddSubtitle")} />
           </div>
 
           <form onSubmit={(event) => void onAdd(event)} class="space-y-3">
@@ -753,12 +750,6 @@ export default function SubagentSettingsTab() {
               </button>
             </div>
           </form>
-        </div>
-
-        <div class="space-y-1.5 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-4 py-3 text-[11px] text-[var(--text-muted)]">
-          <div>· {t("models.subagentsWorktreeNote")}</div>
-          <div>· {t("models.subagentsIsolatedNote")}</div>
-          <div>· {t("models.subagentsReadOnlyNote")}</div>
         </div>
       </div>
     </div>

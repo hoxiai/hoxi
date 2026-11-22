@@ -442,8 +442,14 @@ func runStatusCommand(ctx context.Context, cwd, defaultBridgeAddr string, stdout
 func runInstallCLICommand(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("hoxi install-cli", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	var binDir string
+	var (
+		binDir    string
+		uninstall bool
+		status    bool
+	)
 	fs.StringVar(&binDir, "bin-dir", "", "target bin directory (defaults to /usr/local/bin or ~/.local/bin)")
+	fs.BoolVar(&uninstall, "uninstall", false, "remove Hoxi-managed 'hoxi' CLI symlink")
+	fs.BoolVar(&status, "status", false, "inspect current 'hoxi' CLI installation status")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -452,75 +458,52 @@ func runInstallCLICommand(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error resolving current executable: %v\n", err)
 		return 1
 	}
+	if status {
+		st := hoxipaths.InspectCLILink(exePath, os.Getenv("PATH"))
+		if st.Installed && st.Current {
+			fmt.Fprintf(stdout, "%s✓ hoxi CLI is installed at %s -> %s%s\n", ansiGreen, st.LinkPath, st.TargetPath, ansiReset)
+			if st.PathHint != "" {
+				fmt.Fprintf(stdout, "  Add to PATH: %s\n", st.PathHint)
+			}
+			return 0
+		}
+		if st.Installed && !st.Current {
+			fmt.Fprintf(stdout, "hoxi CLI at %s points to outdated path %s (current: %s)\n", st.LinkPath, st.TargetPath, st.Executable)
+			return 1
+		}
+		fmt.Fprintln(stdout, "hoxi CLI is not installed in PATH.")
+		return 1
+	}
+	if uninstall {
+		removed, err := hoxipaths.UninstallCLISymlink(exePath, binDir)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error removing hoxi CLI symlink: %v\n", err)
+			return 1
+		}
+		if len(removed) == 0 {
+			fmt.Fprintln(stdout, "No Hoxi-managed CLI symlink found to remove.")
+			return 0
+		}
+		for _, p := range removed {
+			fmt.Fprintf(stdout, "%s✓ Removed hoxi CLI symlink %s%s\n", ansiGreen, p, ansiReset)
+		}
+		return 0
+	}
 	linkPath, err := InstallSymlink(exePath, binDir)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error installing hoxi CLI symlink: %v\n", err)
 		return 1
 	}
 	fmt.Fprintf(stdout, "%s✓ Installed hoxi CLI at %s -> %s%s\n", ansiGreen, linkPath, exePath, ansiReset)
+	if st := hoxipaths.InspectCLILink(exePath, os.Getenv("PATH")); st.PathHint != "" {
+		fmt.Fprintf(stdout, "  Note: add %s to your shell profile so 'hoxi' is on PATH:\n    %s\n", filepath.Dir(linkPath), st.PathHint)
+	}
 	return 0
 }
 
 // InstallSymlink creates or updates a `hoxi` symlink pointing to exePath.
 func InstallSymlink(exePath, preferredBinDir string) (string, error) {
-	if absExe, err := filepath.Abs(exePath); err == nil && absExe != "" {
-		exePath = absExe
-	}
-	if resolved, err := filepath.EvalSymlinks(exePath); err == nil && resolved != "" {
-		exePath = resolved
-	}
-	exeInfo, err := os.Stat(exePath)
-	if err != nil || exeInfo.IsDir() {
-		return "", fmt.Errorf("executable path %s is not a valid file", exePath)
-	}
-	candidates := []string{}
-	if strings.TrimSpace(preferredBinDir) != "" {
-		candidates = append(candidates, strings.TrimSpace(preferredBinDir))
-	} else {
-		candidates = append(candidates, "/usr/local/bin")
-		if home, err := os.UserHomeDir(); err == nil && home != "" {
-			candidates = append(candidates, filepath.Join(home, ".local", "bin"))
-		}
-	}
-
-	var lastErr error
-	for _, dir := range candidates {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			lastErr = err
-			continue
-		}
-		dest := filepath.Join(dir, "hoxi")
-		if resolvedDir, err := filepath.EvalSymlinks(dir); err == nil && resolvedDir != "" {
-			if filepath.Clean(filepath.Join(resolvedDir, "hoxi")) == filepath.Clean(exePath) {
-				return dest, nil
-			}
-		}
-		if lstat, err := os.Lstat(dest); err == nil {
-			if os.SameFile(exeInfo, lstat) {
-				return dest, nil
-			}
-			if lstat.Mode()&os.ModeSymlink == 0 {
-				lastErr = fmt.Errorf("refusing to overwrite existing non-symlink file %s", dest)
-				continue
-			}
-			if cur, err := os.Readlink(dest); err == nil && cur == exePath {
-				return dest, nil
-			}
-		}
-		tmp := filepath.Join(dir, ".hoxi-link.tmp")
-		_ = os.Remove(tmp)
-		if err := os.Symlink(exePath, tmp); err != nil {
-			lastErr = err
-			continue
-		}
-		if err := os.Rename(tmp, dest); err != nil {
-			_ = os.Remove(tmp)
-			lastErr = err
-			continue
-		}
-		return dest, nil
-	}
-	return "", lastErr
+	return hoxipaths.InstallCLISymlink(exePath, preferredBinDir)
 }
 
 func hasOpenCodeBinary() bool {
@@ -619,6 +602,12 @@ func runCodeIndexCommand(args []string, cwd string, stdout, stderr io.Writer) in
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	limitExplicit := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "limit" {
+			limitExplicit = true
+		}
+	})
 	pos := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	svc := codeindex.NewService("")
 	writeOut := func(v any) int {
@@ -631,6 +620,23 @@ func runCodeIndexCommand(args []string, cwd string, stdout, stderr io.Writer) in
 		return 0
 	}
 	switch action {
+	case "map":
+		if query == "" {
+			query = firstNonEmpty(pos, symbol)
+		}
+		if refresh {
+			_, _ = svc.Refresh(dir)
+		}
+		mapLimit := 0
+		if limitExplicit {
+			mapLimit = limit
+		}
+		res, err := svc.Map(dir, relPath, query, mapLimit)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return 1
+		}
+		return writeOut(res)
 	case "search":
 		if query == "" {
 			query = firstNonEmpty(pos, symbol)
@@ -713,7 +719,7 @@ func runCodeIndexCommand(args []string, cwd string, stdout, stderr io.Writer) in
 		}
 		return writeOut(res)
 	default:
-		fmt.Fprintf(stderr, "Unknown code-index action %q (supported: context, search, inspect, callers, callees, impact, refresh, status)\n", action)
+		fmt.Fprintf(stderr, "Unknown code-index action %q (supported: map, context, search, inspect, callers, callees, impact, refresh, status)\n", action)
 		return 2
 	}
 }

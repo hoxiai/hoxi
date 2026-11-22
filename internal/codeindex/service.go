@@ -22,6 +22,7 @@ import (
 type indexFlight struct {
 	done         chan struct{}
 	forceRebuild bool
+	dirtyGen     uint64
 	cached       *cachedIndex
 	err          error
 }
@@ -33,6 +34,7 @@ type Service struct {
 	mu       sync.Mutex
 	clock    uint64
 	cache    map[string]*cachedIndex
+	dirtyGen map[string]uint64
 	inflight map[string]*indexFlight
 	embedder llm.EmbeddingClient
 	semCache *semanticCache
@@ -114,6 +116,7 @@ func (s *Service) StorageBytes() int64 {
 func (s *Service) ClearCache() int64 {
 	s.mu.Lock()
 	s.cache = make(map[string]*cachedIndex)
+	s.dirtyGen = nil
 	s.mu.Unlock()
 	if s.semCache != nil {
 		s.semCache.reset()
@@ -138,6 +141,7 @@ func (s *Service) ClearCache() int64 {
 }
 
 func (s *Service) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/hoxi/code-index/map", s.handleMap)
 	mux.HandleFunc("/api/hoxi/code-index/search", s.handleSearch)
 	mux.HandleFunc("/api/hoxi/code-index/inspect", s.handleInspect)
 	mux.HandleFunc("/api/hoxi/code-index/callers", s.handleCallers)
@@ -228,6 +232,29 @@ func (s *Service) Evict(directory string) {
 	s.mu.Unlock()
 }
 
+// MarkDirty flags directory so the next query bypasses the 60s TTL cache and
+// runs an incremental rebuild against the in-memory previous index, ensuring
+// file edits are visible immediately without reloading or re-parsing unchanged files.
+func (s *Service) MarkDirty(directory string) {
+	if s == nil {
+		return
+	}
+	if clean, err := canonicalDir(directory); err == nil {
+		directory = clean
+	} else {
+		directory = filepath.Clean(strings.TrimSpace(directory))
+	}
+	if directory == "" || directory == "." {
+		return
+	}
+	s.mu.Lock()
+	if s.dirtyGen == nil {
+		s.dirtyGen = make(map[string]uint64)
+	}
+	s.dirtyGen[directory]++
+	s.mu.Unlock()
+}
+
 func (s *Service) ensure(directory string) (*cachedIndex, error) {
 	return s.ensureIndexContext(context.Background(), directory, false)
 }
@@ -239,8 +266,9 @@ func (s *Service) ensureIndexContext(ctx context.Context, directory string, forc
 		}
 		s.mu.Lock()
 		now := s.now()
+		wantGen := s.dirtyGen[directory]
 		if !forceRebuild {
-			if cached := s.cache[directory]; cached != nil && now-cached.index.BuiltAt < cacheTTL {
+			if cached := s.cache[directory]; cached != nil && cached.builtGen >= wantGen && now-cached.index.BuiltAt < cacheTTL {
 				s.clock++
 				cached.access = s.clock
 				s.trimCacheLocked(directory, now)
@@ -262,7 +290,7 @@ func (s *Service) ensureIndexContext(ctx context.Context, directory string, forc
 			} else {
 				<-flight.done
 			}
-			if !forceRebuild || flight.forceRebuild {
+			if (!forceRebuild || flight.forceRebuild) && flight.dirtyGen >= wantGen {
 				return flight.cached, flight.err
 			}
 			continue
@@ -275,6 +303,7 @@ func (s *Service) ensureIndexContext(ctx context.Context, directory string, forc
 		flight := &indexFlight{
 			done:         make(chan struct{}),
 			forceRebuild: forceRebuild,
+			dirtyGen:     wantGen,
 		}
 		s.inflight[directory] = flight
 		s.mu.Unlock()
@@ -283,7 +312,7 @@ func (s *Service) ensureIndexContext(ctx context.Context, directory string, forc
 		var err error
 		if previous == nil {
 			previous = s.load(directory)
-			if !forceRebuild && previous != nil && now-previous.BuiltAt < cacheTTL {
+			if !forceRebuild && wantGen == 0 && previous != nil && now-previous.BuiltAt < cacheTTL {
 				cached = buildDocs(previous)
 			}
 		}
@@ -302,9 +331,11 @@ func (s *Service) ensureIndexContext(ctx context.Context, directory string, forc
 				if !forceRebuild && !changed && prevCached != nil {
 					reused := *prevCached
 					reused.index = index
+					reused.builtGen = wantGen
 					cached = &reused
 				} else {
 					cached = buildDocs(index)
+					cached.builtGen = wantGen
 				}
 			}
 		}

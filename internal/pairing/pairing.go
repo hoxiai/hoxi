@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"sort"
 	"strconv"
@@ -48,6 +49,10 @@ type Code struct {
 	// QRPng is a data: URL holding the PNG QR code, or empty when no LAN
 	// address was found.
 	QRPng string `json:"qrPng"`
+	// ShortCodeRelayURL is the build/env default 6-digit pairing relay origin
+	// (empty in -tags oss builds unless overridden via HOXI_PAIRING_RELAY_URL).
+	// It is returned to the desktop UI only and never embedded in QRPng.
+	ShortCodeRelayURL string `json:"shortCodeRelayUrl,omitempty"`
 }
 
 // Service builds pairing codes for this desktop.
@@ -59,11 +64,13 @@ type Service struct {
 	lanPeers  func() []string
 	relayURL  func() string
 
-	mu           sync.Mutex
-	cached       string
-	cachedRelay  string
-	cachedE2EE   string
-	cachedCipher *E2EECipher
+	mu               sync.Mutex
+	cached           string
+	cachedRelay      string
+	cachedE2EE       string
+	cachedCipher     *E2EECipher
+	activeShortCode  *PublishedShortCode
+	shortCodeTransport http.RoundTripper
 }
 
 // NewService returns a Service that stores its token at tokenPath and
@@ -103,13 +110,16 @@ func (s *Service) Code() (Code, error) {
 	if err != nil {
 		return Code{}, err
 	}
-	code := Code{Payload: Payload{
-		Type:     "hoxi",
-		Token:    lanToken,
-		E2EEKey:  e2eeKey,
-		Port:     s.port,
-		Hostname: s.hostname(),
-	}}
+	code := Code{
+		Payload: Payload{
+			Type:     "hoxi",
+			Token:    lanToken,
+			E2EEKey:  e2eeKey,
+			Port:     s.port,
+			Hostname: s.hostname(),
+		},
+		ShortCodeRelayURL: DefaultShortCodeRelayURL(),
+	}
 	if relay := s.relay(); relay != "" {
 		code.Relay = relay
 		code.RelayToken = relayToken

@@ -14,6 +14,7 @@ import {
   type SelectedModel,
 } from "../../store/workspace";
 import { ProviderIcon } from "../icons";
+import { HelpTip } from "../settings/setting-controls";
 import { t } from "../../i18n";
 import { isModelFree } from "./model-selector-utils";
 
@@ -149,17 +150,15 @@ export default function MultiModelArenaModal() {
         >
           {/* Header */}
           <div class="flex items-center justify-between px-5 py-3.5 border-b border-[var(--border-subtle)]">
-            <div class="flex items-center gap-2.5">
-              <div class="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--accent-surface)] text-[var(--accent-primary)]">
+            <div class="flex items-center gap-2.5 min-w-0">
+              <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-surface)] text-[var(--accent-primary)]">
                 <Swords size={15} />
               </div>
-              <div>
-                <h3 class="text-[13px] font-semibold text-[var(--text-primary)]">
+              <div class="flex items-center gap-2 min-w-0">
+                <h3 class="text-[13px] font-semibold text-[var(--text-primary)] truncate">
                   {t("models.arenaTitle")}
                 </h3>
-                <p class="text-[11px] text-[var(--text-muted)]">
-                  {t("models.arenaSubtitle")}
-                </p>
+                <HelpTip text={t("models.arenaSubtitle")} />
               </div>
             </div>
             <button

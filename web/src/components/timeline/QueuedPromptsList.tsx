@@ -5,13 +5,20 @@ import {
   canSteerSession,
   editQueuedPrompt,
   isSessionBusy,
+  openAttachmentInInspector,
   openImagePreview,
   type QueuedPromptItem,
   removeQueuedPrompt,
   sendQueuedPromptNow,
   workspace,
 } from "../../store/workspace";
+import { FileIcon } from "../icons";
 import { t } from "../../i18n";
+import {
+  isAudioFilePart,
+  isVideoFilePart,
+  MediaAttachmentPlayer,
+} from "./message-stream-parts";
 import { ActionIconButton } from "./tool-card-helpers";
 
 /**
@@ -53,25 +60,80 @@ export default function QueuedPromptsList(props: {
                   <Show when={item.attachments.length > 0}>
                     <div class="flex flex-wrap gap-2">
                       <For each={item.attachments}>
-                        {(att) => (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              openImagePreview({
-                                src: att.url,
-                                alt: att.filename || "attachment",
-                              })
-                            }
-                            title={t("timeline.previewImageTooltip")}
-                            class="block max-w-[200px] overflow-hidden rounded-lg border border-[var(--border-subtle)] cursor-zoom-in transition-colors hover:border-[var(--accent-border)]"
-                          >
-                            <img
-                              src={att.url}
-                              alt={att.filename || "attachment"}
-                              class="max-h-36 w-auto object-contain block"
-                            />
-                          </button>
-                        )}
+                        {(att, idx) => {
+                          const isImg =
+                            (att.mime || "").toLowerCase().startsWith("image/") ||
+                            /^data:image\//i.test(att.url || "") ||
+                            /\.(png|jpe?g|webp|gif|bmp|tiff?|svg|heic|heif|avif)$/i.test(
+                              att.filename || ""
+                            );
+                          const isMedia =
+                            !isImg && (isAudioFilePart(att) || isVideoFilePart(att));
+                          return (
+                            <Show
+                              when={isImg}
+                              fallback={
+                                <Show
+                                  when={isMedia}
+                                  fallback={
+                                    <a
+                                      href={att.url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      download={att.filename || "attachment"}
+                                      onClick={(e) => {
+                                        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                                        if (openAttachmentInInspector(att.url, att.filename)) {
+                                          e.preventDefault();
+                                        }
+                                      }}
+                                      class="inline-flex max-w-[240px] items-center gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)] hover:border-[var(--accent-border)] transition-colors"
+                                    >
+                                      <FileIcon
+                                        node={{ path: att.filename || "file.txt", type: "file" }}
+                                        class="h-4 w-4 shrink-0"
+                                      />
+                                      <span class="truncate font-mono text-[12px]">
+                                        {att.filename || "attachment"}
+                                      </span>
+                                    </a>
+                                  }
+                                >
+                                  <MediaAttachmentPlayer
+                                    part={{
+                                      id: `${item.id}_att_${idx()}`,
+                                      sessionID: sid(),
+                                      messageID: item.id,
+                                      type: "file",
+                                      mime: att.mime,
+                                      filename: att.filename,
+                                      url: att.url,
+                                    }}
+                                    compact
+                                  />
+                                </Show>
+                              }
+                            >
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  openImagePreview({
+                                    src: att.url,
+                                    alt: att.filename || "attachment",
+                                  })
+                                }
+                                title={t("timeline.previewImageTooltip")}
+                                class="block max-w-[200px] overflow-hidden rounded-lg border border-[var(--border-subtle)] cursor-zoom-in transition-colors hover:border-[var(--accent-border)]"
+                              >
+                                <img
+                                  src={att.url}
+                                  alt={att.filename || "attachment"}
+                                  class="max-h-36 w-auto object-contain block"
+                                />
+                              </button>
+                            </Show>
+                          );
+                        }}
                       </For>
                     </div>
                   </Show>

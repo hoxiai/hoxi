@@ -346,6 +346,7 @@ func TestLocalCLIStatusAndImportEndpoints(t *testing.T) {
 
 	// SetWSBaseURL triggers syncLocalCLIBridgeURLs; the shared config keeps the neutral bridge URL.
 	svc.SetWSBaseURL("wss://127.0.0.1:7099")
+	t.Cleanup(svc.StopCredentialSync)
 	grokOpts := svc.loadHoxiConfigDoc()["provider"].(map[string]interface{})["grok-cli"].(map[string]interface{})["options"].(map[string]interface{})
 	if got := grokOpts["baseURL"]; got != grokCLIStoredBridgeURL {
 		t.Fatalf("expected neutral grok-cli bridge URL, got %v", got)

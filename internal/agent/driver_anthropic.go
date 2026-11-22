@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,12 +29,12 @@ func (d *anthropicDriver) BuildRequest(req ModelRequest) (llm.StreamHTTPRequest,
 		maxTokens = 8192
 	}
 	msgs := make([]map[string]any, 0, len(req.Messages))
-	for i, m := range req.Messages {
+	for _, m := range req.Messages {
 		if m.Role == RoleSystem {
 			continue
 		}
 		blocks := make([]map[string]any, 0, len(m.Content))
-		for j, b := range m.Content {
+		for _, b := range m.Content {
 			var block map[string]any
 			switch b.Type {
 			case ContentText:
@@ -109,9 +111,6 @@ func (d *anthropicDriver) BuildRequest(req ModelRequest) (llm.StreamHTTPRequest,
 			if block == nil {
 				continue
 			}
-			if i == len(req.Messages)-1 && j == len(m.Content)-1 && m.Role == RoleUser && b.Type != ContentThinking {
-				block["cache_control"] = map[string]string{"type": "ephemeral"}
-			}
 			blocks = append(blocks, block)
 		}
 		if len(blocks) == 0 {
@@ -121,7 +120,6 @@ func (d *anthropicDriver) BuildRequest(req ModelRequest) (llm.StreamHTTPRequest,
 			// Anthropic requires all tool_result blocks to precede image/document/text blocks in a user message.
 			var trBlocks, otherBlocks []map[string]any
 			for _, blk := range blocks {
-				delete(blk, "cache_control")
 				if blk["type"] == "tool_result" {
 					trBlocks = append(trBlocks, blk)
 				} else {
@@ -131,12 +129,10 @@ func (d *anthropicDriver) BuildRequest(req ModelRequest) (llm.StreamHTTPRequest,
 			if len(trBlocks) > 0 && len(otherBlocks) > 0 {
 				blocks = append(trBlocks, otherBlocks...)
 			}
-			if i == len(req.Messages)-1 {
-				blocks[len(blocks)-1]["cache_control"] = map[string]string{"type": "ephemeral"}
-			}
 		}
 		msgs = append(msgs, map[string]any{"role": string(m.Role), "content": blocks})
 	}
+	markAnthropicTrailingUserCacheBreakpoints(msgs)
 
 	payload := map[string]any{
 		"model":      req.Target.ModelID,
@@ -144,10 +140,26 @@ func (d *anthropicDriver) BuildRequest(req ModelRequest) (llm.StreamHTTPRequest,
 		"stream":     true,
 		"messages":   msgs,
 	}
+	cacheKey := effectiveModelCacheKey(req)
+	if stickyID := anthropicStickyUserID(req.Target.ProviderID, cacheKey); stickyID != "" {
+		payload["metadata"] = map[string]string{"user_id": stickyID}
+	}
+	var sysBlocks []map[string]any
 	if strings.TrimSpace(req.System) != "" {
-		payload["system"] = []map[string]any{
-			{"type": "text", "text": req.System, "cache_control": map[string]string{"type": "ephemeral"}},
-		}
+		sysBlocks = append(sysBlocks, map[string]any{
+			"type":          "text",
+			"text":          req.System,
+			"cache_control": map[string]string{"type": "ephemeral"},
+		})
+	}
+	if suffix := strings.TrimSpace(req.SystemSuffix); suffix != "" {
+		sysBlocks = append(sysBlocks, map[string]any{
+			"type": "text",
+			"text": suffix,
+		})
+	}
+	if len(sysBlocks) > 0 {
+		payload["system"] = sysBlocks
 	}
 	if len(req.Tools) > 0 {
 		tools := make([]map[string]any, 0, len(req.Tools))
@@ -172,12 +184,22 @@ func (d *anthropicDriver) BuildRequest(req ModelRequest) (llm.StreamHTTPRequest,
 	if effort != "" {
 		payload["output_config"] = map[string]string{"effort": effort}
 	}
+	var extraHeaders map[string]string
+	if req.FastMode && supportsAnthropicFastMode(req.Target) {
+		payload["speed"] = "fast"
+		extraHeaders = map[string]string{"anthropic-beta": anthropicFastModeBetaHeader}
+	}
 
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return llm.StreamHTTPRequest{}, err
 	}
-	return llm.StreamHTTPRequest{Target: req.Target, Body: raw}, nil
+	return llm.StreamHTTPRequest{
+		Target:       req.Target,
+		Body:         raw,
+		ExtraHeaders: extraHeaders,
+		SessionID:    cacheKey,
+	}, nil
 }
 
 func (d *anthropicDriver) ParseSSE(ctx context.Context, body io.Reader, emit func(StreamEvent)) error {
@@ -220,6 +242,11 @@ func (d *anthropicDriver) ParseSSE(ctx context.Context, body io.Reader, emit fun
 					usage.Input += intFromAny(u["input_tokens"])
 					usage.CacheRead += intFromAny(u["cache_read_input_tokens"])
 					usage.CacheWrite += intFromAny(u["cache_creation_input_tokens"])
+					if tier := normalizeFastServiceTier(u["speed"]); tier != "" {
+						usage.ServiceTier = tier
+					} else if tier := normalizeFastServiceTier(u["service_tier"]); tier != "" {
+						usage.ServiceTier = tier
+					}
 				}
 			}
 		case "content_block_start":
@@ -295,6 +322,11 @@ func (d *anthropicDriver) ParseSSE(ctx context.Context, body io.Reader, emit fun
 		case "message_delta":
 			if u, ok := raw["usage"].(map[string]any); ok {
 				usage.Output += intFromAny(u["output_tokens"])
+				if tier := normalizeFastServiceTier(u["speed"]); tier != "" {
+					usage.ServiceTier = tier
+				} else if tier := normalizeFastServiceTier(u["service_tier"]); tier != "" {
+					usage.ServiceTier = tier
+				}
 			}
 			if dMap, ok := raw["delta"].(map[string]any); ok {
 				if stop, _ := dMap["stop_reason"].(string); stop != "" {
@@ -328,6 +360,7 @@ func (d *anthropicDriver) ParseSSE(ctx context.Context, body io.Reader, emit fun
 			}
 			if strings.TrimSpace(pt.id) == "" || strings.TrimSpace(pt.name) == "" {
 				if truncatedByMaxTokens {
+					emit(StreamEvent{Kind: EventTruncatedTool})
 					continue
 				}
 				return fmt.Errorf("incomplete anthropic tool_use identity: %w", ErrIncompleteStream)
@@ -337,6 +370,7 @@ func (d *anthropicDriver) ParseSSE(ctx context.Context, body io.Reader, emit fun
 				return vErr
 			}
 			if !keep {
+				emit(StreamEvent{Kind: EventTruncatedTool})
 				continue
 			}
 			emit(StreamEvent{
@@ -352,6 +386,52 @@ func (d *anthropicDriver) ParseSSE(ctx context.Context, body io.Reader, emit fun
 	emit(StreamEvent{Kind: EventUsage, Usage: &usage})
 	emit(StreamEvent{Kind: EventFinish, Finish: stopReason})
 	return nil
+}
+
+// anthropicStickyUserID derives a deterministic, zero-PII opaque session key
+// matching the user_<64hex>_account__session_<uuid> convention used by Claude
+// account pools (Sub2API, CRS, NewAPI, LiteLLM) so shifting cache_control
+// breakpoints do not switch upstream accounts or invalidate KV caches mid-session.
+func anthropicStickyUserID(providerID, sessionID string) string {
+	sid := strings.TrimSpace(sessionID)
+	if sid == "" {
+		return ""
+	}
+	prov := strings.ToLower(strings.TrimSpace(providerID))
+	userSum := sha256.Sum256([]byte("hoxi-anthropic-pool-user:v1:" + prov))
+	sessSum := sha256.Sum256([]byte("hoxi-anthropic-pool-session:v1:" + prov + ":" + sid))
+	u := sessSum[:16]
+	u[6] = (u[6] & 0x0f) | 0x40
+	u[8] = (u[8] & 0x3f) | 0x80
+	sessUUID := fmt.Sprintf("%x-%x-%x-%x-%x", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16])
+	return "user_" + hex.EncodeToString(userSum[:]) + "_account__session_" + sessUUID
+}
+
+// markAnthropicTrailingUserCacheBreakpoints marks up to the last two user
+// messages with ephemeral cache breakpoints (keeping total breakpoints within
+// Anthropic's 4-block limit alongside tools[last] and system[0]). Marking the
+// penultimate user message preserves prefix cache hits even when a parallel
+// tool batch exceeds Anthropic's 20-block lookback window.
+func markAnthropicTrailingUserCacheBreakpoints(msgs []map[string]any) {
+	marked := 0
+	for i := len(msgs) - 1; i >= 0 && marked < 2; i-- {
+		if msgs[i]["role"] != string(RoleUser) {
+			continue
+		}
+		blocks, ok := msgs[i]["content"].([]map[string]any)
+		if !ok || len(blocks) == 0 {
+			continue
+		}
+		for j := len(blocks) - 1; j >= 0; j-- {
+			tp, _ := blocks[j]["type"].(string)
+			if tp == "thinking" || tp == "redacted_thinking" {
+				continue
+			}
+			blocks[j]["cache_control"] = map[string]string{"type": "ephemeral"}
+			marked++
+			break
+		}
+	}
 }
 
 func intFromAny(v any) int {

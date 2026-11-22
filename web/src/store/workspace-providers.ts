@@ -324,7 +324,24 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
       const rawModels = hProv.models || {};
       const existingProv = byId.get(pid);
       const exactModels: Record<string, any> = {};
-      for (const [mid, mCfg] of Object.entries<any>(rawModels)) {
+      const orderedKeys: string[] = [];
+      const seenKeys = new Set<string>();
+      if (Array.isArray(hProv.options?.modelOrder)) {
+        for (const k of hProv.options.modelOrder) {
+          if (typeof k === "string" && k in rawModels && !seenKeys.has(k)) {
+            seenKeys.add(k);
+            orderedKeys.push(k);
+          }
+        }
+      }
+      for (const k of Object.keys(rawModels)) {
+        if (!seenKeys.has(k)) {
+          seenKeys.add(k);
+          orderedKeys.push(k);
+        }
+      }
+      for (const mid of orderedKeys) {
+        const mCfg = rawModels[mid];
         if (!mCfg || typeof mCfg !== "object") continue;
         const rtModel = existingProv?.models?.[mid];
         const hasImgModality = Boolean(
@@ -373,6 +390,9 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
         },
         models: exactModels,
       });
+      if (typeof hProv.options?.defaultModel === "string" && exactModels[hProv.options.defaultModel]) {
+        defaults[pid] = hProv.options.defaultModel;
+      }
       if (!connected.includes(pid)) {
         connected.push(pid);
       }

@@ -2,14 +2,17 @@
 // Attachment, paste, active-command, context-mention chips, and autocomplete popover.
 // Kept out of composer-subcomponents so the Work surface composer can reuse them
 // without pulling in ModeSwitcher, which reads the surface extension back.
-import { createEffect, For, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { Portal } from "solid-js/web";
 import {
   AlertCircle,
   AtSign,
   Check,
   ClipboardPaste,
+  ExternalLink,
   FileText,
   LoaderCircle,
+  Play,
   RefreshCw,
   Slash,
   Sparkles,
@@ -19,6 +22,11 @@ import {
 import { FileIcon } from "../icons";
 import { t } from "../../i18n";
 import type { SkillSelection } from "../../services/api";
+import {
+  isLoopbackMediaURL,
+  openStagedMediaExternally,
+  resolveMediaPlaybackURL,
+} from "../../store/workspace";
 import { classifyAttachmentKind } from "./composer-hooks";
 import type {
   ActiveSlashCommandInfo,
@@ -140,6 +148,32 @@ export function ComposerAttachmentChips(props: {
     const k = img.kind ?? classifyAttachmentKind(img.filename, img.mime);
     return k === "image" || (img.mime || "").toLowerCase().startsWith("image/");
   };
+
+  const isVideoItem = (img: ImageItem) => {
+    const k = img.kind ?? classifyAttachmentKind(img.filename, img.mime);
+    return k === "video" || (img.mime || "").toLowerCase().startsWith("video/");
+  };
+
+  const [previewVideo, setPreviewVideo] = createSignal<{
+    url: string;
+    sourceUrl: string;
+    filename: string;
+  } | null>(null);
+  const [previewVideoError, setPreviewVideoError] = createSignal(false);
+
+  createEffect(() => {
+    void previewVideo();
+    setPreviewVideoError(false);
+    if (!previewVideo()) return;
+    const onKeyDown = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        setPreviewVideo(null);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+  });
 
   const extBadge = (filename: string, mime: string) => {
     const lower = (mime || "").toLowerCase();
@@ -355,12 +389,46 @@ export function ComposerAttachmentChips(props: {
                 <Show
                   when={isImageItem(img)}
                   fallback={
-                    <span
-                      class={`inline-flex h-6 items-center gap-1 rounded bg-[var(--bg-inset)] px-1.5 font-mono text-[11px] font-semibold ${extBadgeColor(img.filename, img.mime, img.kind)}`}
+                    <Show
+                      when={isVideoItem(img)}
+                      fallback={
+                        <span
+                          class={`inline-flex h-6 items-center gap-1 rounded bg-[var(--bg-inset)] px-1.5 font-mono text-[11px] font-semibold ${extBadgeColor(img.filename, img.mime, img.kind)}`}
+                        >
+                          <FileText size={12} class="shrink-0" />
+                          {extBadge(img.filename, img.mime)}
+                        </span>
+                      }
                     >
-                      <FileText size={12} class="shrink-0" />
-                      {extBadge(img.filename, img.mime)}
-                    </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPreviewVideo({
+                            url: resolveMediaPlaybackURL(img.previewUrl || img.dataUrl),
+                            sourceUrl: img.dataUrl,
+                            filename: img.filename,
+                          })
+                        }
+                        title={img.filename}
+                        class="group/vid relative block h-8 w-12 shrink-0 overflow-hidden rounded bg-black cursor-pointer"
+                      >
+                        <video
+                          src={resolveMediaPlaybackURL(img.previewUrl || img.dataUrl)}
+                          crossOrigin={
+                            isLoopbackMediaURL(resolveMediaPlaybackURL(img.previewUrl || img.dataUrl))
+                              ? "anonymous"
+                              : undefined
+                          }
+                          muted
+                          playsinline
+                          preload="metadata"
+                          class="h-full w-full object-cover pointer-events-none"
+                        />
+                        <span class="absolute inset-0 flex items-center justify-center bg-black/35 group-hover/vid:bg-black/50 transition-colors">
+                          <Play size={12} class="fill-white text-white translate-x-[0.5px]" />
+                        </span>
+                      </button>
+                    </Show>
                   }
                 >
                   <img
@@ -411,6 +479,65 @@ export function ComposerAttachmentChips(props: {
             )}
           </For>
         </div>
+      </Show>
+      <Show when={previewVideo()}>
+        {(vid) => (
+          <Portal>
+            <div
+              class="fixed inset-0 z-[120] flex items-center justify-center bg-black/75 p-6 backdrop-blur-xs"
+              onClick={() => setPreviewVideo(null)}
+            >
+              <div
+                class="flex max-h-[90vh] max-w-[90vw] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] shadow-2xl"
+                onClick={(ev) => ev.stopPropagation()}
+              >
+                <div class="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] px-3.5 py-2 text-[12px]">
+                  <span class="truncate font-mono text-[var(--text-primary)]">
+                    {vid().filename}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewVideo(null)}
+                    class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+                <Show
+                  when={!previewVideoError()}
+                  fallback={
+                    <div class="flex flex-col items-center justify-center gap-3 px-6 py-8 text-center">
+                      <AlertCircle size={20} class="text-amber-500" />
+                      <div class="max-w-sm text-[12px] text-[var(--text-secondary)]">
+                        {t("timeline.videoPlaybackFailed")}
+                      </div>
+                      <Show when={vid().sourceUrl.startsWith("/api/hoxi/file/content?")}>
+                        <button
+                          type="button"
+                          onClick={() => openStagedMediaExternally(vid().sourceUrl, "open")}
+                          class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-3 py-1.5 text-[12px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
+                        >
+                          <ExternalLink size={13} />
+                          <span>{t("inspector.files.openInDefaultApp")}</span>
+                        </button>
+                      </Show>
+                    </div>
+                  }
+                >
+                  <video
+                    src={vid().url}
+                    crossOrigin={isLoopbackMediaURL(vid().url) ? "anonymous" : undefined}
+                    controls
+                    autoplay
+                    playsinline
+                    onError={() => setPreviewVideoError(true)}
+                    class="max-h-[80vh] max-w-[88vw] bg-black object-contain"
+                  />
+                </Show>
+              </div>
+            </div>
+          </Portal>
+        )}
       </Show>
     </>
   );

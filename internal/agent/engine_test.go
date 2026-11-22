@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -19,6 +20,8 @@ type stubStreamClient struct {
 	proto     llm.StreamProtocol
 	responses []string
 	callCount atomic.Int32
+	mu        sync.Mutex
+	bodies    [][]byte
 }
 
 func (s *stubStreamClient) ResolveStreamTarget(providerID, modelID string) llm.StreamTarget {
@@ -33,7 +36,10 @@ func (s *stubStreamClient) ResolveStreamTarget(providerID, modelID string) llm.S
 	}
 }
 
-func (s *stubStreamClient) OpenStream(_ context.Context, _ llm.StreamHTTPRequest) (*http.Response, error) {
+func (s *stubStreamClient) OpenStream(_ context.Context, req llm.StreamHTTPRequest) (*http.Response, error) {
+	s.mu.Lock()
+	s.bodies = append(s.bodies, append([]byte(nil), req.Body...))
+	s.mu.Unlock()
 	idx := int(s.callCount.Add(1)) - 1
 	body := ""
 	if idx < len(s.responses) {

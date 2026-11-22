@@ -319,13 +319,14 @@ func (s *Service) resumeCLITurnFromLedger(rec SessionRecord, entry InflightTurnE
 	s.recordInflightTurn(entry)
 
 	userInfo := MessageInfo{
-		ID:         userMsgID,
-		SessionID:  rec.ID,
-		Role:       "user",
-		Time:       MessageTime{Created: firstPositiveInt64(entry.StartedAt, nowMs)},
-		Agent:      mode,
-		ModelID:    modelID,
-		ProviderID: rec.ProviderID,
+		ID:          userMsgID,
+		SessionID:   rec.ID,
+		Role:        "user",
+		Time:        MessageTime{Created: firstPositiveInt64(entry.StartedAt, nowMs)},
+		Agent:       mode,
+		ServiceTier: fastServiceTierValue(entry.FastMode && !rec.Subagent && s.ApprovalPolicy().Mode != ApprovalModeUnattended),
+		ModelID:     modelID,
+		ProviderID:  rec.ProviderID,
 	}
 
 	if extID != "" {

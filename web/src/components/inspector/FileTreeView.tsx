@@ -16,7 +16,13 @@ import { resolveSessionDiffForFile } from "../timeline/file-diff-lines";
 import { t, locale } from "../../i18n";
 import FilePreviewPane from "./FilePreviewPane";
 import FileTreeNodes, { type FileTreeNode } from "./FileTreeNodes";
-import { baseName, isPreviewableDocumentPath } from "./file-tree-helpers";
+import {
+  baseName,
+  detectMediaPreviewMime,
+  isAudioPreviewable,
+  isPreviewableDocumentPath,
+  isVideoPreviewable,
+} from "./file-tree-helpers";
 
 const MAX_CACHED_ROOT_DIRS = 24;
 const rootFileNodesCache = new Map<string, FileTreeNode[]>();
@@ -159,8 +165,20 @@ export default function FileTreeView() {
     setPreviewDiff(effectiveDiff);
     setHighlightedLine(lineTarget);
     setViewMode(
-      !lineTarget && isPreviewableDocumentPath(path) ? "preview" : "source"
+      !lineTarget && (isPreviewableDocumentPath(path) || isVideoPreviewable(path) || isAudioPreviewable(path))
+        ? "preview"
+        : "source"
     );
+    if (isVideoPreviewable(path) || isAudioPreviewable(path)) {
+      setPreviewMeta({
+        type: "binary",
+        content: "",
+        mimeType: detectMediaPreviewMime(path),
+      });
+      setLoadingPreview(false);
+      setPreviewError(null);
+      return;
+    }
     setLoadingPreview(true);
     setPreviewError(null);
     try {
@@ -228,6 +246,7 @@ export default function FileTreeView() {
       },
       ([path], prev) => {
         if (!path || !prev || prev[0] !== path || loadingPreview()) return;
+        if (isVideoPreviewable(path) || isAudioPreviewable(path)) return;
         const request = ++previewRequest;
         void hoxiAPI
           .readFileContent(

@@ -88,6 +88,9 @@ export const header = {
   updateSpeedEtaMinutes: "{speed} · ~{minutes}m left",
   updateSlowHint: "Download from the release server is slow. Hoxi will keep downloading in the background, or you can use the manual download button below to download with your browser.",
   updateNativeExplanation: "Download and install the update in the app; new tasks pause during installation",
+  updateManagedByNotice: "Installed via {manager}; upgrade through your package manager instead of overwriting the managed binary.",
+  updateCopyCommand: "Copy Upgrade Command",
+  updateCommandCopied: "Upgrade command copied",
   updateRestartRequired: "Restart Required",
   updateDrainingNotice: "New tasks are paused until the update finishes and Hoxi restarts.",
   updateInstallFailed: "Could not open the native updater.",
@@ -131,8 +134,4 @@ export const header = {
   pulseNoModelActivity: "No model activity recorded today yet",
   pulseConnectedProviders: "{count} providers connected",
   pulseViewUsageHistory: "View full usage history",
-  pulseMatrixTitle: "HQ Fleet Matrix",
-  pulseMatrixSummary: "{total} projects · {sandboxes} sandboxes",
-  pulseMatrixBlocked: "{count} blocked ({names})",
-  pulseMatrixAllClear: "0 blocked · all clear",
 };

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -133,7 +134,7 @@ func TestBashOutputCompactionAndStreaming(t *testing.T) {
 	reg := newToolRegistry()
 	res, _ := reg.Execute(context.Background(), ToolContext{
 		WorktreeDir: ws,
-		StreamRunCommand: func(_ context.Context, _, _ string, onOutput func(string)) (string, int, error) {
+		StreamRunCommand: func(_ context.Context, _, _ string, capture io.Writer, onOutput func(string)) (string, int, error) {
 			onOutput("step 1\r\x1b[33mstep 2\x1b[0m\n")
 			return "done\n", 0, nil
 		},

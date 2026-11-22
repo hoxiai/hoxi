@@ -57,6 +57,10 @@ func CloneMessageInfo(info MessageInfo) MessageInfo {
 	out := info
 	if info.Tokens != nil {
 		tok := *info.Tokens
+		if tok.Summary != nil {
+			summary := *tok.Summary
+			tok.Summary = &summary
+		}
 		out.Tokens = &tok
 	}
 	if info.Error != nil {

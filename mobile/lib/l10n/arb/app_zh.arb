@@ -2,6 +2,8 @@
   "@@locale": "zh",
   "appName": "Hoxi",
   "commonCancel": "取消",
+  "commonCopy": "复制",
+  "commonRetry": "重试",
   "commonRefresh": "刷新",
   "chatSend": "发送消息",
   "chatHideKeyboard": "收起键盘",
@@ -392,5 +394,8 @@
   "codeWsProjectPickerSearchHint": "搜索项目名称或路径…",
   "codeWsProjectPickerEmpty": "未找到匹配的项目",
   "chatCameraPermissionDenied": "没有相机或相册权限，没有发送图片",
-  "chatActionPickGallery": "从相册选择图片"
+  "chatActionPickGallery": "从相册选择图片",
+  "commonCopied": "已复制",
+  "chatReportAction": "举报",
+  "chatReportedBadge": "已举报"
 }

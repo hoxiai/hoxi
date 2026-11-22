@@ -27,6 +27,39 @@ func replyTestPermission(t *testing.T, svc *Service, permID, reply, message stri
 	}
 }
 
+func TestNativeSearchApprovalDistinguishesQueryFromFilePattern(t *testing.T) {
+	ws := t.TempDir()
+	svc := NewService(ws, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
+	defer svc.CloseAll()
+	rec := SessionRecord{ID: "ses_search_approval", Runtime: string(RuntimeNative), ProjectDir: ws, WorktreePath: ws}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{Mode: ApprovalModeAuto})
+	hook := svc.nativePermissionHook(rec, "msg_search")
+	for _, tc := range []struct {
+		name, tool, input string
+		ask               bool
+	}{
+		{"route text", "grep", `{"path":".","pattern":"/api/claude|api/v1","include":"*.{ts,vue}"}`, false},
+		{"relative import text", "grep", `{"pattern":"../components"}`, false},
+		{"secret target", "grep", `{"pattern":"/api","path":".env"}`, true},
+		{"secret filter", "grep", `{"pattern":"/api","include":"**/.env"}`, true},
+		{"outside filter", "grep", `{"pattern":"/api","include":"../other/*.go"}`, true},
+		{"file pattern", "glob", `{"pattern":"../components"}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// A request reaching the interactive gate must fail on cancellation.
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			err := hook(ctx, NativePermissionRequest{SessionID: rec.ID, CallID: tc.name, ToolName: tc.tool, IsRead: true, Input: json.RawMessage(tc.input)})
+			if (err != nil) != tc.ask || (err != nil && !strings.Contains(err.Error(), "approval hook was interrupted")) {
+				t.Fatalf("ask = %v, want %v (error %v)", err != nil, tc.ask, err)
+			}
+		})
+	}
+}
+
 func TestNativeExplicitAskTaskPromptsInSmartAutoAndTrustedAndDeniesInUnattended(t *testing.T) {
 	root := t.TempDir()
 	ws := filepath.Join(root, "ws")

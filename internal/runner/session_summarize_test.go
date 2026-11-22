@@ -1,7 +1,9 @@
 package runner
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -178,5 +180,56 @@ func TestNativeSummaryRetainsMiddleTurnsAndToolDetails(t *testing.T) {
 	}
 	if strings.Contains(got, "[truncated]") || strings.Contains(got, "turns omitted") {
 		t.Fatal("summary formatter must leave chunking to the native engine")
+	}
+}
+
+type meteredTestEngine struct {
+	captureNativeEngine
+	fail bool
+}
+
+func (e *meteredTestEngine) SummarizeWithUsage(_ context.Context, _, _, _ string, record func(NativeTokenUsage)) (string, error) {
+	record(NativeTokenUsage{Input: 11, Output: 4, CostUSD: 0.25})
+	if e.fail {
+		return "", errors.New("later segment failed")
+	}
+	record(NativeTokenUsage{Input: 7, Output: 1, CostUSD: 0.25})
+	return "final checkpoint", nil
+}
+
+func TestManualSummaryAccountsForSuccessfulAndFailedAttempts(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		root := t.TempDir()
+		svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
+		t.Cleanup(svc.CloseAll)
+		svc.SetNativeEngine(&meteredTestEngine{fail: fail})
+		rec := SessionRecord{ID: "ses_meter", Runtime: "native", ProviderID: "provider", ModelID: "model", WorktreePath: root, ProjectDir: root,
+			Turns: []MessageTurn{{Info: MessageInfo{ID: "user", Role: "user"}, Parts: []MessagePart{{Type: "text", Text: "long engineering task"}}}}}
+		if err := svc.store.Put(rec); err != nil {
+			t.Fatal(err)
+		}
+		w := httptest.NewRecorder()
+		svc.handleSessionSummarize(w, httptest.NewRequest("POST", "/summarize", strings.NewReader("{}")), rec.ID)
+		got, ok := svc.store.Get(rec.ID)
+		if !ok || len(got.Turns) != 2 {
+			t.Fatalf("missing accounting turn: %+v", got)
+		}
+		turn := got.Turns[1]
+		u := turn.Info.Tokens
+		if u == nil || u.Summary == nil || u.Input != u.Summary.Input {
+			t.Fatalf("summary accounting: %+v", u)
+		}
+		if fail {
+			if w.Code != 502 || turn.Parts == nil || len(turn.Parts) != 0 || turn.Info.Cost != 0.25 || u.Input != 11 || u.Context != 0 {
+				t.Fatalf("failed summary: %+v", turn)
+			}
+		} else if w.Code != 200 || len(turn.Parts) != 2 || turn.Info.Cost != 0.5 || u.Input != 18 || u.Output != 5 {
+			t.Fatalf("complete summary: %+v", turn)
+		}
+		u.Summary.Input = -1
+		stored, _ := svc.store.Get(rec.ID)
+		if stored.Turns[1].Info.Tokens.Summary.Input != u.Input {
+			t.Fatal("returned receipt aliases stored summary")
+		}
 	}
 }

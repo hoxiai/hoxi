@@ -35,6 +35,8 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 		{get, "/api/hoxi/worktree/verify-status"}, {post, "/api/hoxi/worktree/commit"}, {post, "/api/hoxi/worktree/apply"},
 		{post, "/api/hoxi/attachments"}, {get, "/api/hoxi/attachments/att_1"}, {get, "/api/hoxi/attachments/att_1/content"},
 		{get, "/api/hoxi/skills/list"}, {get, "/api/hoxi/skills/marketplace"}, {get, "/api/hoxi/workspaces"},
+		{get, "/api/hoxi/work/apps-summary"},
+		{get, "/api/hoxi/work/app-sessions/demo"},
 		{get, "/file/content"}, {get, "/api/file/content"}, {get, "/api/hoxi/file/content"},
 		{get, "/api/hoxi/file/list"}, {get, "/api/hoxi/file/search"},
 	}
@@ -44,6 +46,8 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 		}
 	}
 	denied := []route{
+		{get, "/api/hoxi/cap/v1/discovery"}, {post, "/api/hoxi/cap/v1/auth/token"},
+		{post, "/api/hoxi/mcp"}, {get, "/api/hoxi/app-grants"}, {post, "/api/hoxi/app-grants/approvals/apr_1/decision"},
 		{get, "/api/hoxi/computer/apps"}, {get, "/api/hoxi/computer/permissions"}, {get, "/api/hoxi/computer/state"}, {post, "/api/hoxi/computer/action"}, {post, "/api/hoxi/computer/grant"}, {post, "/api/hoxi/computer/revoke"}, {post, "/api/hoxi/computer/pause"}, {post, "/api/hoxi/computer/stop"},
 		{get, "/api/hoxi/browser/extension"}, {post, "/api/hoxi/browser/action"}, {get, "/api/hoxi/browser/stream"},
 		{get, "/api/hoxi/browser/workflows"}, {post, "/api/hoxi/browser/workflows"}, {get, "/api/hoxi/browser/diagnostics"}, {post, "/api/hoxi/browser/diagnostics"},
@@ -61,12 +65,14 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 		{get, "/api/hoxi/provider/auto-pools"}, {get, "/api/hoxi/provider/models/x"}, {get, "/provider"}, {get, "/global/config"},
 		{get, "/api/hoxi/provider/catalog"}, {get, "/api/hoxi/provider/auth-methods"}, {post, "/api/hoxi/provider/oauth/openrouter/authorize"},
 		{http.MethodPut, "/api/hoxi/provider/credentials/openai"}, {http.MethodDelete, "/api/hoxi/provider/credentials/openai"},
+		{post, "/api/hoxi/provider/disconnect"}, {post, "/api/hoxi/local-cli/disconnect"},
 		{get, "/api/hoxi/provider/config"}, {http.MethodPatch, "/api/hoxi/provider/config"}, {post, "/api/hoxi/provider/dispose"},
 		{get, "/api/hoxi/pty"}, {post, "/api/hoxi/pty"}, {get, "/api/hoxi/pty/1/connect"},
 		{get, "/api/hoxi/agents"}, {get, "/api/hoxi/commands"}, {get, "/api/hoxi/lsp"},
 		{get, "/api/hoxi/browser"}, {get, "/api/hoxi/clipboard/images"}, {get, "/api/hoxi/sessionsx"},
 		{get, "/api/hoxi/sessions/../tunnel/pair"}, {get, "/session"}, {get, "/pty/1/connect"}, {get, "/config"}, {get, "/auth/openai"},
 		{post, "/api/hoxi/desktop/notify"}, {post, "/api/hoxi/desktop/focus"}, {get, "/api/hoxi/dev-pulse"},
+		{get, "/api/hoxi/dialog/open-directory"}, {post, "/api/hoxi/dialog/open-directory"},
 		{get, "/api/hoxi/desktop/notify/permission"}, {post, "/api/hoxi/desktop/notify/permission"},
 		{get, "/api/hoxi/dev-pulse/history"}, {get, "/api/hoxi/request-log"}, {get, "/api/hoxi/request-log/content"}, {get, "/api/hoxi/request-log"}, {get, "/api/hoxi/request-log"}, {get, "/api/hoxi/request-log"}, {get, "/api/hoxi/request-log"}, {get, "/api/hoxi/request-log"},
 		// The local OpenAI-compatible relay plane mints and consumes provider
@@ -109,6 +115,11 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 		{get, "/api/hoxi/git/attribution"}, {http.MethodPut, "/api/hoxi/git/attribution"},
 		// Optional desktop extension profiles, proxy probes, and calculation endpoints stay desktop-only.
 		{get, "/api/hoxi/work/apps"}, {http.MethodPut, "/api/hoxi/work/apps"}, {post, "/api/hoxi/work/apps"},
+		{post, workAppRegistryPath}, {http.MethodHead, workAppRegistryPath}, {http.MethodPut, workAppRegistryPath}, {http.MethodDelete, workAppRegistryPath},
+		{get, workAppRegistryPath + "/"}, {get, workAppRegistryPath + "/demo"}, {get, "/api/hoxi/work/packages"},
+		{post, "/api/hoxi/work/app-sessions/demo"}, {http.MethodDelete, "/api/hoxi/work/app-sessions/demo"},
+		{get, "/api/hoxi/work/app-sessions/"}, {get, "/api/hoxi/work/app-sessions/demo/extra"},
+		{get, "/api/hoxi/work/apps/demo/service/info"}, {post, "/api/hoxi/work/packages/install"},
 		{get, "/api/hoxi/work/stores"}, {post, "/api/hoxi/work/proxy-check"},
 		{post, "/api/hoxi/work/ext/calc"}, {post, "/api/hoxi/work/ext/audit"},
 		{get, "/api/hoxi/sessions//message"}, {get, "/api/hoxi/sessions/"},
@@ -132,6 +143,8 @@ func TestTunnelRejectsEncodedPathsAndBareFileContent(t *testing.T) {
 	for _, target := range []string{
 		"/api/hoxi/sessions/ses_1%2F..%2F..%2Ftunnel%2Fpair",
 		"/api/hoxi/permission/per%2F1/reply",
+		workAppRegistryPath + "?include=manifest",
+		workPackageSessionsPrefix + "demo?include=stores",
 		"/file/content",
 		"/api/file/content?directory=/tmp",
 		"/api/hoxi/file/content?path=",

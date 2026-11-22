@@ -124,3 +124,100 @@ func TestEngineHonorsModelOutputLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestModelDriversPreferExplicitCacheKeyOverSessionID(t *testing.T) {
+	factory := newDriverFactory()
+	baseMsgs := []Message{{Role: RoleUser, Content: []ContentBlock{{Type: ContentText, Text: "ping"}}}}
+
+	// 1. OpenAI Chat Completions
+	chatDrv, err := factory.Create(llm.ProtocolOpenAI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chatReq, err := chatDrv.BuildRequest(ModelRequest{
+		SessionID: "ses_parent",
+		CacheKey:  "ses_parent:sub:call_1",
+		Target:    llm.StreamTarget{ProviderID: "openai", ModelID: "gpt-5", BaseURL: "https://api.openai.com/v1", Protocol: llm.ProtocolOpenAI},
+		Messages:  baseMsgs,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var chatBody map[string]any
+	if err := json.Unmarshal(chatReq.Body, &chatBody); err != nil {
+		t.Fatal(err)
+	}
+	if chatBody["prompt_cache_key"] != "ses_parent:sub:call_1" || chatReq.SessionID != "ses_parent:sub:call_1" {
+		t.Fatalf("openai chat ignored CacheKey: body=%v headerSID=%q", chatBody["prompt_cache_key"], chatReq.SessionID)
+	}
+
+	// 2. Anthropic sticky pool user_id and SessionID affinity
+	anthDrv, err := factory.Create(llm.ProtocolAnthropic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentAnth, err := anthDrv.BuildRequest(ModelRequest{
+		SessionID: "ses_parent",
+		Target:    llm.StreamTarget{ProviderID: "anthropic", ModelID: "claude-sonnet-4-6", Protocol: llm.ProtocolAnthropic},
+		Messages:  baseMsgs,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	childAnth, err := anthDrv.BuildRequest(ModelRequest{
+		SessionID: "ses_parent",
+		CacheKey:  "ses_parent:sub:call_1",
+		Target:    llm.StreamTarget{ProviderID: "anthropic", ModelID: "claude-sonnet-4-6", Protocol: llm.ProtocolAnthropic},
+		Messages:  baseMsgs,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parentAnthBody, childAnthBody struct {
+		Metadata struct {
+			UserID string `json:"user_id"`
+		} `json:"metadata"`
+	}
+	_ = json.Unmarshal(parentAnth.Body, &parentAnthBody)
+	_ = json.Unmarshal(childAnth.Body, &childAnthBody)
+	if childAnth.SessionID != "ses_parent:sub:call_1" || childAnthBody.Metadata.UserID == "" || childAnthBody.Metadata.UserID == parentAnthBody.Metadata.UserID {
+		t.Fatalf("anthropic driver did not isolate CacheKey: parent=%q child=%q headerSID=%q",
+			parentAnthBody.Metadata.UserID, childAnthBody.Metadata.UserID, childAnth.SessionID)
+	}
+
+	// 3. Gemini SessionID affinity
+	gemDrv, err := factory.Create(llm.ProtocolGoogle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gemReq, err := gemDrv.BuildRequest(ModelRequest{
+		SessionID: "ses_parent",
+		CacheKey:  "ses_parent:sub:call_1",
+		Target:    llm.StreamTarget{ProviderID: "google", ModelID: "gemini-2.5-pro", Protocol: llm.ProtocolGoogle},
+		Messages:  baseMsgs,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gemReq.SessionID != "ses_parent:sub:call_1" {
+		t.Fatalf("gemini driver ignored CacheKey: got %q", gemReq.SessionID)
+	}
+}
+
+func TestGeminiLocalCallIDAcrossResponses(t *testing.T) {
+	driver := newGeminiDriver()
+	seen := map[string]bool{}
+	for _, label := range []string{"inspect", "implement"} {
+		frame := `data: {"candidates":[{"finishReason":"STOP","content":{"parts":[{"functionCall":{"name":"task","args":{}}}]}}]}` + "\n\n"
+		var id string
+		err := driver.ParseSSE(context.Background(), strings.NewReader(frame), func(e StreamEvent) {
+			if e.ToolCall != nil {
+				id = e.ToolCall.ID
+			}
+		})
+		if err != nil || id == "" || seen[id] {
+			t.Fatalf("%s: call id %q, seen %t, error %v", label, id, seen[id], err)
+		}
+		seen[id] = true
+	}
+}

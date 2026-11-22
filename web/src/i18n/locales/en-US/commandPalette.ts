@@ -38,4 +38,5 @@ export const commandPalette = {
   slashBuildDesc: "Switch to Build mode (or execute a prompt)",
   slashDiffDesc: "Open the session changes inspector",
   slashUndoDesc: "Revert the last turn in this session",
+  slashFastDesc: "Toggle Fast mode (priority speed, ~2x cost/quota)",
 };

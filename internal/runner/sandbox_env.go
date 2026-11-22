@@ -109,9 +109,66 @@ func sandboxedRuntimeEnv(runtime string, env []string) []string {
 // command-sandboxed session leaves the network open for model calls, so no
 // credential beyond the runtime's own model key may ride along. hookEnv (the
 // approval hook token) is appended after the scrub.
+var applyRuntimeSystemProxy = agentcli.WithSystemProxy
+
 func runtimeProcessEnv(rec SessionRecord, base, hookEnv []string) []string {
+	if rec.Runtime != "" && rec.Runtime != "native" && applyRuntimeSystemProxy != nil {
+		base = applyRuntimeSystemProxy(base)
+	}
 	if rec.CommandSandbox {
 		base = sandboxedRuntimeEnv(rec.Runtime, base)
 	}
-	return subproc.WithUTF8Env(agentcli.WithUserBinPath(append(base, hookEnv...)))
+	return subproc.WithUTF8Env(agentcli.WithUserBinPath(mergeProcessEnv(base, hookEnv)))
+}
+
+// mergeProcessEnv applies hookEnv overrides onto base in-place while merging
+// comma-separated NO_PROXY / no_proxy lists so loopback hook exclusions never
+// overwrite system/user proxy bypass entries.
+func mergeProcessEnv(base, overlay []string) []string {
+	out := make([]string, 0, len(base)+len(overlay))
+	idxByKey := make(map[string]int, len(base)+len(overlay))
+	apply := func(kv string) {
+		name, val, ok := strings.Cut(kv, "=")
+		if !ok || name == "" {
+			return
+		}
+		if prevIdx, exists := idxByKey[name]; exists {
+			if name == "NO_PROXY" || name == "no_proxy" {
+				_, prevVal, _ := strings.Cut(out[prevIdx], "=")
+				out[prevIdx] = name + "=" + mergeNoProxyCSV(prevVal, val)
+				return
+			}
+			out[prevIdx] = kv
+			return
+		}
+		idxByKey[name] = len(out)
+		out = append(out, kv)
+	}
+	for _, kv := range base {
+		apply(kv)
+	}
+	for _, kv := range overlay {
+		apply(kv)
+	}
+	return out
+}
+
+func mergeNoProxyCSV(a, b string) string {
+	seen := make(map[string]bool)
+	var parts []string
+	for _, list := range []string{a, b} {
+		for _, raw := range strings.Split(list, ",") {
+			tok := strings.TrimSpace(raw)
+			if tok == "" {
+				continue
+			}
+			lower := strings.ToLower(tok)
+			if seen[lower] {
+				continue
+			}
+			seen[lower] = true
+			parts = append(parts, tok)
+		}
+	}
+	return strings.Join(parts, ",")
 }

@@ -97,8 +97,8 @@ func (s *Service) CreateSession(body CreateSessionRequest, directory string) (Se
 				modelID = ms[0].ID
 			}
 		case string(RuntimeCodex):
-			if ms := agentcli.DiscoverCodexModelsWithRefresh(false); len(ms) > 0 {
-				modelID = ms[0].ID
+			if snap := agentcli.DiscoverCodexCatalog(false); snap.DefaultModel != "" {
+				modelID = snap.DefaultModel
 			}
 		case string(RuntimeOpenCode):
 			if ms := agentcli.DiscoverOpenCodeCLIModelsWithRefresh(false); len(ms) > 0 {

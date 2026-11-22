@@ -68,6 +68,56 @@ func NewSubdirRuleTracker(seedPaths []string, budgetBytes int) *SubdirRuleTracke
 	}
 }
 
+var subdirInstrFileAttrRe = regexp.MustCompile(`<subdirectory_instructions\s+file="([^"]+)"`)
+
+// SeedFromHistory records subdirectory rule files that are already present in
+// the visible conversation history so multi-turn sessions in the same
+// subdirectory do not re-inject up to 32 KiB of duplicate rules on every turn.
+// After compaction removes earlier tool results from history, rules are
+// automatically eligible for re-injection on the next access.
+func (t *SubdirRuleTracker) SeedFromHistory(worktreeDir string, history []Message) {
+	if t == nil || len(history) == 0 {
+		return
+	}
+	wtClean := strings.TrimSpace(worktreeDir)
+	home, _ := os.UserHomeDir()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, m := range history {
+		if m.Role != RoleUser {
+			continue
+		}
+		for _, b := range m.Content {
+			if b.Type != ContentToolResult || !strings.Contains(b.Text, "<subdirectory_instructions ") {
+				continue
+			}
+			for _, match := range subdirInstrFileAttrRe.FindAllStringSubmatch(b.Text, -1) {
+				if len(match) < 2 {
+					continue
+				}
+				label := strings.TrimSpace(match[1])
+				if label == "" {
+					continue
+				}
+				var candidate string
+				switch {
+				case strings.HasPrefix(label, "~/") && home != "":
+					candidate = filepath.Join(home, filepath.FromSlash(label[2:]))
+				case filepath.IsAbs(label):
+					candidate = label
+				case wtClean != "":
+					candidate = filepath.Join(wtClean, filepath.FromSlash(label))
+				default:
+					continue
+				}
+				if key := canonicalRuleKey(candidate); key != "" {
+					t.seenReal[key] = true
+				}
+			}
+		}
+	}
+}
+
 func canonicalRuleKey(path string) string {
 	trimmed := strings.TrimSpace(path)
 	if trimmed == "" {

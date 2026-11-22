@@ -96,8 +96,22 @@ func TestComputeTotal(t *testing.T) {
 		}
 	}
 
-	// 5. hoxi_image false-success regression: HTTP 200 {"ok":false,"error":"..."} must return an error!
-	if _, err := g.invokeNativeHostTool(context.Background(), tc, "hoxi_image", json.RawMessage(`{"prompt":"test icon"}`)); err == nil {
-		t.Fatal("expected hoxi_image without configured provider/model to fail instead of returning false success")
+	// 5. hoxi_image / hoxi_video / hoxi_speech false-success regression + structured missingCapability metadata!
+	for _, tcMedia := range []struct {
+		tool string
+		body string
+		cap  string
+	}{
+		{"hoxi_image", `{"prompt":"test icon"}`, "image"},
+		{"hoxi_video", `{"prompt":"test video"}`, "video"},
+		{"hoxi_speech", `{"text":"hello"}`, "speech"},
+	} {
+		res, err := g.invokeNativeHostTool(context.Background(), tc, tcMedia.tool, json.RawMessage(tcMedia.body))
+		if err == nil {
+			t.Fatalf("expected %s without configured provider/model to fail instead of returning false success", tcMedia.tool)
+		}
+		if res.Metadata == nil || res.Metadata["missingCapability"] != tcMedia.cap {
+			t.Fatalf("expected %s error metadata to carry missingCapability=%q, got %+v", tcMedia.tool, tcMedia.cap, res.Metadata)
+		}
 	}
 }

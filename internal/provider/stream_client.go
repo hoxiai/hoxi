@@ -28,6 +28,18 @@ var (
 // completely silent between reads before the request is cancelled as stalled.
 const DefaultStreamStallTimeout = 180 * time.Second
 
+var (
+	streamTransportMu   sync.Mutex
+	streamHTTPTransport http.RoundTripper
+)
+
+// SetStreamTransportForTest overrides the HTTP transport used by OpenStream in tests.
+func SetStreamTransportForTest(rt http.RoundTripper) {
+	streamTransportMu.Lock()
+	streamHTTPTransport = rt
+	streamTransportMu.Unlock()
+}
+
 type stallReadCloser struct {
 	body    io.ReadCloser
 	limit   time.Duration
@@ -82,7 +94,7 @@ func (s *Service) ResolveStreamTarget(providerID, modelID string) llm.StreamTarg
 	if pid == "" || mid == "" {
 		return target
 	}
-	baseURL, _, npm, _ := s.resolveProviderConnection(pid, "", "")
+	baseURL, _, npm, _ := s.resolveEffectiveProviderConnection(pid, "", "")
 	target.BaseURL = baseURL
 	target.NPM = npm
 	target.HasEndpoint = isHTTPEndpoint(baseURL)
@@ -189,11 +201,15 @@ func (s *Service) OpenStream(ctx context.Context, req llm.StreamHTTPRequest) (*h
 	if !req.Target.HasEndpoint {
 		return nil, llm.ErrUnavailable
 	}
-	baseURL, apiKey, npm, headers := s.resolveProviderConnection(req.Target.ProviderID, req.Target.BaseURL, req.Target.NPM)
+	baseURL, apiKey, npm, headers := s.resolveEffectiveProviderConnection(req.Target.ProviderID, req.Target.BaseURL, req.Target.NPM)
 	if !isHTTPEndpoint(baseURL) {
 		return nil, llm.ErrUnavailable
 	}
 	targetURL := resolveStreamEndpointURL(baseURL, req.Target)
+	reqBody := req.Body
+	if isCodexChatGPTBackendURL(targetURL) {
+		reqBody = normalizeCodexBackendResponsesPayload(reqBody)
+	}
 	proto := effectiveProviderProtocol(req.Target.ProviderID, npm, baseURL)
 	if req.Target.Protocol == llm.ProtocolAnthropic {
 		proto = "anthropic"
@@ -214,7 +230,7 @@ func (s *Service) OpenStream(ctx context.Context, req llm.StreamHTTPRequest) (*h
 			cancelReq()
 		})
 
-		outReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, reqURL, bytes.NewReader(req.Body))
+		outReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, reqURL, bytes.NewReader(reqBody))
 		if err != nil {
 			timer.Stop()
 			cancelReq()
@@ -222,6 +238,10 @@ func (s *Service) OpenStream(ctx context.Context, req llm.StreamHTTPRequest) (*h
 		}
 		outReq.Header.Set("Accept", "text/event-stream")
 		outReq.Header.Set("Content-Type", "application/json")
+		if sid := strings.TrimSpace(req.SessionID); sid != "" && !isCodexChatGPTBackendURL(reqURL) {
+			outReq.Header.Set("x-session-affinity", sid)
+			outReq.Header.Set("X-Session-Id", sid)
+		}
 
 		hasCustomAuth := false
 		for k, v := range headers {
@@ -260,10 +280,15 @@ func (s *Service) OpenStream(ctx context.Context, req llm.StreamHTTPRequest) (*h
 			}
 		}
 
-		transport := providerTransport
+		var transport http.RoundTripper = providerTransport
 		if isLoopbackURL(reqURL) {
 			transport = localTransport
 		}
+		streamTransportMu.Lock()
+		if streamHTTPTransport != nil {
+			transport = streamHTTPTransport
+		}
+		streamTransportMu.Unlock()
 		client := &http.Client{Transport: transport}
 		resp, doErr := client.Do(outReq)
 		if doErr != nil {
@@ -282,7 +307,7 @@ func (s *Service) OpenStream(ctx context.Context, req llm.StreamHTTPRequest) (*h
 	resp, err := doOpen(targetURL, false)
 	if err != nil {
 		if s.breaker != nil {
-			s.breaker.RecordFailure(req.Target.ProviderID, req.Target.ModelID, classifyCandidateFailure(0, err, nil), 0, 0, err.Error())
+			s.breaker.RecordFailure(req.Target.ProviderID, req.Target.ModelID, classifyCandidateFailure(0, err, nil), 0, time.Since(started).Milliseconds(), err.Error())
 		}
 		return nil, err
 	}
@@ -337,7 +362,7 @@ func (s *Service) OpenStream(ctx context.Context, req llm.StreamHTTPRequest) (*h
 			if isQuotaExhausted(bodyBytes) {
 				class = breakerClassQuota
 			}
-			s.breaker.RecordFailure(req.Target.ProviderID, req.Target.ModelID, class, resp.StatusCode, retryAfter.Milliseconds(), errText)
+			s.breaker.RecordFailureWithRetryAfter(req.Target.ProviderID, req.Target.ModelID, class, resp.StatusCode, latencyMs, retryAfter, errText)
 		}
 		diagMsg := "native stream HTTP error"
 		if upstream != nil && upstream.RequestID != "" {

@@ -1,4 +1,5 @@
 import { createSignal, onMount, Show } from "solid-js";
+import { ExternalLink, Globe, History, Shield, Trash2, WifiOff } from "lucide-solid";
 import { locale, t } from "../../i18n";
 import {
   clearLocalPromptHistory,
@@ -9,9 +10,7 @@ import {
   saveTelemetryEnabled,
   telemetry,
 } from "../../store/workspace";
-
-const buttonClass = "rounded-lg border border-[var(--border-strong)] px-4 py-2 text-[13px] font-medium hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer";
-const linkClass = "text-[var(--accent-primary)] underline underline-offset-2";
+import { HelpTip, SettingGroup, SettingRow, ToggleSwitch } from "./setting-controls";
 
 function legalURL(document: "privacy" | "terms") {
   return resolveOfficialWebURL(`/legal/${document}-${locale() === "zh-CN" ? "zh" : "en"}.html`);
@@ -22,92 +21,127 @@ export function PrivacySettingsTab() {
   onMount(() => {
     void loadTelemetrySettings();
   });
+
+  const overviewTip = () =>
+    `${t("privacy.openSource")}\n\n${t("privacy.providers")}\n\n${t("privacy.connections")}`;
+
   return (
     <div class="space-y-6 text-[var(--text-primary)]">
-      <h3 class="text-[15px] font-semibold">{t("privacy.title")}</h3>
-      <div class="space-y-3 text-[13px] leading-relaxed text-[var(--text-secondary)]">
-        <p>{t("privacy.openSource")}</p>
-        <p>{t("privacy.providers")}</p>
-        <p>{t("privacy.connections")}</p>
-      </div>
-      <section class="space-y-3 border-t border-[var(--border-subtle)] pt-5">
-        <div class="flex items-start justify-between gap-4">
-          <div class="space-y-1">
-            <h4 class="font-semibold">{t("privacy.offlineTitle")}</h4>
-            <p class="text-[13px] text-[var(--text-secondary)]">{t("privacy.offlineDesc")}</p>
+      <div class="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/50 px-4 py-3">
+        <div class="flex items-center gap-3 min-w-0">
+          <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-surface)] text-[var(--accent-primary)]">
+            <Globe size={16} />
           </div>
-          <button
-            role="switch"
-            aria-checked={telemetry.offline}
+          <div class="flex items-center gap-2 min-w-0">
+            <h3 class="text-[13px] font-semibold text-[var(--text-primary)] truncate">
+              {t("privacy.title")}
+            </h3>
+            <HelpTip text={overviewTip()} />
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2 shrink-0 text-[12px]">
+          <a
+            class="inline-flex items-center gap-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-1.5 font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
+            href={legalURL("privacy")}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => {
+              e.preventDefault();
+              openExternalURL(legalURL("privacy"));
+            }}
+          >
+            <span>{t("privacy.policyLink")}</span>
+            <ExternalLink size={12} />
+          </a>
+          <a
+            class="inline-flex items-center gap-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-1.5 font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
+            href={legalURL("terms")}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => {
+              e.preventDefault();
+              openExternalURL(legalURL("terms"));
+            }}
+          >
+            <span>{t("privacy.termsLink")}</span>
+            <ExternalLink size={12} />
+          </a>
+        </div>
+      </div>
+
+      <SettingGroup>
+        <SettingRow
+          icon={WifiOff}
+          label={t("privacy.offlineTitle")}
+          tip={t("privacy.offlineDesc")}
+        >
+          <Show when={telemetry.offlineEnvOverride}>
+            <span class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] text-[var(--text-muted)]">
+              {t("privacy.offlineEnvLocked")}
+            </span>
+          </Show>
+          <ToggleSwitch
+            checked={telemetry.offline}
             disabled={telemetry.offlineEnvOverride || telemetry.saving}
-            onClick={() => void saveOfflineMode(!telemetry.offline)}
-            class={`${buttonClass} shrink-0 min-w-[72px]`}
-          >
-            {telemetry.offline ? t("privacy.telemetryOn") : t("privacy.telemetryOff")}
-          </button>
-        </div>
-        <Show when={telemetry.offlineEnvOverride}>
-          <p class="text-[13px] text-[var(--text-secondary)]">{t("privacy.offlineEnvLocked")}</p>
-        </Show>
-      </section>
-      <section class="space-y-3 border-t border-[var(--border-subtle)] pt-5">
-        <div class="flex items-start justify-between gap-4">
-          <div class="space-y-1">
-            <h4 class="font-semibold">{t("privacy.telemetryTitle")}</h4>
-            <p class="text-[13px] text-[var(--text-secondary)]">{t("privacy.telemetryDesc")}</p>
-          </div>
-          <button
-            role="switch"
-            aria-checked={telemetry.enabled && !telemetry.offline}
+            onChange={(next) => void saveOfflineMode(next)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          icon={Shield}
+          label={t("privacy.telemetryTitle")}
+          tip={t("privacy.telemetryDesc")}
+        >
+          <Show when={telemetry.offline && !telemetry.envOverride}>
+            <span class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] text-[var(--text-muted)]">
+              {t("privacy.telemetrySuppressedByOffline")}
+            </span>
+          </Show>
+          <Show when={telemetry.envOverride}>
+            <span class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] text-[var(--text-muted)]">
+              {t("privacy.telemetryEnvLocked")}
+            </span>
+          </Show>
+          <ToggleSwitch
+            checked={telemetry.enabled && !telemetry.offline}
             disabled={telemetry.envOverride || telemetry.offline || telemetry.saving}
-            onClick={() => void saveTelemetryEnabled(!telemetry.enabled)}
-            class={`${buttonClass} shrink-0 min-w-[72px]`}
+            onChange={(next) => void saveTelemetryEnabled(next)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          icon={History}
+          label={t("privacy.localData")}
+          tip={t("privacy.historyScope")}
+        >
+          <Show when={historyResult()}>
+            <span role="status" class="text-[12px] text-[var(--text-secondary)]">
+              {historyResult()}
+            </span>
+          </Show>
+          <button
+            type="button"
+            class="hoxi-press inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-3.5 py-1.5 text-[12.5px] font-medium text-[var(--text-primary)] transition-colors cursor-pointer"
+            onClick={() =>
+              setHistoryResult(
+                clearLocalPromptHistory()
+                  ? t("privacy.historyCleared")
+                  : t("privacy.historyError")
+              )
+            }
           >
-            {telemetry.enabled && !telemetry.offline ? t("privacy.telemetryOn") : t("privacy.telemetryOff")}
+            <Trash2 size={13} />
+            <span>{t("privacy.clearHistory")}</span>
           </button>
-        </div>
-        <Show when={telemetry.offline && !telemetry.envOverride}>
-          <p class="text-[13px] text-[var(--text-secondary)]">{t("privacy.telemetrySuppressedByOffline")}</p>
-        </Show>
-        <Show when={telemetry.envOverride}>
-          <p class="text-[13px] text-[var(--text-secondary)]">{t("privacy.telemetryEnvLocked")}</p>
-        </Show>
-        <Show when={telemetry.error}>
-          <p role="alert" class="text-[13px] text-red-500">{telemetry.error}</p>
-        </Show>
-      </section>
-      <div class="flex flex-wrap gap-x-4 gap-y-2 text-[13px]">
-        <a
-          class={linkClass}
-          href={legalURL("privacy")}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={(e) => {
-            e.preventDefault();
-            openExternalURL(legalURL("privacy"));
-          }}
-        >
-          {t("privacy.policyLink")}
-        </a>
-        <a
-          class={linkClass}
-          href={legalURL("terms")}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={(e) => {
-            e.preventDefault();
-            openExternalURL(legalURL("terms"));
-          }}
-        >
-          {t("privacy.termsLink")}
-        </a>
-      </div>
-      <section class="space-y-3 border-t border-[var(--border-subtle)] pt-5">
-        <h4 class="font-semibold">{t("privacy.localData")}</h4>
-        <p class="text-[13px] text-[var(--text-secondary)]">{t("privacy.historyScope")}</p>
-        <button class={buttonClass} onClick={() => setHistoryResult(clearLocalPromptHistory() ? t("privacy.historyCleared") : t("privacy.historyError"))}>{t("privacy.clearHistory")}</button>
-        <p class="text-[13px]" role="status">{historyResult()}</p>
-      </section>
+        </SettingRow>
+      </SettingGroup>
+
+      <Show when={telemetry.error}>
+        <p role="alert" class="px-1 text-[12.5px] text-rose-500">
+          {telemetry.error}
+        </p>
+      </Show>
     </div>
   );
 }

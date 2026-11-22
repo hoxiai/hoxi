@@ -17,7 +17,7 @@ import {
   remoteTunnel,
   requestRemoteTunnel,
 } from "../../store/workspace";
-import { SettingGroup } from "./setting-controls";
+import { HelpTip, SettingGroup } from "./setting-controls";
 import { confirmAction } from "./confirm-dialog";
 
 const inputClass =
@@ -161,27 +161,29 @@ export function RemoteTunnelControls() {
 
         <Show when={remoteTunnel.relayQr?.available && remoteTunnel.relayQr?.qrPng}>
           <div class="flex flex-col items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-4 py-4">
-            <p class="text-[13px] font-medium text-[var(--text-primary)]">{t("remoteTunnel.qrTitle")}</p>
+            <div class="flex items-center gap-2">
+              <p class="text-[13px] font-medium text-[var(--text-primary)]">{t("remoteTunnel.qrTitle")}</p>
+              <HelpTip text={t("remoteTunnel.qrHint")} />
+            </div>
             <img
               src={remoteTunnel.relayQr!.qrPng}
               alt={t("remoteTunnel.qrAlt")}
               class="h-48 w-48 rounded-xl border border-[var(--border-subtle)] bg-white p-2"
             />
-            <p class="max-w-[260px] text-center text-[11px] leading-relaxed text-[var(--text-muted)]">
-              {t("remoteTunnel.qrHint")}
-            </p>
           </div>
         </Show>
 
         <Show when={waiting()}>
           <div class="space-y-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-4 py-4">
-            <p class="text-[13px] font-medium text-[var(--text-primary)]">{t("remoteTunnel.waitingTitle")}</p>
+            <div class="flex items-center gap-2">
+              <p class="text-[13px] font-medium text-[var(--text-primary)]">{t("remoteTunnel.waitingTitle")}</p>
+              <HelpTip text={t("remoteTunnel.waitingHint")} />
+            </div>
             <div class="flex items-baseline gap-3">
               <span class="text-[12px] text-[var(--text-secondary)]">{t("remoteTunnel.userCodeLabel")}</span>
               <span class="font-mono text-[22px] font-semibold tracking-[0.2em] text-[var(--text-primary)]">{pending()?.userCode}</span>
             </div>
             <p class="text-[12px] text-[var(--text-muted)]">{t("remoteTunnel.expiresIn", { time: remaining() })}</p>
-            <p class="text-[12px] text-[var(--text-secondary)]">{t("remoteTunnel.waitingHint")}</p>
             <div class="flex items-center gap-2">
               <button type="button" class={buttonClass} disabled={remoteTunnel.busy} onClick={() => void cancelRemoteTunnel()}>
                 <span>{t("remoteTunnel.cancelAction")}</span>
@@ -206,7 +208,10 @@ export function RemoteTunnelControls() {
         <Show when={showForm()}>
           <form class="grid gap-3 sm:grid-cols-2" onSubmit={(event) => void onAuthorize(event)}>
             <label class="space-y-1 sm:col-span-2">
-              <span class="text-[12px] text-[var(--text-secondary)]">{t("remoteTunnel.controllerLabel")}</span>
+              <span class="inline-flex items-center gap-1.5 text-[12px] text-[var(--text-secondary)]">
+                <span>{t("remoteTunnel.controllerLabel")}</span>
+                <HelpTip text={t("remoteTunnel.controllerHint")} size={13} />
+              </span>
               <input
                 class={inputClass}
                 type="url"
@@ -215,7 +220,6 @@ export function RemoteTunnelControls() {
                 placeholder={t("remoteTunnel.controllerPlaceholder")}
                 onInput={(event) => setControllerUrl(event.currentTarget.value)}
               />
-              <span class="block text-[11px] text-[var(--text-muted)]">{t("remoteTunnel.controllerHint")}</span>
             </label>
             <label class="space-y-1 sm:col-span-2">
               <span class="text-[12px] text-[var(--text-secondary)]">{t("remoteTunnel.nameLabel")}</span>

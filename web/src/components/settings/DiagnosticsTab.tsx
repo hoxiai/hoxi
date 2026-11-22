@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { ChevronLeft, ChevronRight, Columns3, RefreshCw, X } from "lucide-solid";
 import { locale, t } from "../../i18n";
+import { HelpTip } from "./setting-controls";
 import { formatCompactNumber, formatUsd } from "../../i18n/format";
 import { formatDurationMs } from "./usage-format";
 import {
@@ -202,12 +203,12 @@ export default function DiagnosticsTab() {
   return (
     <div class="space-y-3 select-text">
       <div class="flex flex-wrap items-center justify-between gap-3">
-        <div class="flex min-w-0 items-baseline gap-2">
+        <div class="flex min-w-0 items-center gap-2">
           <h3 class="text-[15px] font-semibold text-[var(--text-primary)]">{t("diagnostics.title")}</h3>
           <span class="rounded-full bg-[var(--bg-inset)] px-2 py-0.5 text-[11px] text-[var(--text-muted)]" title={t("diagnostics.listCount", { count: requestLogTotal() })}>
             {t("diagnostics.listCount", { count: filtered().length })}
           </span>
-          <span class="text-[12px] text-[var(--text-muted)]">{t("diagnostics.localHint")}</span>
+          <HelpTip text={t("diagnostics.localHint")} />
         </div>
         <div class="relative">
           <button type="button" class={button} aria-expanded={columnsOpen()} onClick={() => setColumnsOpen((open) => !open)}>

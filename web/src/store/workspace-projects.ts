@@ -4,11 +4,13 @@ import { hoxiAPI } from "../services/api";
 import {
   readStorageItem,
   RECENT_PROJECTS_KEY,
+  SIDEBAR_NAV_TAB_KEY,
   SIDEBAR_PROJECT_MODE_KEY,
   setWorkspace,
   workspace,
   writeStorageItem,
   writeStorageJSON,
+  type SidebarNavTab,
   type SidebarProjectMode,
 } from "./workspace-state";
 import { loadAgents, loadProviders } from "./workspace-providers";
@@ -476,16 +478,31 @@ export async function switchWorkspace(
   void loadAgents(cleaned, { preferCache: true });
 }
 
+export function switchSidebarNavTab(tab: SidebarNavTab) {
+  setWorkspace("sidebarNavTab", tab);
+  writeStorageItem(SIDEBAR_NAV_TAB_KEY, tab);
+}
+
 export function setSidebarProjectMode(mode: SidebarProjectMode) {
-  setWorkspace("sidebarProjectMode", mode);
-  if (mode === "multi" || mode === "single" || mode === "recent") {
+  batch(() => {
+    setWorkspace("sidebarProjectMode", mode);
+    setWorkspace("sidebarNavTab", "projects");
+  });
+  writeStorageItem(SIDEBAR_NAV_TAB_KEY, "projects");
+  if (mode === "multi" || mode === "single") {
     writeStorageItem(SIDEBAR_PROJECT_MODE_KEY, mode);
   }
 }
 
 export function healTransientSidebarProjectMode(): void {
   const savedMode = readStorageItem(SIDEBAR_PROJECT_MODE_KEY);
-  if (savedMode === "attention" || savedMode === "running") {
+  if (savedMode === "recent") {
+    writeStorageItem(SIDEBAR_PROJECT_MODE_KEY, "multi");
+    if (!readStorageItem(SIDEBAR_NAV_TAB_KEY)) {
+      writeStorageItem(SIDEBAR_NAV_TAB_KEY, "recent");
+      setWorkspace("sidebarNavTab", "recent");
+    }
+  } else if (savedMode === "attention" || savedMode === "running") {
     writeStorageItem(SIDEBAR_PROJECT_MODE_KEY, "multi");
     if (workspace.sidebarProjectMode === "attention" || workspace.sidebarProjectMode === "running") {
       setWorkspace("sidebarProjectMode", "multi");

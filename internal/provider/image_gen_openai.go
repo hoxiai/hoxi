@@ -83,7 +83,7 @@ func (s *Service) openAIChatGenerateImage(
 		}
 	}
 
-	resp, parseErr := s.parseOpenAIChatImageResponse(ctx, body, timeout)
+	resp, parseErr := s.parseOpenAIChatImageResponse(ctx, body, conn, timeout)
 	if parseErr != nil {
 		return llm.ImageResponse{}, parseErr
 	}
@@ -96,7 +96,7 @@ func (s *Service) openAIChatGenerateImage(
 	return llm.ImageResponse{}, errors.New("chat completion response contained no generated image")
 }
 
-func (s *Service) parseOpenAIChatImageResponse(ctx context.Context, raw []byte, timeout time.Duration) (llm.ImageResponse, error) {
+func (s *Service) parseOpenAIChatImageResponse(ctx context.Context, raw []byte, conn imageGenConn, timeout time.Duration) (llm.ImageResponse, error) {
 	var parsed struct {
 		Choices []struct {
 			Message struct {
@@ -123,7 +123,7 @@ func (s *Service) parseOpenAIChatImageResponse(ctx context.Context, raw []byte, 
 	msg := parsed.Choices[0].Message
 
 	for _, rawImg := range msg.Images {
-		if img, ok := s.resolveOpenAIImageItem(ctx, rawImg, timeout); ok {
+		if img, ok := s.resolveOpenAIImageItem(ctx, rawImg, conn, timeout); ok {
 			out.Images = append(out.Images, img)
 		}
 	}
@@ -140,13 +140,13 @@ func (s *Service) parseOpenAIChatImageResponse(ctx context.Context, raw []byte, 
 				}
 				_ = json.Unmarshal(partRaw, &meta)
 				if (meta.Type == "" || meta.Type == "text") && strings.TrimSpace(meta.Text) != "" {
-					cleaned := s.extractEmbeddedImagesFromText(ctx, meta.Text, &out.Images, timeout)
+					cleaned := s.extractEmbeddedImagesFromText(ctx, meta.Text, conn, &out.Images, timeout)
 					if strings.TrimSpace(cleaned) != "" {
 						texts = append(texts, strings.TrimSpace(cleaned))
 					}
 					continue
 				}
-				if img, ok := s.resolveOpenAIImageItem(ctx, partRaw, timeout); ok {
+				if img, ok := s.resolveOpenAIImageItem(ctx, partRaw, conn, timeout); ok {
 					out.Images = append(out.Images, img)
 				}
 			}
@@ -155,13 +155,13 @@ func (s *Service) parseOpenAIChatImageResponse(ctx context.Context, raw []byte, 
 	} else if len(trimmedContent) > 0 && trimmedContent[0] == '"' {
 		var textContent string
 		if json.Unmarshal(trimmedContent, &textContent) == nil {
-			out.Text = strings.TrimSpace(s.extractEmbeddedImagesFromText(ctx, textContent, &out.Images, timeout))
+			out.Text = strings.TrimSpace(s.extractEmbeddedImagesFromText(ctx, textContent, conn, &out.Images, timeout))
 		}
 	}
 	return out, nil
 }
 
-func (s *Service) extractEmbeddedImagesFromText(ctx context.Context, text string, dst *[]llm.GeneratedImage, timeout time.Duration) string {
+func (s *Service) extractEmbeddedImagesFromText(ctx context.Context, text string, conn imageGenConn, dst *[]llm.GeneratedImage, timeout time.Duration) string {
 	cleaned := mdDataImageRe.ReplaceAllStringFunc(text, func(match string) string {
 		sub := mdDataImageRe.FindStringSubmatch(match)
 		if len(sub) >= 2 {
@@ -182,7 +182,7 @@ func (s *Service) extractEmbeddedImagesFromText(ctx context.Context, text string
 	cleaned = mdHTTPImageRe.ReplaceAllStringFunc(cleaned, func(match string) string {
 		sub := mdHTTPImageRe.FindStringSubmatch(match)
 		if len(sub) >= 2 {
-			if img, err := fetchRemoteImage(ctx, sub[1], timeout); err == nil && len(img.Data) > 0 {
+			if img, err := fetchRemoteImage(ctx, sub[1], conn, timeout); err == nil && len(img.Data) > 0 {
 				*dst = append(*dst, img)
 				return ""
 			}
@@ -192,7 +192,7 @@ func (s *Service) extractEmbeddedImagesFromText(ctx context.Context, text string
 	return strings.TrimSpace(cleaned)
 }
 
-func (s *Service) resolveOpenAIImageItem(ctx context.Context, raw json.RawMessage, timeout time.Duration) (llm.GeneratedImage, bool) {
+func (s *Service) resolveOpenAIImageItem(ctx context.Context, raw json.RawMessage, conn imageGenConn, timeout time.Duration) (llm.GeneratedImage, bool) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
 		return llm.GeneratedImage{}, false
@@ -200,7 +200,7 @@ func (s *Service) resolveOpenAIImageItem(ctx context.Context, raw json.RawMessag
 	if trimmed[0] == '"' {
 		var str string
 		if json.Unmarshal(trimmed, &str) == nil {
-			return resolveImageStringValue(ctx, str, "", timeout)
+			return resolveImageStringValue(ctx, str, "", conn, timeout)
 		}
 		return llm.GeneratedImage{}, false
 	}
@@ -268,7 +268,7 @@ func (s *Service) resolveOpenAIImageItem(ctx context.Context, raw json.RawMessag
 		}
 	}
 	if urlCandidate != "" {
-		if img, ok := resolveImageStringValue(ctx, urlCandidate, mime, timeout); ok {
+		if img, ok := resolveImageStringValue(ctx, urlCandidate, mime, conn, timeout); ok {
 			img.RevisedPrompt = strings.TrimSpace(obj.RevisedPrompt)
 			return img, true
 		}
@@ -328,7 +328,7 @@ func (s *Service) openAIImagesGenerate(
 			msg:    redactSecretInText(extractAPIErrorMessage(status, body), conn.APIKey),
 		}
 	}
-	return s.parseOpenAIImagesEndpointResponse(ctx, body, timeout)
+	return s.parseOpenAIImagesEndpointResponse(ctx, body, conn, timeout)
 }
 
 func (s *Service) openAIImagesEditMultipart(
@@ -341,6 +341,10 @@ func (s *Service) openAIImagesEditMultipart(
 ) (llm.ImageResponse, error) {
 	if len(input.Data) == 0 {
 		return llm.ImageResponse{}, errors.New("empty edit image")
+	}
+	targetURL := strings.TrimRight(strings.TrimSpace(conn.BaseURL), "/") + "/images/edits"
+	if err := isBlockedMediaTargetURL(targetURL, conn.BaseURL); err != nil {
+		return llm.ImageResponse{}, err
 	}
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
@@ -367,7 +371,6 @@ func (s *Service) openAIImagesEditMultipart(
 	_, _ = fw.Write(input.Data)
 	_ = mw.Close()
 
-	targetURL := strings.TrimRight(strings.TrimSpace(conn.BaseURL), "/") + "/images/edits"
 	ctx, cancel := context.WithTimeout(parentCtx, timeout)
 	defer cancel()
 	outReq, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, &buf)
@@ -378,10 +381,10 @@ func (s *Service) openAIImagesEditMultipart(
 	outReq.Header.Set("Content-Type", mw.FormDataContentType())
 	applyImageAuthHeaders(outReq, conn, false, false)
 
-	client := &http.Client{Timeout: timeout, Transport: selectImageTransport(targetURL)}
+	client := newSafeVideoHTTPClient(timeout, targetURL, conn)
 	resp, err := client.Do(outReq)
 	if err != nil {
-		return llm.ImageResponse{}, err
+		return llm.ImageResponse{}, errors.New(redactSecretInText(err.Error(), conn.APIKey))
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxImageResponseBytes))
@@ -391,10 +394,10 @@ func (s *Service) openAIImagesEditMultipart(
 			msg:    redactSecretInText(extractAPIErrorMessage(resp.StatusCode, body), conn.APIKey),
 		}
 	}
-	return s.parseOpenAIImagesEndpointResponse(parentCtx, body, timeout)
+	return s.parseOpenAIImagesEndpointResponse(parentCtx, body, conn, timeout)
 }
 
-func (s *Service) parseOpenAIImagesEndpointResponse(ctx context.Context, raw []byte, timeout time.Duration) (llm.ImageResponse, error) {
+func (s *Service) parseOpenAIImagesEndpointResponse(ctx context.Context, raw []byte, conn imageGenConn, timeout time.Duration) (llm.ImageResponse, error) {
 	var parsed struct {
 		Data []json.RawMessage `json:"data"`
 	}
@@ -403,7 +406,7 @@ func (s *Service) parseOpenAIImagesEndpointResponse(ctx context.Context, raw []b
 	}
 	var out llm.ImageResponse
 	for _, item := range parsed.Data {
-		if img, ok := s.resolveOpenAIImageItem(ctx, item, timeout); ok {
+		if img, ok := s.resolveOpenAIImageItem(ctx, item, conn, timeout); ok {
 			out.Images = append(out.Images, img)
 		}
 	}
@@ -440,13 +443,13 @@ func isModalitiesParamRejection(raw []byte) bool {
 		strings.Contains(lower, "unrecognized request argument")
 }
 
-func resolveImageStringValue(ctx context.Context, val, fallbackMime string, timeout time.Duration) (llm.GeneratedImage, bool) {
+func resolveImageStringValue(ctx context.Context, val, fallbackMime string, conn imageGenConn, timeout time.Duration) (llm.GeneratedImage, bool) {
 	trimmed := strings.TrimSpace(val)
 	if strings.HasPrefix(trimmed, "data:") {
 		return decodeDataURIImage(trimmed)
 	}
 	if strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://") {
-		if img, err := fetchRemoteImage(ctx, trimmed, timeout); err == nil && len(img.Data) > 0 {
+		if img, err := fetchRemoteImage(ctx, trimmed, conn, timeout); err == nil && len(img.Data) > 0 {
 			return img, true
 		}
 		return llm.GeneratedImage{}, false
@@ -478,32 +481,74 @@ func decodeDataURIImage(dataURI string) (llm.GeneratedImage, bool) {
 	}, true
 }
 
-func fetchRemoteImage(parentCtx context.Context, rawURL string, timeout time.Duration) (llm.GeneratedImage, error) {
+func detectVerifiedImageMime(data []byte) (string, bool) {
+	switch {
+	case len(data) >= 8 && bytes.Equal(data[:8], []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}):
+		return "image/png", true
+	case len(data) >= 3 && data[0] == 0xff && data[1] == 0xd8 && data[2] == 0xff:
+		return "image/jpeg", true
+	case len(data) >= 6 && (bytes.Equal(data[:6], []byte("GIF87a")) || bytes.Equal(data[:6], []byte("GIF89a"))):
+		return "image/gif", true
+	case len(data) >= 12 && bytes.Equal(data[:4], []byte("RIFF")) && bytes.Equal(data[8:12], []byte("WEBP")):
+		return "image/webp", true
+	case len(data) >= 2 && data[0] == 'B' && data[1] == 'M':
+		return "image/bmp", true
+	case len(data) >= 4 && data[0] == 0x00 && data[1] == 0x00 && (data[2] == 0x01 || data[2] == 0x02) && data[3] == 0x00:
+		return "image/x-icon", true
+	case len(data) >= 4 && (bytes.Equal(data[:4], []byte{'I', 'I', 0x2a, 0x00}) || bytes.Equal(data[:4], []byte{'M', 'M', 0x00, 0x2a})):
+		return "image/tiff", true
+	case len(data) >= 12 && bytes.Equal(data[4:8], []byte("ftyp")):
+		switch string(data[8:12]) {
+		case "avif", "avis":
+			return "image/avif", true
+		case "heic", "heix", "hevc", "hevx":
+			return "image/heic", true
+		case "mif1", "msf1":
+			return "image/heif", true
+		}
+	}
+	return "", false
+}
+
+func fetchRemoteImage(parentCtx context.Context, rawURL string, conn imageGenConn, timeout time.Duration) (llm.GeneratedImage, error) {
+	trimmed := strings.TrimSpace(rawURL)
+	if err := isBlockedMediaTargetURL(trimmed, conn.BaseURL); err != nil {
+		return llm.GeneratedImage{}, err
+	}
 	if timeout <= 0 || timeout > 30*time.Second {
 		timeout = 30 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(parentCtx, timeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, trimmed, nil)
 	if err != nil {
 		return llm.GeneratedImage{}, err
 	}
-	client := &http.Client{Timeout: timeout, Transport: selectImageTransport(rawURL)}
+	if sameHostIgnoreCase(trimmed, conn.BaseURL) {
+		applyImageAuthHeaders(req, conn, false, false)
+	}
+	client := newSafeVideoHTTPClient(timeout, trimmed, conn)
 	resp, err := client.Do(req)
 	if err != nil {
-		return llm.GeneratedImage{}, err
+		return llm.GeneratedImage{}, errors.New(redactSecretInText(err.Error(), conn.APIKey))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return llm.GeneratedImage{}, fmt.Errorf("download generated image HTTP %d", resp.StatusCode)
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageResponseBytes))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageResponseBytes+1))
 	if err != nil || len(data) == 0 {
 		return llm.GeneratedImage{}, fmt.Errorf("empty generated image body")
 	}
-	ct := strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0])
+	if len(data) > maxImageResponseBytes {
+		return llm.GeneratedImage{}, fmt.Errorf("generated image exceeds %d MB limit", maxImageResponseBytes>>20)
+	}
+	verifiedMime, ok := detectVerifiedImageMime(data)
+	if !ok {
+		return llm.GeneratedImage{}, errors.New("downloaded resource does not contain valid image magic bytes")
+	}
 	return llm.GeneratedImage{
-		Mime: normalizeGeneratedImageMime(ct, data),
+		Mime: verifiedMime,
 		Data: data,
 	}, nil
 }
@@ -528,6 +573,9 @@ func decodeBase64Flexible(s string) ([]byte, error) {
 }
 
 func normalizeGeneratedImageMime(mime string, data []byte) string {
+	if verified, ok := detectVerifiedImageMime(data); ok {
+		return verified
+	}
 	m := strings.ToLower(strings.TrimSpace(strings.Split(mime, ";")[0]))
 	if m == "image/jpg" {
 		m = "image/jpeg"

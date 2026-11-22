@@ -13,9 +13,24 @@ type claudeUsage struct {
 	CacheReadInputTokens     int     `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens int     `json:"cache_creation_input_tokens"`
 	ContextUsageRatio        float64 `json:"context_usage_ratio"`
+	Speed                    string  `json:"speed,omitempty"`
+	ServiceTier              string  `json:"service_tier,omitempty"`
 	OutputTokensDetails      *struct {
 		ThinkingTokens int `json:"thinking_tokens"`
 	} `json:"output_tokens_details"`
+}
+
+func (u *claudeUsage) resolvedFastServiceTier() string {
+	if u == nil {
+		return ""
+	}
+	for _, raw := range []string{u.Speed, u.ServiceTier} {
+		switch strings.ToLower(strings.TrimSpace(raw)) {
+		case "fast", "priority":
+			return "fast"
+		}
+	}
+	return ""
 }
 
 func (u claudeUsage) effectiveInputTokens() int {
@@ -168,6 +183,11 @@ func (t *TurnTranslator) noteClaudeMsgUsage(msgID string, u *claudeUsage) bool {
 	if u == nil {
 		return false
 	}
+	tierChanged := false
+	if tier := u.resolvedFastServiceTier(); tier != "" && t.MsgInfo.ServiceTier != tier {
+		t.MsgInfo.ServiceTier = tier
+		tierChanged = true
+	}
 	key := strings.TrimSpace(msgID)
 	if key == "" {
 		key = "_default"
@@ -178,13 +198,13 @@ func (t *TurnTranslator) noteClaudeMsgUsage(msgID string, u *claudeUsage) bool {
 	}
 	tokens := sumClaudeUsageMap(t.claudeMsgUsage)
 	if tokens == nil {
-		return false
+		return tierChanged
 	}
 	if ctx := t.latestClaudeParentContextTokens(nil); ctx > 0 {
 		tokens.Total = ctx
 	}
 	if messageTokensEqual(t.MsgInfo.Tokens, tokens) {
-		return false
+		return tierChanged
 	}
 	t.MsgInfo.Tokens = tokens
 	return true
@@ -196,6 +216,9 @@ func (t *TurnTranslator) applyClaudeResultUsage(env *claudeRawEvent) {
 	}
 	if env.TotalCostUSD > 0 {
 		t.MsgInfo.Cost = env.TotalCostUSD
+	}
+	if tier := env.Usage.resolvedFastServiceTier(); tier != "" {
+		t.MsgInfo.ServiceTier = tier
 	}
 	resUsage := env.Usage.normalizeForRuntime(t.runtime)
 	latestContext := t.latestClaudeParentContextTokens(resUsage)

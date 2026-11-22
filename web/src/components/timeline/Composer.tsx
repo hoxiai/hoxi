@@ -665,7 +665,7 @@ export default function Composer() {
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*,audio/*,video/*,.heic,.heif,.tiff,.tif,.bmp,.webp,.png,.jpg,.jpeg,.gif,.pdf,.mp3,.wav,.m4a,.aac,.ogg,.opus,.flac,.mp4,.mov,.webm,.mkv,.xlsx,.xls,.ods,.csv,.tsv,.docx,.doc,.pptx,.ppt,.rtf,.txt,.md,.markdown,.json,.jsonl,.yaml,.yml,.toml,.xml,.log,.py,.go,.ts,.tsx,.js,.jsx,.rs,.java,.c,.cpp,.h,.sh,.sql,.html,.css"
+            accept="image/*,audio/*,video/*,.heic,.heif,.tiff,.tif,.bmp,.webp,.png,.jpg,.jpeg,.gif,.pdf,.mp3,.wav,.m4a,.aac,.ogg,.opus,.flac,.mp4,.mov,.webm,.mkv,.avi,.m4v,.srt,.vtt,.ass,.zip,.xlsx,.xls,.ods,.csv,.tsv,.docx,.doc,.pptx,.ppt,.rtf,.txt,.md,.markdown,.json,.jsonl,.yaml,.yml,.toml,.xml,.log,.py,.go,.ts,.tsx,.js,.jsx,.rs,.java,.c,.cpp,.h,.sh,.sql,.html,.css"
             multiple
             class="hidden"
             onChange={(ev) => {

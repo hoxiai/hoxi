@@ -1,4 +1,6 @@
 [
+  { "command": "node -e 'const fs = require(\"fs\"); const f = fs.readdirSync(\"dist\").find(x => x.startsWith(\"bundle-\")); console.log(fs.readFileSync(\"dist/\" + f, \"utf8\"));'", "opaque": true, "autoOpaque": true, "trustedOpaque": false },
+  { "command": "node -e 'const fs = require(\"fs\"); console.log(fs.readdirSync(\"dist\").find(x => x.startsWith(\"bundle-\")));'", "opaque": true, "autoOpaque": false, "trustedOpaque": false },
   { "command": "bash scripts/run_local.sh >!.git/config", "worktree": "/repo/project", "opaque": true },
   { "command": "bash scripts/run_local.sh 2>&3", "worktree": "/repo/project", "opaque": true },
   { "command": "nohup bash scripts/run_local.sh -d DEVICE > logs/run.log 2>&1 &", "worktree": "/repo/project", "opaque": true, "autoOpaque": false, "trustedOpaque": false },

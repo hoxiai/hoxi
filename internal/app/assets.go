@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/gateway"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 )
 
@@ -108,7 +109,7 @@ func assetServerMiddleware(gw http.Handler) assetserver.Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if strings.HasPrefix(r.URL.Path, "/api/") {
-				gw.ServeHTTP(w, r)
+				gw.ServeHTTP(w, gateway.WithAppProtocolDesktop(r))
 				return
 			}
 			if r.Method != http.MethodGet && r.Method != http.MethodHead {

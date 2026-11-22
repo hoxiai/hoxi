@@ -3,10 +3,10 @@
 // Owns the pending-link lifecycle: immediate focus when the session is loaded,
 // a workspace switch when the intent names another project, and expiry so an
 // unresolved link can never fire later after an unrelated project change.
-import { createEffect, createRoot, createSignal, untrack } from "solid-js";
+import { createEffect, createRoot, createSignal, onCleanup, untrack } from "solid-js";
 import { hoxiAPI, type DesktopIntent } from "../services/api";
-import { onDesktopIntent } from "../services/desktop-events";
-import { saveLayoutPrefs, setLeftNavOpen } from "./layout";
+import { fillDesktopComposer, onDesktopIntent } from "../services/desktop-events";
+import { saveLayoutPrefs, setLeftNavOpen, surfaceMode } from "./layout";
 import { isActionableApprovalSession } from "./approval-mode";
 import { isSessionArchived, isSessionBusy, sessionDirectory } from "./session-query";
 import { startNewThreadDraft } from "./session-sandbox";
@@ -33,6 +33,19 @@ import {
 } from "./workspace-projects";
 import { closeWorkspaceModal } from "./workspace-profiles";
 import { selectSession } from "./workspace-sessions";
+import { openFileInInspector, openURLInInspector } from "./inspector";
+import { t } from "../i18n";
+
+const [appLinkConfirmation, setAppLinkConfirmation] = createSignal<{ message: string; root: string | null; expiresAt: number; accept: () => void }>();
+export { appLinkConfirmation };
+export function resolveAppLinkConfirmation(approve: boolean): void {
+  const current = appLinkConfirmation();
+  setAppLinkConfirmation(undefined);
+  if (approve && current && current.root === workspace.rootDir && Date.now() < current.expiresAt) current.accept();
+}
+function confirmAppLink(message: string, accept: () => void) {
+  setAppLinkConfirmation({ message, root: workspace.rootDir, expiresAt: Date.now() + DEEP_LINK_TTL_MS, accept });
+}
 
 export interface SessionDeepLink {
   sessionID: string;
@@ -339,7 +352,9 @@ export function focusFirstRunningSession(targetSessionID?: string, directory?: s
   }
 }
 
-export function applyDesktopIntent(intent: DesktopIntent | null | undefined): void {
+type OpenAppIntent = (intent: DesktopIntent) => void;
+
+export function applyDesktopIntent(intent: DesktopIntent | null | undefined, openApp?: OpenAppIntent): void {
   if (!intent) return;
   switch (intent.action) {
     case "sync-keep-awake":
@@ -359,10 +374,42 @@ export function applyDesktopIntent(intent: DesktopIntent | null | undefined): vo
       closeWorkspaceModal();
       openSettingsModal("policy");
       return;
+    case "connect-app":
+      closeHandoffModal();
+      closeWorkspaceModal();
+      openSettingsModal("app-grants");
+      return;
+    case "open-app":
+      openApp?.(intent);
+      return;
+    case "run-draft": {
+      if (surfaceMode() !== "code" || (intent.directory && normalizeFolderPath(intent.directory) !== normalizeFolderPath(workspace.rootDir))) return;
+      const text = [intent.params?.skill, intent.params?.prompt].filter(Boolean).join("\n");
+      if (!text) return;
+      confirmAppLink(t("settings.appLinkRunConfirm"), () => {
+        closeSettingsModal();
+        startNewThreadDraft();
+        queueMicrotask(() => fillDesktopComposer(text));
+      });
+      return;
+    }
+    case "open-browser": {
+      const url = intent.params?.url;
+      if (url) confirmAppLink(t("settings.appLinkBrowserConfirm", { url }), () => openURLInInspector(url));
+      return;
+    }
+    case "preview-doc": {
+      const path = intent.params?.path;
+      if (path && workspace.rootDir && normalizeFolderPath(path).startsWith(normalizeFolderPath(workspace.rootDir) + "/")) {
+        confirmAppLink(t("settings.appLinkDocConfirm", { path }), () => openFileInInspector(path));
+      }
+      return;
+    }
     case "settings":
       closeHandoffModal();
       closeWorkspaceModal();
-      openSettingsModal("general");
+      const section = intent.params?.section;
+      openSettingsModal(section === "app-grants" ? "app-grants" : section === "approval" ? "policy" : section === "media-roles" ? "models" : section === "providers" ? "providers" : "general");
       return;
     case "handoff":
       closeSettingsModal();
@@ -398,9 +445,9 @@ export function applyDesktopIntent(intent: DesktopIntent | null | undefined): vo
   }
 }
 
-async function consumeAndOpenDesktopIntent(): Promise<void> {
+async function consumeAndOpenDesktopIntent(openApp?: OpenAppIntent): Promise<void> {
   const intent = await consumeDesktopIntent();
-  if (intent) applyDesktopIntent(intent);
+  if (intent) applyDesktopIntent(intent, openApp);
 }
 
 /**
@@ -408,8 +455,15 @@ async function consumeAndOpenDesktopIntent(): Promise<void> {
  * intent wake-ups, drains any intent queued before the UI mounted, and
  * re-resolves the pending link as sessions load. Returns a disposer.
  */
-export function startDeepLinkNavigation(): () => void {
+export function startDeepLinkNavigation(openApp?: OpenAppIntent): () => void {
   const disposeRoot = createRoot((dispose) => {
+    createEffect(() => {
+      const confirmation = appLinkConfirmation();
+      if (!confirmation) return;
+      if (confirmation.root !== workspace.rootDir) { setAppLinkConfirmation(undefined); return; }
+      const expire = setTimeout(() => setAppLinkConfirmation(undefined), Math.max(0, confirmation.expiresAt - Date.now()));
+      onCleanup(() => clearTimeout(expire));
+    });
     createEffect(() => {
       const sessionID = workspace.activeSessionID;
       const rootDir = workspace.rootDir;
@@ -426,10 +480,11 @@ export function startDeepLinkNavigation(): () => void {
     });
     return dispose;
   });
-  const unsubscribe = onDesktopIntent(() => void consumeAndOpenDesktopIntent());
-  void consumeAndOpenDesktopIntent();
+  const unsubscribe = onDesktopIntent(() => void consumeAndOpenDesktopIntent(openApp));
+  void consumeAndOpenDesktopIntent(openApp);
   return () => {
     unsubscribe();
+    setAppLinkConfirmation(undefined);
     disposeRoot();
     clearFocusTimer();
     clearPendingDeepLink();

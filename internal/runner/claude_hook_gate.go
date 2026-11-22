@@ -54,8 +54,16 @@ type claudeHookDecision struct {
 // expands the header variables from its own environment, so the token never
 // appears in argv.
 func claudeHookSettings(hookURL string) string {
-	return string(marshalJSON(map[string]interface{}{
-		"hooks": map[string]interface{}{
+	return claudeHookSettingsWithFast(hookURL, false)
+}
+
+func claudeHookSettingsWithFast(hookURL string, fastMode bool) string {
+	doc := map[string]interface{}{}
+	if fastMode {
+		doc["fastMode"] = true
+	}
+	if strings.TrimSpace(hookURL) != "" {
+		doc["hooks"] = map[string]interface{}{
 			"PreToolUse": []interface{}{map[string]interface{}{
 				// Every tool is seen for doom-loop detection; only Bash is gated.
 				"matcher": "*",
@@ -70,22 +78,47 @@ func claudeHookSettings(hookURL string) string {
 					"allowedEnvVars": []string{claudeHookTokenEnv, claudeHookSessionEnv},
 				}},
 			}},
-		},
-	}, false))
+		}
+	}
+	return string(marshalJSON(doc, false))
+}
+
+func supportsClaudeCLIFastMode(modelID string) bool {
+	lower := strings.ToLower(strings.TrimSpace(modelID))
+	if lower == "" || lower == "default" || lower == "auto" {
+		return true
+	}
+	if strings.Contains(lower, "haiku") || strings.Contains(lower, "sonnet") {
+		return false
+	}
+	return strings.Contains(lower, "opus") ||
+		strings.Contains(lower, "fable") ||
+		strings.Contains(lower, "mythos")
 }
 
 // issueClaudeHook returns the extra argv and environment for one Claude Code
 // turn. Read-only modes (plan, ask) keep Claude's own read-only policy, so they
 // get no hook.
 func (s *Service) issueClaudeHook(mode, sessionID, messageID string) ([]string, []string, func()) {
+	return s.issueClaudeTurnSettings(mode, "", sessionID, messageID, false)
+}
+
+func (s *Service) issueClaudeTurnSettings(mode, modelID, sessionID, messageID string, fastMode bool) ([]string, []string, func()) {
+	enableFast := fastMode && supportsClaudeCLIFastMode(modelID)
 	if isReadOnlyMode(mode) {
+		if enableFast {
+			return []string{"--settings", claudeHookSettingsWithFast("", true)}, nil, func() {}
+		}
 		return nil, nil, func() {}
 	}
 	base, token, revoke := s.issueHookCredential(string(RuntimeClaudeCode), sessionID, messageID)
 	if base == "" {
+		if enableFast {
+			return []string{"--settings", claudeHookSettingsWithFast("", true)}, nil, revoke
+		}
 		return nil, nil, revoke
 	}
-	args := []string{"--settings", claudeHookSettings(base + claudeHookPreToolPath)}
+	args := []string{"--settings", claudeHookSettingsWithFast(base+claudeHookPreToolPath, enableFast)}
 	env := withLoopbackNoProxy([]string{
 		claudeHookTokenEnv + "=" + token,
 		claudeHookSessionEnv + "=" + sessionID,
@@ -205,7 +238,8 @@ func (s *Service) decideClaudeHookCall(r *http.Request, cred hookCredential, p c
 	case lowerTool == "glob" || lowerTool == "grep" || lowerTool == "ls":
 		path := resolveHookToolPath(baseDir, argsMap)
 		cwdOK := strings.TrimSpace(p.Cwd) == "" || pathWithin(rec.WorktreePath, p.Cwd)
-		if cwdOK && !hasEscapingSearchPattern(argsMap) && (path == "" || pathWithin(rec.WorktreePath, path)) {
+		if cwdOK && !hasRiskySearchSelector(lowerTool, argsMap) && (path == "" || pathWithin(rec.WorktreePath, path)) &&
+			!isSecretFilePath(path) && !isSecretFilePath(rawHookToolPath(argsMap)) {
 			return "", ""
 		}
 		if approved, reason := s.gateToolCallIn(r, cred, p.ToolName, argsMap, p.ToolUseID, p.Cwd); approved {

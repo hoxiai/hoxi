@@ -48,6 +48,12 @@ export const providerAndAssistAPI = {
   removeProviderAuth(providerID: string): Promise<void> {
     return requestJSON(`/api/hoxi/provider/credentials/${encodeURIComponent(providerID)}`, { method: "DELETE" });
   },
+  disconnectProvider(providerID: string): Promise<{ ok: boolean; providerID: string }> {
+    return requestJSON("/api/hoxi/provider/disconnect", {
+      method: "POST",
+      body: JSON.stringify({ providerID }),
+    });
+  },
   fetchCustomProviderModels(opts: {
     baseURL: string;
     apiKey?: string;

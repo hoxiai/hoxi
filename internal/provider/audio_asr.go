@@ -46,7 +46,7 @@ func (s *Service) resolveAudioTranscriber(preferredProviderID, preferredModelID 
 	}
 
 	buildTarget := func(pid, mid, kind string) (resolvedAudioTarget, bool) {
-		baseURL, apiKey, npm, headers := s.resolveProviderConnection(pid, "", "")
+		baseURL, apiKey, npm, headers := s.resolveEffectiveProviderConnection(pid, "", "")
 		if !isHTTPEndpoint(baseURL) {
 			return resolvedAudioTarget{}, false
 		}
@@ -66,8 +66,11 @@ func (s *Service) resolveAudioTranscriber(preferredProviderID, preferredModelID 
 
 	prefPID := strings.TrimSpace(preferredProviderID)
 	prefMID := strings.TrimSpace(preferredModelID)
+	if prefPID == "" && prefMID == "" {
+		prefPID, prefMID = splitMediaRoleSpec(s.LoadMediaRolePrefs().TranscribeModel)
+	}
 	if prefPID != "" && prefMID != "" && s.isProviderUsableForLocalMedia(prefPID) {
-		baseURL, _, npm, _ := s.resolveProviderConnection(prefPID, "", "")
+		baseURL, _, npm, _ := s.resolveEffectiveProviderConnection(prefPID, "", "")
 		kind := "openai_asr"
 		if effectiveProviderProtocol(prefPID, npm, baseURL) == "google" {
 			kind = "google_gemini"
@@ -84,7 +87,7 @@ func (s *Service) resolveAudioTranscriber(preferredProviderID, preferredModelID 
 		}
 		pObj, _ := merged[pid].(map[string]interface{})
 		mMap, _ := pObj["models"].(map[string]interface{})
-		baseURL, _, npm, _ := s.resolveProviderConnection(pid, "", "")
+		baseURL, _, npm, _ := s.resolveEffectiveProviderConnection(pid, "", "")
 		if effectiveProviderProtocol(pid, npm, baseURL) != "openai" {
 			continue
 		}
@@ -110,7 +113,7 @@ func (s *Service) resolveAudioTranscriber(preferredProviderID, preferredModelID 
 		}
 		pObj, _ := merged[pid].(map[string]interface{})
 		mMap, _ := pObj["models"].(map[string]interface{})
-		baseURL, _, npm, _ := s.resolveProviderConnection(pid, "", "")
+		baseURL, _, npm, _ := s.resolveEffectiveProviderConnection(pid, "", "")
 		if effectiveProviderProtocol(pid, npm, baseURL) != "google" {
 			continue
 		}
@@ -147,6 +150,62 @@ func (s *Service) resolveAudioTranscriber(preferredProviderID, preferredModelID 
 func (s *Service) HasAudioTranscriber() bool {
 	_, ok := s.resolveAudioTranscriber("", "")
 	return ok
+}
+
+// ListAudioTranscriberModels lists all configured ASR models and Google Gemini
+// multimodal audio-capable chat models usable for voice transcription.
+func (s *Service) ListAudioTranscriberModels() []llm.AudioModelOption {
+	if s == nil {
+		return nil
+	}
+	merged := s.loadOpenCodeImportedProviderMap()
+	for k, v := range s.loadHoxiProvidersMap() {
+		merged[k] = v
+	}
+	var out []llm.AudioModelOption
+	seen := map[string]bool{}
+	for _, pid := range sortedKeys(merged) {
+		if !s.isProviderUsableForLocalMedia(pid) {
+			continue
+		}
+		pObj, _ := merged[pid].(map[string]interface{})
+		baseURL, _, npm, _ := s.resolveEffectiveProviderConnection(pid, "", "")
+		proto := effectiveProviderProtocol(pid, npm, baseURL)
+		for _, mapKey := range []string{"models", "mediaModels"} {
+			mMap, ok := pObj[mapKey].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			for _, mid := range sortedKeys(mMap) {
+				mObj, _ := mMap[mid].(map[string]interface{})
+				cat := ""
+				name := mid
+				if mObj != nil {
+					cat, _ = mObj["category"].(string)
+					if n, _ := mObj["name"].(string); strings.TrimSpace(n) != "" {
+						name = strings.TrimSpace(n)
+					}
+				}
+				resolvedCat := inferModelCategory(mid, cat, "")
+				isASR := (proto == "openai" && resolvedCat == "asr") ||
+					(proto == "google" && isConversationalCategory(resolvedCat))
+				if !isASR {
+					continue
+				}
+				key := pid + "/" + mid
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				out = append(out, llm.AudioModelOption{
+					ProviderID: pid,
+					ModelID:    mid,
+					Name:       name,
+				})
+			}
+		}
+	}
+	return out
 }
 
 // TranscribeAudio converts spoken audio bytes into text using the user's

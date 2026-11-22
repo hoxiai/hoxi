@@ -18,13 +18,17 @@ import (
 func (g *Gateway) handleFileContent(w http.ResponseWriter, r *http.Request) {
 	remote := isRemoteRequest(r)
 	rawPath := strings.TrimSpace(r.URL.Query().Get("path"))
-	if r.Method != http.MethodGet || rawPath == "" {
+	if (r.Method != http.MethodGet && r.Method != http.MethodHead) || rawPath == "" {
 		// Remote requests never fall through to the OpenCode proxy.
 		if remote {
 			writeJSONError(w, http.StatusForbidden, "route is not available for remote controllers")
 			return
 		}
 		g.proxy.ServeHTTP(w, r)
+		return
+	}
+	if r.Method == http.MethodHead && r.URL.Query().Get("raw") != "1" {
+		writeJSONError(w, http.StatusMethodNotAllowed, "HEAD is only supported for raw file previews")
 		return
 	}
 	rawDir := strings.TrimSpace(r.URL.Query().Get("directory"))
@@ -95,6 +99,19 @@ func (g *Gateway) handleFileContent(w http.ResponseWriter, r *http.Request) {
 		return
 	} else {
 		info = openedInfo
+	}
+
+	if r.URL.Query().Get("raw") == "1" {
+		var head [512]byte
+		n, _ := f.Read(head[:])
+		_, _ = f.Seek(0, io.SeekStart)
+		mimeType := attachment.DetectFileMimeType(targetPath, head[:n])
+		if mimeType != "" {
+			w.Header().Set("Content-Type", mimeType)
+		}
+		w.Header().Set("Cache-Control", "private, max-age=60")
+		http.ServeContent(w, r, info.Name(), info.ModTime(), f)
+		return
 	}
 
 	data, err := io.ReadAll(io.LimitReader(f, maxLocalFilePreviewBytes))

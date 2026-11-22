@@ -23,17 +23,19 @@ import {
   selectSession,
   setProjectOrder,
   setSidebarProjectMode,
+  switchSidebarNavTab,
   switchWorkspace,
   type SidebarProjectMode,
   unarchiveSession,
   workspace,
+  workspaceDisplayName,
 } from "../../store/workspace";
 import type { SessionInfo } from "../../services/sse-types";
 import { Icon, Spinner } from "../icons";
 import { buildAllProjects, collectPendingApprovalRoots, collectPendingSessionIDs, findProjectDropTarget, resolveActiveRootSessionID, sameStringSet, type ProjectNavEntry } from "./left-nav-helpers";
 import MultiProjectTreeItem from "./MultiProjectItem";
-import SingleProjectNavView, { RecentTasksNavView } from "./SingleProjectNavView";
-import { AttentionNavView, RunningNavView } from "./CrossProjectNavView";
+import SingleProjectNavView from "./SingleProjectNavView";
+import { AttentionNavView, RecentTasksNavView, RunningNavView } from "./CrossProjectNavView";
 import UserAccountMenu from "./UserAccountMenu";
 import { t } from "../../i18n";
 import { matchesProjectSessionSearch } from "./session-search";
@@ -51,6 +53,12 @@ export default function LeftNav() {
   const [syncingLists, setSyncingLists] = createSignal(false);
   let modeBtnRef: HTMLButtonElement | undefined;
   let modeMenuRef: HTMLDivElement | undefined;
+  let searchInputRef: HTMLInputElement | undefined;
+
+  const closeSearch = () => {
+    setFilterQuery("");
+    setShowSearch(false);
+  };
 
   // Global shortcut: Cmd+N (or Ctrl+N) creates a new thread
   createEffect(() => {
@@ -188,10 +196,19 @@ export default function LeftNav() {
     const activeRoot = normalizeFolderPath(workspace.rootDir);
     if (activeRoot && workspace.bootstrappingSessions) return;
     void workspace.savedWorkspaces.length;
+    const navTab = workspace.sidebarNavTab;
+    const mode = workspace.sidebarProjectMode;
+    const needAllProjects =
+      navTab === "recent" ||
+      (navTab === "projects" &&
+        (mode === "attention" || mode === "running" || (mode === "multi" && Boolean(filterQuery().trim()))));
+    const candidatePaths = needAllProjects
+      ? allProjects().map((p) => p.path)
+      : Array.from(expandedProjects());
     const currentSessions = untrack(projectSessions);
     const currentLoading = untrack(loadingProjects);
     const unloaded: string[] = [];
-    for (const rawPath of expandedProjects()) {
+    for (const rawPath of candidatePaths) {
       const path = normalizeFolderPath(rawPath);
       if (!path || isInvalidProjectPath(path) || path === activeRoot) continue;
       if (currentLoading[path] || currentSessions[path] !== undefined) continue;
@@ -210,7 +227,7 @@ export default function LeftNav() {
       const activeRoot = normalizeFolderPath(workspace.rootDir);
       const paths = [activeRoot];
       const crossProjectMode =
-        workspace.sidebarProjectMode === "recent" ||
+        workspace.sidebarNavTab === "recent" ||
         workspace.sidebarProjectMode === "attention" ||
         workspace.sidebarProjectMode === "running";
       for (const proj of allProjects()) {
@@ -412,19 +429,7 @@ export default function LeftNav() {
     onCleanup(() => window.removeEventListener("pointerdown", handlePointerDown));
   });
 
-  createEffect(() => {
-    if (isWorkSurface()) return;
-    const mode = workspace.sidebarProjectMode;
-    if (mode !== "recent" && mode !== "attention" && mode !== "running" &&
-      !(mode === "multi" && filterQuery().trim())) return;
-    const activeRoot = normalizeFolderPath(workspace.rootDir);
-    for (const p of allProjects()) {
-      const clean = normalizeFolderPath(p.path);
-      if (clean && clean !== activeRoot && projectSessions()[clean] === undefined && !loadingProjects()[clean]) {
-        void loadSessionsForProject(clean);
-      }
-    }
-  });
+  const currentWorkspaceName = createMemo(() => workspaceDisplayName(workspace.rootDir));
 
   const modeOptions: Array<{
     id: SidebarProjectMode;
@@ -432,10 +437,9 @@ export default function LeftNav() {
     icon: typeof Folder;
   }> = [
     { id: "multi", label: () => t("leftNav.multiProject"), icon: Layers },
+    { id: "single", label: () => t("leftNav.singleProject"), icon: Folder },
     { id: "attention", label: () => t("leftNav.attentionTasks"), icon: Bell },
     { id: "running", label: () => t("leftNav.runningTasks"), icon: Activity },
-    { id: "single", label: () => t("leftNav.singleProject"), icon: Folder },
-    { id: "recent", label: () => t("leftNav.recentTasks"), icon: Clock },
   ];
 
   return (
@@ -454,7 +458,11 @@ export default function LeftNav() {
             onClick={onCreateGlobalNewThread}
             disabled={creatingGlobal()}
             class="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer min-w-0"
-            title={`${t("leftNav.newThread")}`}
+            title={
+              currentWorkspaceName()
+                ? `${t("leftNav.newThread")} (${currentWorkspaceName()})`
+                : t("leftNav.newThread")
+            }
           >
             <Show
               when={!creatingGlobal()}
@@ -477,7 +485,25 @@ export default function LeftNav() {
         </div>
 
         <div class="flex items-center gap-0.5 shrink-0">
-          {/* Sidebar Mode Switcher (Single / Multi / Recent Tasks) */}
+          {/* Quick Toggle: Recent Tasks */}
+          <button
+            type="button"
+            aria-pressed={workspace.sidebarNavTab === "recent"}
+            aria-label={t("leftNav.recentTasks")}
+            onClick={() =>
+              switchSidebarNavTab(workspace.sidebarNavTab === "recent" ? "projects" : "recent")
+            }
+            class={`inline-flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg transition-colors cursor-pointer ${
+              workspace.sidebarNavTab === "recent"
+                ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+            }`}
+            title={t("leftNav.recentTasks")}
+          >
+            <Clock size={14} class="block shrink-0" />
+          </button>
+
+          {/* Sidebar Project Layout Switcher (Multi / Single / Attention / Running) */}
           <div class="relative flex items-center">
             <button
               ref={modeBtnRef}
@@ -504,6 +530,8 @@ export default function LeftNav() {
                 <For each={modeOptions}>
                   {(opt) => {
                     const OptIcon = opt.icon;
+                    const isCurrentMode = () =>
+                      workspace.sidebarNavTab === "projects" && workspace.sidebarProjectMode === opt.id;
                     return (
                       <button
                         type="button"
@@ -512,7 +540,7 @@ export default function LeftNav() {
                           setModeMenuOpen(false);
                         }}
                         class={`w-full flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[12px] transition-colors cursor-pointer ${
-                          workspace.sidebarProjectMode === opt.id
+                          isCurrentMode()
                             ? "bg-[var(--accent-surface)] text-[var(--text-primary)] font-medium"
                             : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
                         }`}
@@ -527,7 +555,7 @@ export default function LeftNav() {
                               {pendingApprovalCount()}
                             </span>
                           </Show>
-                          <Show when={workspace.sidebarProjectMode === opt.id}>
+                          <Show when={isCurrentMode()}>
                             <Check size={13} class="text-[var(--accent-primary)]" />
                           </Show>
                         </span>
@@ -542,12 +570,20 @@ export default function LeftNav() {
 
           <button
             type="button"
+            aria-pressed={showSearch()}
+            aria-label={t("leftNav.filterPlaceholder")}
             onClick={() => {
-              if (showSearch()) setFilterQuery("");
-              setShowSearch((v) => !v);
+              if (showSearch()) {
+                closeSearch();
+              } else {
+                setShowSearch(true);
+                requestAnimationFrame(() => searchInputRef?.focus());
+              }
             }}
-            class={`inline-flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer ${
-              showSearch() ? "bg-[var(--bg-hover)] text-[var(--text-primary)]" : ""
+            class={`inline-flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg transition-colors cursor-pointer ${
+              showSearch()
+                ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
             }`}
             title={t("leftNav.filterPlaceholder")}
           >
@@ -565,7 +601,7 @@ export default function LeftNav() {
       </div>
 
       {/* Pending Approvals Quick Entry */}
-      <Show when={hasUnfocusedPendingApproval() && workspace.sidebarProjectMode !== "attention"}>
+      <Show when={hasUnfocusedPendingApproval() && !(workspace.sidebarNavTab === "projects" && workspace.sidebarProjectMode === "attention")}>
         <div class="pl-1.5 pr-2.5 pb-1.5 shrink-0">
           <button
             type="button"
@@ -592,39 +628,46 @@ export default function LeftNav() {
       </Show>
 
       {/* Collapsible Search Filter */}
-      <div
-        class="hoxi-drawer-grid shrink-0"
-        data-open={showSearch() ? "true" : "false"}
-        aria-hidden={!showSearch()}
-      >
-        <div class="min-h-0 overflow-hidden">
-          <div class="pl-2 pr-3 pb-2">
-            <div class="flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2.5 py-1.5 text-[12px]">
-              <Icon name="magnifying-glass" size="small" class="text-[var(--text-muted)]" />
-              <input
-                type="text"
-                placeholder={t("leftNav.filterPlaceholder")}
-                value={filterQuery()}
-                tabIndex={showSearch() ? 0 : -1}
-                onInput={(e) => setFilterQuery(e.currentTarget.value)}
-                class="w-full bg-transparent text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none"
-              />
-              <Show when={filterQuery()}>
-                <button
-                  type="button"
-                  onClick={() => setFilterQuery("")}
-                  class="text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
-                >
-                  <Icon name="close-small" size="small" />
-                </button>
-              </Show>
-            </div>
+      <Show when={showSearch()}>
+        <div class="pl-2 pr-3 pb-2 shrink-0">
+          <div class="flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2.5 py-1.5 text-[12px]">
+            <Icon name="magnifying-glass" size="small" class="text-[var(--text-muted)] shrink-0" />
+            <input
+              ref={(el) => {
+                searchInputRef = el;
+              }}
+              type="text"
+              placeholder={t("leftNav.filterPlaceholder")}
+              value={filterQuery()}
+              onInput={(e) => setFilterQuery(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  closeSearch();
+                }
+              }}
+              class="w-full bg-transparent text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                if (filterQuery()) {
+                  setFilterQuery("");
+                  searchInputRef?.focus();
+                } else {
+                  closeSearch();
+                }
+              }}
+              class="text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer shrink-0"
+            >
+              <Icon name="close-small" size="small" />
+            </button>
           </div>
         </div>
-      </div>
+      </Show>
 
       {/* MODE A: MULTI-PROJECT TREE */}
-      <Show when={workspace.sidebarProjectMode === "multi"}>
+      <Show when={workspace.sidebarNavTab === "projects" && workspace.sidebarProjectMode === "multi"}>
         <div
           ref={projectListContainerRef}
           class="sidebar-scroll hoxi-view-enter flex-1 min-h-0 overflow-y-auto pl-1 pr-2 py-1 space-y-1"
@@ -696,7 +739,7 @@ export default function LeftNav() {
       </Show>
 
       {/* MODE B: ATTENTION INBOX (approvals / completed / paused) */}
-      <Show when={workspace.sidebarProjectMode === "attention"}>
+      <Show when={workspace.sidebarNavTab === "projects" && workspace.sidebarProjectMode === "attention"}>
         <AttentionNavView
           allProjects={allProjects()}
           projectSessions={projectSessions()}
@@ -709,7 +752,7 @@ export default function LeftNav() {
       </Show>
 
       {/* MODE C: RUNNING TASKS BY PROJECT */}
-      <Show when={workspace.sidebarProjectMode === "running"}>
+      <Show when={workspace.sidebarNavTab === "projects" && workspace.sidebarProjectMode === "running"}>
         <RunningNavView
           allProjects={allProjects()}
           projectSessions={projectSessions()}
@@ -722,7 +765,7 @@ export default function LeftNav() {
       </Show>
 
       {/* MODE D: SINGLE-PROJECT FOCUSED VIEW */}
-      <Show when={workspace.sidebarProjectMode === "single"}>
+      <Show when={workspace.sidebarNavTab === "projects" && workspace.sidebarProjectMode === "single"}>
         <SingleProjectNavView
           allProjects={allProjects()}
           filterQuery={filterQuery()}
@@ -733,11 +776,12 @@ export default function LeftNav() {
         />
       </Show>
 
-      {/* MODE E: RECENT TASKS FLAT VIEW */}
-      <Show when={workspace.sidebarProjectMode === "recent"}>
+      {/* RECENT TASKS TAB (bounded cross-project stream) */}
+      <Show when={workspace.sidebarNavTab === "recent"}>
         <RecentTasksNavView
           allProjects={allProjects()}
           projectSessions={projectSessions()}
+          isLoading={workspace.bootstrappingSessions || Object.values(loadingProjects()).some(Boolean)}
           filterQuery={filterQuery()}
           pendingSessions={pendingSessions()}
           onSelectSession={(p, id) => void onSelectSessionInProject(p, id)}

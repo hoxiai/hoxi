@@ -1,7 +1,9 @@
 // web/src/components/tasks/TaskOverviewView.tsx
 import {
+  createComputed,
   createEffect,
   createMemo,
+  createSignal,
   For,
   Match,
   onCleanup,
@@ -9,15 +11,20 @@ import {
   Show,
   Switch,
 } from "solid-js";
+import { createStore, reconcile } from "solid-js/store";
+import { Portal } from "solid-js/web";
 import {
   Bot,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
   CircleDashed,
+  Link2,
   ListTodo,
   LoaderCircle,
   MinusCircle,
+  MoreHorizontal,
+  Undo2,
   Workflow,
   XCircle,
 } from "lucide-solid";
@@ -25,11 +32,20 @@ import { t } from "../../i18n";
 import {
   activeDirectory,
   buildTaskOverview,
+  canDismissTaskOverviewNode,
   collectAncestorSessionIDs,
+  dismissTaskOverviewNode,
+  intakeLinksModalOpen,
+  intakeTasks,
   isTaskNodeExpanded,
+  loadIntakeTasks,
   loadTaskOverviewPlans,
+  resetIntakeState,
   resetTaskOverviewPlans,
+  restoreTaskOverviewNode,
   selectSession,
+  setIntakeLinksModalOpen,
+  startIntakeTasksPolling,
   startTaskOverviewPolling,
   taskOverviewFailed,
   taskOverviewLoading,
@@ -38,8 +54,12 @@ import {
   workspace,
   type TaskGroupID,
   type TaskNodeStatus,
+  type TaskOverviewGroup,
   type TaskOverviewNode,
 } from "../../store/workspace";
+import { useAnchoredPopover } from "../layout/anchored-popover";
+import IntakeLinksModal from "./IntakeLinksModal";
+import IntakeTasksSection from "./IntakeTasksSection";
 
 const statusTextColor: Record<TaskNodeStatus, string> = {
   queued: "text-[var(--text-muted)]",
@@ -131,7 +151,80 @@ function StatusIcon(props: { status: TaskNodeStatus }) {
   );
 }
 
-function TaskNodeRow(props: { node: TaskOverviewNode; depth: number }) {
+function TaskRowActions(props: { onRemove: () => void }) {
+  const [open, setOpen] = createSignal(false);
+  const [panel, setPanel] = createSignal<HTMLDivElement>();
+  let trigger: HTMLButtonElement | undefined;
+  const anchored = useAnchoredPopover({ anchor: () => trigger, panel: () => open() ? panel() : undefined });
+
+  createEffect(() => {
+    if (!open()) {
+      setPanel(undefined);
+      return;
+    }
+    const menu = panel();
+    if (!menu) return;
+    menu.querySelector("button")?.focus();
+    const outside = (event: Event) => {
+      if (event.target instanceof Node && !trigger?.contains(event.target) && !menu.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      setOpen(false);
+      trigger?.focus();
+    };
+    window.addEventListener("pointerdown", outside);
+    window.addEventListener("focusin", outside);
+    window.addEventListener("keydown", escape);
+    onCleanup(() => {
+      window.removeEventListener("pointerdown", outside);
+      window.removeEventListener("focusin", outside);
+      window.removeEventListener("keydown", escape);
+    });
+  });
+
+  return (
+    <>
+      <button
+        ref={trigger}
+        type="button"
+        title={t("tasks.rowActions")}
+        aria-label={t("tasks.rowActions")}
+        aria-haspopup="menu"
+        aria-expanded={open()}
+        onClick={() => setOpen(!open())}
+        class="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded text-[var(--text-muted)] hover:bg-[var(--bg-inset)] hover:text-[var(--text-primary)]"
+      >
+        <MoreHorizontal size={14} />
+      </button>
+      <Show when={open()}>
+        <Portal>
+          <div
+            ref={setPanel}
+            role="menu"
+            class="hoxi-popover fixed z-[100] w-48 max-w-[calc(100vw-16px)] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1"
+            style={anchored.positionStyle()}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => { setOpen(false); props.onRemove(); }}
+              class="w-full cursor-pointer rounded-lg px-2.5 py-1.5 text-left text-[12px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+            >
+              <span class="block font-medium">{t("tasks.removeFromList")}</span>
+              <span class="block text-[11px] text-[var(--text-muted)]">{t("tasks.removeFromListHint")}</span>
+            </button>
+          </div>
+        </Portal>
+      </Show>
+    </>
+  );
+}
+
+function TaskNodeRow(props: { node: TaskOverviewNode; depth: number; onRemove: (node: TaskOverviewNode) => void }) {
   const expanded = () => isTaskNodeExpanded(props.node.id, props.depth);
   const hasChildren = () => props.node.children.length > 0;
   const openSession = () => {
@@ -177,6 +270,9 @@ function TaskNodeRow(props: { node: TaskOverviewNode; depth: number }) {
         <span class={`shrink-0 text-[10px] ${statusTextColor[props.node.status]}`}>
           {statusLabel(props.node.status)}
         </span>
+        <Show when={canDismissTaskOverviewNode(props.node)}>
+          <TaskRowActions onRemove={() => props.onRemove(props.node)} />
+        </Show>
       </div>
       <Show when={props.node.dependsOn && props.node.dependsOn.length > 0}>
         <p class="pl-8 pr-2 text-[10px] text-[var(--text-faint)]">
@@ -186,7 +282,7 @@ function TaskNodeRow(props: { node: TaskOverviewNode; depth: number }) {
       <Show when={expanded() && hasChildren()}>
         <div class="ml-3 border-l border-[var(--border-subtle)]/50 pl-1">
           <For each={props.node.children}>
-            {(child) => <TaskNodeRow node={child} depth={props.depth + 1} />}
+            {(child) => <TaskNodeRow node={child} depth={props.depth + 1} onRemove={props.onRemove} />}
           </For>
         </div>
       </Show>
@@ -196,6 +292,15 @@ function TaskNodeRow(props: { node: TaskOverviewNode; depth: number }) {
 
 export default function TaskOverviewView() {
   const directory = createMemo(() => activeDirectory() ?? "");
+  const [lastRemoval, setLastRemoval] = createSignal<{ key: string; sessionID: string | null }>();
+  const undoKey = () => {
+    const removal = lastRemoval();
+    return removal?.sessionID === workspace.activeSessionID ? removal?.key : undefined;
+  };
+  const onRemove = (node: TaskOverviewNode) => {
+    const key = dismissTaskOverviewNode(node);
+    if (key) setLastRemoval({ key, sessionID: workspace.activeSessionID });
+  };
   // Joined-ID equality keeps stream flushes from re-triggering plan loads.
   const relatedSessionIDs = createMemo(
     () => collectAncestorSessionIDs(workspace.activeSessionID),
@@ -211,34 +316,90 @@ export default function TaskOverviewView() {
     const sessionIDs = relatedSessionIDs();
     if (!dir && sessionIDs.length === 0) {
       resetTaskOverviewPlans();
+      resetIntakeState();
       return;
     }
     void loadTaskOverviewPlans(dir, sessionIDs);
-    onCleanup(startTaskOverviewPolling(dir, sessionIDs));
+    const stopPlans = startTaskOverviewPolling(dir, sessionIDs);
+    let stopIntake: (() => void) | undefined;
+    if (dir) {
+      void loadIntakeTasks(dir).catch(() => {});
+      stopIntake = startIntakeTasksPolling(dir);
+    } else {
+      resetIntakeState();
+    }
+    onCleanup(() => {
+      stopPlans();
+      stopIntake?.();
+    });
   });
 
-  const groups = createMemo(() => (visible() ? buildTaskOverview(taskOverviewPlans()) : []));
-  const total = createMemo(() => groups().reduce((sum, group) => sum + group.nodes.length, 0));
+  // Reconcile groups and nodes by stable ID so plan polling and stream flushes
+  // update rows in place without unmounting open row-action menus or stealing focus.
+  const [renderedGroups, setRenderedGroups] = createStore<TaskOverviewGroup[]>([]);
+  createComputed(() => {
+    const next = visible()
+      ? buildTaskOverview(taskOverviewPlans()).filter((group) => group.nodes.length > 0)
+      : [];
+    setRenderedGroups(reconcile(next, { key: "id" }));
+  });
+  const total = createMemo(() => renderedGroups.reduce((sum, group) => sum + group.nodes.length, 0));
 
   return (
     <div class="flex h-full flex-col">
+      <Show when={directory() || undoKey()}>
+        <div class="flex shrink-0 flex-wrap items-center justify-end gap-2 border-b border-[var(--border-subtle)]/50 px-2.5 py-1.5">
+          <Show when={undoKey()}>
+            {(key) => (
+              <button
+                type="button"
+                onClick={() => { restoreTaskOverviewNode(key()); setLastRemoval(undefined); }}
+                class="mr-auto inline-flex cursor-pointer items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+              >
+                <Undo2 size={12} />
+                {t("tasks.undoRemoval")}
+              </button>
+            )}
+          </Show>
+          <Show when={directory()}>
+            <button
+              type="button"
+              onClick={() => setIntakeLinksModalOpen(true)}
+              class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+            >
+              <Link2 size={11} class="text-[var(--accent-primary)]" />
+              <span>{t("tasks.intakeLinksBtn")}</span>
+            </button>
+          </Show>
+        </div>
+      </Show>
+
       <div class="min-h-0 flex-1 overflow-y-auto px-2.5 py-2">
+        <IntakeTasksSection />
         <Show
           when={workspace.activeSessionID}
-          fallback={<p class="px-2 py-4 text-center text-[12px] text-[var(--text-faint)]">{t("tasks.noSession")}</p>}
+          fallback={
+            <Show when={intakeTasks().length === 0}>
+              <p class="px-2 py-4 text-center text-[12px] text-[var(--text-faint)]">
+                {t("tasks.noSession")}
+              </p>
+            </Show>
+          }
         >
           <Show
             when={total() > 0}
             fallback={
-              <div class="flex items-center justify-center gap-2 px-2 py-8 text-[12px] text-[var(--text-faint)]">
-                <Show when={taskOverviewLoading()}>
-                  <TaskLoadingIcon class="text-[var(--text-muted)]" />
-                </Show>
-                <span>{taskOverviewFailed() ? t("tasks.loadFailed") : t("tasks.empty")}</span>
-              </div>
+              <Show when={intakeTasks().length === 0}>
+                <div class="flex items-center justify-center gap-2 px-2 py-8 text-[12px] text-[var(--text-faint)]">
+                  <Show when={taskOverviewLoading()}>
+                    <TaskLoadingIcon class="text-[var(--text-muted)]" />
+                  </Show>
+                  <span>{taskOverviewFailed() ? t("tasks.loadFailed") : t("tasks.empty")}</span>
+                </div>
+              </Show>
             }
           >
-            <For each={groups().filter((group) => group.nodes.length > 0)}>
+            <For each={renderedGroups}>
               {(group) => (
                 <section class="mb-3">
                   <div class="mb-1 flex items-center gap-1.5 px-1 text-[11px] font-medium text-[var(--text-muted)]">
@@ -259,7 +420,7 @@ export default function TaskOverviewView() {
                     </span>
                   </div>
                   <For each={group.nodes}>
-                    {(node) => <TaskNodeRow node={node} depth={0} />}
+                    {(node) => <TaskNodeRow node={node} depth={0} onRemove={onRemove} />}
                   </For>
                 </section>
               )}
@@ -267,6 +428,12 @@ export default function TaskOverviewView() {
           </Show>
         </Show>
       </div>
+
+      <IntakeLinksModal
+        open={intakeLinksModalOpen()}
+        directory={directory()}
+        onClose={() => setIntakeLinksModalOpen(false)}
+      />
     </div>
   );
 }

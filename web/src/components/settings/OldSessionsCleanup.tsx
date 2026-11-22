@@ -13,7 +13,7 @@ import type {
 import { deleteOldSessions, previewOldSessions } from "../../store/workspace";
 import { locale, t, type TxKey } from "../../i18n";
 import { Spinner } from "../icons";
-import { SegmentedPills } from "./setting-controls";
+import { HelpTip, SegmentedPills } from "./setting-controls";
 import { formatBytes } from "./storage-format";
 
 type DayOption = "30" | "60" | "90" | "180";
@@ -127,12 +127,10 @@ export function OldSessionsCleanup(props: {
 
   return (
     <div class="space-y-3 px-5 py-4">
-      <div class="space-y-1">
-        <div class="flex items-center gap-2 text-[13px] font-medium text-[var(--text-primary)]">
-          <Trash2 size={14} class="text-[var(--text-muted)]" />
-          {t("settings.oldSessionsTitle")}
-        </div>
-        <p class="text-[11.5px] leading-relaxed text-[var(--text-muted)]">{t("settings.oldSessionsDesc")}</p>
+      <div class="flex items-center gap-2 text-[13px] font-medium text-[var(--text-primary)]">
+        <Trash2 size={14} class="text-[var(--text-muted)]" />
+        <span>{t("settings.oldSessionsTitle")}</span>
+        <HelpTip text={t("settings.oldSessionsDesc")} />
       </div>
 
       <div class="flex flex-wrap items-center gap-3">
@@ -228,52 +226,53 @@ export function OldSessionsCleanup(props: {
                 </div>
               </div>
 
-              <Show when={p().sessions.some((s) => s.worktree)}>
-                <p class="text-[11px] leading-relaxed text-[var(--text-faint)]">{t("settings.oldSessionsWorktreeNote")}</p>
-              </Show>
-
-              <Show
-                when={confirming()}
-                fallback={
-                  <button
-                    type="button"
-                    disabled={busy() || selectedSessions().length === 0}
-                    onClick={() => setConfirming(true)}
-                    class="hoxi-press inline-flex items-center gap-1.5 rounded-xl border border-red-500/30 bg-red-500/10 px-3.5 py-1.5 text-[13px] font-medium text-red-500 hover:bg-red-500/15 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Trash2 size={14} />
-                    {t("settings.oldSessionsDeleteSelected", { count: selectedSessions().length })}
-                  </button>
-                }
-              >
-                <div class="flex flex-wrap items-center gap-2.5 rounded-xl border border-red-500/30 bg-red-500/10 px-3.5 py-2.5">
-                  <span class="min-w-0 flex-1 text-[12.5px] text-[var(--text-primary)]">
-                    {t("settings.oldSessionsConfirm", {
-                      count: selectedSessions().length,
-                      size: formatBytes(selectedBytes()),
-                    })}
-                  </span>
-                  <button
-                    type="button"
-                    disabled={deleting()}
-                    onClick={() => setConfirming(false)}
-                    class="rounded-lg px-3 py-1.5 text-[12.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer disabled:opacity-50"
-                  >
-                    {t("settings.oldSessionsCancel")}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={deleting()}
-                    onClick={() => void remove()}
-                    class="hoxi-press inline-flex items-center gap-1.5 rounded-lg bg-red-500 px-3 py-1.5 text-[12.5px] font-medium text-white hover:opacity-90 cursor-pointer disabled:opacity-60 disabled:cursor-wait"
-                  >
-                    <Show when={deleting()} fallback={<Trash2 size={13} />}>
-                      <Spinner class="h-3.5 w-3.5" />
-                    </Show>
-                    {deleting() ? t("settings.oldSessionsDeleting") : t("settings.oldSessionsConfirmBtn")}
-                  </button>
-                </div>
-              </Show>
+              <div class="flex items-center gap-2">
+                <Show
+                  when={confirming()}
+                  fallback={
+                    <button
+                      type="button"
+                      disabled={busy() || selectedSessions().length === 0}
+                      onClick={() => setConfirming(true)}
+                      class="hoxi-press inline-flex items-center gap-1.5 rounded-xl border border-red-500/30 bg-red-500/10 px-3.5 py-1.5 text-[13px] font-medium text-red-500 hover:bg-red-500/15 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Trash2 size={14} />
+                      {t("settings.oldSessionsDeleteSelected", { count: selectedSessions().length })}
+                    </button>
+                  }
+                >
+                  <div class="flex flex-1 flex-wrap items-center gap-2.5 rounded-xl border border-red-500/30 bg-red-500/10 px-3.5 py-2.5">
+                    <span class="min-w-0 flex-1 text-[12.5px] text-[var(--text-primary)]">
+                      {t("settings.oldSessionsConfirm", {
+                        count: selectedSessions().length,
+                        size: formatBytes(selectedBytes()),
+                      })}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={deleting()}
+                      onClick={() => setConfirming(false)}
+                      class="rounded-lg px-3 py-1.5 text-[12.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer disabled:opacity-50"
+                    >
+                      {t("settings.oldSessionsCancel")}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={deleting()}
+                      onClick={() => void remove()}
+                      class="hoxi-press inline-flex items-center gap-1.5 rounded-lg bg-red-500 px-3 py-1.5 text-[12.5px] font-medium text-white hover:opacity-90 cursor-pointer disabled:opacity-60 disabled:cursor-wait"
+                    >
+                      <Show when={deleting()} fallback={<Trash2 size={13} />}>
+                        <Spinner class="h-3.5 w-3.5" />
+                      </Show>
+                      {deleting() ? t("settings.oldSessionsDeleting") : t("settings.oldSessionsConfirmBtn")}
+                    </button>
+                  </div>
+                </Show>
+                <Show when={p().sessions.some((s) => s.worktree) && !confirming()}>
+                  <HelpTip text={t("settings.oldSessionsWorktreeNote")} />
+                </Show>
+              </div>
             </Show>
           </div>
         )}

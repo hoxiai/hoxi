@@ -11,7 +11,7 @@ import {
 } from "./orchestration";
 import { isSessionBusy, sessionDirectory } from "./session-query";
 import { hasEditingQueuedPrompt } from "./prompt-queue";
-import { setActiveAgent } from "./session-ai";
+import { setActiveAgent, setFastMode, toggleFastMode } from "./session-ai";
 import { canRevertSession } from "./session-capabilities";
 import { revertToHere } from "./session-revert";
 import { startNewThreadDraft } from "./session-sandbox";
@@ -139,7 +139,8 @@ export type ComposerControlCommand =
   | { kind: "new" }
   | { kind: "diff" }
   | { kind: "undo" }
-  | { kind: "mode"; mode: "plan" | "build"; prompt: string };
+  | { kind: "mode"; mode: "plan" | "build"; prompt: string }
+  | { kind: "fast"; action: "toggle" | "on" | "off"; prompt: string };
 
 const MAX_CUSTOM_CMD_DIRS = 24;
 const customCommandsByDir = new Map<string, Set<string>>();
@@ -194,6 +195,14 @@ export function parseComposerControlCommand(
   if (/^\/(?:new|clear)$/i.test(trimmed)) return { kind: "new" };
   if (/^\/diff$/i.test(trimmed)) return { kind: "diff" };
   if (/^\/undo$/i.test(trimmed)) return { kind: "undo" };
+  const fastMatch = trimmed.match(/^\/fast(?:\s+([\s\S]*))?$/i);
+  if (fastMatch) {
+    const rest = (fastMatch[1] ?? "").trim();
+    if (!rest) return { kind: "fast", action: "toggle", prompt: "" };
+    if (/^on$/i.test(rest)) return { kind: "fast", action: "on", prompt: "" };
+    if (/^off$/i.test(rest)) return { kind: "fast", action: "off", prompt: "" };
+    return { kind: "fast", action: "on", prompt: rest };
+  }
   const modeMatch = trimmed.match(/^\/(plan|build)(?:\s+([\s\S]*))?$/i);
   if (modeMatch) {
     return {
@@ -208,7 +217,8 @@ export function parseComposerControlCommand(
 export function isPureLocalSlashCommand(text: string, directory?: string): boolean {
   const cmd = parseComposerControlCommand(text, directory);
   if (!cmd) return false;
-  return cmd.kind !== "mode" || !cmd.prompt;
+  if (cmd.kind === "mode" || cmd.kind === "fast") return !cmd.prompt;
+  return true;
 }
 
 /**
@@ -245,6 +255,11 @@ export async function submitSessionPrompt(
       }
       case "mode":
         setActiveAgent(controlCommand.mode, sid);
+        if (!controlCommand.prompt) return "";
+        return dispatchSessionPrompt(controlCommand.prompt, targetSessionID, options);
+      case "fast":
+        if (controlCommand.action === "toggle") toggleFastMode(sid);
+        else setFastMode(controlCommand.action === "on", sid);
         if (!controlCommand.prompt) return "";
         return dispatchSessionPrompt(controlCommand.prompt, targetSessionID, options);
     }

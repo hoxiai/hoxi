@@ -51,8 +51,8 @@ func (s *Service) resolveEmbeddingTarget(preferredProviderID, preferredModelID s
 	}
 
 	build := func(pid, mid string) (resolvedEmbeddingTarget, bool) {
-		baseURL, apiKey, npm, headers := s.resolveProviderConnection(pid, "", "")
-		if !isHTTPEndpoint(baseURL) {
+		baseURL, apiKey, npm, headers := s.resolveEffectiveProviderConnection(pid, "", "")
+		if !isHTTPEndpoint(baseURL) || isCodexChatGPTBackendURL(baseURL) {
 			return resolvedEmbeddingTarget{}, false
 		}
 		if apiKey == "" && len(headers) == 0 && !isLoopbackURL(baseURL) {

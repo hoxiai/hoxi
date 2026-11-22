@@ -88,6 +88,12 @@ func inlineScriptsReadOnly(command string) bool {
 
 // readOnlyScriptCategory judges one inline script; "" means it only reads.
 func readOnlyScriptCategory(family, code string) string {
+	return classifyReadOnlyScript(family, code, nil)
+}
+
+// discoveryDir is optional diagnostic output for a rejected script. It never
+// changes an unresolved file read into an approval.
+func classifyReadOnlyScript(family, code string, discoveryDir *string) string {
 	if family != "python" && family != "python3" && family != "node" {
 		return unattendedCategoryDynamic
 	}
@@ -126,7 +132,7 @@ func readOnlyScriptCategory(family, code string) string {
 	if inlineSQLiteMentionRe.MatchString(masked) && !hasOnlyReadOnlySQLiteConnect(code) {
 		return inlineCategoryWrites
 	}
-	if inlineReachRe.MatchString(masked) || inlineDynamicStringRe.MatchString(masked) || !filesOK {
+	if inlineReachRe.MatchString(masked) || inlineDynamicStringRe.MatchString(masked) || (!filesOK && discoveryDir == nil) {
 		return unattendedCategorySecret
 	}
 	if inlinePathlibRe.MatchString(masked) && inlineReplaceRe.MatchString(masked) {
@@ -141,6 +147,10 @@ func readOnlyScriptCategory(family, code string) string {
 		if isDisallowedInlineLiteral(lit) {
 			return unattendedCategorySecret
 		}
+	}
+	if !filesOK {
+		*discoveryDir = listedReadDirectory(rawToks)
+		return unattendedCategorySecret
 	}
 	return ""
 }

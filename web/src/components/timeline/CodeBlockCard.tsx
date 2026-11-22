@@ -1,4 +1,5 @@
 import { createEffect, createMemo, createSignal, Index, on, onCleanup, Show } from "solid-js";
+import { Eye } from "lucide-solid";
 import { t } from "../../i18n";
 import {
   getCachedHighlight,
@@ -6,7 +7,13 @@ import {
   stabilizeHighlightedLines,
 } from "./syntax-highlight";
 import { createSyntaxHighlightClient } from "./syntax-highlight-client";
-import { codeWrapEnabled, toggleCodeWrap, workspace } from "../../store/workspace";
+import {
+  codeWrapEnabled,
+  isHtmlPreviewCodeBlockLang,
+  openDocumentPreview,
+  toggleCodeWrap,
+  workspace,
+} from "../../store/workspace";
 import { Icon } from "../icons";
 import { ActionIconButton } from "./tool-card-helpers";
 
@@ -183,6 +190,21 @@ export default function CodeBlockCard(props: {
           {props.lang}
         </span>
         <span class="inline-flex items-center gap-0.5 rounded-md bg-[var(--bg-elevated)]/90 p-0.5">
+          <Show when={isHtmlPreviewCodeBlockLang(props.lang) && props.code.trim().length > 0}>
+            <ActionIconButton
+              label={t("timeline.previewHtml")}
+              tooltipSide="left"
+              onClick={() =>
+                openDocumentPreview({
+                  kind: "html",
+                  title: t("timeline.previewHtml"),
+                  html: props.code,
+                })
+              }
+            >
+              <Eye size={13} />
+            </ActionIconButton>
+          </Show>
           <ActionIconButton
             label={wrap() ? t("timeline.codeWrapOff") : t("timeline.codeWrapOn")}
             tooltipSide="left"

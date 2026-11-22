@@ -8,8 +8,10 @@ import {
   type ProviderAuthAuthorization,
 } from "../services/api";
 import type { ProviderMcpOAuthPollResponse } from "../services/platform-api";
+import { desktopAuth } from "./auth-state";
 import { disposeOpenCodeInstance, patchGlobalConfig } from "./global-config";
 import {
+  AUTO_PROVIDER_ID,
   inferDedicatedMediaModality,
   inferProviderNpmFromEndpoint,
   isNonChatUtilityModelID,
@@ -17,9 +19,8 @@ import {
   supportsMultimodalImageEditModelID,
   type FreeTierGuideItem,
 } from "./auto-models";
-import { isImportedOpenCodeProvider } from "./provider-catalog";
-import { ensureLocalCLIStatusLoaded, setLocalCLIStatusItems } from "./handoff";
-import { parseModelString } from "./session-ai";
+import { ensureLocalCLIStatusLoaded, localCLIStatusItems, setLocalCLIStatusItems } from "./handoff";
+import { parseModelString, updateSessionAI } from "./session-ai";
 import {
   loadAgents,
   loadProviders,
@@ -30,7 +31,13 @@ import {
   selectProviderModelPreservingBusySession,
   shouldAutoSelectProvisionedModel,
 } from "./workspace-providers";
-import { workspace } from "./workspace-state";
+import {
+  OFFICIAL_PROVIDER_ID,
+  SELECTED_MODEL_KEY,
+  workspace,
+  writeStorageJSON,
+  type SelectedModel,
+} from "./workspace-state";
 
 export type CustomModelCategory = "chat" | "image" | "audio" | "embedding";
 
@@ -124,7 +131,10 @@ export async function connectProviderWithKey(opts: {
     await hoxiAPI.disposeGlobal().catch(() => {});
   }
 
-  await loadProviders();
+  await Promise.all([
+    loadProviders(),
+    ensureLocalCLIStatusLoaded(true),
+  ]);
 
   if (normalizedCustomModelID) {
     selectProviderModelPreservingBusySession({ providerID: pid, modelID: normalizedCustomModelID });
@@ -226,7 +236,10 @@ export async function saveCustomProvider(input: SaveCustomProviderInput): Promis
     options: nextOptions,
     models: nextModels,
   });
-  await loadProviders();
+  await Promise.all([
+    loadProviders(),
+    ensureLocalCLIStatusLoaded(true),
+  ]);
 
   const cur = workspace.selectedModel;
   if (firstModelID) {
@@ -239,11 +252,69 @@ export async function saveCustomProvider(input: SaveCustomProviderInput): Promis
   }
 }
 
+function pickFallbackConnectedModel(excludedProviderIDs: ReadonlySet<string>): SelectedModel | null {
+  if (desktopAuth.isLoggedIn && !excludedProviderIDs.has(OFFICIAL_PROVIDER_ID)) {
+    const official = workspace.providers.find((p) => p.id === OFFICIAL_PROVIDER_ID);
+    const officialModel = official ? Object.keys(official.models || {})[0] : undefined;
+    if (official && officialModel) {
+      return { providerID: OFFICIAL_PROVIDER_ID, modelID: officialModel };
+    }
+  }
+  const disabledSet = new Set<string>(
+    Array.isArray(workspace.globalConfig?.disabled_providers)
+      ? workspace.globalConfig.disabled_providers
+      : []
+  );
+  for (const pid of workspace.connectedProviders) {
+    if (!pid || pid === AUTO_PROVIDER_ID || excludedProviderIDs.has(pid) || disabledSet.has(pid)) {
+      continue;
+    }
+    if (pid === "opencode" && !workspace.hoxiProviders?.[pid] && !workspace.globalConfig?.provider?.[pid]) {
+      continue;
+    }
+    const prov = workspace.providers.find((p) => p.id === pid);
+    const defModel = workspace.defaultModels[pid];
+    if (prov && defModel && prov.models?.[defModel]) {
+      return { providerID: pid, modelID: defModel };
+    }
+    const firstKey = prov?.models ? Object.keys(prov.models)[0] : undefined;
+    if (prov && firstKey) {
+      return { providerID: pid, modelID: firstKey };
+    }
+  }
+  return null;
+}
+
+function reconcileSelectionAfterProviderDisconnect(providerIDs: readonly string[]): void {
+  const removed = new Set(providerIDs.map((id) => id.trim()).filter(Boolean));
+  if (removed.size === 0) return;
+  const fallback = pickFallbackConnectedModel(removed);
+  if (workspace.defaultAI.model && removed.has(workspace.defaultAI.model.providerID)) {
+    if (fallback) {
+      selectDefaultModel(fallback);
+    } else {
+      updateSessionAI({ model: null }, null);
+      writeStorageJSON(SELECTED_MODEL_KEY, null);
+    }
+  }
+  if (workspace.selectedModel && removed.has(workspace.selectedModel.providerID)) {
+    if (fallback) {
+      selectProviderModelPreservingBusySession(fallback);
+    } else if (workspace.activeSessionID) {
+      updateSessionAI({ model: null }, workspace.activeSessionID);
+    }
+  }
+}
+
 export async function disconnectProvider(providerID: string): Promise<void> {
-  if (isImportedOpenCodeProvider(providerID)) throw new Error("OpenCode imported provider is read-only");
-  await hoxiAPI.removeProviderAuth(providerID).catch(() => {});
-  await hoxiAPI.deleteHoxiProviderConfig(providerID).catch(() => {});
-  await loadProviders();
+  const pid = providerID.trim();
+  if (!pid) return;
+  await hoxiAPI.disconnectProvider(pid);
+  await Promise.all([
+    loadProviders(true),
+    ensureLocalCLIStatusLoaded(true),
+  ]);
+  reconcileSelectionAfterProviderDisconnect([pid]);
 }
 
 export async function toggleDisabledProvider(providerID: string, disabled: boolean): Promise<void> {
@@ -336,11 +407,17 @@ export async function applyFreeTierGuideProvider(item: FreeTierGuideItem): Promi
   }
 }
 
-export async function syncLocalCLIModel(tool: LocalCLIStatusItem) {
+export async function syncLocalCLIModel(
+  tool: LocalCLIStatusItem,
+  options?: { overwrite?: boolean }
+) {
   const isRunner = isRunnerAuthMode(tool.authMode);
   let providerID = tool.providerID;
   if (!isRunner) {
-    const result = await hoxiAPI.importLocalCLI(tool.id);
+    const result = await hoxiAPI.importLocalCLI(
+      tool.id,
+      options?.overwrite ? { overwrite: true } : undefined
+    );
     if (!result.ok) throw new Error(result.error || t("common.error"));
     providerID = result.providerID;
   }
@@ -354,6 +431,28 @@ export async function syncLocalCLIModel(tool: LocalCLIStatusItem) {
   }
   selectProviderModelPreservingBusySession({ providerID, modelID });
   return status;
+}
+
+export async function disconnectLocalCLIModel(
+  tool: LocalCLIStatusItem
+): Promise<LocalCLIStatusItem[]> {
+  if (isRunnerAuthMode(tool.authMode)) {
+    return ensureLocalCLIStatusLoaded(true);
+  }
+  const res = await hoxiAPI.disconnectLocalCLI(tool.id);
+  if (!res.ok) {
+    throw new Error(res.error || t("models.disconnectFailed"));
+  }
+  await Promise.all([
+    loadProviders(true),
+    ensureLocalCLIStatusLoaded(true),
+  ]);
+  const removedIDs =
+    Array.isArray(res.disconnected) && res.disconnected.length > 0
+      ? res.disconnected
+      : [tool.providerID];
+  reconcileSelectionAfterProviderDisconnect(removedIDs);
+  return localCLIStatusItems();
 }
 
 export interface ProviderMcpOAuthUIState {

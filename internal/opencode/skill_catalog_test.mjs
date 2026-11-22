@@ -99,6 +99,8 @@ test("plugin rewrites the catalog from Hoxi's decisions, stays stable and guards
     const subagent = [systemWith(upstreamCatalog(SKILLS), false)];
     await transform(subagent);
     assert.ok(subagent[1].includes("hoxi-subtasks"));
+    assert.ok(subagent[1].includes("Handle normal requests directly in the main turn"));
+    assert.ok(subagent[1].includes('"autoStart":false'));
     assert.match(subagent[1], /Reviews and questions are read-only/);
     assert.ok(!/-> edit ->/.test(subagent[1]), "navigation no longer ends in an unconditional edit");
   });

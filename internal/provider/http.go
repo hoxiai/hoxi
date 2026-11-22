@@ -248,7 +248,7 @@ func isOfficialGoogleHost(rawURL string) bool {
 }
 
 func isOpenAIResponsesProtocol(npm, baseURL string) bool {
-	if strings.EqualFold(strings.TrimSpace(npm), "@ai-sdk/openai") {
+	if strings.EqualFold(strings.TrimSpace(npm), "@ai-sdk/openai") || isCodexChatGPTBackendURL(baseURL) {
 		return true
 	}
 	trimmed := strings.TrimRight(strings.ToLower(strings.TrimSpace(baseURL)), "/")
@@ -376,6 +376,9 @@ func buildOpenAIResponsesBody(req llmCompletionRequest, maxTokens int) map[strin
 	if eff := strings.TrimSpace(req.ReasoningEffort); eff != "" {
 		bodyMap["reasoning"] = map[string]string{"effort": eff}
 	}
+	if isCodexChatGPTBackendURL(req.BaseURL) {
+		normalizeCodexBackendResponsesMap(bodyMap)
+	}
 	return bodyMap
 }
 
@@ -459,6 +462,9 @@ func attemptSimpleLLM(parentCtx context.Context, req llmCompletionRequest, windo
 			return nil, nil, err
 		}
 		outReq.Header.Set("Accept", "application/json")
+		if isCodexChatGPTBackendURL(reqURL) {
+			outReq.Header.Set("Accept", "text/event-stream")
+		}
 		outReq.Header.Set("Content-Type", "application/json")
 		hasCustomAuth := false
 		for k, v := range req.Headers {
@@ -527,7 +533,7 @@ func attemptSimpleLLM(parentCtx context.Context, req llmCompletionRequest, windo
 	// legacy proxy fallback if a third-party gateway rejects max_completion_tokens or temperature.
 	if !isAnthropic && !isGoogle && resp.StatusCode >= 400 && resp.StatusCode < 500 {
 		lowerBody := strings.ToLower(string(respBytes))
-		if isResponses && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed) &&
+		if isResponses && !isCodexChatGPTBackendURL(trimmedBase) && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed) &&
 			!strings.HasSuffix(strings.ToLower(trimmedBase), "/responses") {
 			if retryResp, retryBytes, retryErr := doOnce(trimmedBase+"/chat/completions", buildOpenAIChatCompletionBody(req, maxTokens), false); retryErr == nil && retryResp != nil && retryResp.StatusCode < 400 {
 				resp, respBytes = retryResp, retryBytes
@@ -656,6 +662,9 @@ func extractLLMTextContent(raw []byte) string {
 			}
 			return ""
 		}
+	}
+	if sseText, ok := extractSSETextContent(raw); ok {
+		return sseText
 	}
 	trimmed := strings.TrimSpace(string(raw))
 	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {

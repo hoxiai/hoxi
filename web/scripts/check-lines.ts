@@ -63,10 +63,6 @@ const COMPONENT_SERVICE_READONLY_ALLOWLIST: Record<
     allowed: ["hoxiAPI.fetchCustomProviderModels"],
     reason: "Read-only /v1/models discovery probe for populating the custom provider form draft",
   },
-  "web/src/components/models/LocalCliBridgeBanner.tsx": {
-    allowed: ["hoxiAPI.getLocalCLIStatus"],
-    reason: "Read-only local CLI installation and credential status probe for the bridge banner",
-  },
   "web/src/components/terminal/WebGLTerminal.tsx": {
     allowed: ["getGatewayToken"],
     reason: "Read-only gateway auth token accessor for constructing the PTY WebSocket URL",
@@ -308,8 +304,8 @@ for (const file of files) {
       console.error(`  ✗ [layering violation] ${rel} must not import from store/ or components/ (${badImport[0]}). Move state/UI logic to web/src/store/ or web/src/components/.`);
       violations++;
     }
-    if (/["'`]\/(?:session|event|permission)(?:[/"'`?]|$)/.test(content)) {
-      console.error(`  ✗ [gateway plane violation] ${rel} must not call raw '/session', '/event', or '/permission'; route through '/api/hoxi/sessions', '/api/hoxi/event', and '/api/hoxi/permission'.`);
+    if (/["'`]\/(?:session|event|permission|project|pty|agent|command|lsp)(?:[/"'`?]|$)/.test(content)) {
+      console.error(`  ✗ [gateway plane violation] ${rel} must not call raw upstream paths ('/session', '/event', '/permission', '/project', '/pty', '/agent', '/command', '/lsp'); route through '/api/hoxi/*'.`);
       violations++;
     }
   } else if (rel.startsWith("web/src/store/")) {
@@ -372,8 +368,8 @@ for (const file of files) {
       }
     }
   } else if (rel.startsWith("work/web/")) {
-    if (/["'`]\/(?:session|event|permission)(?:[/"'`?]|$)/.test(content)) {
-      console.error(`  ✗ [gateway plane violation] ${rel} must not call raw '/session', '/event', or '/permission'; route through '/api/hoxi/sessions', '/api/hoxi/event', and '/api/hoxi/permission'.`);
+    if (/["'`]\/(?:session|event|permission|project|pty|agent|command|lsp)(?:[/"'`?]|$)/.test(content)) {
+      console.error(`  ✗ [gateway plane violation] ${rel} must not call raw upstream paths ('/session', '/event', '/permission', '/project', '/pty', '/agent', '/command', '/lsp'); route through '/api/hoxi/*'.`);
       violations++;
     }
     if (rel.startsWith("work/web/store/")) {

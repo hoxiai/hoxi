@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
+import '../../core/l10n/l10n.dart';
 import '../../core/theme/app_theme.dart';
 
 /// Rate-matched streaming text pacer ported from PC Hoxi (`web/src/components/timeline/markdown/reveal.ts`
@@ -203,13 +204,35 @@ class StreamTextPacer {
   }
 }
 
+String _sliceUtf16Prefix(String text, int maxUnits) {
+  if (maxUnits <= 0 || text.isEmpty) return '';
+  if (text.length <= maxUnits) return text;
+  var end = maxUnits;
+  final prev = text.codeUnitAt(end - 1);
+  if (prev >= 0xD800 && prev <= 0xDBFF) {
+    end -= 1;
+  }
+  return end <= 0 ? '' : text.substring(0, end);
+}
+
+String _sliceUtf16Suffix(String text, int maxUnits) {
+  if (maxUnits <= 0 || text.isEmpty) return '';
+  if (text.length <= maxUnits) return text;
+  var start = text.length - maxUnits;
+  final first = text.codeUnitAt(start);
+  if (first >= 0xDC00 && first <= 0xDFFF && start < text.length) {
+    start += 1;
+  }
+  return start >= text.length ? '' : text.substring(start);
+}
+
 /// Extracts a concise single-line live ticker from streaming or completed reasoning text,
-/// ported from PC Hoxi (`web/src/components/timeline/ThoughtBox.tsx`).
+/// ported from PC Hoxi.
 String extractLiveReasoningTicker(String rawText, {bool isStreaming = false}) {
   if (rawText.isEmpty) return '';
   final windowText = isStreaming && rawText.length > 600
-      ? rawText.substring(rawText.length - 600)
-      : (rawText.length > 400 ? rawText.substring(0, 400) : rawText);
+      ? _sliceUtf16Suffix(rawText, 600)
+      : _sliceUtf16Prefix(rawText, 400);
   final cleaned = windowText
       .replaceAll(RegExp(r'<\/?think(?:ing)?>', caseSensitive: false), '')
       .replaceAll('\r\n', '\n')
@@ -231,7 +254,7 @@ String extractLiveReasoningTicker(String rawText, {bool isStreaming = false}) {
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
     if (stripped.length <= 44) return stripped;
-    return '${stripped.substring(0, 44).trimRight()}…';
+    return '${_sliceUtf16Prefix(stripped, 44).trimRight()}…';
   }
 
   if (isStreaming) {
@@ -302,6 +325,8 @@ class AssistantTurnFooter extends StatelessWidget {
     required this.copied,
     required this.onCopy,
     this.onRetry,
+    this.onReport,
+    this.reported = false,
     this.durationMs = 0,
     this.totalTokens = 0,
     this.timestamp,
@@ -310,12 +335,15 @@ class AssistantTurnFooter extends StatelessWidget {
   final bool copied;
   final VoidCallback onCopy;
   final VoidCallback? onRetry;
+  final VoidCallback? onReport;
+  final bool reported;
   final int durationMs;
   final int totalTokens;
   final DateTime? timestamp;
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final durationLabel = formatElapsedDurationMs(durationMs);
     final tokensLabel = formatCompactTokens(totalTokens);
     final clockLabel = timestamp != null ? formatTurnClockTime(timestamp!) : '';
@@ -347,7 +375,7 @@ class AssistantTurnFooter extends StatelessWidget {
                   ),
                   const SizedBox(width: 4),
                   Text(
-                    copied ? '已复制' : '复制',
+                    copied ? l10n.commonCopied : l10n.commonCopy,
                     style: TextStyle(
                       color: copied ? AppTheme.success : AppTheme.textLight,
                       fontSize: 11.5,
@@ -362,23 +390,57 @@ class AssistantTurnFooter extends StatelessWidget {
             InkWell(
               borderRadius: BorderRadius.circular(6),
               onTap: onRetry,
-              child: const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(
+                    const Icon(
                       Icons.refresh_rounded,
                       size: 13,
                       color: AppTheme.primaryBlue,
                     ),
-                    SizedBox(width: 3),
+                    const SizedBox(width: 3),
                     Text(
-                      '重试',
-                      style: TextStyle(
+                      l10n.commonRetry,
+                      style: const TextStyle(
                         color: AppTheme.primaryBlue,
                         fontSize: 11.5,
                         fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          if (onReport != null)
+            InkWell(
+              key: const ValueKey('assistant_turn_report_button'),
+              borderRadius: BorderRadius.circular(6),
+              onTap: onReport,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      reported ? Icons.flag_rounded : Icons.flag_outlined,
+                      size: 13,
+                      color: reported
+                          ? AppTheme.textSecondary
+                          : AppTheme.textLight,
+                    ),
+                    const SizedBox(width: 3),
+                    Text(
+                      reported ? l10n.chatReportedBadge : l10n.chatReportAction,
+                      style: TextStyle(
+                        color: reported
+                            ? AppTheme.textSecondary
+                            : AppTheme.textLight,
+                        fontSize: 11.5,
+                        fontWeight: reported
+                            ? FontWeight.w600
+                            : FontWeight.w500,
                       ),
                     ),
                   ],
@@ -447,6 +509,9 @@ class EarlierMessagesBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     if (hiddenCount <= 0) return const SizedBox.shrink();
     final batchCount = math.min(hiddenCount, kMessageBatchSize);
+    final isZh =
+        Localizations.maybeLocaleOf(context)?.languageCode.startsWith('zh') ??
+        true;
 
     return Container(
       width: double.infinity,
@@ -459,7 +524,9 @@ class EarlierMessagesBanner extends StatelessWidget {
       child: Column(
         children: [
           Text(
-            '已折叠前 $hiddenCount 条历史消息（上拉或点击加载）',
+            isZh
+                ? '已折叠前 $hiddenCount 条历史消息（上拉或点击加载）'
+                : '$hiddenCount earlier messages folded',
             style: TextStyle(color: AppTheme.textLight, fontSize: 11.5),
           ),
           const SizedBox(height: 6),
@@ -491,7 +558,7 @@ class EarlierMessagesBanner extends StatelessWidget {
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        '加载更早 $batchCount 条',
+                        isZh ? '加载更早 $batchCount 条' : 'Load $batchCount earlier',
                         style: TextStyle(
                           color: AppTheme.textPrimary,
                           fontSize: 12,
@@ -512,7 +579,7 @@ class EarlierMessagesBanner extends StatelessWidget {
                       vertical: 5,
                     ),
                     child: Text(
-                      '展开全部 ($totalCount)',
+                      isZh ? '展开全部 ($totalCount)' : 'Show all ($totalCount)',
                       style: TextStyle(
                         color: AppTheme.textSecondary,
                         fontSize: 12,

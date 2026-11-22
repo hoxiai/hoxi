@@ -40,6 +40,7 @@ export interface SessionAIConfig {
   model: SelectedModel | null;
   agent: string;
   effort: ReasoningEffort;
+  fastMode?: boolean;
 }
 
 export const SESSION_AI_KEY = "hoxi-session-ai:v1";
@@ -117,18 +118,29 @@ export function initialDefaultAgent(): string {
 
 export function initialSessionAI(): Record<string, SessionAIConfig> {
   const parsed = readStorageRecord<SessionAIConfig | null>(SESSION_AI_KEY);
-  return Object.fromEntries(
-    Object.entries(parsed).filter(([, c]) =>
-      Boolean(
-        c &&
-          typeof c.agent === "string" &&
-          c.agent.length > 0 &&
-          VALID_REASONING_EFFORTS.includes(c.effort) &&
-          (c.model === null ||
-            (typeof c.model?.providerID === "string" && typeof c.model?.modelID === "string"))
+  const out: Record<string, SessionAIConfig> = {};
+  for (const [sid, c] of Object.entries(parsed)) {
+    if (
+      !c ||
+      typeof c.agent !== "string" ||
+      c.agent.length === 0 ||
+      !VALID_REASONING_EFFORTS.includes(c.effort) ||
+      (c.fastMode !== undefined && typeof c.fastMode !== "boolean") ||
+      !(
+        c.model === null ||
+        (typeof c.model?.providerID === "string" && typeof c.model?.modelID === "string")
       )
-    )
-  ) as Record<string, SessionAIConfig>;
+    ) {
+      continue;
+    }
+    out[sid] = {
+      model: c.model,
+      agent: c.agent,
+      effort: c.effort,
+      ...(c.fastMode ? { fastMode: true } : {}),
+    };
+  }
+  return out;
 }
 
 export const DEFAULT_AGENTS: AgentInfo[] = [
@@ -175,6 +187,7 @@ export interface QueuedPromptItem {
   agent?: string;
   model?: SelectedModel;
   effort?: ReasoningEffort;
+  fastMode?: boolean;
   attachments: QueuedPromptAttachment[];
   skillSelection?: SkillSelection;
   /** Turn-scoped system instructions, kept out of the visible user message. */
@@ -225,7 +238,8 @@ export interface SessionIndexEntry {
   updated: number;
 }
 
-export type SidebarProjectMode = "multi" | "single" | "recent" | "attention" | "running";
+export type SidebarNavTab = "projects" | "recent";
+export type SidebarProjectMode = "multi" | "single" | "attention" | "running";
 
 export interface HoxiProviderConfig {
   name?: string;
@@ -273,6 +287,7 @@ export interface WorkspaceState {
   defaultAI: SessionAIConfig;
   aiBySession: Record<string, SessionAIConfig>;
   sessionSandboxMode: "local" | "worktree";
+  sidebarNavTab: SidebarNavTab;
   sidebarProjectMode: SidebarProjectMode;
   inspectorTab: "diffs" | "memory" | "files" | "skills" | "terminal" | "browser" | "computer" | "tasks";
   inspectorOpen: boolean;
@@ -300,6 +315,7 @@ export interface WorkspaceState {
   providerAuthMethods: Record<string, ProviderAuthMethod[]>;
   selectedModel: SelectedModel | null;
   reasoningEffort: ReasoningEffort;
+  fastMode: boolean;
   favoriteModels: SelectedModel[];
   recentModels: SelectedModel[];
   messagesBySession: Record<string, MessageTurn[]>;
@@ -337,6 +353,7 @@ export const RECENT_MODELS_KEY = "hoxi-recent-models:v1";
 export const EFFORT_KEY = "hoxi-reasoning-effort:v1";
 export const RECENT_PROJECTS_KEY = "hoxi-recent-projects:v1";
 export const PROJECT_ORDER_KEY = "hoxi-project-order:v1";
+export const SIDEBAR_NAV_TAB_KEY = "hoxi:sidebar-nav-tab:v1";
 export const SIDEBAR_PROJECT_MODE_KEY = "hoxi-sidebar-project-mode:v1";
 export const SESSION_SANDBOX_MODE_KEY = "hoxi-session-sandbox-mode:v1";
 export const ARCHIVED_SESSIONS_KEY = "hoxi-archived-sessions:v1";
@@ -404,14 +421,26 @@ function initialProjectOrder(): string[] {
   return readStorageArray(PROJECT_ORDER_KEY, isValidStoredProjectPath);
 }
 
-const PERSISTED_SIDEBAR_PROJECT_MODES: SidebarProjectMode[] = ["multi", "single", "recent"];
+const PERSISTED_SIDEBAR_PROJECT_MODES: SidebarProjectMode[] = ["multi", "single"];
+
+function initialSidebarNavTab(): SidebarNavTab {
+  const savedTab = readStorageItem(SIDEBAR_NAV_TAB_KEY);
+  if (savedTab === "projects" || savedTab === "recent") {
+    return savedTab;
+  }
+  if (readStorageItem(SIDEBAR_PROJECT_MODE_KEY) === "recent") {
+    writeStorageItem(SIDEBAR_NAV_TAB_KEY, "recent");
+    return "recent";
+  }
+  return "projects";
+}
 
 function initialSidebarProjectMode(): SidebarProjectMode {
   const saved = readStorageItem(SIDEBAR_PROJECT_MODE_KEY);
   if (PERSISTED_SIDEBAR_PROJECT_MODES.includes(saved as SidebarProjectMode)) {
     return saved as SidebarProjectMode;
   }
-  if (saved === "attention" || saved === "running") {
+  if (saved === "attention" || saved === "running" || saved === "recent") {
     writeStorageItem(SIDEBAR_PROJECT_MODE_KEY, "multi");
   }
   return "multi";
@@ -456,6 +485,7 @@ const [workspace, rawSetWorkspace] = createStore<WorkspaceState>({
     return (this.activeSessionID && this.aiBySession[this.activeSessionID] || this.defaultAI).agent;
   },
   sessionSandboxMode: initialSessionSandboxMode(),
+  sidebarNavTab: initialSidebarNavTab(),
   sidebarProjectMode: initialSidebarProjectMode(),
   inspectorTab: "diffs",
   inspectorOpen: false,
@@ -486,6 +516,9 @@ const [workspace, rawSetWorkspace] = createStore<WorkspaceState>({
   },
   get reasoningEffort() {
     return (this.activeSessionID && this.aiBySession[this.activeSessionID] || this.defaultAI).effort;
+  },
+  get fastMode() {
+    return Boolean((this.activeSessionID && this.aiBySession[this.activeSessionID] || this.defaultAI).fastMode);
   },
   favoriteModels: initialModelList(FAVORITE_MODELS_KEY),
   recentModels: initialModelList(RECENT_MODELS_KEY),

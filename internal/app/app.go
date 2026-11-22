@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/agyhook"
+	"github.com/hoxiai/hoxi/internal/appbridge"
 	"github.com/hoxiai/hoxi/internal/buildinfo"
 	"github.com/hoxiai/hoxi/internal/cli"
 	"github.com/hoxiai/hoxi/internal/diagnostics"
@@ -25,6 +26,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/notify"
 	"github.com/hoxiai/hoxi/internal/opencode"
+	"github.com/hoxiai/hoxi/internal/osopen"
 	"github.com/hoxiai/hoxi/internal/reclaim"
 	"github.com/hoxiai/hoxi/internal/statusbar"
 	"github.com/hoxiai/hoxi/internal/telemetry"
@@ -144,6 +146,9 @@ func Run(distFS fs.FS) {
 	// Before any daemon, port or log file: a repeat launch goes to the running window.
 	if !cfg.NoDesktop && handOffToRunningInstance(identity.BundleID) {
 		return
+	}
+	if !cfg.NoDesktop && identity.Variant == "release" && exePath != "" {
+		go hoxipaths.RefreshOutdatedCLILink(exePath, os.Getenv("PATH"))
 	}
 
 	cfg.RootDir = workspace.ResolveInitialRootDir(cfg.RootDir)
@@ -274,6 +279,15 @@ func Run(distFS fs.FS) {
 		}
 	}()
 
+	// Publish the actual bound port, including fallback-port startups.
+	if !cfg.NoDesktop {
+		if err := appbridge.WriteRuntimeEndpoint(appbridge.RuntimeEndpoint{BaseURL: "http://" + loopbackAddr, PID: os.Getpid()}); err != nil {
+			logger.Warn("local application discovery file unavailable", "error", err)
+		} else {
+			defer app.clearAppRuntimeEndpoint()
+		}
+	}
+
 	// LAN pairing listener: the phone dials this Mac directly on the local
 	// network using the QR from Settings → Remote. Token-gated and best effort:
 	// if the port is taken, desktop access still works over loopback/GoPanel.
@@ -371,19 +385,32 @@ func Run(distFS fs.FS) {
 		}
 	})
 
-	gw.SetOpenDirectoryDialog(func() (string, error) {
+	gw.SetOpenDirectoryDialogWithOptions(func(opts gateway.OpenDirectoryOptions) (string, error) {
 		ctx := app.desktopContext()
 		if ctx == nil {
 			return "", fmt.Errorf("desktop window context not ready")
 		}
+		title := strings.TrimSpace(opts.Title)
+		if title == "" {
+			title = "Select Workspace Project Folder"
+		}
 		return wailsruntime.OpenDirectoryDialog(ctx, wailsruntime.OpenDialogOptions{
-			Title: "Select Workspace Project Folder",
+			Title:            title,
+			DefaultDirectory: opts.DefaultDirectory,
 		})
 	})
 	app.configureBrowserFiles(gw)
 	app.configureComputer(gw)
 	app.configureFileAccess(gw)
 	app.configureDesktopCompanion(gw)
+	gw.SetAppConnectRedirect(func(ctx context.Context, target string) error {
+		if err := appbridge.ValidateRedirectURI(target); err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		return osopen.Open(ctx, target, false)
+	})
 	gw.SetDesktopFocusHandler(func(_, _ string) {
 		app.showWindow()
 	})
@@ -439,6 +466,7 @@ func Run(distFS fs.FS) {
 	})
 	if err != nil {
 		logger.Error("wails application exited with error", "error", err)
+		app.clearAppRuntimeEndpoint()
 		os.Exit(1)
 	}
 }
@@ -602,6 +630,12 @@ func (a *DesktopApp) persistWindowGeometry() {
 	a.windowTracker.Flush()
 }
 
+func (a *DesktopApp) clearAppRuntimeEndpoint() {
+	if err := appbridge.ClearRuntimeEndpoint(os.Getpid()); err != nil && a.logger != nil {
+		a.logger.Warn("could not remove application discovery file", "error", err)
+	}
+}
+
 func (a *DesktopApp) shutdown(_ context.Context) {
 	stopPlatformWindowObserver()
 	if a.windowTracker != nil {
@@ -636,6 +670,16 @@ func (a *DesktopApp) shutdown(_ context.Context) {
 }
 
 func (a *DesktopApp) onURLOpen(rawURL string) {
+	if in, ok := ParseConnectDeepLink(rawURL); ok {
+		if a.gateway != nil {
+			if _, err := a.gateway.BeginAppConnect(in); err == nil {
+				a.showWindow()
+			} else if a.logger != nil {
+				a.logger.Warn("application connection request was rejected")
+			}
+		}
+		return
+	}
 	// Session deep links navigate the existing window; they never touch the auth flow.
 	if intent, ok := ParseDeepLink(rawURL); ok {
 		a.showWindow()

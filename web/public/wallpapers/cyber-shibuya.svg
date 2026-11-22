@@ -1,111 +1,91 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
   <defs>
     <linearGradient id="cy-bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#060814"/>
-      <stop offset="50%" stop-color="#140d30"/>
-      <stop offset="100%" stop-color="#091f36"/>
+      <stop offset="0%" stop-color="#050712"/>
+      <stop offset="52%" stop-color="#110c29"/>
+      <stop offset="100%" stop-color="#081c30"/>
     </linearGradient>
-    <radialGradient id="cy-mag" cx="76%" cy="38%" r="46%">
-      <stop offset="0%" stop-color="#ec4899" stop-opacity="0.5"/>
-      <stop offset="55%" stop-color="#7c3aed" stop-opacity="0.24"/>
-      <stop offset="100%" stop-color="#060814" stop-opacity="0"/>
+    <radialGradient id="cy-mag" cx="78%" cy="36%" r="46%">
+      <stop offset="0%" stop-color="#ec4899" stop-opacity="0.44"/>
+      <stop offset="52%" stop-color="#7c3aed" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#050712" stop-opacity="0"/>
     </radialGradient>
-    <radialGradient id="cy-cyan" cx="62%" cy="68%" r="44%">
-      <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.42"/>
-      <stop offset="100%" stop-color="#060814" stop-opacity="0"/>
+    <radialGradient id="cy-cyan" cx="66%" cy="72%" r="44%">
+      <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.36"/>
+      <stop offset="58%" stop-color="#0284c7" stop-opacity="0.14"/>
+      <stop offset="100%" stop-color="#050712" stop-opacity="0"/>
     </radialGradient>
-    <linearGradient id="cy-hair" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#f5d0fe"/>
-      <stop offset="52%" stop-color="#c4b5fd"/>
-      <stop offset="100%" stop-color="#6366f1"/>
+    <linearGradient id="cy-tower" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#131936"/>
+      <stop offset="100%" stop-color="#070a18"/>
     </linearGradient>
-    <linearGradient id="cy-jacket" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#1e1b4b"/>
-      <stop offset="65%" stop-color="#0f172a"/>
-      <stop offset="100%" stop-color="#3b0764"/>
+    <linearGradient id="cy-neon-pink" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f472b6" stop-opacity="0.82"/>
+      <stop offset="100%" stop-color="#9333ea" stop-opacity="0.48"/>
+    </linearGradient>
+    <linearGradient id="cy-neon-cyan" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#67e8f9" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#0284c7" stop-opacity="0.42"/>
     </linearGradient>
   </defs>
 
+  <!-- Deep Midnight Rain-Night Base & Neon Atmospheric Glows -->
   <rect width="1600" height="900" fill="url(#cy-bg)"/>
   <rect width="1600" height="900" fill="url(#cy-mag)"/>
   <rect width="1600" height="900" fill="url(#cy-cyan)"/>
 
-  <!-- Futuristic Cyberpunk Skyline Silhouette & Neon Signs -->
-  <g fill="#0b1024" stroke="#312e81" stroke-width="1.5">
-    <rect x="780" y="120" width="110" height="780"/>
-    <rect x="915" y="60" width="145" height="840"/>
-    <rect x="1085" y="165" width="125" height="735"/>
-    <rect x="1235" y="85" width="160" height="815"/>
-    <rect x="1420" y="140" width="150" height="760"/>
-    <rect x="520" y="290" width="95" height="610" fill-opacity="0.65"/>
-    <rect x="640" y="220" width="105" height="680" fill-opacity="0.72"/>
+  <!-- Distant Low-Contrast Skyline (Left Reading Zone Kept Calm) -->
+  <g fill="#0a0f22" fill-opacity="0.62">
+    <rect x="90" y="420" width="96" height="480"/>
+    <rect x="215" y="350" width="118" height="550"/>
+    <rect x="365" y="455" width="88" height="445"/>
+    <rect x="490" y="305" width="112" height="595"/>
+    <rect x="630" y="245" width="118" height="655"/>
   </g>
 
-  <!-- Glowing Neon Billboards & Bokeh -->
-  <rect x="938" y="190" width="42" height="150" rx="6" fill="#f43f5e" fill-opacity="0.72"/>
-  <rect x="1265" y="210" width="54" height="190" rx="6" fill="#22d3ee" fill-opacity="0.68"/>
-  <rect x="1450" y="260" width="46" height="140" rx="6" fill="#a855f7" fill-opacity="0.78"/>
-  <circle cx="845" cy="390" r="28" fill="#ec4899" fill-opacity="0.45"/>
-  <circle cx="995" cy="460" r="36" fill="#22d3ee" fill-opacity="0.38"/>
-  <circle cx="1390" cy="480" r="42" fill="#d946ef" fill-opacity="0.42"/>
-  <circle cx="695" cy="440" r="24" fill="#38bdf8" fill-opacity="0.32"/>
-
-  <!-- High-Rise Window Frame & Rain Streaks -->
-  <rect x="760" y="0" width="14" height="900" fill="#1e293b"/>
-  <g stroke="#67e8f9" stroke-opacity="0.26" stroke-width="1.6" stroke-linecap="round">
-    <line x1="830" y1="80" x2="795" y2="210"/>
-    <line x1="960" y1="40" x2="920" y2="190"/>
-    <line x1="1150" y1="90" x2="1110" y2="240"/>
-    <line x1="1460" y1="70" x2="1415" y2="230"/>
-    <line x1="880" y1="510" x2="845" y2="650"/>
+  <!-- Shibuya Neon High-Rise Towers (Right Third Framing Standee) -->
+  <g fill="url(#cy-tower)" stroke="#312e81" stroke-width="1.4" stroke-opacity="0.72">
+    <rect x="812" y="135" width="118" height="765"/>
+    <rect x="954" y="68" width="156" height="832"/>
+    <rect x="1136" y="168" width="134" height="732"/>
+    <rect x="1294" y="88" width="164" height="812"/>
+    <rect x="1478" y="148" width="122" height="752"/>
   </g>
 
-  <!-- Anime Hacker Girl (Right-Third Golden Ratio, Over-the-Shoulder Pose) -->
-  <g transform="translate(950, 142)">
-    <!-- Back Lavender-Silver Asymmetric Hair -->
-    <path d="M135 205 C128 88, 188 46, 265 46 C344 46, 398 98, 388 228 C382 302, 355 348, 326 368 L172 356 C146 326, 138 274, 135 205 Z" fill="url(#cy-hair)" stroke="#312e81" stroke-width="2.5"/>
-    <!-- Neon Cyan Rim-Light Hair Edge -->
-    <path d="M142 195 C140 105, 192 54, 262 52" fill="none" stroke="#22d3ee" stroke-width="4.5" stroke-linecap="round"/>
+  <!-- Vertical Neon Billboards & Window Horizon Strips -->
+  <rect x="980" y="176" width="38" height="162" rx="6" fill="url(#cy-neon-pink)"/>
+  <rect x="1322" y="196" width="48" height="196" rx="6" fill="url(#cy-neon-cyan)"/>
+  <rect x="1502" y="254" width="40" height="146" rx="6" fill="#a855f7" fill-opacity="0.7"/>
+  <g stroke="#38bdf8" stroke-opacity="0.28" stroke-width="2">
+    <line x1="832" y1="220" x2="908" y2="220"/>
+    <line x1="832" y1="242" x2="892" y2="242"/>
+    <line x1="1158" y1="264" x2="1246" y2="264"/>
+    <line x1="1158" y1="286" x2="1224" y2="286"/>
+  </g>
 
-    <!-- Cyberpunk Techwear Jacket (Over-the-shoulder silhouette) -->
-    <path d="M118 758 L156 408 C172 352, 218 332, 282 336 C348 340, 392 378, 412 456 L442 758 Z" fill="url(#cy-jacket)" stroke="#a855f7" stroke-width="2.8"/>
-    <!-- Neon Jacket Stripes & Tech Patch -->
-    <path d="M214 415 L182 758" fill="none" stroke="#22d3ee" stroke-width="3.5"/>
-    <path d="M352 405 L398 758" fill="none" stroke="#ec4899" stroke-width="3.5"/>
-    <rect x="256" y="476" width="64" height="34" rx="6" fill="#090d16" stroke="#22d3ee" stroke-width="2"/>
-    <line x1="268" y1="488" x2="306" y2="488" stroke="#22d3ee" stroke-width="2.5"/>
-    <line x1="268" y1="498" x2="294" y2="498" stroke="#ec4899" stroke-width="2.5"/>
+  <!-- Soft Out-of-Focus Rain-Night Neon Bokeh Orbs -->
+  <circle cx="715" cy="465" r="24" fill="#38bdf8" fill-opacity="0.22"/>
+  <circle cx="868" cy="396" r="32" fill="#ec4899" fill-opacity="0.34"/>
+  <circle cx="942" cy="520" r="26" fill="#22d3ee" fill-opacity="0.28"/>
+  <circle cx="1442" cy="468" r="44" fill="#d946ef" fill-opacity="0.34"/>
+  <circle cx="1528" cy="590" r="30" fill="#22d3ee" fill-opacity="0.26"/>
 
-    <!-- Face (3/4 Over-Shoulder Gaze) -->
-    <path d="M174 188 C174 132, 206 108, 252 108 C298 108, 326 136, 324 192 C322 256, 286 300, 244 300 C202 300, 174 252, 174 188 Z" fill="#f8e7eb" stroke="#312e81" stroke-width="2.2"/>
+  <!-- Crisp Vector Holographic Cyber Ring Behind Hacker Standee -->
+  <g transform="translate(1188, 342)" fill="none">
+    <circle cx="0" cy="0" r="268" stroke="#22d3ee" stroke-opacity="0.28" stroke-width="1.5"/>
+    <circle cx="0" cy="0" r="244" stroke="#ec4899" stroke-opacity="0.32" stroke-width="1.2" stroke-dasharray="14 8 3 8"/>
+    <circle cx="0" cy="0" r="196" stroke="#a855f7" stroke-opacity="0.22" stroke-width="1"/>
+  </g>
 
-    <!-- Luminous Cyber Violet-Cyan Eyes -->
-    <g>
-      <path d="M186 198 Q206 188 225 200" fill="none" stroke="#1e1b4b" stroke-width="3.6" stroke-linecap="round"/>
-      <ellipse cx="206" cy="212" rx="12" ry="14.5" fill="#581c87"/>
-      <ellipse cx="206" cy="216" rx="8.8" ry="10" fill="#e879f9"/>
-      <circle cx="206" cy="211" r="5" fill="#0f172a"/>
-      <circle cx="211" cy="205" r="3.8" fill="#ffffff"/>
-      <circle cx="201" cy="219" r="2" fill="#67e8f9"/>
-
-      <path d="M262 200 Q282 188 302 198" fill="none" stroke="#1e1b4b" stroke-width="3.6" stroke-linecap="round"/>
-      <ellipse cx="281" cy="212" rx="12.5" ry="14.5" fill="#581c87"/>
-      <ellipse cx="281" cy="216" rx="9" ry="10" fill="#e879f9"/>
-      <circle cx="281" cy="211" r="5" fill="#0f172a"/>
-      <circle cx="286" cy="205" r="3.8" fill="#ffffff"/>
-      <circle cx="276" cy="219" r="2" fill="#67e8f9"/>
-    </g>
-
-    <!-- Cool Subtle Smirk -->
-    <path d="M236 264 Q248 269 258 262" fill="none" stroke="#9d174d" stroke-width="2.2" stroke-linecap="round"/>
-
-    <!-- Asymmetric Bangs Sweeping Across Forehead -->
-    <path d="M148 198 C154 108, 198 62, 260 62 C318 62, 358 106, 364 196 C346 154, 326 142, 306 192 C292 140, 270 138, 248 198 C232 144, 212 142, 192 194 C176 152, 162 158, 148 198 Z" fill="url(#cy-hair)" stroke="#312e81" stroke-width="2.2"/>
-
-    <!-- Glowing Neon Headphones Around Neck -->
-    <path d="M188 315 C202 362, 298 362, 322 312" fill="none" stroke="#1e293b" stroke-width="18" stroke-linecap="round"/>
-    <circle cx="222" cy="340" r="30" fill="#0f172a" stroke="#22d3ee" stroke-width="3.5"/>
-    <circle cx="222" cy="340" r="18" fill="none" stroke="#ec4899" stroke-width="3.5"/>
-    <circle cx="222" cy="340" r="7" fill="#22d3ee"/>
+  <!-- Penthouse Window Mullion & Diagonal Rain Streaks -->
+  <rect x="774" y="0" width="12" height="900" fill="#0f172a" fill-opacity="0.9"/>
+  <line x1="786" y1="0" x2="786" y2="900" stroke="#38bdf8" stroke-opacity="0.32" stroke-width="1.4"/>
+  <g stroke="#67e8f9" stroke-opacity="0.24" stroke-width="1.5" stroke-linecap="round">
+    <line x1="848" y1="74" x2="812" y2="206"/>
+    <line x1="988" y1="42" x2="948" y2="188"/>
+    <line x1="1176" y1="92" x2="1138" y2="236"/>
+    <line x1="1476" y1="68" x2="1434" y2="224"/>
+    <line x1="896" y1="518" x2="862" y2="652"/>
+    <line x1="650" y1="168" x2="620" y2="282" stroke-opacity="0.14"/>
   </g>
 </svg>

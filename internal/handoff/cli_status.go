@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/hoxiai/hoxi/internal/agentcli"
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
@@ -35,6 +36,11 @@ func isLoopbackBridgeURL(raw, bridgePath string) bool {
 }
 
 func (g *Service) syncLocalCLIBridgeURLs() {
+	var codexSnap *agentcli.CodexCatalogSnapshot
+	if isImportedCodexProvider(g.loadHoxiProvidersMap()["openai"]) {
+		snap := agentcli.DiscoverCodexCatalog(false)
+		codexSnap = &snap
+	}
 	_ = g.updateHoxiConfigDoc(func(doc map[string]interface{}) error {
 		provMap, _ := doc["provider"].(map[string]interface{})
 		if provMap == nil {
@@ -78,6 +84,17 @@ func (g *Service) syncLocalCLIBridgeURLs() {
 					opts["baseURL"] = grokCLIStoredBridgeURL
 				}
 			}
+		}
+
+		// Keep imported Codex CLI model catalog current when Codex updates.
+		if codexSnap != nil && isImportedCodexProvider(provMap["openai"]) {
+			existingObj, _ := provMap["openai"].(map[string]interface{})
+			existingOpts, _ := existingObj["options"].(map[string]interface{})
+			refreshed, _ := buildCodexProviderEntry(*codexSnap, "", existingOpts)
+			if existingNPM := strings.TrimSpace(asString(existingObj["npm"])); existingNPM != "" {
+				refreshed["npm"] = existingNPM
+			}
+			provMap["openai"] = refreshed
 		}
 		doc["provider"] = provMap
 		return nil

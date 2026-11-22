@@ -83,13 +83,21 @@ export function loadMarkdownImage(path: string, directory: string, sessionID?: s
     if (!entry.valid) return null;
     return hoxiAPI.readFileContent(path, directory || undefined, sessionID)
     .then((res) => {
-      if (res.type !== "binary" || res.encoding !== "base64") return null;
       if (typeof res.size === "number" && res.size > 8 * 1024 * 1024) return null;
       const mime = (res.mimeType || "").toLowerCase();
-      if (!mime.startsWith("image/") || mime.startsWith("image/svg")) return null;
-      const url = `data:${mime};base64,${res.content}`;
-      if (entry.valid) cacheImage(key, url, sessionID);
-      return url;
+      if (res.type === "binary" && res.encoding === "base64") {
+        if (!mime.startsWith("image/")) return null;
+        const url = `data:${mime};base64,${res.content}`;
+        if (entry.valid) cacheImage(key, url, sessionID);
+        return url;
+      }
+      const isSvg = mime.startsWith("image/svg") || /\.svg$/i.test(path);
+      if (isSvg && typeof res.content === "string" && res.content.trim()) {
+        const url = `data:image/svg+xml;utf8,${encodeURIComponent(res.content)}`;
+        if (entry.valid) cacheImage(key, url, sessionID);
+        return url;
+      }
+      return null;
     }).catch(() => null);
   }).finally(() => { if (inflight.get(key) === entry) inflight.delete(key); });
   entry.promise = request;

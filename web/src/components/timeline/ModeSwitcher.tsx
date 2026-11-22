@@ -13,15 +13,19 @@ import {
   Sparkles,
   Wrench,
 } from "lucide-solid";
-import { setActiveAgent, workspace } from "../../store/workspace";
+import { DEFAULT_AGENTS, setActiveAgent, workspace } from "../../store/workspace";
 import type { AgentInfo } from "../../services/api";
-import { isWorkSurface, surfaceExtension } from "../layout/surface-extension";
+import {
+  isWorkSurface,
+  resolveSurfacePrimaryModes,
+  surfaceExtension,
+} from "../layout/surface-extension";
 import { locale, t } from "../../i18n";
 
 function formatAgentLabel(agentOrName: AgentInfo | string): string {
   const name = typeof agentOrName === "string" ? agentOrName : agentOrName.name;
   if (!name) return "Agent";
-  if (isWorkSurface() && surfaceExtension.formatModeLabel) {
+  if (surfaceExtension.enabled && surfaceExtension.formatModeLabel) {
     const custom = surfaceExtension.formatModeLabel(name, locale());
     if (custom) return custom;
   }
@@ -37,6 +41,10 @@ function formatAgentLabel(agentOrName: AgentInfo | string): string {
 }
 
 function modeIcon(name: string) {
+  if (surfaceExtension.enabled && surfaceExtension.renderModeIcon) {
+    const extIcon = surfaceExtension.renderModeIcon(name, 12);
+    if (extIcon) return extIcon;
+  }
   const lower = name.toLowerCase();
   if (lower === "build") return <Hammer size={12} class="shrink-0" />;
   if (lower === "plan") return <Compass size={12} class="shrink-0" />;
@@ -60,13 +68,22 @@ export default function ModeSwitcher() {
   let menuRef: HTMLDivElement | undefined;
 
   const agents = createMemo(() => {
-    const all = workspace.agents || [];
+    const merged = resolveSurfacePrimaryModes(workspace.agents || []);
     if (isWorkSurface() && surfaceExtension.hideCodeComposerControls) {
-      return all.filter((a) => a.name.toLowerCase() !== "debug");
+      return merged.filter((a) => a.name.toLowerCase() !== "debug");
     }
-    return all;
+    return merged;
   });
-  const currentMode = () => workspace.activeMode || "build";
+  const currentMode = () => {
+    const raw = workspace.activeMode || "build";
+    if (!surfaceExtension.enabled) {
+      const matched = agents().find((a) => a.name.toLowerCase() === raw.toLowerCase());
+      if (!matched && !DEFAULT_AGENTS.some((a) => a.name.toLowerCase() === raw.toLowerCase())) {
+        return "build";
+      }
+    }
+    return raw;
+  };
   const currentAgent = createMemo(() =>
     agents().find((a) => a.name.toLowerCase() === currentMode().toLowerCase())
   );
@@ -216,7 +233,7 @@ export default function ModeSwitcher() {
 
                       <Show when={agent.description}>
                         <p class="mt-0.5 text-[11px] leading-snug text-[var(--text-muted)] line-clamp-2">
-                          {(isWorkSurface() &&
+                          {(surfaceExtension.enabled &&
                             surfaceExtension.formatModeDescription?.(agent.name, locale())) ||
                             agent.description}
                         </p>

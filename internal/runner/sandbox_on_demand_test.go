@@ -437,7 +437,7 @@ func TestNativeEngineOnDemandSandboxAutoRunsOpaqueAndBlocksEscapes(t *testing.T)
 	}
 
 	svc.gate.stashNativeOnDemand(rec.ID, loopCmd, "/tmp/fake_stream.sb")
-	_, _, streamErr := svc.nativeStreamCommandRunner(rec, nil)(reqCtx, outsideDir, loopCmd, nil)
+	_, _, streamErr := svc.nativeStreamCommandRunner(rec, nil)(reqCtx, outsideDir, loopCmd, nil, nil)
 	if streamErr == nil {
 		t.Fatal("expected nativeStreamCommandRunner to reject outside dir")
 	}

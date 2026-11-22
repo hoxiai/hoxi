@@ -426,6 +426,37 @@ describe("restrained AssistantErrorCard view state across all error classes", ()
         { id: "retryModel", primary: false },
         { id: "diagnostics", primary: false },
       ]);
+
+      // 6. Network / proxy EOF failure (e.g. agy loadCodeAssist EOF): calm notice copy with collapsible raw details
+      const { decideAutoFailover } = await import("../store/auto-failover");
+      const rawAgyEOF =
+        'Eligibility check failed: Post "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist": EOF';
+      const decision = decideAutoFailover(
+        { name: "RunnerError", data: { message: rawAgyEOF, kind: "network", isRetryable: true } },
+        0
+      );
+      assertEqual(decision.reason, "network");
+      const networkEOF = resolveErrorCardViewState({
+        kind: "api",
+        superseded: false,
+        hasSelectedModel: true,
+        hasFallbackModel: true,
+        isAuthError: false,
+        isNetworkError: decision.reason === "network",
+        isProviderDegraded: false,
+        rawErrorName: "RunnerError",
+        rawErrorMessage: rawAgyEOF,
+      });
+      assertEqual(networkEOF.tone, "notice");
+      assertEqual(networkEOF.title, "Network connection interrupted");
+      assertEqual(networkEOF.monoMessage, false);
+      assertEqual(networkEOF.rawDetails, rawAgyEOF);
+      assertEqual(networkEOF.showHealthBadge, true);
+      assertDeepEqual(networkEOF.actions, [
+        { id: "retryModel", primary: true },
+        { id: "fallback", primary: false },
+        { id: "diagnostics", primary: false },
+      ]);
     } finally {
       setLocale(prevLocale);
     }

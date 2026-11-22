@@ -33,6 +33,7 @@ func newToolRegistry() *BuiltinToolRegistry {
 	r.Register(&questionTool{})
 	r.Register(&planConsentTool{})
 	r.Register(&webFetchTool{})
+	r.Register(&webSearchTool{})
 	r.Register(&mcpListToolsTool{})
 	r.Register(&mcpCallTool{})
 	r.Register(&subtaskTool{})
@@ -41,9 +42,12 @@ func newToolRegistry() *BuiltinToolRegistry {
 	r.Register(&multiEditTool{})
 	r.Register(&applyPatchTool{})
 	r.Register(&bashTool{})
+	r.Register(&loadHostTool{})
 	r.Register(&hoxiBrowserTool{})
 	r.Register(&hoxiComputerTool{})
 	r.Register(&hoxiImageTool{})
+	r.Register(&hoxiVideoTool{})
+	r.Register(&hoxiSpeechTool{})
 	r.Register(&hoxiToolsGatewayTool{})
 	r.Register(&hoxiDataProfileTool{})
 	r.Register(&skillLoaderTool{})
@@ -98,10 +102,18 @@ func (r *BuiltinToolRegistry) SpecsForTurn(mode string, subtaskDepth int) []Tool
 	r.mu.RLock()
 	names := make([]string, 0, len(r.tools))
 	for name, t := range r.tools {
+		// Omit legacy single-purpose code-index aliases from the per-step tool schema
+		// (hoxi_code_index supersedes them) while keeping them executable for compatibility.
+		if name == "code_search" || name == "symbol_inspect" || name == "impact_analysis" {
+			continue
+		}
 		if planMode && !isAllowedInPlanMode(t) {
 			continue
 		}
-		if subtaskDepth > 0 && (name == "task" || name == "question" || name == "plan_consent" || name == "todowrite" || name == "goal_report") {
+		if !planMode && name == "plan_consent" {
+			continue
+		}
+		if subtaskDepth > 0 && (name == "task" || name == "question" || name == "plan_consent" || name == "todowrite" || name == "todoread" || name == "skill" || name == "goal_report") {
 			continue
 		}
 		names = append(names, name)
@@ -172,12 +184,62 @@ func (r *BuiltinToolRegistry) Execute(
 	if call.Name == "webfetch" || call.Name == "hoxi_browser" || call.Name == "hoxi_computer" {
 		maxBytes = maxWebFetchOutputBytes
 	}
-	if call.Name == "bash" {
+	if call.Name == "bash" && out.Metadata["logId"] != nil {
+		out.Output = truncateToolOutput(ensureValidUTF8(stripTerminalControlNoise(out.Output)), maxBytes)
+	} else if call.Name == "bash" {
 		out.Output = compactBashToolOutput(rawInput, out.Output, out.IsError, maxBytes)
 	} else {
-		out.Output = truncateToolOutput(out.Output, maxBytes)
+		body, trailingRules := splitTrailingRuleBlocks(out.Output)
+		out.Output = attachPreservedRules(truncateToolOutput(body, maxBytes), trailingRules)
 	}
 	return out, err
+}
+
+// splitTrailingRuleBlocks peels complete <subdirectory_instructions> and
+// <rules_budget_notice> blocks appended at the very end of a tool output so
+// generic 32 KiB truncation never slices source code alongside appended rules
+// or severs closing XML tags.
+func splitTrailingRuleBlocks(s string) (body, rules string) {
+	trimmed := strings.TrimRight(s, " \t\r\n")
+	if !strings.HasSuffix(trimmed, "</subdirectory_instructions>") && !strings.HasSuffix(trimmed, "</rules_budget_notice>") {
+		return s, ""
+	}
+	type tagPair struct{ open, close string }
+	tags := []tagPair{
+		{open: "<subdirectory_instructions ", close: "</subdirectory_instructions>"},
+		{open: "<rules_budget_notice ", close: "</rules_budget_notice>"},
+	}
+	var revBlocks []string
+	cur := trimmed
+	for {
+		matched := false
+		for _, tg := range tags {
+			if !strings.HasSuffix(cur, tg.close) {
+				continue
+			}
+			openIdx := strings.LastIndex(cur, tg.open)
+			if openIdx < 0 {
+				continue
+			}
+			if openIdx > 0 && !strings.HasSuffix(cur[:openIdx], "\n\n") {
+				continue
+			}
+			revBlocks = append(revBlocks, strings.TrimSpace(cur[openIdx:]))
+			cur = strings.TrimRight(cur[:openIdx], " \t\r\n")
+			matched = true
+			break
+		}
+		if !matched {
+			break
+		}
+	}
+	if len(revBlocks) == 0 {
+		return s, ""
+	}
+	for i, j := 0, len(revBlocks)-1; i < j; i, j = i+1, j-1 {
+		revBlocks[i], revBlocks[j] = revBlocks[j], revBlocks[i]
+	}
+	return cur, strings.Join(revBlocks, "\n\n")
 }
 
 func resolveWorkspacePath(worktreeDir, relOrAbs string, mustStayInside bool) (string, error) {

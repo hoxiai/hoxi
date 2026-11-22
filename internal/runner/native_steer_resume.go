@@ -244,7 +244,9 @@ func (s *Service) resumeNativeTurnFromLedger(_ context.Context, rec SessionRecor
 	}
 
 	callerSys := strings.TrimSpace(entry.CallerSystem)
-	if storeCtx := s.resolveSessionContextBlock(rec.ID, rec.WorktreePath); storeCtx != "" && !strings.Contains(callerSys, "<hoxi_work_store_profile>") {
+	if storeCtx := s.resolveSessionContextBlock(rec.ID, rec.WorktreePath); storeCtx != "" &&
+		!strings.Contains(callerSys, "<hoxi_work_store_profile>") &&
+		!strings.Contains(callerSys, "<hoxi_work_app>") {
 		if callerSys == "" {
 			callerSys = storeCtx
 		} else {
@@ -252,13 +254,6 @@ func (s *Service) resumeNativeTurnFromLedger(_ context.Context, rec SessionRecor
 		}
 	}
 	nativeSystem := strings.TrimSpace(effectiveCommandExecutionGuidance() + "\n\n" + callerSys)
-	if memCtx := strings.TrimSpace(runtimeMemoryContext(rec)); memCtx != "" && !strings.Contains(nativeSystem, "<project_memory>") {
-		if nativeSystem == "" {
-			nativeSystem = memCtx
-		} else {
-			nativeSystem = memCtx + "\n\n" + nativeSystem
-		}
-	}
 
 	s.mu.Lock()
 	s.seqSeed++
@@ -294,13 +289,14 @@ func (s *Service) resumeNativeTurnFromLedger(_ context.Context, rec SessionRecor
 	s.recordInflightTurn(entry)
 
 	userInfo := MessageInfo{
-		ID:         userMsgID,
-		SessionID:  rec.ID,
-		Role:       "user",
-		Time:       MessageTime{Created: firstPositiveInt64(entry.StartedAt, nowMs)},
-		Agent:      mode,
-		ModelID:    modelID,
-		ProviderID: rec.ProviderID,
+		ID:          userMsgID,
+		SessionID:   rec.ID,
+		Role:        "user",
+		Time:        MessageTime{Created: firstPositiveInt64(entry.StartedAt, nowMs)},
+		Agent:       mode,
+		ServiceTier: fastServiceTierValue(entry.FastMode && !rec.Subagent && s.ApprovalPolicy().Mode != ApprovalModeUnattended),
+		ModelID:     modelID,
+		ProviderID:  rec.ProviderID,
 	}
 
 	if !hasPersistedTurn {
@@ -326,7 +322,7 @@ func isThinkingSignatureErrorText(raw string) bool {
 	if lower == "" {
 		return false
 	}
-	if strings.Contains(lower, "thoughtsignature") || strings.Contains(lower, "thought_signature") {
+	if strings.Contains(lower, "thoughtsignature") || strings.Contains(lower, "thought_signature") || strings.Contains(lower, "encrypted_content") {
 		return true
 	}
 	if !strings.Contains(lower, "thinking") && !strings.Contains(lower, "redacted_thinking") {

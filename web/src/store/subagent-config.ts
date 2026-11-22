@@ -99,22 +99,27 @@ export async function refreshSubagentCatalog(): Promise<void> {
 /** Reads every agent OpenCode can invoke as a subagent. */
 export function readSubagents(config: ConfigDoc = workspace.globalConfig): SubagentEntry[] {
   const agents = agentMap(config);
+  const primaryOnlyIDs = new Set(
+    (workspace.agents || [])
+      .filter((a) => a?.name && a.mode === "primary")
+      .map((a) => a.name.toLowerCase())
+  );
   const ids = new Set<string>(BUILTIN_SUBAGENT_IDS);
   for (const [id, value] of Object.entries(agents)) {
     if (!value || typeof value !== "object") continue;
-    if (NON_SUBAGENT_IDS.has(id)) continue;
+    if (NON_SUBAGENT_IDS.has(id) || primaryOnlyIDs.has(id.toLowerCase())) continue;
     const mode = (value as Record<string, any>).mode;
     if (mode === "primary") continue;
     ids.add(id);
   }
   const engineByID = new Map(engineSubagents().map((entry) => [entry.id, entry]));
   for (const id of engineByID.keys()) {
-    if (NON_SUBAGENT_IDS.has(id)) continue;
+    if (NON_SUBAGENT_IDS.has(id) || primaryOnlyIDs.has(id.toLowerCase())) continue;
     if (agentEntry(config, id).mode === "primary") continue;
     ids.add(id);
   }
   return [...ids]
-    .filter((id) => !NON_SUBAGENT_IDS.has(id))
+    .filter((id) => !NON_SUBAGENT_IDS.has(id) && !primaryOnlyIDs.has(id.toLowerCase()))
     .map((id) => {
       const raw = agentEntry(config, id);
       return mergeEngineEntry(toEntry(id, raw), raw, engineByID.get(id));

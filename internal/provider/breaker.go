@@ -293,6 +293,12 @@ func (s *breakerStore) RecordSuccess(providerID, modelID string, latencyMs int64
 // RecordFailure counts a failure and opens the circuit once the class threshold
 // is reached. bad_request and user cancellation never penalize the model.
 func (s *breakerStore) RecordFailure(providerID, modelID string, class breakerClass, status int, latencyMs int64, reason string) {
+	s.RecordFailureWithRetryAfter(providerID, modelID, class, status, latencyMs, 0, reason)
+}
+
+// RecordFailureWithRetryAfter records a failure with its actual request latency
+// and an optional authoritative retry-after duration from upstream HTTP headers.
+func (s *breakerStore) RecordFailureWithRetryAfter(providerID, modelID string, class breakerClass, status int, latencyMs int64, retryAfter time.Duration, reason string) {
 	if class == breakerClassNone || class == breakerClassBadReq {
 		return
 	}
@@ -304,6 +310,11 @@ func (s *breakerStore) RecordFailure(providerID, modelID string, class breakerCl
 	rec := s.entryLocked(providerID, modelID)
 	now := s.now()
 	class, resetAt, hasReset := quotaResetCooldown(class, reason, now)
+	class, headerResetAt, hasHeaderReset := applyRetryAfterCooldown(class, retryAfter, now)
+	if hasHeaderReset && (!hasReset || headerResetAt.After(resetAt)) {
+		resetAt = headerResetAt
+		hasReset = true
+	}
 	rec.Failures++
 	rec.ConsecutiveFailures++
 	rec.LastClass = class
@@ -328,6 +339,14 @@ func (s *breakerStore) RecordFailure(providerID, modelID string, class breakerCl
 		if hasReset {
 			// The upstream named the reset time; trust it over the backoff guess.
 			rec.OpenUntil = resetAt.UnixMilli()
+		} else if retryAfter > 0 {
+			wait := retryAfter
+			if wait > quotaResetMaxWait {
+				wait = quotaResetMaxWait
+			}
+			if hdrUntil := now.Add(wait).UnixMilli(); hdrUntil > rec.OpenUntil {
+				rec.OpenUntil = hdrUntil
+			}
 		}
 		phaseChanged = true
 	}

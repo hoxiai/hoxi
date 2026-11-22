@@ -609,29 +609,35 @@ func renderTrayIconPixels(pixels []uint32, size int, attention, running int, ava
 		}
 	}
 
-	// 2. Hoxi mark (roof chevron, eyes, smile)
+	// 2. Hoxi 7x8 fine dot-matrix H mark (38 anti-aliased circles centered in 32x32)
+	const dotStep = 2.45
+	const dotRadius = 0.88
+	const dotStartX = (32.0 - 6.0*dotStep) / 2.0
+	const dotStartY = (32.0 - 7.0*dotStep) / 2.0
 	for y := 5; y <= 26; y++ {
 		for x := 5; x <= 26; x++ {
 			fx, fy := float64(x)+0.5, float64(y)+0.5
-			// Roof chevron: peak at (16, 6.5), slopes to (7, 13.5) and (25, 13.5)
-			if distToSegment(fx, fy, 16.0, 6.5, 7.5, 13.0) <= 1.8 ||
-				distToSegment(fx, fy, 16.0, 6.5, 24.5, 13.0) <= 1.8 {
-				setPixel(x, y, fgColor)
-				continue
-			}
-			// Left & right eyes
-			if insideRoundedRect(fx, fy, 10.0, 14.5, 3.2, 6.0, 1.6) ||
-				insideRoundedRect(fx, fy, 18.8, 14.5, 3.2, 6.0, 1.6) {
-				setPixel(x, y, fgColor)
-				continue
-			}
-			// Smile curve (parabolic arc between x=10.5..21.5)
-			if fx >= 10.5 && fx <= 21.5 {
-				dx := (fx - 16.0) / 5.5
-				curveY := 24.2 - 2.0*dx*dx
-				if math.Abs(fy-curveY) <= 1.45 {
-					setPixel(x, y, fgColor)
+			var maxCov float64
+			for row := 0; row < 8; row++ {
+				for col := 0; col < 7; col++ {
+					leftStem := col <= 1
+					rightStem := col >= 5
+					crossBar := (row == 3 || row == 4) && col >= 2 && col <= 4
+					if !leftStem && !rightStem && !crossBar {
+						continue
+					}
+					cx := dotStartX + float64(col)*dotStep
+					cy := dotStartY + float64(row)*dotStep
+					cov := dotRadius + 0.5 - math.Hypot(fx-cx, fy-cy)
+					if cov > maxCov {
+						maxCov = cov
+					}
 				}
+			}
+			if maxCov >= 1.0 {
+				setPixel(x, y, fgColor)
+			} else if maxCov > 0 {
+				setPixel(x, y, blendOpaqueARGB(bgColor, fgColor, maxCov))
 			}
 		}
 	}
@@ -670,18 +676,17 @@ func insideRoundedRect(px, py, rx, ry, rw, rh, radius float64) bool {
 	return math.Hypot(px-cx, py-cy) <= radius
 }
 
-func distToSegment(px, py, ax, ay, bx, by float64) float64 {
-	vx, vy := bx-ax, by-ay
-	wx, wy := px-ax, py-ay
-	c1 := wx*vx + wy*vy
-	if c1 <= 0 {
-		return math.Hypot(px-ax, py-ay)
+func blendOpaqueARGB(bg, fg uint32, alpha float64) uint32 {
+	if alpha <= 0 {
+		return bg
 	}
-	c2 := vx*vx + vy*vy
-	if c2 <= c1 {
-		return math.Hypot(px-bx, py-by)
+	if alpha >= 1 {
+		return fg
 	}
-	b := c1 / c2
-	pbx, pby := ax+b*vx, ay+b*vy
-	return math.Hypot(px-pbx, py-pby)
+	blend := func(shift uint) uint32 {
+		b := float64((bg >> shift) & 0xFF)
+		f := float64((fg >> shift) & 0xFF)
+		return uint32(math.Round(b+(f-b)*alpha)) << shift
+	}
+	return 0xFF000000 | blend(16) | blend(8) | blend(0)
 }

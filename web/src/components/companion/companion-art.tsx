@@ -83,203 +83,110 @@ export function formatCompanionTokensText(todayTokens: number): string {
   return t("companion.todayTokensLabel", { tokens: formatCompactTokens(todayTokens) });
 }
 
-function HoxiChanSvg(props: { mood: CompanionMood }) {
+export const HOXI_CHAN_CHIBI_URI = "/companion/hoxi-chan.png";
+
+function HoxiChanChibi(props: { mood: CompanionMood }) {
   return (
-    <svg viewBox="0 0 120 120" class="h-full w-full overflow-visible" aria-hidden="true">
-      {/* Twin-tail back silhouettes */}
-      <path
-        d="M26 48 C10 56, 8 86, 18 104 C24 98, 28 82, 32 66 Z"
-        fill="var(--accent-primary)"
-        fill-opacity="0.32"
+    <div class="relative h-full w-full">
+      <img
+        src={HOXI_CHAN_CHIBI_URI}
+        alt=""
+        aria-hidden="true"
+        draggable={false}
+        class="h-full w-full object-contain drop-shadow-sm select-none"
       />
-      <path
-        d="M94 48 C110 56, 112 86, 102 104 C96 98, 92 82, 88 66 Z"
-        fill="var(--accent-primary)"
-        fill-opacity="0.32"
-      />
+      <Show when={props.mood !== "idle"}>
+        <svg
+          viewBox="0 0 120 120"
+          class="pointer-events-none absolute inset-0 h-full w-full overflow-visible"
+          aria-hidden="true"
+        >
+          <Show when={props.mood === "gate-danger"}>
+            <g transform="translate(86, 82)">
+              <circle cx="15" cy="15" r="15" fill="#f43f5e" stroke="#ffffff" stroke-width="2" />
+              <rect x="13.1" y="6.8" width="3.8" height="10" rx="1.9" fill="#ffffff" />
+              <circle cx="15" cy="21.2" r="2.1" fill="#ffffff" />
+            </g>
+          </Show>
 
-      {/* Tech operator cape / hoodie shoulders */}
-      <path
-        d="M28 114 C30 92, 44 86, 60 86 C76 86, 90 92, 92 114 Z"
-        fill="var(--bg-elevated)"
-        stroke="var(--border-strong)"
-        stroke-width="1.6"
-      />
-      <path
-        d="M46 88 L60 103 L74 88"
-        fill="none"
-        stroke="var(--accent-primary)"
-        stroke-width="2.4"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      />
+          <Show when={props.mood === "gate-approval"}>
+            <g transform="translate(86, 82)">
+              <circle cx="15" cy="15" r="15" fill="#f59e0b" stroke="#ffffff" stroke-width="2" />
+              <text
+                x="15"
+                y="20.2"
+                text-anchor="middle"
+                fill="#ffffff"
+                font-size="16.5"
+                font-weight="700"
+                font-family="ui-monospace, monospace"
+              >
+                ?
+              </text>
+            </g>
+          </Show>
 
-      {/* Main hair dome */}
-      <path
-        d="M25 56 C25 26, 42 15, 60 15 C78 15, 95 26, 95 56 C95 74, 88 86, 82 91 C82 76, 80 65, 76 58 L44 58 C40 65, 38 76, 38 91 C32 86, 25 74, 25 56 Z"
-        fill="#261f33"
-      />
-      <path
-        d="M29 50 C31 27, 45 18, 60 18 C75 18, 89 27, 91 50 C81 40, 70 36, 60 36 C50 36, 39 40, 29 50 Z"
-        fill="var(--accent-primary)"
-        fill-opacity="0.45"
-      />
+          <Show when={props.mood === "failover"}>
+            <g transform="translate(86, 82)">
+              <circle cx="15" cy="15" r="15" fill="#f59e0b" stroke="#ffffff" stroke-width="2" />
+              <path d="M16.8 6.8 L10.2 15.8 H15.2 L13.4 23.2 L20 14.2 H15 Z" fill="#ffffff" />
+            </g>
+          </Show>
 
-      {/* Face contour */}
-      <path
-        d="M36 53 C36 40, 46 34, 60 34 C74 34, 84 40, 84 53 C84 71, 74 83, 60 83 C46 83, 36 71, 36 53 Z"
-        fill="#fff5f2"
-        stroke="rgba(30, 41, 59, 0.22)"
-        stroke-width="1.2"
-      />
+          <Show when={props.mood === "coding"}>
+            <g transform="translate(80, 84)">
+              <rect
+                x="0"
+                y="0"
+                width="36"
+                height="24"
+                rx="8"
+                fill="var(--bg-elevated)"
+                stroke="var(--accent-primary)"
+                stroke-width="2"
+              />
+              <text
+                x="18"
+                y="16"
+                text-anchor="middle"
+                fill="var(--accent-primary)"
+                font-size="12"
+                font-weight="700"
+                font-family="ui-monospace, monospace"
+              >
+                {"</>"}
+              </text>
+            </g>
+          </Show>
 
-      {/* Soft anime blush */}
-      <ellipse cx="44" cy="66" rx="5.2" ry="2.6" fill="#fb7185" fill-opacity="0.42" />
-      <ellipse cx="76" cy="66" rx="5.2" ry="2.6" fill="#fb7185" fill-opacity="0.42" />
+          <Show when={props.mood === "convoy"}>
+            <g transform="translate(88, 10)">
+              <line
+                x1="4"
+                y1="4"
+                x2="4"
+                y2="34"
+                stroke="var(--text-secondary)"
+                stroke-width="2.4"
+                stroke-linecap="round"
+              />
+              <path d="M4 5 L28 12 L4 19 Z" fill="var(--accent-primary)" />
+            </g>
+          </Show>
 
-      {/* Front bangs */}
-      <path
-        d="M33 49 C37 33, 48 27, 60 27 C72 27, 83 33, 87 49 C80 43, 75 49, 71 53 C67 43, 62 47, 58 53 C53 44, 48 47, 44 53 C40 46, 36 45, 33 49 Z"
-        fill="#261f33"
-      />
-
-      {/* Signature Hoxi 4-point star hairpin */}
-      <path
-        d="M81 30 L83.5 35.5 L89 38 L83.5 40.5 L81 46 L78.5 40.5 L73 38 L78.5 35.5 Z"
-        fill="var(--accent-primary)"
-      />
-
-      {/* Dynamic Eyes & Mouth by Mood */}
-      <Show when={props.mood === "gate-danger"}>
-        <g stroke="#e11d48" stroke-width="2.4" stroke-linecap="round" fill="none">
-          <path d="M43 56 L51 60 L43 64" />
-          <path d="M77 56 L69 60 L77 64" />
-        </g>
-        <path
-          d="M55 73 Q60 68 65 73"
-          fill="none"
-          stroke="#be123c"
-          stroke-width="2"
-          stroke-linecap="round"
-        />
-        {/* Stop Shield Prop */}
-        <g transform="translate(82, 68)">
-          <circle cx="14" cy="14" r="14" fill="#f43f5e" />
-          <rect x="12.2" y="6.5" width="3.6" height="9.5" rx="1.8" fill="#ffffff" />
-          <circle cx="14" cy="19.8" r="2" fill="#ffffff" />
-        </g>
+          <Show when={props.mood === "celebrate"}>
+            <path
+              d="M18 14 L20.4 20.6 L27 23 L20.4 25.4 L18 32 L15.6 25.4 L9 23 L15.6 20.6 Z"
+              fill="#fbbf24"
+            />
+            <path
+              d="M103 12 L105.2 17.8 L111 20 L105.2 22.2 L103 28 L100.8 22.2 L95 20 L100.8 17.8 Z"
+              fill="var(--accent-primary)"
+            />
+          </Show>
+        </svg>
       </Show>
-
-      <Show when={props.mood === "gate-approval"}>
-        <g class="hoxi-companion-eye">
-          <ellipse cx="48" cy="59" rx="4.2" ry="5" fill="#1e293b" />
-          <ellipse cx="72" cy="59" rx="4.2" ry="5" fill="#1e293b" />
-          <circle cx="49.5" cy="57" r="1.6" fill="#ffffff" />
-          <circle cx="73.5" cy="57" r="1.6" fill="#ffffff" />
-        </g>
-        <circle cx="60" cy="72" r="2.6" fill="#d97706" />
-        <g transform="translate(83, 69)">
-          <circle cx="13" cy="13" r="13" fill="#f59e0b" />
-          <text
-            x="13"
-            y="17.5"
-            text-anchor="middle"
-            fill="#ffffff"
-            font-size="15"
-            font-family="ui-monospace, monospace"
-          >
-            ?
-          </text>
-        </g>
-      </Show>
-
-      <Show when={props.mood === "failover"}>
-        <g stroke="#1e293b" stroke-width="2.2" stroke-linecap="round" fill="none">
-          <path d="M43 59 Q48 55 53 59" />
-          <path d="M67 59 Q72 55 77 59" />
-          <path d="M55 72 Q60 70 65 72" />
-        </g>
-        <g transform="translate(83, 69)">
-          <circle cx="13" cy="13" r="13" fill="#f59e0b" />
-          <path d="M14.5 6 L8.5 14 H13 L11.5 20 L17.5 12 H13 Z" fill="#ffffff" />
-        </g>
-      </Show>
-
-      <Show when={props.mood === "coding"}>
-        <g class="hoxi-companion-eye">
-          <ellipse cx="48" cy="59" rx="4" ry="4.6" fill="#1e293b" />
-          <ellipse cx="72" cy="59" rx="4" ry="4.6" fill="#1e293b" />
-          <circle cx="49.5" cy="57.2" r="1.5" fill="#ffffff" />
-          <circle cx="73.5" cy="57.2" r="1.5" fill="#ffffff" />
-        </g>
-        {/* Holo coding glasses */}
-        <rect
-          x="39"
-          y="53"
-          width="18"
-          height="11"
-          rx="4"
-          fill="var(--accent-primary)"
-          fill-opacity="0.16"
-          stroke="var(--accent-primary)"
-          stroke-width="1.6"
-        />
-        <rect
-          x="63"
-          y="53"
-          width="18"
-          height="11"
-          rx="4"
-          fill="var(--accent-primary)"
-          fill-opacity="0.16"
-          stroke="var(--accent-primary)"
-          stroke-width="1.6"
-        />
-        <line x1="57" y1="58" x2="63" y2="58" stroke="var(--accent-primary)" stroke-width="1.6" />
-        <path
-          d="M55 71 Q57.5 74 60 71 Q62.5 74 65 71"
-          fill="none"
-          stroke="#475569"
-          stroke-width="1.8"
-          stroke-linecap="round"
-        />
-      </Show>
-
-      <Show when={props.mood === "convoy"}>
-        <g stroke="#1e293b" stroke-width="2.3" stroke-linecap="round" fill="none">
-          <path d="M43 60 Q48 54 53 60" />
-          <path d="M67 60 Q72 54 77 60" />
-        </g>
-        <path d="M54 70 Q60 78 66 70 Z" fill="#fb7185" />
-        {/* Cheer Pennant */}
-        <g transform="translate(85, 62)">
-          <line x1="4" y1="4" x2="4" y2="30" stroke="var(--text-secondary)" stroke-width="2" stroke-linecap="round" />
-          <path d="M4 5 L24 11 L4 17 Z" fill="var(--accent-primary)" />
-        </g>
-      </Show>
-
-      <Show when={props.mood === "celebrate"}>
-        <path d="M48 53 L49.6 57.4 L54 59 L49.6 60.6 L48 65 L46.4 60.6 L42 59 L46.4 57.4 Z" fill="var(--accent-primary)" />
-        <path d="M72 53 L73.6 57.4 L78 59 L73.6 60.6 L72 65 L70.4 60.6 L66 59 L70.4 57.4 Z" fill="var(--accent-primary)" />
-        <path d="M54 70 Q60 78 66 70 Z" fill="#fb7185" />
-      </Show>
-
-      <Show when={props.mood === "idle"}>
-        <g class="hoxi-companion-eye">
-          <ellipse cx="48" cy="59" rx="4.1" ry="4.8" fill="#1e293b" />
-          <ellipse cx="72" cy="59" rx="4.1" ry="4.8" fill="#1e293b" />
-          <circle cx="49.5" cy="57.2" r="1.6" fill="#ffffff" />
-          <circle cx="73.5" cy="57.2" r="1.6" fill="#ffffff" />
-        </g>
-        <path
-          d="M55 71 Q60 75 65 71"
-          fill="none"
-          stroke="#475569"
-          stroke-width="1.9"
-          stroke-linecap="round"
-        />
-      </Show>
-    </svg>
+    </div>
   );
 }
 
@@ -395,7 +302,7 @@ export function CompanionAvatar(props: {
         fallback={
           <Show
             when={props.persona === "neko-bot"}
-            fallback={<HoxiChanSvg mood={props.mood} />}
+            fallback={<HoxiChanChibi mood={props.mood} />}
           >
             <NekoBotSvg mood={props.mood} />
           </Show>

@@ -21,7 +21,7 @@ func detectMediaExtMime(ext string) string {
 		return "audio/ogg"
 	case ".flac":
 		return "audio/flac"
-	case ".mp4":
+	case ".mp4", ".m4v":
 		return "video/mp4"
 	case ".mov":
 		return "video/quicktime"
@@ -48,6 +48,8 @@ func classifyMediaAttachment(lowerMime, ext string) (Kind, string, bool) {
 		return KindAudio, "audio/flac", true
 	case "audio/mpeg", "audio/wav", "audio/mp4", "audio/aac", "audio/ogg", "audio/opus", "audio/flac", "audio/webm":
 		return KindAudio, lowerMime, true
+	case "video/x-m4v":
+		return KindVideo, "video/mp4", true
 	case "video/mp4", "video/webm", "video/quicktime", "video/x-matroska", "video/x-msvideo":
 		return KindVideo, lowerMime, true
 	}

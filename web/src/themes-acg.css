@@ -330,6 +330,10 @@
   background-color: color-mix(in srgb, var(--bg-code) 95%, var(--bg-panel));
 }
 
+:root[data-wallpaper-active="true"] .pane-island [data-terminal-surface="true"] pre {
+  background-color: transparent;
+}
+
 :root[data-wallpaper-active="true"] #workspace-left-nav {
   background-color: color-mix(in srgb, var(--bg-panel) var(--glass-nav-opacity), transparent);
   border-right: 1px solid color-mix(in srgb, var(--border-subtle) 82%, var(--glass-specular-edge));

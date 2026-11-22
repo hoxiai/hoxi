@@ -70,6 +70,18 @@ export function setSessionDraft(key: string, draft: SessionComposerDraft) {
   while (sessionDrafts.size > MAX_SESSION_DRAFTS) {
     const oldest = sessionDrafts.keys().next().value;
     if (oldest === undefined) break;
+    const evicted = sessionDrafts.get(oldest);
+    if (evicted && typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
+      for (const item of evicted.images) {
+        if (item.previewUrl?.startsWith("blob:")) {
+          try {
+            URL.revokeObjectURL(item.previewUrl);
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    }
     sessionDrafts.delete(oldest);
   }
 }

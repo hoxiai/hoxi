@@ -91,7 +91,7 @@ func trustedHost(authority string) bool {
 			return false
 		}
 	}
-	return host == "localhost" || host == "127.0.0.1" || host == "::1" || nativeHost(host)
+	return host == "localhost" || net.ParseIP(host).IsLoopback() || nativeHost(host)
 }
 
 func validUIOrigin(origin string) bool {
@@ -142,11 +142,14 @@ func isTokenProtectedHoxiHostPath(requestPath string) bool {
 		"/api/hoxi/agents",
 		"/api/hoxi/commands",
 		"/api/hoxi/lsp",
+		"/api/hoxi/system/cli-link",
 		"/api/hoxi/provider/catalog",
 		"/api/hoxi/provider/auth-methods",
 		"/api/hoxi/provider/config",
 		"/api/hoxi/provider/dispose",
-		"/api/hoxi/provider/credentials":
+		"/api/hoxi/provider/credentials",
+		"/api/hoxi/provider/disconnect",
+		"/api/hoxi/local-cli/disconnect":
 		return true
 	}
 	return strings.HasPrefix(requestPath, "/api/hoxi/pty/") ||

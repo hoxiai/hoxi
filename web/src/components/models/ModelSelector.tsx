@@ -10,11 +10,13 @@ import {
   KeyRound,
   Search,
   Star,
+  Zap,
 } from "lucide-solid";
 import {
   AUTO_PROVIDER_ID,
   buildAutoVirtualProvider,
   clampReasoningEffort,
+  inferModelFastModeCapability,
   lookupModelContextLimit,
   inferModelEffortCapabilities,
   isCustomOrConfiguredProvider,
@@ -24,10 +26,10 @@ import {
   OFFICIAL_PROVIDER_ID,
   openProviderModal,
   peekAutoModelTarget,
+  resolveEffectiveFastMode,
   resolveFavoriteModelEntries,
   resolveRecentModelEntries,
   selectModel,
-  setReasoningEffort,
   toggleFavoriteModel,
   workspace,
   type ConcreteReasoningEffort,
@@ -40,6 +42,7 @@ import {
   formatPricePerMillion,
   formatTokenLimit,
   getMultiplierBadgeClass,
+  ModelSelectorFooterBar,
   ModelSelectorRail,
   rankModelSearch,
   type FlattenedModel,
@@ -280,6 +283,17 @@ export default function ModelSelector(props: { openRequest?: number }) {
     return clampReasoningEffort(raw, info?.efforts, info?.defaultEffort);
   });
 
+  const activeSupportsFastMode = createMemo(() => {
+    const sel = workspace.selectedModel;
+    if (!sel) return false;
+    const info = activeModelInfo();
+    return inferModelFastModeCapability(sel.providerID, sel.modelID, info, null, info?.baseURL);
+  });
+
+  const effectiveFastMode = createMemo(() =>
+    resolveEffectiveFastMode(workspace.selectedModel, workspace.fastMode)
+  );
+
   const filteredModels = createMemo<FlattenedModel[]>(() => {
     const q = query().trim();
     const pool = connectedModels();
@@ -460,6 +474,14 @@ export default function ModelSelector(props: { openRequest?: number }) {
         <Show when={effectiveReasoningEffort()}>
           <span class="shrink-0 rounded bg-[var(--accent-surface)] px-1 py-[1px] text-[11px] uppercase font-mono text-[var(--accent-primary)]">
             {effectiveReasoningEffort()}
+          </span>
+        </Show>
+        <Show when={effectiveFastMode()}>
+          <span
+            title={t("models.fastModeTooltip")}
+            class="shrink-0 inline-flex items-center rounded bg-amber-500/15 px-1 py-[2px] text-[10px] font-semibold text-amber-500"
+          >
+            <Zap size={10} class="fill-current" />
           </span>
         </Show>
         <ChevronDown
@@ -700,49 +722,16 @@ export default function ModelSelector(props: { openRequest?: number }) {
                 </Show>
               </div>
 
-              <div
-                ref={effortRowRef}
-                class="flex items-center justify-between border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 px-3 py-1.5 text-[11px]"
-              >
-                <span class="text-[var(--text-muted)]">
-                  {t("models.reasoningEffort")}
-                  <Show when={!workspace.reasoningEffort && activeModelInfo()?.defaultEffort}>
-                    {(def) => (
-                      <span class="ml-1 font-mono text-[11px] uppercase text-[var(--text-faint)]">
-                        ({def()})
-                      </span>
-                    )}
-                  </Show>
-                </span>
-                <Show
-                  when={availableEffortOptions().length > 0}
-                  fallback={
-                    <span class="rounded-md bg-[var(--bg-inset)] px-2 py-0.5 text-[11px] text-[var(--text-faint)]">
-                      {t("models.reasoningUnsupported")}
-                    </span>
-                  }
-                >
-                  <div class="inline-flex items-center gap-0.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5">
-                    <For each={availableEffortOptions()}>
-                      {(opt) => (
-                        <button
-                          type="button"
-                          title={opt.title}
-                          aria-pressed={effectiveReasoningEffort() === opt.value}
-                          onClick={() => setReasoningEffort(opt.value)}
-                          class={`rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors cursor-pointer ${
-                            effectiveReasoningEffort() === opt.value
-                              ? "bg-[var(--bg-panel)] text-[var(--accent-primary)] shadow-2xs"
-                              : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                          }`}
-                        >
-                          {opt.label}
-                        </button>
-                      )}
-                    </For>
-                  </div>
-                </Show>
-              </div>
+              <ModelSelectorFooterBar
+                onRef={(el) => {
+                  effortRowRef = el;
+                }}
+                defaultEffort={activeModelInfo()?.defaultEffort}
+                availableOptions={availableEffortOptions()}
+                effectiveEffort={effectiveReasoningEffort()}
+                supportsFastMode={activeSupportsFastMode()}
+                fastModeActive={effectiveFastMode()}
+              />
             </div>
           </div>
           </div>

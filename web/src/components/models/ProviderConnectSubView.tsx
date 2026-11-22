@@ -17,7 +17,9 @@ import {
   completeProviderOAuth,
   connectProviderWithKey,
   connectProviderWithMcpOAuth,
+  disconnectProvider,
   isCustomOrConfiguredProvider,
+  isImportedOpenCodeProvider,
   leaderboardState,
   openExternalURL,
   openProviderModal,
@@ -26,9 +28,11 @@ import {
   workspace,
 } from "../../store/workspace";
 import { ProviderIcon } from "../icons";
+import { HelpTip } from "../settings/setting-controls";
 import { t } from "../../i18n";
 import ProviderQualityCard from "./ProviderQualityCard";
 import { ProviderSelectAllView } from "./ProviderSelectAllView";
+import ProviderDisconnectButton from "./provider-disconnect-button";
 
 export { ProviderSelectAllView };
 
@@ -50,8 +54,25 @@ export function ProviderConnectView(props: {
   const [oauthState, setOauthState] = createSignal<ProviderAuthAuthorization | null>(null);
   const [oauthCode, setOauthCode] = createSignal("");
   const [busy, setBusy] = createSignal(false);
+  const [deleting, setDeleting] = createSignal(false);
   const [probingModel, setProbingModel] = createSignal(false);
   const [feedback, setFeedback] = createSignal<{ ok: boolean; text: string } | null>(null);
+
+  const isImported = createMemo(() => isImportedOpenCodeProvider(props.provider.id));
+
+  const onDisconnectCurrent = async () => {
+    if (busy() || deleting()) return;
+    setDeleting(true);
+    setFeedback(null);
+    try {
+      await disconnectProvider(props.provider.id);
+      props.onBack();
+    } catch (err: any) {
+      setFeedback({ ok: false, text: err?.message || t("models.disconnectFailed") });
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const authMethods = createMemo(() => {
     const methods = workspace.providerAuthMethods[props.provider.id];
@@ -223,14 +244,10 @@ export function ProviderConnectView(props: {
 
         <Show when={supportsMcpOAuth()}>
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-[var(--accent-border)] bg-[var(--accent-surface)]/35 p-4">
-            <div class="space-y-1 min-w-0">
-              <div class="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--text-primary)]">
-                <Sparkles size={14} class="text-[var(--accent-primary)] shrink-0" />
-                <span>{t("models.mcpOAuthCardTitle")}</span>
-              </div>
-              <p class="text-[12px] text-[var(--text-secondary)]">
-                {t("models.mcpOAuthCardDesc")}
-              </p>
+            <div class="flex items-center gap-2 min-w-0 text-[13px] font-semibold text-[var(--text-primary)]">
+              <Sparkles size={14} class="text-[var(--accent-primary)] shrink-0" />
+              <span class="truncate">{t("models.mcpOAuthCardTitle")}</span>
+              <HelpTip text={t("models.mcpOAuthCardDesc")} />
             </div>
             <div class="flex items-center gap-2 shrink-0">
               <button
@@ -330,9 +347,12 @@ export function ProviderConnectView(props: {
           }
         >
           <div>
-            <label class="block text-[12px] font-medium text-[var(--text-secondary)] mb-1.5">
-              {t("models.apiKey")}
-            </label>
+            <div class="flex items-center gap-1.5 mb-1.5">
+              <label class="text-[12px] font-medium text-[var(--text-secondary)]">
+                {t("models.apiKey")}
+              </label>
+              <HelpTip text={t("models.keysStoreNote")} size={13} />
+            </div>
             <div class="relative">
               <input
                 type={showApiKey() ? "text" : "password"}
@@ -420,11 +440,41 @@ export function ProviderConnectView(props: {
         </Show>
       </div>
 
-      <div class="mx-auto w-full max-w-3xl flex items-center justify-between border-t border-[var(--border-subtle)] pt-4 mt-6">
-        <span class="text-[11px] text-[var(--text-faint)]">{t("models.keysStoreNote")}</span>
+      <div class="mx-auto w-full max-w-3xl flex items-center justify-between gap-3 border-t border-[var(--border-subtle)] pt-4 mt-6">
+        <div>
+          <Show when={props.connected && props.provider.source !== "runner"}>
+            <ProviderDisconnectButton
+              variant="button"
+              align="start"
+              providerName={props.provider.name || props.provider.id}
+              label={
+                isImported()
+                  ? t("models.removeImportedProvider")
+                  : t("models.deleteProvider")
+              }
+              confirmTitle={
+                isImported()
+                  ? t("models.removeImportedConfirmTitle", {
+                      name: props.provider.name || props.provider.id,
+                    })
+                  : t("models.deleteProviderConfirmTitle", {
+                      name: props.provider.name || props.provider.id,
+                    })
+              }
+              confirmBody={
+                isImported()
+                  ? t("models.removeImportedConfirmBody")
+                  : t("models.deleteProviderConfirmBody")
+              }
+              disabled={busy()}
+              loading={deleting()}
+              onConfirm={() => void onDisconnectCurrent()}
+            />
+          </Show>
+        </div>
         <button
           type="submit"
-          disabled={busy()}
+          disabled={busy() || deleting()}
           class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[13px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
         >
           <Show when={!busy()} fallback={<LoaderCircle size={14} class="animate-spin" />}>

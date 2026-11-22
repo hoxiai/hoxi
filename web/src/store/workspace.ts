@@ -89,12 +89,26 @@ export * from "./relay";
 export * from "./deep-link";
 export * from "./subagent-config";
 export * from "./image-viewer";
+export * from "./document-viewer";
 export * from "./markdown-images";
 export * from "./media-options";
 export * from "./wallpaper-optics";
 export * from "./wallpaper";
 export * from "./companion";
 export * from "./host-profiles";
+export * from "./intake";
+export * from "./intake-portal";
+export type {
+  IntakeAttachmentRef,
+  IntakeLinkItem,
+  IntakeTaskComment,
+  IntakeTaskItem,
+  IntakeTaskStatus,
+  SanitizedExecutionStep,
+  SanitizedExecutionTimeline,
+  SanitizedExecutionTurn,
+  SanitizedTodoItem,
+} from "../services/intake-api";
 export type {
   DataProfileItem,
   DataProfileKind,
@@ -103,3 +117,10 @@ export type {
   RemoteHostProbeResponse,
   RemoteHostUpsertPayload,
 } from "../services/host-profiles-api";
+export type {
+  MediaAudioModelOption,
+  MediaRolePrefs,
+} from "../services/media-api";
+export type { CliLinkStatus } from "../services/platform-api";
+
+export * from "./app-grants";

@@ -317,6 +317,7 @@ export interface TurnDispatchState {
   promptText: string;
   agent?: string;
   effort?: ReasoningEffort;
+  fastMode?: boolean;
   attachments?: Array<{ type: "file"; mime: string; filename?: string; url: string }>;
   skillSelection?: SkillSelection;
   system?: string;

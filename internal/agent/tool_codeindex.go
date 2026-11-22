@@ -12,7 +12,7 @@ type hoxiCodeIndexTool struct{}
 func (t *hoxiCodeIndexTool) Name() string     { return "hoxi_code_index" }
 func (t *hoxiCodeIndexTool) IsReadOnly() bool { return true }
 func (t *hoxiCodeIndexTool) Description() string {
-	return "Navigate workspace code efficiently via the worktree-scoped knowledge graph. Prefer action='context' to fetch a symbol's source, callees, callers, blast radius, and tests in 1 call; or use search -> inspect -> callers/callees/impact -> refresh. Avoids full-repo grep and whole-file reads."
+	return "Navigate workspace code efficiently via the worktree-scoped knowledge graph. Use action='map' first for a PageRank-ordered architectural overview of hub files and key symbols, action='context' to fetch a symbol's source, callees, callers, blast radius, and tests in 1 call, or search -> inspect -> callers/callees/impact -> refresh."
 }
 func (t *hoxiCodeIndexTool) Parameters() map[string]any {
 	return map[string]any{
@@ -20,18 +20,18 @@ func (t *hoxiCodeIndexTool) Parameters() map[string]any {
 		"properties": map[string]any{
 			"action": map[string]any{
 				"type":        "string",
-				"enum":        []string{"context", "search", "inspect", "callers", "callees", "impact", "refresh"},
-				"description": "context | search | inspect | callers | callees | impact | refresh",
+				"enum":        []string{"map", "context", "search", "inspect", "callers", "callees", "impact", "refresh"},
+				"description": "map | context | search | inspect | callers | callees | impact | refresh",
 			},
-			"query":        map[string]any{"type": "string", "description": "Symbol or keyword query for search or context"},
+			"query":        map[string]any{"type": "string", "description": "Symbol or keyword query for map focus, search, or context"},
 			"symbol":       map[string]any{"type": "string", "description": "Symbol name for context, inspect, callers, callees, or impact"},
-			"path":         map[string]any{"type": "string", "description": "Relative file path (context/inspect/callers/callees/impact) or path prefix (search)"},
+			"path":         map[string]any{"type": "string", "description": "Relative file path (context/inspect/callers/callees/impact) or directory prefix (map/search)"},
 			"startLine":    map[string]any{"type": "integer", "description": "1-based start line for inspect"},
 			"endLine":      map[string]any{"type": "integer", "description": "1-based end line for inspect"},
 			"contextLines": map[string]any{"type": "integer", "description": "Extra context lines for inspect or context (default 5, max 30)"},
 			"depth":        map[string]any{"type": "integer", "description": "Call graph depth for impact (default 2, max 3)"},
-			"limit":        map[string]any{"type": "integer", "description": "Max hits for search, callers, callees, or impact (default 12)"},
-			"refresh":      map[string]any{"type": "boolean", "description": "Refresh worktree index before search"},
+			"limit":        map[string]any{"type": "integer", "description": "Max files/hits for map, search, callers, callees, or impact (default 12-16)"},
+			"refresh":      map[string]any{"type": "boolean", "description": "Refresh worktree index before map or search"},
 		},
 		"required": []string{"action"},
 	}
@@ -51,6 +51,21 @@ func (t *hoxiCodeIndexTool) Execute(ctx context.Context, tc ToolContext, input j
 	}
 	_ = json.Unmarshal(input, &args)
 	switch strings.ToLower(strings.TrimSpace(args.Action)) {
+	case "map":
+		if args.Path != "" {
+			if _, err := resolveWorkspacePath(tc.WorktreeDir, args.Path, true); err != nil {
+				return ToolOutput{Title: "CodeIndex: map", IsError: true}, err
+			}
+		}
+		if tc.RepoMap != nil {
+			report, err := tc.RepoMap(ctx, tc.WorktreeDir, args.Path, firstNonEmptyCodeStr(args.Query, args.Symbol), args.Limit)
+			if err != nil {
+				return ToolOutput{Title: "CodeIndex: map", IsError: true}, err
+			}
+			return ToolOutput{Title: "CodeIndex: map", Output: report}, nil
+		}
+		fb, _ := json.Marshal(map[string]any{"pattern": "*", "path": args.Path})
+		return (&globTool{}).Execute(ctx, tc, fb)
 	case "inspect", "callers", "context":
 		fb, _ := json.Marshal(map[string]any{"symbol": firstNonEmptyCodeStr(args.Symbol, args.Query), "filePath": args.Path, "includeCallers": true})
 		return (&symbolInspectTool{}).Execute(ctx, tc, fb)

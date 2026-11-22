@@ -27,20 +27,18 @@
   opacity: 0.8;
 }
 
-/* The face svg sat at x/y 4.5 with size 15 inside the 24-unit logo. */
+/* The dot-matrix H sits centered inside the 24-unit orbit ring. */
 [data-component="hoxi-activity-logo"] [data-slot="face"] {
   position: absolute;
   left: 18.75%;
   top: 18.75%;
   width: 62.5%;
   height: 62.5%;
-  /* The face's own (32, 32), where it breathed from before. */
-  transform-origin: 50% 56.5%;
+  transform-origin: 50% 50%;
 }
 
-[data-component="hoxi-activity-logo"] [data-slot="eye"] {
-  /* Centre of the winking eye within the face viewBox. */
-  transform-origin: 30.31% 54.25%;
+[data-component="hoxi-activity-logo"] [data-slot="spark"] {
+  transform-origin: 50% 50%;
 }
 
 [data-component="hoxi-activity-logo"][data-active="true"] [data-slot="face"] {
@@ -51,8 +49,8 @@
   animation: hoxi-activity-orbit 2.6s linear infinite;
 }
 
-[data-component="hoxi-activity-logo"][data-active="true"] [data-wink] {
-  animation: hoxi-activity-wink 4.8s linear infinite;
+[data-component="hoxi-activity-logo"][data-active="true"] [data-slot="spark"] {
+  animation: hoxi-activity-spark 1.8s ease-in-out infinite;
 }
 
 [data-component="hoxi-activity-logo"][data-active="false"] [data-slot="arc"] {
@@ -63,19 +61,18 @@
   animation-play-state: paused;
 }
 
-/* -0.6 face units is about -0.2 CSS px at this size. */
 @keyframes hoxi-activity-breathe {
-  0%, 100% { transform: translateY(0) scale(1); }
-  50% { transform: translateY(-0.2px) scale(1.015); }
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.03); }
 }
 
 @keyframes hoxi-activity-orbit {
   to { transform: rotate(360deg); }
 }
 
-@keyframes hoxi-activity-wink {
-  0%, 68%, 73%, 100% { transform: scaleY(1); }
-  70%, 71% { transform: scaleY(0.13); }
+@keyframes hoxi-activity-spark {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.28); opacity: 0.45; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -28,6 +28,18 @@ func (s *Service) confineRuntimeCommand(rec SessionRecord, bin string, args []st
 	if err != nil {
 		return "", nil, err
 	}
+	if bundle, bErr := s.ResolveSessionBundle(rec.ID, rec.WorktreePath); bErr == nil {
+		if len(bundle.AppIDs) > 0 {
+			if withApps, aErr := sandbox.WithWorkAppPackageAccess(profile, bundle.AppIDs...); aErr == nil {
+				profile = withApps
+			}
+		}
+		if len(bundle.ReadOnlyExecRoots) > 0 {
+			if withRoots, rErr := sandbox.WithReadOnlyExecRoots(profile, bundle.ReadOnlyExecRoots...); rErr == nil {
+				profile = withRoots
+			}
+		}
+	}
 	return sandbox.WrapExec(profile, bin, args)
 }
 

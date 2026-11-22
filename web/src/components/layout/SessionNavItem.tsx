@@ -3,8 +3,11 @@ import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "so
 import { Bot, Pencil, Square } from "lucide-solid";
 import {
   countRunningSubagents,
+  getSubagentVisibleLimit,
   isPlaceholderSessionTitle,
   isSubagentDrawerExpanded,
+  loadMoreSubagents,
+  partitionVisibleSubagents,
   renameSessionTitle,
   selectSession,
   sessionDirectory,
@@ -22,6 +25,7 @@ import { t } from "../../i18n";
 import { badgeFor } from "./left-nav-helpers";
 import SessionPullRequestPill from "./SessionPullRequestPill";
 import { fetchPullRequests, type ForgePullRequest } from "../../services/forge";
+import { useCollapsibleDrawerMount } from "./SessionHistory";
 import { SessionRenamePopover } from "./SessionRenamePopover";
 import { SubagentNavRow } from "./SubagentNavRow";
 import {
@@ -36,6 +40,8 @@ export interface SessionNavItemProps {
   canDelete: boolean;
   isArchived?: boolean;
   showBranchIcon?: boolean;
+  projectName?: string;
+  projectTitle?: string;
   pendingSessions: Set<string>;
   subagents?: SessionInfo[];
   filterQuery?: string;
@@ -61,6 +67,28 @@ export function SessionNavItem(props: SessionNavItemProps) {
   );
   const expanded = () =>
     hasSubagents() && isSubagentDrawerExpanded(props.session.id, autoExpand());
+  const subagentsMounted = useCollapsibleDrawerMount(expanded);
+  const subagentSlice = createMemo(() =>
+    subagentsMounted()
+      ? partitionVisibleSubagents(
+          subagents(),
+          getSubagentVisibleLimit(props.session.id),
+          props.pendingSessions,
+          workspace.activeSessionID,
+        )
+      : { visible: [] as SessionInfo[], hiddenCount: 0 },
+  );
+  const displayTitle = () =>
+    isPlaceholderSessionTitle(props.session.title)
+      ? t("leftNav.newThread")
+      : props.session.title || "";
+  const rowTooltip = () => {
+    const title = displayTitle();
+    if (!props.projectName) return title;
+    return props.projectTitle
+      ? `[${props.projectName}] ${title}\n${props.projectTitle}`
+      : `[${props.projectName}] ${title}`;
+  };
   const hasActiveSubagent = createMemo(() =>
     subagents().some((sub) => sub.id === workspace.activeSessionID)
   );
@@ -193,6 +221,7 @@ export function SessionNavItem(props: SessionNavItemProps) {
     <div class="flex flex-col min-w-0">
       <div
         ref={rowRef}
+        title={rowTooltip()}
         class={`group/row relative flex items-center justify-between gap-1 rounded-lg px-2.5 py-1.5 cursor-pointer min-w-0 overflow-hidden transition-colors duration-120 ${
           confirmingDelete()
             ? "bg-[var(--danger-surface)] text-[var(--text-primary)] ring-1 ring-[var(--danger-border)]"
@@ -208,270 +237,260 @@ export function SessionNavItem(props: SessionNavItemProps) {
           if (!editing() && !confirmingDelete()) props.onSelect();
         }}
       >
-        <div class="flex items-center gap-1.5 min-w-0 flex-1 mr-1">
-          <Show when={hasSubagents()}>
-            <button
-              type="button"
-              data-subagent-chevron
-              class="shrink-0 -ml-1 inline-flex h-4 w-4 items-center justify-center rounded text-[var(--text-faint)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-              title={
-                expanded()
-                  ? t("leftNav.collapseSubagents")
-                  : t("leftNav.expandSubagents", { count: subagents().length })
-              }
-              onClick={(ev) => {
-                ev.stopPropagation();
-                setSubagentDrawerExpanded(props.session.id, !expanded(), autoExpand());
-              }}
-            >
-              <Icon
-                name="chevron-right"
-                size="small"
-                class={`w-3 h-3 transition-transform duration-150 ${
-                  expanded() ? "rotate-90" : ""
-                }`}
+        <div class="relative flex items-center justify-between gap-1 min-w-0 flex-1">
+          <div class="flex items-center gap-1.5 min-w-0 flex-1 mr-1">
+            <Show when={badge() === "approval"}>
+              <span class="shrink-0 w-2 h-2 rounded-full bg-[var(--warn)] animate-pulse" />
+            </Show>
+            <Show when={badge() === "completed"}>
+              <span
+                class="shrink-0 w-2 h-2 rounded-full bg-[var(--accent-primary)]"
+                title={t("timeline.turnCompleted")}
               />
-            </button>
-          </Show>
-          <Show when={badge() === "approval"}>
-            <span class="shrink-0 w-2 h-2 rounded-full bg-[var(--warn)] animate-pulse" />
-          </Show>
-          <Show when={badge() === "completed"}>
-            <span
-              class="shrink-0 w-2 h-2 rounded-full bg-[var(--accent-primary)]"
-              title={t("timeline.turnCompleted")}
-            />
-          </Show>
-          <Show when={isPaused()}>
-            <span class="shrink-0 rounded border border-[var(--border-subtle)] bg-[var(--bg-hover)] px-1 py-0.5 text-[11px] font-medium leading-none text-[var(--text-muted)]">
-              {t("timeline.turnPaused")}
-            </span>
-          </Show>
-          <span
-            class={`session-row-title truncate text-[14px] flex-1 leading-snug ${
-              props.isArchived ? "text-[var(--text-muted)]" : ""
-            }`}
-            title={props.session.title || ""}
-            onDblClick={(ev) => startEditing(ev)}
-          >
-            {isPlaceholderSessionTitle(props.session.title)
-              ? t("leftNav.newThread")
-              : props.session.title}
-          </span>
-        </div>
-
-        {/* Static Badges (Branch, Subagents, Queue, Time or Loading) shown when not hovered and not confirming delete */}
-        <Show when={!confirmingDelete()}>
-          <div class="flex items-center gap-1.5 shrink-0 text-[12px] font-mono group-hover/row:opacity-0 group-hover/row:invisible group-has-[:focus-visible]/row:opacity-0 group-has-[:focus-visible]/row:invisible transition-opacity duration-120 ease-out">
-            <Show when={hasSubagents()}>
-              <span
-                data-subagent-badge
-                class={`inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10.5px] leading-none tabular-nums select-none ${
-                  runningSubagents() > 0
-                    ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
-                    : "text-[var(--text-faint)]"
-                }`}
-                title={
-                  expanded()
-                    ? t("leftNav.collapseSubagents")
-                    : t("leftNav.expandSubagents", { count: subagents().length })
-                }
-              >
-                <Bot size={10.5} class="shrink-0" />
-                <span>{subagents().length}</span>
+            </Show>
+            <Show when={isPaused()}>
+              <span class="shrink-0 rounded border border-[var(--border-subtle)] bg-[var(--bg-hover)] px-1 py-0.5 text-[11px] font-medium leading-none text-[var(--text-muted)]">
+                {t("timeline.turnPaused")}
               </span>
             </Show>
-
-            <Show when={pullRequest()}>
-              {(pr) => <SessionPullRequestPill pr={pr()} />}
-            </Show>
-
-          <Show when={wt()?.isolated && wt()?.branch}>
-            <span class="inline-flex items-center gap-0.5 text-[var(--text-faint)] truncate max-w-[68px]">
-              <Show when={props.showBranchIcon}>
-                <Icon name="branch" size="small" class="w-3 h-3" />
-              </Show>
-              <span class="truncate">{wt()?.branch}</span>
-            </span>
-          </Show>
-
-          <Show when={queuedCount() > 0}>
             <span
-              class="inline-flex items-center rounded px-1 py-0.2 text-[11px] font-medium bg-[var(--accent-surface)] text-[var(--accent-primary)] border border-[var(--accent-border)]/60 shrink-0"
-              title={t("timeline.queueCountBadge", { count: queuedCount() })}
+              class={`session-row-title truncate text-[14px] flex-1 leading-snug ${
+                props.isArchived ? "text-[var(--text-muted)]" : ""
+              }`}
+              onDblClick={(ev) => startEditing(ev)}
             >
-              +{queuedCount()}
+              {displayTitle()}
             </span>
-          </Show>
+          </div>
 
-          {/* Compact activity arc while busy; relative time when finished or idle. */}
-          <Show
-            when={!isBusy()}
-            fallback={
-              <span
-                class="inline-flex items-center text-[var(--accent-primary)] shrink-0 select-none"
-                title={badge() === "approval" ? t("timeline.waitingApprovalBadge") : t("common.working")}
-              >
-                <ArcSpinner active={badge() !== "approval"} />
-              </span>
-            }
-          >
-            <Show when={timeText()}>
-              <span
-                class="text-[11px] text-[var(--text-faint)] tabular-nums font-mono shrink-0 select-none"
-                title={fullDateTooltip()}
-              >
-                {timeText()}
-              </span>
-            </Show>
-          </Show>
-        </div>
-      </Show>
+          {/* Static Badges (PR, Branch, Queue, Time or Loading) shown when not hovered and not confirming delete */}
+          <Show when={!confirmingDelete()}>
+            <div class="flex items-center gap-1.5 shrink-0 text-[12px] font-mono group-hover/row:opacity-0 group-hover/row:invisible group-has-[:focus-visible]/row:opacity-0 group-has-[:focus-visible]/row:invisible transition-opacity duration-120 ease-out">
+              <Show when={pullRequest()}>
+                {(pr) => <SessionPullRequestPill pr={pr()} />}
+              </Show>
 
-      {/* Hover Actions / Delete Gate Overlay */}
-      <Show when={!editing()}>
-        <div
-          class={`absolute right-1 top-1/2 -translate-y-1/2 flex items-center z-10 transition-opacity duration-120 ease-out ${
-            confirmingDelete()
-              ? "visible opacity-100 pointer-events-auto"
-              : "invisible opacity-0 pointer-events-none group-hover/row:visible group-hover/row:opacity-100 group-hover/row:pointer-events-auto group-has-[:focus-visible]/row:visible group-has-[:focus-visible]/row:opacity-100 group-has-[:focus-visible]/row:pointer-events-auto"
-          }`}
-          onClick={(ev) => ev.stopPropagation()}
-        >
-          {/* Soft horizontal feather mask to prevent hard visual cut over long session titles */}
-          <div
-            aria-hidden="true"
-            class="pointer-events-none h-6 w-5 -mr-1.5 bg-gradient-to-l from-[var(--bg-canvas)]/75 via-[var(--bg-canvas)]/35 to-transparent rounded-l-lg"
-          />
-
-          <Show
-            when={!confirmingDelete()}
-            fallback={
-              <div class="session-action-danger-glass flex items-center gap-1 rounded-lg px-1.5 py-0.5">
-                <button
-                  type="button"
-                  disabled={deleting()}
-                  onClick={(ev) => void handleConfirmDelete(ev)}
-                  class="inline-flex items-center gap-0.5 rounded-md bg-[var(--danger-text)] px-1.5 py-0.5 text-[11px] font-medium text-white hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
-                  title={t("leftNav.discardConfirm")}
-                >
-                  <Show
-                    when={!deleting()}
-                    fallback={<Spinner class="w-2.5 h-2.5 text-white" />}
-                  >
-                    <span>{t("leftNav.confirmDelete")}</span>
+              <Show when={wt()?.isolated && wt()?.branch}>
+                <span class="inline-flex items-center gap-0.5 text-[var(--text-faint)] truncate max-w-[68px]">
+                  <Show when={props.showBranchIcon}>
+                    <Icon name="branch" size="small" class="w-3 h-3" />
                   </Show>
-                </button>
-                <button
-                  type="button"
-                  disabled={deleting()}
-                  onClick={(ev) => {
-                    ev.stopPropagation();
-                    setConfirmingDelete(false);
-                  }}
-                  class="rounded-md px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                  <span class="truncate">{wt()?.branch}</span>
+                </span>
+              </Show>
+
+              <Show when={queuedCount() > 0}>
+                <span
+                  class="inline-flex items-center rounded px-1 py-0.2 text-[11px] font-medium bg-[var(--accent-surface)] text-[var(--accent-primary)] border border-[var(--accent-border)]/60 shrink-0"
+                  title={t("timeline.queueCountBadge", { count: queuedCount() })}
                 >
-                  {t("leftNav.cancelDelete")}
-                </button>
-              </div>
-            }
-          >
-            <div class="session-action-glass flex items-center gap-0.5 rounded-lg px-1 py-0.5">
-              <button
-                type="button"
-                class="inline-flex h-5 w-5 items-center justify-center rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-                onClick={(ev) => startEditing(ev)}
-              >
-                <Pencil size={11} class="shrink-0 block" />
-              </button>
-              <button
-                type="button"
-                class="inline-flex h-5 w-5 items-center justify-center rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-                onClick={(ev) => {
-                  ev.stopPropagation();
-                  downloadSessionExport(props.session.id);
-                }}
-                title={t("leftNav.exportSessionTooltip")}
-              >
-                <Icon name="download" size="small" class="w-3 h-3" />
-              </button>
+                  +{queuedCount()}
+                </span>
+              </Show>
+
+              {/* Compact activity arc while busy; relative time when finished or idle. */}
               <Show
                 when={!isBusy()}
                 fallback={
-                  <button
-                    type="button"
-                    disabled={stopping()}
-                    onClick={(ev) => void handleStop(ev)}
-                    class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--danger-text)] hover:bg-[var(--danger-surface)] transition-colors cursor-pointer disabled:opacity-50"
-                    title={t("leftNav.stopTooltip")}
+                  <span
+                    class="inline-flex items-center text-[var(--accent-primary)] shrink-0 select-none"
+                    title={badge() === "approval" ? t("timeline.waitingApprovalBadge") : t("common.working")}
                   >
-                    <Show
-                      when={!stopping()}
-                      fallback={<Spinner class="w-2.5 h-2.5 text-[var(--danger-text)]" />}
-                    >
-                      <Square size={9.5} class="shrink-0 fill-current" />
-                    </Show>
-                    <span>{t("leftNav.stopSession")}</span>
-                  </button>
+                    <ArcSpinner active={badge() !== "approval"} />
+                  </span>
                 }
               >
-                <Show when={!props.isArchived && props.onArchive}>
-                  <button
-                    type="button"
-                    class="inline-flex h-5 w-5 items-center justify-center rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-                    onClick={(ev) => {
-                      ev.stopPropagation();
-                      props.onArchive?.(ev, props.session.id);
-                    }}
-                    title={t("leftNav.archiveSessionTooltip")}
+                <Show when={timeText()}>
+                  <span
+                    class="text-[11px] text-[var(--text-faint)] tabular-nums font-mono shrink-0 select-none"
+                    title={fullDateTooltip()}
                   >
-                    <Icon name="archive" size="small" class="w-3 h-3" />
-                  </button>
-                </Show>
-
-                <Show when={props.isArchived && props.onUnarchive}>
-                  <button
-                    type="button"
-                    class="inline-flex h-5 w-5 items-center justify-center rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-                    onClick={(ev) => {
-                      ev.stopPropagation();
-                      props.onUnarchive?.(ev, props.session.id);
-                    }}
-                    title={t("leftNav.unarchiveSessionTooltip")}
-                  >
-                    <Icon name="reset" size="small" class="w-3 h-3" />
-                  </button>
-                </Show>
-
-                <Show when={props.canDelete}>
-                  <button
-                    type="button"
-                    class="inline-flex h-5 w-5 items-center justify-center rounded-md text-[var(--text-secondary)] hover:text-[var(--danger-text)] hover:bg-[var(--danger-surface)] transition-colors cursor-pointer"
-                    onClick={(ev) => {
-                      ev.stopPropagation();
-                      setConfirmingDelete(true);
-                    }}
-                    title={t("leftNav.deleteSessionTooltip")}
-                  >
-                    <Icon name="trash" size="small" class="w-3 h-3" />
-                  </button>
+                    {timeText()}
+                  </span>
                 </Show>
               </Show>
             </div>
           </Show>
+
+          {/* Hover Actions / Delete Gate Overlay */}
+          <Show when={!editing()}>
+            <div
+              class={`absolute ${
+                hasSubagents() && !confirmingDelete() ? "right-0" : "-right-1.5"
+              } top-1/2 -translate-y-1/2 flex items-center z-10 transition-opacity duration-120 ease-out ${
+                confirmingDelete()
+                  ? "visible opacity-100 pointer-events-auto"
+                  : "invisible opacity-0 pointer-events-none group-hover/row:visible group-hover/row:opacity-100 group-hover/row:pointer-events-auto group-has-[:focus-visible]/row:visible group-has-[:focus-visible]/row:opacity-100 group-has-[:focus-visible]/row:pointer-events-auto"
+              }`}
+              onClick={(ev) => ev.stopPropagation()}
+            >
+              {/* Soft horizontal feather mask to prevent hard visual cut over long session titles */}
+              <div
+                aria-hidden="true"
+                class="pointer-events-none h-6 w-5 -mr-1.5 bg-gradient-to-l from-[var(--bg-canvas)]/75 via-[var(--bg-canvas)]/35 to-transparent rounded-l-lg"
+              />
+
+              <Show
+                when={!confirmingDelete()}
+                fallback={
+                  <div class="session-action-danger-glass flex items-center gap-1 rounded-lg px-1.5 py-0.5">
+                    <button
+                      type="button"
+                      disabled={deleting()}
+                      onClick={(ev) => void handleConfirmDelete(ev)}
+                      class="inline-flex items-center gap-0.5 rounded-md bg-[var(--danger-text)] px-1.5 py-0.5 text-[11px] font-medium text-white hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
+                      title={t("leftNav.discardConfirm")}
+                    >
+                      <Show
+                        when={!deleting()}
+                        fallback={<Spinner class="w-2.5 h-2.5 text-white" />}
+                      >
+                        <span>{t("leftNav.confirmDelete")}</span>
+                      </Show>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={deleting()}
+                      onClick={(ev) => {
+                        ev.stopPropagation();
+                        setConfirmingDelete(false);
+                      }}
+                      class="rounded-md px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                    >
+                      {t("leftNav.cancelDelete")}
+                    </button>
+                  </div>
+                }
+              >
+                <div class="session-action-glass flex items-center gap-0.5 rounded-lg px-1 py-0.5">
+                  <button
+                    type="button"
+                    class="inline-flex h-5 w-5 items-center justify-center rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                    onClick={(ev) => startEditing(ev)}
+                  >
+                    <Pencil size={11} class="shrink-0 block" />
+                  </button>
+                  <button
+                    type="button"
+                    class="inline-flex h-5 w-5 items-center justify-center rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      downloadSessionExport(props.session.id);
+                    }}
+                    title={t("leftNav.exportSessionTooltip")}
+                  >
+                    <Icon name="download" size="small" class="w-3 h-3" />
+                  </button>
+                  <Show
+                    when={!isBusy()}
+                    fallback={
+                      <button
+                        type="button"
+                        disabled={stopping()}
+                        onClick={(ev) => void handleStop(ev)}
+                        class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--danger-text)] hover:bg-[var(--danger-surface)] transition-colors cursor-pointer disabled:opacity-50"
+                        title={t("leftNav.stopTooltip")}
+                      >
+                        <Show
+                          when={!stopping()}
+                          fallback={<Spinner class="w-2.5 h-2.5 text-[var(--danger-text)]" />}
+                        >
+                          <Square size={9.5} class="shrink-0 fill-current" />
+                        </Show>
+                        <span>{t("leftNav.stopSession")}</span>
+                      </button>
+                    }
+                  >
+                    <Show when={!props.isArchived && props.onArchive}>
+                      <button
+                        type="button"
+                        class="inline-flex h-5 w-5 items-center justify-center rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          props.onArchive?.(ev, props.session.id);
+                        }}
+                        title={t("leftNav.archiveSessionTooltip")}
+                      >
+                        <Icon name="archive" size="small" class="w-3 h-3" />
+                      </button>
+                    </Show>
+
+                    <Show when={props.isArchived && props.onUnarchive}>
+                      <button
+                        type="button"
+                        class="inline-flex h-5 w-5 items-center justify-center rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          props.onUnarchive?.(ev, props.session.id);
+                        }}
+                        title={t("leftNav.unarchiveSessionTooltip")}
+                      >
+                        <Icon name="reset" size="small" class="w-3 h-3" />
+                      </button>
+                    </Show>
+
+                    <Show when={props.canDelete}>
+                      <button
+                        type="button"
+                        class="inline-flex h-5 w-5 items-center justify-center rounded-md text-[var(--text-secondary)] hover:text-[var(--danger-text)] hover:bg-[var(--danger-surface)] transition-colors cursor-pointer"
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          setConfirmingDelete(true);
+                        }}
+                        title={t("leftNav.deleteSessionTooltip")}
+                      >
+                        <Icon name="trash" size="small" class="w-3 h-3" />
+                      </button>
+                    </Show>
+                  </Show>
+                </div>
+              </Show>
+            </div>
+          </Show>
         </div>
-      </Show>
-      <Show when={editing() && rowRef}>
-        <SessionRenamePopover
-          anchor={rowRef!}
-          title={props.session.title || ""}
-          onSave={commitEdit}
-          onClose={() => setEditing(false)}
-        />
-      </Show>
+
+        <Show when={hasSubagents() && !confirmingDelete()}>
+          <button
+            type="button"
+            data-subagent-chevron
+            data-subagent-badge
+            aria-expanded={expanded()}
+            title={
+              expanded()
+                ? t("leftNav.collapseSubagents")
+                : t("leftNav.expandSubagents", { count: subagents().length })
+            }
+            onClick={(ev) => {
+              ev.stopPropagation();
+              setSubagentDrawerExpanded(props.session.id, !expanded(), autoExpand());
+            }}
+            class={`relative z-20 shrink-0 -mr-1 inline-flex items-center gap-0.5 rounded-md px-1 py-0.5 text-[10.5px] font-mono leading-none tabular-nums select-none transition-colors cursor-pointer ${
+              runningSubagents() > 0
+                ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] hover:opacity-85"
+                : expanded()
+                  ? "bg-[var(--bg-hover)]/70 text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                  : "text-[var(--text-faint)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+            }`}
+          >
+            <Bot size={10.5} class="shrink-0" />
+            <span>{subagents().length}</span>
+            <span class="hoxi-chevron" data-open={expanded() ? "true" : "false"}>
+              <Icon name="chevron-right" size="small" class="w-3 h-3" />
+            </span>
+          </button>
+        </Show>
+
+        <Show when={editing() && rowRef}>
+          <SessionRenamePopover
+            anchor={rowRef!}
+            title={props.session.title || ""}
+            onSave={commitEdit}
+            onClose={() => setEditing(false)}
+          />
+        </Show>
       </div>
 
-      <Show when={hasSubagents()}>
+      <Show when={hasSubagents() && subagentsMounted()}>
         <div
           class="hoxi-drawer-grid"
           data-open={expanded() ? "true" : "false"}
@@ -479,7 +498,7 @@ export function SessionNavItem(props: SessionNavItemProps) {
         >
           <div class="hoxi-drawer-inner min-h-0 min-w-0 overflow-hidden">
             <div class="ml-3.5 pl-2 my-0.5 border-l border-[var(--border-subtle)]/60 flex flex-col gap-0.5 min-w-0 overflow-hidden">
-              <For each={subagents()}>
+              <For each={subagentSlice().visible}>
                 {(sub) => (
                   <SubagentNavRow
                     parentSessionID={props.session.id}
@@ -497,6 +516,18 @@ export function SessionNavItem(props: SessionNavItemProps) {
                   />
                 )}
               </For>
+              <Show when={subagentSlice().hiddenCount > 0}>
+                <button
+                  type="button"
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    loadMoreSubagents(props.session.id);
+                  }}
+                  class="flex items-center rounded-md px-2 py-0.5 text-left text-[11px] font-medium text-[var(--accent-primary)] hover:bg-[var(--bg-hover)]/60 transition-colors cursor-pointer"
+                >
+                  {t("leftNav.showMoreSubagents", { count: subagentSlice().hiddenCount })}
+                </button>
+              </Show>
             </div>
           </div>
         </div>

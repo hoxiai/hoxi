@@ -1,6 +1,6 @@
 // web/src/components/models/SelectedModelHoverCard.tsx
 import { onMount, Show } from "solid-js";
-import { ChevronRight, Image, Sparkles, Wrench } from "lucide-solid";
+import { ChevronRight, Image, Sparkles, Wrench, Zap } from "lucide-solid";
 import {
   AUTO_PROVIDER_ID,
   ensureLocalCLIStatusLoaded,
@@ -8,6 +8,7 @@ import {
   getLocalCLIStatusForProvider,
   isCandidateCoolingDown,
   peekAutoModelTarget,
+  resolveEffectiveFastMode,
   workspace,
 } from "../../store/workspace";
 import { ProviderIcon } from "../icons";
@@ -44,6 +45,11 @@ export function SelectedModelHoverCard(props: {
     autoCands().filter((c) => !isCandidateCoolingDown(c.providerID, c.modelID)).length;
   const hasEffortControl = () =>
     props.model.reasoning || (props.model.efforts?.length ?? 0) > 0;
+  const isFastActive = () =>
+    resolveEffectiveFastMode(
+      { providerID: props.model.providerID, modelID: props.model.modelID },
+      workspace.fastMode
+    );
   const effortText = () => {
     const current = workspace.reasoningEffort;
     if (current) return current.toUpperCase();
@@ -206,6 +212,15 @@ export function SelectedModelHoverCard(props: {
           </div>
 
           <div class="flex items-center gap-1 shrink-0">
+            <Show when={isFastActive()}>
+              <span
+                title={t("models.fastModeTooltip")}
+                class="inline-flex items-center gap-0.5 rounded bg-amber-500/15 px-1.5 py-[1px] text-[11px] font-medium text-amber-500"
+              >
+                <Zap size={9} class="fill-current" />
+                {t("models.fastModeActiveBadge")}
+              </span>
+            </Show>
             <Show when={hasEffortControl()}>
               <span class="inline-flex items-center gap-0.5 rounded bg-[var(--accent-surface)] px-1.5 py-[1px] text-[11px] font-medium text-[var(--accent-primary)]">
                 <Sparkles size={9} />

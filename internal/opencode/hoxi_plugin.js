@@ -8,7 +8,7 @@ import {
   createFrozenProjectMemoryResolver,
 } from "./context_compaction.js";
 import { createToolsGatewayTool } from "./tools_gateway_tool.js";
-import { createImageGenerationTool } from "./image_tool.js";
+import { createImageGenerationTool, createSpeechSynthesisTool, createVideoGenerationTool } from "./image_tool.js";
 import { createSkillCatalog } from "./skill_catalog.js";
 
 // Safety rules for Hoxi's browser and desktop tools. Each tool's own
@@ -33,11 +33,12 @@ export const HOXI_FALLBACK_GUIDANCE =
   "context (symbol source, callers, callees, blast radius and tests in one call) or search -> inspect the target lines -> " +
   "callers / callees / impact. Reviews and questions are read-only; edit, then refresh the index and verify, only when the task asks for changes. " +
   "For Office and PDF documents (.xlsx, .xls, .ods, .csv, .tsv, .docx, .pptx, .pdf), prefer the built-in zero-dependency 'hoxi doc inspect|read|write-xlsx|set-cell|write-docx|write-pptx|write-pdf' CLI before installing third-party packages. " +
-  "When generating or editing raster images/illustrations/UI assets, prefer the built-in 'hoxi_image' tool (routes to the user's configured Gemini/OpenAI/Flux image model). " +
-  "When the user asks to spawn/start a background subtask and continue chatting in the main thread, or to split work into parallel coding subtasks, " +
+  "When generating or editing raster images/illustrations/UI assets, prefer the built-in 'hoxi_image' tool; for video clips, prefer 'hoxi_video' (both check the active model's native capability first, then configured local models, before falling back to hoxi_tools). " +
+  "Handle normal requests directly in the main turn without emitting a hoxi-subtasks block. " +
+  "ONLY when the user explicitly asks to spawn/start a background subtask and continue chatting in the main thread, or explicitly asks to split work into isolated parallel coding subtasks, " +
   "do NOT call the synchronous task tool (which blocks the turn); instead output a fenced hoxi-subtasks JSON block " +
-  '(`{"title":"plan title","autoStart":true,"concurrency":3,"tasks":[{"id":"task-1","prompt":"self-contained instructions and verification","dependsOn":[]}]}`) ' +
-  "and end your turn immediately so Hoxi launches the subtask(s) asynchronously in the background.";
+  '(`{"title":"plan title","autoStart":false,"concurrency":3,"tasks":[{"id":"task-1","prompt":"self-contained instructions and verification","dependsOn":[]}]}`) ' +
+  'and end your turn immediately so Hoxi launches the subtask(s) asynchronously in the background (set "autoStart":true only when the user explicitly asks to start immediately).';
 
 function createGoalReportTool() {
   return tool({
@@ -79,6 +80,8 @@ export default async function HoxiPlugin({ directory: factoryDir } = {}) {
       hoxi_computer: createComputerTool(),
       hoxi_tools: createToolsGatewayTool(),
       hoxi_image: createImageGenerationTool(),
+      hoxi_video: createVideoGenerationTool(),
+      hoxi_speech: createSpeechSynthesisTool(),
       goal_report: createGoalReportTool(),
     },
     "experimental.chat.system.transform": async (input, output) => {

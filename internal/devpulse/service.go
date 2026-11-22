@@ -74,22 +74,6 @@ type DailyPulseResponse struct {
 	DbToolCallsFailed    int              `json:"dbToolCallsFailed"`
 	DbLatestTurnTs       int64            `json:"dbLatestTurnTs"`
 	DbModels             []DailyModelStat `json:"dbModels"`
-	HQMatrix             any              `json:"hqMatrix,omitempty"`
-}
-
-// MatrixCollector summarizes an optional multi-repo workspace matrix for DailyPulse.
-type MatrixCollector func(s *Service, targets []GitTarget) any
-
-var (
-	matrixCollectorMu sync.RWMutex
-	matrixCollector   MatrixCollector
-)
-
-// RegisterMatrixCollector registers an optional workspace matrix collector.
-func RegisterMatrixCollector(fn MatrixCollector) {
-	matrixCollectorMu.Lock()
-	matrixCollector = fn
-	matrixCollectorMu.Unlock()
 }
 
 // CandidateDirectories returns workspace directories supplied by the pulse Source.
@@ -231,12 +215,6 @@ func (s *Service) DailyPulse(dir, sessionID string, forced bool) DailyPulseRespo
 	s.collectDailyUsage(now, startOfTodayMs, forced, &res)
 	if len(targets) > 0 {
 		s.CollectGitDailyStats(targets, startOfToday, &res)
-	}
-	matrixCollectorMu.RLock()
-	collector := matrixCollector
-	matrixCollectorMu.RUnlock()
-	if collector != nil {
-		res.HQMatrix = collector(s, targets)
 	}
 
 	s.mu.Lock()

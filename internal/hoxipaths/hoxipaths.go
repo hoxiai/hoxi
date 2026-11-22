@@ -61,6 +61,10 @@ var protectedStateFiles = []string{
 	"approval-audit.json",
 	"approval-policy.json",
 	"relay-keys.json",
+	"app-grants.json",
+	"app-grants.json.lock",
+	"runtime-endpoint.json",
+	"runtime-endpoint.json.lock",
 	"git-attribution.json",
 	"browser-settings.json",
 	"window-state.json",
@@ -70,6 +74,10 @@ var protectedStateFiles = []string{
 	"host-daemon.json",
 	"remote-hosts.json",
 	"remote-hosts.json.lock",
+	"intake.json",
+	"intake.json.lock",
+	"media-roles.json",
+	"media-roles.json.lock",
 	// The reclaim ledger tells the next Hoxi start which processes to signal
 	// and which directories to delete; it must not be writable by agents.
 	"reclaim.json",
@@ -135,6 +143,9 @@ func ProtectedStateFiles() []string {
 // IsProtectedStateFile reports whether baseName is a protected ~/.hoxi state file.
 func IsProtectedStateFile(baseName string) bool {
 	lower := strings.ToLower(strings.TrimSpace(baseName))
+	if strings.HasPrefix(lower, "app-grants.json.corrupt-") {
+		return true
+	}
 	for _, f := range protectedStateFiles {
 		if lower == f {
 			return true
@@ -268,6 +279,24 @@ func CloudflaredConfigPath() string {
 // and per-tool overrides every runtime's approval gate reads.
 func ApprovalPolicyPath() string {
 	return Join("approval-policy.json")
+}
+
+// AppGrantsPath returns ~/.hoxi/app-grants.json, storing hashed hoxi-app/v1
+// external application capability tokens and scopes. Written 0600.
+func AppGrantsPath() string {
+	return Join("app-grants.json")
+}
+
+// RuntimeEndpointPath returns ~/.hoxi/runtime-endpoint.json, the non-secret
+// loopback discovery file advertising the active gateway and Host MCP URLs.
+func RuntimeEndpointPath() string {
+	return Join("runtime-endpoint.json")
+}
+
+// IntakeStorePath returns ~/.hoxi/intake.json, storing project-scoped tester
+// intake links and staged QA tasks. Written 0600.
+func IntakeStorePath() string {
+	return Join("intake.json")
 }
 
 // BinDir returns ~/.hoxi/bin, where Hoxi installs its managed binaries.

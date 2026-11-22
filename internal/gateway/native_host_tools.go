@@ -84,9 +84,9 @@ func (g *Gateway) invokeNativeCodeIndexTool(ctx context.Context, tc agent.ToolCo
 	}
 	act := strings.ToLower(strings.TrimSpace(req.Action))
 	switch act {
-	case "context", "search", "inspect", "callers", "callees", "impact", "refresh":
+	case "map", "context", "search", "inspect", "callers", "callees", "impact", "refresh":
 	default:
-		return agent.HostToolResult{Title: "hoxi_code_index"}, fmt.Errorf("invalid hoxi_code_index action %q (expected context|search|inspect|callers|callees|impact|refresh)", req.Action)
+		return agent.HostToolResult{Title: "hoxi_code_index"}, fmt.Errorf("invalid hoxi_code_index action %q (expected map|context|search|inspect|callers|callees|impact|refresh)", req.Action)
 	}
 
 	relPath := strings.TrimSpace(req.Path)
@@ -147,6 +147,21 @@ func (g *Gateway) invokeNativeCodeIndexTool(ctx context.Context, tc agent.ToolCo
 		}
 		if req.Limit > 0 {
 			q.Set("limit", strconv.Itoa(req.Limit))
+		}
+	case "map":
+		if relPath != "" {
+			q.Set("path", relPath)
+		}
+		if qry := strings.TrimSpace(req.Query); qry != "" {
+			q.Set("q", qry)
+		} else if s := strings.TrimSpace(req.Symbol); s != "" {
+			q.Set("q", s)
+		}
+		if req.Limit > 0 {
+			q.Set("limit", strconv.Itoa(req.Limit))
+		}
+		if req.Refresh {
+			q.Set("refresh", "1")
 		}
 	case "context":
 		if s := strings.TrimSpace(req.Symbol); s != "" {
@@ -225,15 +240,21 @@ func formatCodeIndexHostOutput(action string, payload map[string]any) string {
 		}
 		return out
 	}
+	ambiguity := func(hit map[string]any) string {
+		if v, _ := hit["possible"].(bool); v {
+			return " [possible target]"
+		}
+		return ""
+	}
 	fmtHit := func(h map[string]any) string {
 		sym := ""
 		if s := str(h, "symbol"); s != "" {
 			sym = " [" + s + "]"
 		}
-		return fmt.Sprintf("  %s:%d%s — %s", str(h, "path"), num(h, "line"), sym, str(h, "snippet"))
+		return fmt.Sprintf("  %s:%d%s — %s", str(h, "path"), num(h, "line"), sym+ambiguity(h), str(h, "snippet"))
 	}
 	fmtCallee := func(c map[string]any) string {
-		return fmt.Sprintf("  %s:%d-%d [%s] (called at L%d)", str(c, "path"), num(c, "startLine"), num(c, "endLine"), str(c, "symbol"), num(c, "callLine"))
+		return fmt.Sprintf("  %s:%d-%d [%s] (called at L%d)", str(c, "path"), num(c, "startLine"), num(c, "endLine"), str(c, "symbol"), num(c, "callLine")) + ambiguity(c)
 	}
 
 	switch action {
@@ -336,7 +357,7 @@ func formatCodeIndexHostOutput(action string, payload map[string]any) string {
 				if s := str(h, "symbol"); s != "" {
 					sym = " [" + s + "]"
 				}
-				lines = append(lines, fmt.Sprintf("  %s:%d%s (depth %d, via %s) — %s", str(h, "path"), num(h, "line"), sym, num(h, "depth"), str(h, "via"), str(h, "snippet")))
+				lines = append(lines, fmt.Sprintf("  %s:%d%s (depth %d, via %s) — %s", str(h, "path"), num(h, "line"), sym+ambiguity(h), num(h, "depth"), str(h, "via"), str(h, "snippet")))
 			}
 		}
 		lines = append(lines, fmt.Sprintf("Related Tests (%d):", len(tests)))
@@ -389,7 +410,7 @@ func formatCodeIndexHostOutput(action string, payload map[string]any) string {
 					if s := str(h, "symbol"); s != "" {
 						hsym = " [" + s + "]"
 					}
-					lines = append(lines, fmt.Sprintf("  %s:%d%s (depth %d, via %s)", str(h, "path"), num(h, "line"), hsym, num(h, "depth"), str(h, "via")))
+					lines = append(lines, fmt.Sprintf("  %s:%d%s (depth %d, via %s)", str(h, "path"), num(h, "line"), hsym+ambiguity(h), num(h, "depth"), str(h, "via")))
 				}
 			}
 			lines = append(lines, fmt.Sprintf("Tests (%d):", len(tests)))
@@ -402,6 +423,32 @@ func formatCodeIndexHostOutput(action string, payload map[string]any) string {
 			}
 			return strings.Join(lines, "\n")
 		}
+	case "map":
+		entries := sliceMaps(payload["entries"])
+		if len(entries) == 0 {
+			return "No indexed code files found for map."
+		}
+		lines := make([]string, 0, len(entries)+1)
+		hdr := fmt.Sprintf("Repository Backbone Map (%d top of %d code files):", len(entries), num(payload, "files"))
+		if pfx := str(payload, "pathPrefix"); pfx != "" {
+			hdr = fmt.Sprintf("Repository Backbone Map [%s] (%d files):", pfx, len(entries))
+		}
+		lines = append(lines, hdr)
+		for _, e := range entries {
+			lines = append(lines, fmt.Sprintf("%s (rank %d)", str(e, "path"), num(e, "score")))
+			for _, sym := range sliceMaps(e["symbols"]) {
+				refNote := ""
+				if r := num(sym, "references"); r > 0 {
+					refNote = fmt.Sprintf(" [%d refs]", r)
+				}
+				sig := str(sym, "signature")
+				if sig == "" {
+					sig = str(sym, "symbol")
+				}
+				lines = append(lines, fmt.Sprintf("  L%d-%d%s: %s", num(sym, "startLine"), num(sym, "endLine"), refNote, sig))
+			}
+		}
+		return strings.Join(lines, "\n")
 	case "refresh":
 		if _, hasFiles := payload["files"]; hasFiles {
 			return fmt.Sprintf("Index refreshed (%d files, %d chunks).", num(payload, "files"), num(payload, "chunks"))
@@ -502,6 +549,189 @@ func (g *Gateway) invokeNativeImageTool(ctx context.Context, tc agent.ToolContex
 	}
 	return agent.HostToolResult{
 		Title:    "HoxiImage: " + titleModel,
+		Output:   strings.Join(lines, "\n"),
+		Metadata: parsed,
+	}, nil
+}
+
+func (g *Gateway) invokeNativeVideoTool(ctx context.Context, tc agent.ToolContext, input json.RawMessage) (agent.HostToolResult, error) {
+	var payload map[string]any
+	_ = json.Unmarshal(input, &payload)
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	payload["sessionID"] = tc.SessionID
+	payload["directory"] = tc.WorktreeDir
+	dirQ := url.Values{}
+	if tc.WorktreeDir != "" {
+		dirQ.Set("directory", tc.WorktreeDir)
+	}
+	status, raw, err := g.doInternalMuxJSON(ctx, http.MethodPost, "/api/hoxi/media/video?"+dirQ.Encode(), payload, "")
+	if err != nil {
+		return agent.HostToolResult{Title: "hoxi_video"}, err
+	}
+	var parsed map[string]any
+	if json.Unmarshal(raw, &parsed) != nil {
+		txt := strings.TrimSpace(string(raw))
+		if status >= 400 {
+			return agent.HostToolResult{Title: "hoxi_video", Output: txt}, fmt.Errorf("hoxi_video HTTP %d: %s", status, txt)
+		}
+		return agent.HostToolResult{Title: "hoxi_video", Output: txt}, nil
+	}
+	if status >= 400 {
+		errMsg, _ := parsed["error"].(string)
+		if errMsg == "" {
+			errMsg = strings.TrimSpace(string(raw))
+		}
+		return agent.HostToolResult{Title: "hoxi_video", Output: errMsg, Metadata: parsed}, fmt.Errorf("hoxi_video: %s", errMsg)
+	}
+	if okVal, hasOK := parsed["ok"].(bool); hasOK && !okVal {
+		errMsg, _ := parsed["error"].(string)
+		if strings.TrimSpace(errMsg) == "" {
+			errMsg = "Video generation failed"
+		}
+		return agent.HostToolResult{Title: "hoxi_video", Output: errMsg, Metadata: parsed}, fmt.Errorf("hoxi_video: %s", errMsg)
+	}
+
+	provID, _ := parsed["providerID"].(string)
+	modID, _ := parsed["modelID"].(string)
+	note, _ := parsed["text"].(string)
+	rawVideos, _ := parsed["videos"].([]any)
+
+	count := len(rawVideos)
+	if count == 0 {
+		count = 1
+	}
+	lines := []string{fmt.Sprintf("Generated %d video(s) via %s/%s.", count, provID, modID)}
+	if strings.TrimSpace(note) != "" {
+		lines = append(lines, "Model note: "+strings.TrimSpace(note))
+	}
+	var mediaAtts []map[string]any
+	for _, it := range rawVideos {
+		m, ok := it.(map[string]any)
+		if !ok {
+			continue
+		}
+		pStr, _ := m["path"].(string)
+		fStr, _ := m["filename"].(string)
+		uStr, _ := m["url"].(string)
+		mimeStr, _ := m["mime"].(string)
+		if mimeStr == "" {
+			mimeStr = "video/mp4"
+		}
+		if fStr == "" {
+			fStr = "generated.mp4"
+		}
+		disp := pStr
+		if disp == "" {
+			disp = fStr
+		}
+		lines = append(lines, fmt.Sprintf("- File: %s (attachment URL: %s)", disp, uStr))
+		if strings.TrimSpace(uStr) != "" {
+			mediaAtts = append(mediaAtts, map[string]any{
+				"type":     "file",
+				"mime":     mimeStr,
+				"filename": fStr,
+				"url":      uStr,
+			})
+		}
+	}
+	if len(mediaAtts) > 0 {
+		parsed["mediaAttachments"] = mediaAtts
+	}
+	titleModel := strings.TrimSpace(modID)
+	if titleModel == "" {
+		titleModel = "generated"
+	}
+	return agent.HostToolResult{
+		Title:    "HoxiVideo: " + titleModel,
+		Output:   strings.Join(lines, "\n"),
+		Metadata: parsed,
+	}, nil
+}
+
+func (g *Gateway) invokeNativeSpeechTool(ctx context.Context, tc agent.ToolContext, input json.RawMessage) (agent.HostToolResult, error) {
+	var payload map[string]any
+	_ = json.Unmarshal(input, &payload)
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	payload["sessionID"] = tc.SessionID
+	payload["directory"] = tc.WorktreeDir
+	dirQ := url.Values{}
+	if tc.WorktreeDir != "" {
+		dirQ.Set("directory", tc.WorktreeDir)
+	}
+	status, raw, err := g.doInternalMuxJSON(ctx, http.MethodPost, "/api/hoxi/media/speech?"+dirQ.Encode(), payload, "")
+	if err != nil {
+		return agent.HostToolResult{Title: "hoxi_speech"}, err
+	}
+	var parsed map[string]any
+	if json.Unmarshal(raw, &parsed) != nil {
+		txt := strings.TrimSpace(string(raw))
+		if status >= 400 {
+			return agent.HostToolResult{Title: "hoxi_speech", Output: txt}, fmt.Errorf("hoxi_speech HTTP %d: %s", status, txt)
+		}
+		return agent.HostToolResult{Title: "hoxi_speech", Output: txt}, nil
+	}
+	if status >= 400 {
+		errMsg, _ := parsed["error"].(string)
+		if errMsg == "" {
+			errMsg = strings.TrimSpace(string(raw))
+		}
+		return agent.HostToolResult{Title: "hoxi_speech", Output: errMsg, Metadata: parsed}, fmt.Errorf("hoxi_speech: %s", errMsg)
+	}
+	if okVal, hasOK := parsed["ok"].(bool); hasOK && !okVal {
+		errMsg, _ := parsed["error"].(string)
+		if strings.TrimSpace(errMsg) == "" {
+			errMsg = "Speech synthesis failed"
+		}
+		return agent.HostToolResult{Title: "hoxi_speech", Output: errMsg, Metadata: parsed}, fmt.Errorf("hoxi_speech: %s", errMsg)
+	}
+
+	provID, _ := parsed["providerID"].(string)
+	modID, _ := parsed["modelID"].(string)
+	rawAudios, _ := parsed["audios"].([]any)
+	lines := []string{fmt.Sprintf("Synthesized speech audio via %s/%s.", provID, modID)}
+	var mediaAtts []map[string]any
+	for _, it := range rawAudios {
+		m, ok := it.(map[string]any)
+		if !ok {
+			continue
+		}
+		pStr, _ := m["path"].(string)
+		fStr, _ := m["filename"].(string)
+		uStr, _ := m["url"].(string)
+		mimeStr, _ := m["mime"].(string)
+		if mimeStr == "" {
+			mimeStr = "audio/mpeg"
+		}
+		if fStr == "" {
+			fStr = "generated.mp3"
+		}
+		disp := pStr
+		if disp == "" {
+			disp = fStr
+		}
+		lines = append(lines, fmt.Sprintf("- File: %s (attachment URL: %s)", disp, uStr))
+		if strings.TrimSpace(uStr) != "" {
+			mediaAtts = append(mediaAtts, map[string]any{
+				"type":     "file",
+				"mime":     mimeStr,
+				"filename": fStr,
+				"url":      uStr,
+			})
+		}
+	}
+	if len(mediaAtts) > 0 {
+		parsed["mediaAttachments"] = mediaAtts
+	}
+	titleModel := strings.TrimSpace(modID)
+	if titleModel == "" {
+		titleModel = "generated"
+	}
+	return agent.HostToolResult{
+		Title:    "HoxiSpeech: " + titleModel,
 		Output:   strings.Join(lines, "\n"),
 		Metadata: parsed,
 	}, nil

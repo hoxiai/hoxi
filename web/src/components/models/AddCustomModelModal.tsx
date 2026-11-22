@@ -32,6 +32,7 @@ import {
   type FlattenedModel,
 } from "../../store/workspace";
 import { t } from "../../i18n";
+import { HelpTip } from "../settings/setting-controls";
 import { guessFetchedModelDraft } from "./custom-endpoint-helpers";
 import { appendModels, verifyBatch, type ModelProbeFn } from "./model-probe-batch";
 
@@ -327,14 +328,12 @@ export function AddCustomModelModal(props: {
           class="hoxi-modal-panel hoxi-elevation-4 flex w-full max-w-[620px] max-h-[82dvh] flex-col rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl overflow-hidden"
           onClick={(e) => e.stopPropagation()}
         >
-          <div class="flex items-start justify-between gap-3 border-b border-[var(--border-subtle)] px-5 py-4">
-            <div>
-              <h3 class="text-[15px] font-semibold text-[var(--text-primary)]">
+          <div class="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] px-5 py-3.5">
+            <div class="flex items-center gap-2 min-w-0">
+              <h3 class="text-[15px] font-semibold text-[var(--text-primary)] truncate">
                 {t("models.addModelModalTitle")}
               </h3>
-              <p class="mt-0.5 text-[12px] text-[var(--text-muted)]">
-                {t("models.addModelModalDesc")}
-              </p>
+              <HelpTip text={t("models.addModelModalDesc")} />
             </div>
             <button
               type="button"

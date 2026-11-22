@@ -83,6 +83,14 @@ export const models = {
   disconnectConfirmTitle: "Disconnect {name}?",
   disconnectConfirmBody:
     "Its credentials and local provider config will be removed from this device. Models using it must be selected again.",
+  deleteProvider: "Delete",
+  deleteProviderConfirmTitle: "Delete {name}?",
+  deleteProviderConfirmBody:
+    "Removes this provider's credentials and Hoxi config from this device. You can reconnect or re-import it anytime.",
+  removeImportedProvider: "Remove",
+  removeImportedConfirmTitle: "Remove {name} from Hoxi?",
+  removeImportedConfirmBody:
+    "Only hides this imported provider in Hoxi without modifying your external OpenCode config. You can re-import it anytime.",
   disconnectFailed: "Could not disconnect the provider. Please try again.",
   providerActionFailed: "Could not update the provider. Please try again.",
   gatewaysLoadError: "Could not load the recommended providers. Check your network and try again.",
@@ -248,6 +256,24 @@ export const models = {
   compactionModelTitle: "Context Compaction Model",
   compactionModelDesc:
     "Model used when compacting session context and memory",
+  mediaRolesSectionTitle: "Media & Voice Default Models",
+  mediaRolesSectionDesc:
+    "Active models with native capability are checked first; otherwise these defaults (or auto-best) are used",
+  mediaRoleAutoBestOption: "Auto-select best configured model",
+  mediaRoleUnconfiguredBadge: "No local model configured",
+  mediaRoleConfigureBtn: "Configure Provider",
+  imageRoleModelTitle: "Default Image Generation Model",
+  imageRoleModelDesc:
+    "Used by hoxi_image when the active session model has no native image output",
+  videoRoleModelTitle: "Default Video Generation Model",
+  videoRoleModelDesc:
+    "Used by hoxi_video when the active session model has no native video output",
+  speechRoleModelTitle: "Default Speech Synthesis (TTS) Model",
+  speechRoleModelDesc:
+    "Used by hoxi_speech when generating spoken audio or voiceovers",
+  transcribeRoleModelTitle: "Default Voice Transcription (ASR) Model",
+  transcribeRoleModelDesc:
+    "Used for microphone dictation and audio attachment transcription",
   modeModelsTitle: "Per-Mode Models",
   modeModelsDesc:
     "Assign dedicated default models for Build or Plan modes",
@@ -467,4 +493,9 @@ export const models = {
   categoryEmbedding: "Embedding",
   subagentsBindEconomyBtn: "Bind Economy Model to Read-Only ({model})",
   subagentsBindEconomyDone: "Bound {model} to read-only exploration subagents",
+  fastModeLabel: "Fast",
+  fastModeActiveBadge: "Fast 2x",
+  fastModeTooltip: "Priority high-speed inference: same intelligence, up to 2.5x faster output (~2x cost/quota; interactive foreground turns only)",
+  fastModeUnsupportedTooltip: "Fast mode is unavailable for the selected model or endpoint",
+  hoverFastModeLabel: "Speed Tier",
 };

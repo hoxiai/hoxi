@@ -340,7 +340,17 @@ func stringsToInterfaces(values []string) []interface{} {
 }
 
 func (g *Service) loadOpenCodeImportedProviderMap() map[string]interface{} {
-	return loadOpenCodeImportedProvidersFromDisk()
+	raw := loadOpenCodeImportedProvidersFromDisk()
+	dismissed := g.dismissedExternalProvidersSet()
+	if len(dismissed) == 0 {
+		return raw
+	}
+	for pid := range raw {
+		if dismissed[pid] || dismissed[strings.ToLower(strings.TrimSpace(pid))] {
+			delete(raw, pid)
+		}
+	}
+	return raw
 }
 
 // ensureCompactionDefaults makes automatic compaction explicit instead of
@@ -570,6 +580,7 @@ func (g *Service) handleModelsConfig(w http.ResponseWriter, r *http.Request) {
 		g.normalizeAndStoreMultiKeys(pid, cleaned)
 		hoxiMap[pid] = cleaned
 		doc["provider"] = hoxiMap
+		g.clearProviderSuppressionLocked(doc, pid)
 		err := g.persistHoxiConfigFiles(doc)
 		g.configPersistMu.Unlock()
 		if err != nil {
@@ -606,6 +617,12 @@ func (g *Service) handleModelsConfig(w http.ResponseWriter, r *http.Request) {
 		delete(hoxiMap, pid)
 		doc["provider"] = hoxiMap
 		err := g.persistHoxiConfigFiles(doc)
+		if err == nil {
+			autoDoc := g.loadAutoPoolsDoc()
+			if deleteKeyPoolInAutoPoolsDoc(autoDoc, pid) {
+				_ = g.persistAutoPoolsDoc(autoDoc)
+			}
+		}
 		g.configPersistMu.Unlock()
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())

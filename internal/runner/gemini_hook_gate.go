@@ -31,6 +31,10 @@ type geminiHookPayload struct {
 }
 
 func geminiHookSettings(exe string) []byte {
+	return geminiHookSettingsWithMCP(exe, true, nil)
+}
+
+func geminiHookSettingsWithMCP(exe string, includeHooks bool, extraMCP map[string]any) []byte {
 	doc := map[string]interface{}{}
 	if gRoot := agentcli.GeminiHomeDir(); gRoot != "" {
 		if raw, err := os.ReadFile(filepath.Join(gRoot, "settings.json")); err == nil {
@@ -44,6 +48,20 @@ func geminiHookSettings(exe string) []byte {
 			}
 		}
 	}
+	if len(extraMCP) > 0 {
+		merged := map[string]interface{}{}
+		if existing, ok := doc["mcpServers"].(map[string]interface{}); ok {
+			for k, v := range existing {
+				merged[k] = v
+			}
+		}
+		for k, v := range extraMCP {
+			if _, exists := merged[k]; !exists {
+				merged[k] = v
+			}
+		}
+		doc["mcpServers"] = merged
+	}
 	secMap, _ := doc["security"].(map[string]interface{})
 	if secMap == nil {
 		secMap = map[string]interface{}{}
@@ -52,31 +70,37 @@ func geminiHookSettings(exe string) []byte {
 		"enabled": false,
 	}
 	doc["security"] = secMap
-	doc["hooksConfig"] = map[string]interface{}{
-		"enabled":       true,
-		"notifications": false,
-	}
-	toolsMap, _ := doc["tools"].(map[string]interface{})
-	if toolsMap == nil {
-		toolsMap = map[string]interface{}{}
-	}
-	toolsMap["enableHooks"] = true
-	doc["tools"] = toolsMap
-	doc["hooks"] = map[string]interface{}{
-		"BeforeTool": []interface{}{map[string]interface{}{
-			"matcher": ".*",
-			"hooks": []interface{}{map[string]interface{}{
-				"name":    agyHookName,
-				"type":    "command",
-				"command": agyHookCommand(exe),
-				"timeout": agyhook.TimeoutSeconds * 1000,
+	if includeHooks && strings.TrimSpace(exe) != "" {
+		doc["hooksConfig"] = map[string]interface{}{
+			"enabled":       true,
+			"notifications": false,
+		}
+		toolsMap, _ := doc["tools"].(map[string]interface{})
+		if toolsMap == nil {
+			toolsMap = map[string]interface{}{}
+		}
+		toolsMap["enableHooks"] = true
+		doc["tools"] = toolsMap
+		doc["hooks"] = map[string]interface{}{
+			"BeforeTool": []interface{}{map[string]interface{}{
+				"matcher": ".*",
+				"hooks": []interface{}{map[string]interface{}{
+					"name":    agyHookName,
+					"type":    "command",
+					"command": agyHookCommand(exe),
+					"timeout": agyhook.TimeoutSeconds * 1000,
+				}},
 			}},
-		}},
+		}
 	}
 	return marshalJSON(doc, true)
 }
 
 func writeGeminiHookHome(sessionID, messageID, exe string) (string, string, error) {
+	return writeGeminiHookHomeWithMCP(sessionID, messageID, exe, true, nil)
+}
+
+func writeGeminiHookHomeWithMCP(sessionID, messageID, exe string, includeHooks bool, extraMCP map[string]any) (string, string, error) {
 	baseDir := filepath.Join(hoxipaths.Home(), "sandbox")
 	if strings.TrimSpace(hoxipaths.Home()) == "" {
 		baseDir = os.TempDir()
@@ -111,7 +135,7 @@ func writeGeminiHookHome(sessionID, messageID, exe string) (string, string, erro
 			}
 		}
 	}
-	data := append(geminiHookSettings(exe), '\n')
+	data := append(geminiHookSettingsWithMCP(exe, includeHooks, extraMCP), '\n')
 	settingsPath := filepath.Join(dotGemini, "settings.json")
 	if err := os.WriteFile(settingsPath, data, 0o600); err != nil {
 		_ = os.RemoveAll(homeDir)
@@ -150,22 +174,55 @@ func linkOrCopyGeminiEntry(src, dst string) {
 // hooks from ~/.gemini/settings.json) and returns the environment variables
 // and cleanup function. Read-only modes rely on `--approval-mode plan` and get no hook.
 func (s *Service) issueGeminiHook(mode, sessionID, messageID string) ([]string, func()) {
+	return s.issueGeminiHookWithMCP(mode, sessionID, messageID, nil)
+}
+
+func (s *Service) issueGeminiHookWithMCP(mode, sessionID, messageID string, extraMCP map[string]any) ([]string, func()) {
 	if isReadOnlyMode(mode) {
-		return nil, func() {}
+		if len(extraMCP) == 0 {
+			return nil, func() {}
+		}
+		homeDir, _, err := writeGeminiHookHomeWithMCP(sessionID, messageID, "", false, extraMCP)
+		if err != nil {
+			return nil, func() {}
+		}
+		env := withLoopbackNoProxy([]string{
+			geminiCLIHomeEnv + "=" + homeDir,
+			geminiTrustWorkspaceEnv + "=true",
+		})
+		return env, func() { _ = os.RemoveAll(homeDir) }
 	}
 	base, token, revoke := s.issueHookCredential(string(RuntimeGeminiCLI), sessionID, messageID)
 	if base == "" {
-		return nil, revoke
+		if len(extraMCP) == 0 {
+			return nil, revoke
+		}
+		homeDir, _, err := writeGeminiHookHomeWithMCP(sessionID, messageID, "", false, extraMCP)
+		if err != nil {
+			return nil, revoke
+		}
+		env := withLoopbackNoProxy([]string{
+			geminiCLIHomeEnv + "=" + homeDir,
+			geminiTrustWorkspaceEnv + "=true",
+		})
+		return env, func() {
+			revoke()
+			_ = os.RemoveAll(homeDir)
+		}
 	}
-	exe, err := hookExecutable()
+	exe, err := currentHookExecutable()
 	if err != nil || strings.TrimSpace(exe) == "" {
 		revoke()
 		return nil, func() {}
 	}
-	homeDir, _, err := writeGeminiHookHome(sessionID, messageID, exe)
+	homeDir, _, err := writeGeminiHookHomeWithMCP(sessionID, messageID, exe, true, extraMCP)
 	if err != nil {
 		revoke()
 		return nil, func() {}
+	}
+	hookBin := exe
+	if looksLikeGoTestBinary(exe) {
+		hookBin = ""
 	}
 	env := withLoopbackNoProxy([]string{
 		geminiCLIHomeEnv + "=" + homeDir,
@@ -173,6 +230,7 @@ func (s *Service) issueGeminiHook(mode, sessionID, messageID string) ([]string, 
 		agyhook.EnvSessionID + "=" + sessionID,
 		agyhook.EnvHookURL + "=" + base + geminiHookPreToolPath,
 		agyhook.EnvHookToken + "=" + token,
+		agyhook.EnvHookBin + "=" + hookBin,
 	})
 	cleanup := func() {
 		revoke()
@@ -292,7 +350,8 @@ func (s *Service) decideGeminiHookCall(r *http.Request, cred hookCredential, p g
 	case lowerTool == "list_directory" || lowerTool == "glob" || lowerTool == "search_file_content" || lowerTool == "grep_search" || lowerTool == "grep" || lowerTool == "ls":
 		path := resolveHookToolPath(baseDir, argsMap)
 		cwdOK := strings.TrimSpace(p.Cwd) == "" || pathWithin(rec.WorktreePath, p.Cwd)
-		if cwdOK && !hasEscapingSearchPattern(argsMap) && (path == "" || pathWithin(rec.WorktreePath, path)) {
+		if cwdOK && !hasRiskySearchSelector(lowerTool, argsMap) && (path == "" || pathWithin(rec.WorktreePath, path)) &&
+			!isSecretFilePath(path) && !isSecretFilePath(rawHookToolPath(argsMap)) {
 			return "allow", ""
 		}
 		if approved, reason := s.gateToolCallIn(r, cred, p.ToolName, argsMap, callID, p.Cwd); approved {

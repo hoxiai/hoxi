@@ -46,24 +46,41 @@ func (s *Service) startTurnProcessWithMode(
 	priorTurns := append([]MessageTurn(nil), rec.Turns...)
 	initialExternalID := strings.TrimSpace(rec.ExternalID)
 
+	fastMode := userInfo.ServiceTier == "fast"
+	mcpArgs, mcpEnv, geminiMCPServers, cleanupMCP := s.prepareSessionMCPForTurn(rec, asstMsgID, geminiUsesAgy)
 	var claudeHookArgs []string
 	var hookEnv []string
-	revokeHook := func() {}
+	rawRevokeHook := func() {}
 	if rec.Runtime == string(RuntimeClaudeCode) {
-		claudeHookArgs, hookEnv, revokeHook = s.issueClaudeHook(mode, rec.ID, asstMsgID)
+		claudeHookArgs, hookEnv, rawRevokeHook = s.issueClaudeTurnSettings(mode, modelID, rec.ID, asstMsgID, fastMode)
 	} else if rec.Runtime == string(RuntimeGeminiCLI) {
 		if geminiUsesAgy {
 			s.ensureAgyHookInstalled()
-			hookEnv, revokeHook = s.issueHookEnv(rec.ID, asstMsgID)
+			hookEnv, rawRevokeHook = s.issueHookEnv(rec.ID, asstMsgID)
 		} else {
-			hookEnv, revokeHook = s.issueGeminiHook(mode, rec.ID, asstMsgID)
+			hookEnv, rawRevokeHook = s.issueGeminiHookWithMCP(mode, rec.ID, asstMsgID, geminiMCPServers)
 		}
 	} else if rec.Runtime == string(RuntimeAntigravity) {
 		s.ensureAgyHookInstalled()
-		hookEnv, revokeHook = s.issueHookEnv(rec.ID, asstMsgID)
+		hookEnv, rawRevokeHook = s.issueHookEnv(rec.ID, asstMsgID)
+	}
+	if len(mcpEnv) > 0 {
+		hookEnv = append(hookEnv, mcpEnv...)
+	}
+	var revokeOnce sync.Once
+	revokeHook := func() {
+		revokeOnce.Do(func() {
+			rawRevokeHook()
+			cleanupMCP()
+		})
 	}
 
-	args := buildTurnCLIArgs(rec.Runtime, mode, rec.ProviderID, modelID, effort, rec.ExternalID, geminiUsesAgy, claudeHookArgs)
+	args := mergeRuntimeMCPArgs(
+		rec.Runtime,
+		geminiUsesAgy,
+		buildTurnCLIArgsWithFast(rec.Runtime, mode, rec.ProviderID, modelID, effort, rec.ExternalID, geminiUsesAgy, fastMode, claudeHookArgs),
+		mcpArgs,
+	)
 	binPath, args, err := s.confineRuntimeCommand(rec, rawBinPath, args)
 	if err != nil {
 		revokeHook()
@@ -72,7 +89,7 @@ func (s *Service) startTurnProcessWithMode(
 	if base := strings.TrimSpace(s.hookBaseURL()); base != "" {
 		hookEnv = append(hookEnv, "HOXI_GATEWAY_URL="+base, "HOXI_BRIDGE_URL="+base)
 	}
-	procEnv := runtimeProcessEnv(rec, os.Environ(), hookEnv)
+	procEnv := s.applySessionBundleEnv(rec, runtimeProcessEnv(rec, os.Environ(), hookEnv))
 	cmd := subproc.Command(binPath, args...)
 	cmd.Dir = rec.WorktreePath
 	cmd.Env = procEnv
@@ -124,6 +141,9 @@ func (s *Service) startTurnProcessWithMode(
 	go s.watchStall(ap)
 
 	tr := NewTurnTranslator(rec.ID, rec.Runtime, asstMsgID, userInfo.ID, rec.ProviderID, modelID, mode, rec.ExternalID)
+	if rec.Runtime == string(RuntimeCodex) && fastMode && turnstreamSupportsCodexFast(modelID) {
+		tr.MsgInfo.ServiceTier = "fast"
+	}
 	tr.CreateChild = s.childSessionFactory(rec, modelID, mode)
 	if emitUserTurn {
 		s.broadcast(rec.ID, tr.InitialEvents(userInfo, storedParts)...)
@@ -302,7 +322,12 @@ func (s *Service) startTurnProcessWithMode(
 					if len(resetEvts) > 0 {
 						s.broadcastRouted(rec.ID, resetEvts)
 					}
-					retryArgs = buildTurnCLIArgs(rec.Runtime, mode, rec.ProviderID, modelID, effort, initialExternalID, geminiUsesAgy, claudeHookArgs)
+					retryArgs = mergeRuntimeMCPArgs(
+						rec.Runtime,
+						geminiUsesAgy,
+						buildTurnCLIArgsWithFast(rec.Runtime, mode, rec.ProviderID, modelID, effort, initialExternalID, geminiUsesAgy, fastMode, claudeHookArgs),
+						mcpArgs,
+					)
 					retryInput = inputBytes
 				} else {
 					settleEvts := tr.PrepareForResumeRetry(time.Now().UnixMilli())
@@ -313,7 +338,12 @@ func (s *Service) startTurnProcessWithMode(
 					if len(settleEvts) > 0 {
 						s.broadcastRouted(rec.ID, settleEvts)
 					}
-					retryArgs = buildTurnCLIArgs(rec.Runtime, mode, rec.ProviderID, modelID, effort, resumeExtID, geminiUsesAgy, claudeHookArgs)
+					retryArgs = mergeRuntimeMCPArgs(
+						rec.Runtime,
+						geminiUsesAgy,
+						buildTurnCLIArgsWithFast(rec.Runtime, mode, rec.ProviderID, modelID, effort, resumeExtID, geminiUsesAgy, fastMode, claudeHookArgs),
+						mcpArgs,
+					)
 					retryInput, _ = EncodeStreamInputTurnWithParts(inputRuntime, turnResumePrompt, nil)
 				}
 				emitMu.Unlock()
@@ -355,7 +385,12 @@ func (s *Service) startTurnProcessWithMode(
 					retryPrompt = sysPrefix + promptText
 				}
 				retryInput, _ := EncodeStreamInputTurnWithParts(inputRuntime, retryPrompt, deliveryParts)
-				retryArgs := buildTurnCLIArgs(rec.Runtime, mode, rec.ProviderID, modelID, effort, "", geminiUsesAgy, claudeHookArgs)
+				retryArgs := mergeRuntimeMCPArgs(
+					rec.Runtime,
+					geminiUsesAgy,
+					buildTurnCLIArgsWithFast(rec.Runtime, mode, rec.ProviderID, modelID, effort, "", geminiUsesAgy, fastMode, claudeHookArgs),
+					mcpArgs,
+				)
 				if started, retryWaitErr := s.runRetrySubprocess(rec, rawBinPath, retryArgs, procEnv, retryInput, ap, &stderrBuf, false, feedStdout); started {
 					waitErr = retryWaitErr
 					continue
@@ -479,7 +514,25 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]interface{}{"error": msg})
 }
 
+func turnstreamSupportsCodexFast(modelID string) bool {
+	lower := strings.ToLower(strings.TrimSpace(modelID))
+	return !strings.Contains(lower, "oss-") &&
+		!strings.Contains(lower, "nano") &&
+		!strings.Contains(lower, "mini")
+}
+
+func fastServiceTierValue(enabled bool) string {
+	if enabled {
+		return "fast"
+	}
+	return ""
+}
+
 func buildTurnCLIArgs(runtime, mode, providerID, modelID, effort, externalID string, geminiUsesAgy bool, claudeHookArgs []string) []string {
+	return buildTurnCLIArgsWithFast(runtime, mode, providerID, modelID, effort, externalID, geminiUsesAgy, false, claudeHookArgs)
+}
+
+func buildTurnCLIArgsWithFast(runtime, mode, providerID, modelID, effort, externalID string, geminiUsesAgy, fastMode bool, claudeHookArgs []string) []string {
 	switch runtime {
 	case string(RuntimeClaudeCode):
 		return append(BuildClaudeArgs(mode, modelID, effort, externalID), claudeHookArgs...)
@@ -494,7 +547,7 @@ func buildTurnCLIArgs(runtime, mode, providerID, modelID, effort, externalID str
 	case string(RuntimeQoder):
 		return BuildQoderArgs(mode, modelID, effort, externalID)
 	case string(RuntimeCodex):
-		return BuildCodexArgs(mode, modelID, effort, externalID)
+		return BuildCodexArgsWithFast(mode, modelID, effort, externalID, fastMode)
 	case string(RuntimeOpenCode):
 		return BuildOpenCodeCLIArgs(mode, providerID, modelID, effort, externalID)
 	default:

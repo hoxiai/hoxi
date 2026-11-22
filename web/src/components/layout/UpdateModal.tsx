@@ -1,7 +1,7 @@
 // web/src/components/layout/UpdateModal.tsx
-import { onCleanup, onMount, Show, type Accessor } from "solid-js";
+import { createSignal, onCleanup, onMount, Show, type Accessor } from "solid-js";
 import { Presence, type PresenceState } from "../motion/Presence";
-import { ArrowUpCircle, Download, ExternalLink, X } from "lucide-solid";
+import { ArrowUpCircle, Check, Copy, Download, ExternalLink, X } from "lucide-solid";
 import { Spinner } from "../icons";
 import UpdateProgressBar from "./UpdateProgressBar";
 import {
@@ -20,6 +20,7 @@ import {
 import { t } from "../../i18n";
 
 function UpdateDialog(props: { state: Accessor<PresenceState> }) {
+  const [copiedCmd, setCopiedCmd] = createSignal(false);
   onMount(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") closeDesktopUpdateModal();
@@ -87,6 +88,37 @@ function UpdateDialog(props: { state: Accessor<PresenceState> }) {
             <p class="text-[12px] leading-relaxed text-[var(--text-secondary)]">
               {t("header.updateNativeExplanation")}
             </p>
+          </Show>
+          <Show when={desktopUpdater.managedBy}>
+            <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/60 p-3 space-y-2 text-[12px] text-[var(--text-secondary)]">
+              <p class="leading-relaxed">
+                {t("header.updateManagedByNotice", { manager: desktopUpdater.managedBy || "" })}
+              </p>
+              <Show when={desktopUpdater.upgradeCommand}>
+                <div class="flex items-center justify-between gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1.5">
+                  <code class="font-mono text-[11.5px] text-[var(--text-primary)] truncate selectable-text">
+                    {desktopUpdater.upgradeCommand}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const cmd = desktopUpdater.upgradeCommand;
+                      if (cmd && navigator.clipboard) {
+                        void navigator.clipboard.writeText(cmd);
+                        setCopiedCmd(true);
+                        setTimeout(() => setCopiedCmd(false), 2000);
+                      }
+                    }}
+                    class="inline-flex shrink-0 items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:bg-[var(--bg-hover)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                  >
+                    <Show when={copiedCmd()} fallback={<Copy size={11} />}>
+                      <Check size={11} class="text-emerald-500" />
+                    </Show>
+                    <span>{t("header.updateCopyCommand")}</span>
+                  </button>
+                </div>
+              </Show>
+            </div>
           </Show>
           <Show when={desktopUpdater.draining}>
             <div role="status" class="rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 text-[11px] text-amber-600 dark:text-amber-400">

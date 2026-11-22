@@ -1,6 +1,36 @@
 package shellpolicy
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
+
+// HasRiskySearchSelector checks filename selectors in structured tool calls.
+// Grep's pattern matches file contents. Glob's pattern selects files.
+func HasRiskySearchSelector(tool string, args map[string]interface{}) bool {
+	keys := []string{"glob", "Glob", "include", "Include"}
+	tool = strings.ToLower(strings.TrimSpace(tool))
+	if tool != "grep" && tool != "search_file_content" {
+		keys = append(keys, "pattern", "Pattern")
+	}
+	for _, key := range keys {
+		for _, value := range stringList(args[key]) {
+			if strings.HasPrefix(value, `"`) && strings.HasSuffix(value, `"`) {
+				var decoded string
+				if json.Unmarshal([]byte(value), &decoded) != nil {
+					return true
+				}
+				value = strings.TrimSpace(decoded)
+			}
+			p := strings.ReplaceAll(value, `\`, "/")
+			if strings.HasPrefix(p, "/") || strings.HasPrefix(p, "~") || (len(p) >= 2 && p[1] == ':') ||
+				strings.Contains("/"+p+"/", "/../") || isSecretFilePathLexical(p) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // Check original spellings before shared permission helpers trim or resolve
 // them. Each narrow read exception supplies its own invalid-path predicate.

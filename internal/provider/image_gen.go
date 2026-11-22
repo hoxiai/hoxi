@@ -40,45 +40,70 @@ const (
 	maxImageResponseBytes    = 32 << 20
 )
 
-// IsImageModel reports whether providerID/modelID is an image generation model,
-// checking both canonical ID patterns and explicit model config modalities.
-func (s *Service) IsImageModel(providerID, modelID string) bool {
-	mid := strings.TrimSpace(modelID)
-	if mid == "" {
-		return false
-	}
-	if IsImageGenerationModel(mid, "", "") {
-		return true
-	}
+func (s *Service) lookupConfiguredModelObject(providerID, modelID string) map[string]interface{} {
 	pid := strings.TrimSpace(providerID)
-	if pid == "" || s == nil {
-		return false
+	mid := strings.TrimSpace(modelID)
+	if pid == "" || mid == "" || s == nil {
+		return nil
 	}
 	for _, src := range []map[string]interface{}{s.loadHoxiProvidersMap(), s.loadOpenCodeImportedProviderMap()} {
 		pObj, ok := src[pid].(map[string]interface{})
 		if !ok {
 			continue
 		}
-		mMap, ok := pObj["models"].(map[string]interface{})
-		if !ok {
-			continue
-		}
-		mObj, ok := mMap[mid].(map[string]interface{})
-		if !ok {
+		for _, mapKey := range []string{"models", "mediaModels"} {
+			mMap, ok := pObj[mapKey].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if mObj, ok := mMap[mid].(map[string]interface{}); ok && mObj != nil {
+				return mObj
+			}
 			for k, v := range mMap {
 				if strings.EqualFold(k, mid) {
-					mObj, _ = v.(map[string]interface{})
-					break
+					if mObj, ok := v.(map[string]interface{}); ok && mObj != nil {
+						return mObj
+					}
 				}
 			}
 		}
-		if mObj == nil {
-			continue
-		}
+	}
+	return nil
+}
+
+// IsImageModel reports whether providerID/modelID is a dedicated image generation model,
+// checking both canonical ID patterns and explicit model config modalities.
+func (s *Service) IsImageModel(providerID, modelID string) bool {
+	mid := strings.TrimSpace(modelID)
+	if mid == "" {
+		return false
+	}
+	if mObj := s.lookupConfiguredModelObject(providerID, mid); mObj != nil {
 		cat, _ := mObj["category"].(string)
+		normCat := normalizeModelCategory(cat)
+		if normCat == "chat" || normCat == "coding" {
+			return false
+		}
 		if IsImageGenerationModel(mid, cat, "") || hasImageOutputModality(mObj) {
 			return true
 		}
+	}
+	return IsImageGenerationModel(mid, "", "")
+}
+
+// CanModelGenerateImage reports whether providerID/modelID itself can natively
+// generate images (either as a dedicated image model or as a multimodal chat model
+// that explicitly advertises image output modality).
+func (s *Service) CanModelGenerateImage(providerID, modelID string) bool {
+	mid := strings.TrimSpace(modelID)
+	if mid == "" {
+		return false
+	}
+	if s.IsImageModel(providerID, mid) {
+		return true
+	}
+	if mObj := s.lookupConfiguredModelObject(providerID, mid); mObj != nil {
+		return hasImageOutputModality(mObj)
 	}
 	return false
 }
@@ -94,7 +119,7 @@ func (s *Service) resolveImageConnection(providerID, modelID string) (imageGenCo
 	if pid == "" || mid == "" {
 		return imageGenConn{}, llm.ErrUnavailable
 	}
-	baseURL, apiKey, npm, headers := s.resolveProviderConnection(pid, "", "")
+	baseURL, apiKey, npm, headers := s.resolveEffectiveProviderConnection(pid, "", "")
 	if modelURL, modelKey, modelNPM, modelHeaders := s.resolveOpenCodeLiveModelConfig(pid, mid); modelURL != "" || modelNPM != "" || len(modelHeaders) > 0 {
 		if baseURL == "" && modelURL != "" {
 			baseURL = s.localizeBridgeURL(modelURL)
@@ -265,6 +290,9 @@ func (s *Service) doJSONImageRequest(
 		return 0, nil, err
 	}
 	send := func(reqURL string, includeBearer bool) (int, []byte, error) {
+		if err := isBlockedMediaTargetURL(reqURL, conn.BaseURL); err != nil {
+			return 0, nil, err
+		}
 		ctx, cancel := context.WithTimeout(parentCtx, timeout)
 		defer cancel()
 		outReq, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(rawPayload))
@@ -274,7 +302,7 @@ func (s *Service) doJSONImageRequest(
 		outReq.Header.Set("Accept", "application/json")
 		outReq.Header.Set("Content-Type", "application/json")
 		applyImageAuthHeaders(outReq, conn, isGoogle, includeBearer)
-		client := &http.Client{Timeout: timeout, Transport: selectImageTransport(reqURL)}
+		client := newSafeVideoHTTPClient(timeout, reqURL, conn)
 		resp, err := client.Do(outReq)
 		if err != nil {
 			return 0, nil, errors.New(redactSecretInText(err.Error(), conn.APIKey))

@@ -43,18 +43,23 @@ func updateMutation(r *http.Request) bool {
 }
 
 func (g *Gateway) admitUpdateRequest(w http.ResponseWriter, r *http.Request) bool {
-	g.updateMu.Lock()
-	if !updateMutation(r) {
-		g.updateMu.Unlock()
+	if g.reserveUpdateRequest(r) {
 		return true
 	}
+	writeJSONError(w, http.StatusServiceUnavailable, "update in progress")
+	return false
+}
+
+func (g *Gateway) reserveUpdateRequest(r *http.Request) bool {
+	if !updateMutation(r) {
+		return true
+	}
+	g.updateMu.Lock()
+	defer g.updateMu.Unlock()
 	if g.updateDraining {
-		g.updateMu.Unlock()
-		writeJSONError(w, http.StatusServiceUnavailable, "update in progress")
 		return false
 	}
 	g.updateMutations++
-	g.updateMu.Unlock()
 	return true
 }
 

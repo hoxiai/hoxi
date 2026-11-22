@@ -96,6 +96,9 @@ type ProviderConfig interface {
 	PersistHoxiConfigDoc(doc map[string]interface{}) error
 	UpdateHoxiConfigDoc(mutate func(doc map[string]interface{}) error) error
 	ReloadOpenCodeGlobalConfig()
+	DisconnectProvider(providerID string) error
+	ClearDismissedExternalProviders(providerIDs ...string) error
+	IsExternalProviderDismissed(providerID string) bool
 }
 
 func NewService(openCodePort int, password, rootDir string, providers ProviderConfig) *Service {
@@ -230,12 +233,26 @@ func (g *Service) syncCodexCredential() {
 	}
 }
 
+// NotifyProviderDisconnected clears cached sync fingerprints when a provider
+// imported from a local CLI is disconnected, allowing clean re-import/re-sync.
+func (g *Service) NotifyProviderDisconnected(providerID string) {
+	if g == nil {
+		return
+	}
+	if strings.TrimSpace(providerID) == "openai" {
+		g.credSyncMu.Lock()
+		g.codexAuthApplied = ""
+		g.credSyncMu.Unlock()
+	}
+}
+
 func (g *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/handoff/sessions", g.handleHandoffSessions)
 	mux.HandleFunc("/api/hoxi/handoff/preview", g.handleHandoffPreview)
 	mux.HandleFunc("/api/hoxi/handoff/import", g.handleHandoffImport)
 	mux.HandleFunc("/api/hoxi/local-cli/status", g.handleLocalCLIStatus)
-	mux.HandleFunc("/api/hoxi/local-cli/import", g.handleLocalCLIImport)
+	mux.HandleFunc("/api/hoxi/local-cli/import", g.handleLocalCLIImportRoute)
+	mux.HandleFunc("/api/hoxi/local-cli/disconnect", g.handleLocalCLIDisconnect)
 	mux.HandleFunc("/api/hoxi/bridge/grok-cli/", g.handleGrokCLIBridge)
 	mux.HandleFunc("/api/hoxi/bridge/gemini-antigravity/", g.handleAntigravityCLIBridge)
 	mux.HandleFunc("/api/hoxi/bridge/claude-code/", g.handleClaudeCLIBridge)
@@ -558,6 +575,27 @@ func (g *Service) reloadOpenCodeGlobalConfig() {
 	if g.providers != nil {
 		g.providers.ReloadOpenCodeGlobalConfig()
 	}
+}
+
+func (g *Service) disconnectProvider(providerID string) error {
+	g.NotifyProviderDisconnected(providerID)
+	if g.providers == nil {
+		return nil
+	}
+	return g.providers.DisconnectProvider(providerID)
+}
+
+func (g *Service) clearDismissedExternalProviders(providerIDs ...string) {
+	if g.providers != nil && len(providerIDs) > 0 {
+		_ = g.providers.ClearDismissedExternalProviders(providerIDs...)
+	}
+}
+
+func (g *Service) isExternalProviderDismissed(providerID string) bool {
+	if g.providers == nil {
+		return false
+	}
+	return g.providers.IsExternalProviderDismissed(providerID)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

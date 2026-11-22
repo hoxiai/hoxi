@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -35,7 +36,7 @@ func (d *geminiDriver) BuildRequest(req ModelRequest) (llm.StreamHTTPRequest, er
 		for _, b := range m.Content {
 			switch b.Type {
 			case ContentThinking:
-				if b.Text != "" && b.Signature != "" {
+				if b.Signature != "" {
 					parts = append(parts, map[string]any{
 						"text":             b.Text,
 						"thought":          true,
@@ -87,8 +88,8 @@ func (d *geminiDriver) BuildRequest(req ModelRequest) (llm.StreamHTTPRequest, er
 	}
 
 	payload := map[string]any{"contents": contents}
-	if strings.TrimSpace(req.System) != "" {
-		payload["systemInstruction"] = map[string]any{"parts": []map[string]string{{"text": req.System}}}
+	if fullSystem := appendSystemPromptSuffix(req.System, req.SystemSuffix); strings.TrimSpace(fullSystem) != "" {
+		payload["systemInstruction"] = map[string]any{"parts": []map[string]string{{"text": fullSystem}}}
 	}
 	generation := map[string]any{}
 	if req.MaxTokens > 0 {
@@ -113,11 +114,10 @@ func (d *geminiDriver) BuildRequest(req ModelRequest) (llm.StreamHTTPRequest, er
 	if err != nil {
 		return llm.StreamHTTPRequest{}, err
 	}
-	return llm.StreamHTTPRequest{Target: req.Target, Body: raw}, nil
+	return llm.StreamHTTPRequest{Target: req.Target, Body: raw, SessionID: effectiveModelCacheKey(req)}, nil
 }
 
 func (d *geminiDriver) ParseSSE(ctx context.Context, body io.Reader, emit func(StreamEvent)) error {
-	callSeq := 0
 	thoughtBlockIdx := 1
 	thoughtOpen := false
 	var usage TokenUsage
@@ -170,7 +170,6 @@ func (d *geminiDriver) ParseSSE(ctx context.Context, body io.Reader, emit func(S
 				}
 				sig, _ := part["thoughtSignature"].(string)
 				if fc, ok := part["functionCall"].(map[string]any); ok {
-					callSeq++
 					name, _ := fc["name"].(string)
 					if strings.TrimSpace(name) == "" {
 						continue
@@ -182,7 +181,7 @@ func (d *geminiDriver) ParseSSE(ctx context.Context, body io.Reader, emit func(S
 					emit(StreamEvent{
 						Kind: EventToolCallReady,
 						ToolCall: &ToolCall{
-							ID:        fmt.Sprintf("call_gem_%d", callSeq),
+							ID:        "call_gem_" + rand.Text(),
 							Name:      name,
 							Input:     argsRaw,
 							Signature: sig,
@@ -225,12 +224,15 @@ func (d *geminiDriver) ParseSSE(ctx context.Context, body io.Reader, emit func(S
 	if !sawTerminal {
 		return ErrIncompleteStream
 	}
-	if usage.Input > 0 || usage.Output > 0 {
+	if usage.Input > 0 || usage.Output > 0 || usage.CacheRead > 0 || usage.CacheWrite > 0 || usage.Reasoning > 0 {
 		emit(StreamEvent{Kind: EventUsage, Usage: &usage})
 	}
 	outFinish := "stop"
-	if strings.EqualFold(finishReason, "MAX_TOKENS") {
+	switch strings.ToUpper(strings.TrimSpace(finishReason)) {
+	case "MAX_TOKENS":
 		outFinish = "length"
+	case "SAFETY", "RECITATION", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "IMAGE_SAFETY":
+		outFinish = "content_filter"
 	}
 	emit(StreamEvent{Kind: EventFinish, Finish: outFinish})
 	return nil

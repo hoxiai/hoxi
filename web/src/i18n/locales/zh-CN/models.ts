@@ -82,6 +82,12 @@ export const models: ModelsI18n = {
   disconnect: "断开连接",
   disconnectConfirmTitle: "断开 {name}？",
   disconnectConfirmBody: "将从本机移除该服务商的凭据与配置，使用它的模型需要重新选择",
+  deleteProvider: "删除",
+  deleteProviderConfirmTitle: "删除 {name}？",
+  deleteProviderConfirmBody: "将从本机 Hoxi 移除该服务商的凭据与配置，后续可随时重新连接或重新导入",
+  removeImportedProvider: "移除",
+  removeImportedConfirmTitle: "从 Hoxi 移除 {name}？",
+  removeImportedConfirmBody: "仅从 Hoxi 移除此导入项，不会修改外部 OpenCode 配置文件，后续可随时重新导入",
   disconnectFailed: "断开服务商失败，请重试",
   providerActionFailed: "更新服务商失败，请重试",
   gatewaysLoadError: "无法加载推荐供应商，请检查网络后重试",
@@ -246,6 +252,24 @@ export const models: ModelsI18n = {
   compactionModelTitle: "上下文压缩模型",
   compactionModelDesc:
     "压缩会话上下文与整理记忆时使用的模型",
+  mediaRolesSectionTitle: "多模态生成与语音默认模型",
+  mediaRolesSectionDesc:
+    "任务优先自检当前对话模型的原生能力；若不支持则优先使用此处指定的模型（未指定时自动择优）",
+  mediaRoleAutoBestOption: "自动选择最优可用模型",
+  mediaRoleUnconfiguredBadge: "尚未配置本地模型",
+  mediaRoleConfigureBtn: "去配置服务商",
+  imageRoleModelTitle: "默认图片生成模型",
+  imageRoleModelDesc:
+    "当前会话模型无原生生图能力时，hoxi_image 默认使用的生图模型",
+  videoRoleModelTitle: "默认视频生成模型",
+  videoRoleModelDesc:
+    "当前会话模型无原生生视频能力时，hoxi_video 默认使用的视频模型",
+  speechRoleModelTitle: "默认语音合成（TTS）模型",
+  speechRoleModelDesc:
+    "hoxi_speech 生成配音与口播音频时默认使用的语音模型",
+  transcribeRoleModelTitle: "默认语音转写（ASR）模型",
+  transcribeRoleModelDesc:
+    "输入框语音听写与音频附件转文字时默认使用的识别模型",
   modeModelsTitle: "按模式指定模型",
   modeModelsDesc:
     "分别为构建模式或规划模式绑定独立模型",
@@ -464,4 +488,9 @@ export const models: ModelsI18n = {
   categoryEmbedding: "向量嵌入",
   subagentsBindEconomyBtn: "一键为只读子代理绑定轻量模型 ({model})",
   subagentsBindEconomyDone: "已为只读探索子代理绑定 {model}",
+  fastModeLabel: "极速",
+  fastModeActiveBadge: "极速 2x",
+  fastModeTooltip: "高速优先推理通道：同智商不降级，输出最高提速 2.5 倍（约 2 倍费用或配额消耗，仅主会话前台交互生效）",
+  fastModeUnsupportedTooltip: "当前所选模型或自定义端点不支持极速通道",
+  hoverFastModeLabel: "推理通道",
 };

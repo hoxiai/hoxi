@@ -14,6 +14,7 @@ import {
   workspace,
   workspaceDisplayName,
 } from "../../store/workspace";
+import { surfaceExtension } from "./surface-extension";
 import { buildAllProjects, FolderIcon } from "./left-nav-helpers";
 
 export function folderBaseName(p: string): string {
@@ -91,16 +92,23 @@ export function DeleteWorkspaceModalView(props: {
 }
 
 export function ManageWorkspacesModalView() {
-  const allManagedWorkspaces = createMemo(() =>
-    buildAllProjects(surfaceMode()).map((entry) => ({
-      key: entry.workspaceId || entry.path,
-      id: entry.workspaceId,
-      name: entry.name,
-      color: entry.color || DEFAULT_WORKSPACE_IDENTITY_COLOR,
-      primaryDir: entry.path,
-      folders: entry.folders,
-    }))
-  );
+  const allManagedWorkspaces = createMemo(() => {
+    const mode = surfaceMode();
+    return buildAllProjects(mode)
+      .filter((entry) =>
+        mode !== "work" || !surfaceExtension.isWorkspaceVisible
+          ? true
+          : surfaceExtension.isWorkspaceVisible(entry.path)
+      )
+      .map((entry) => ({
+        key: entry.workspaceId || entry.path,
+        id: entry.workspaceId,
+        name: entry.name,
+        color: entry.color || DEFAULT_WORKSPACE_IDENTITY_COLOR,
+        primaryDir: entry.path,
+        folders: entry.folders,
+      }));
+  });
 
   return (
     <div class="w-full max-w-[480px] rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#16161A] hoxi-modal-panel hoxi-elevation-4 overflow-hidden">
@@ -115,7 +123,10 @@ export function ManageWorkspacesModalView() {
         </div>
         <button
           type="button"
-          onClick={() => openCreateWorkspaceModal()}
+          onClick={() => {
+            if (surfaceMode() === "work") surfaceExtension.onCreateWorkspaceIntent?.();
+            openCreateWorkspaceModal();
+          }}
           class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[12px] font-medium bg-[var(--accent-primary)] hover:opacity-90 text-[var(--accent-foreground)] transition-opacity"
         >
           + {t("leftNav.newWorkspace")}

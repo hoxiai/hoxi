@@ -7,8 +7,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
+
+	"github.com/hoxiai/hoxi/internal/runner/shellpolicy"
 )
 
 // PreToolUse covers every agy tool since the hooks.json matcher is "*".
@@ -93,12 +94,47 @@ func hookToolActionWithArgs(name string, args map[string]interface{}) string {
 	return hookActionUnknown
 }
 
+// Refuse the opaque script and let agy retry using its scoped file tools.
+// Repeating the same script in a new tool call requests normal human review.
+func (s *Service) discoveryReadHint(cred hookCredential, rec SessionRecord, ask approvalAsk, guardKey string) string {
+	if cred.discoveryReadHints == nil || ask.callID == "" || !strings.Contains(ask.command, "readdirSync") {
+		return ""
+	}
+	policy := s.ApprovalPolicy()
+	if policy.Mode != ApprovalModeAuto || policy.EffectiveRule(permissionCategoryBash) != "allow" {
+		return ""
+	}
+	dir := shellpolicy.InlineDiscoveryDirectory(ask.command, s.currentPermissionRules()[permissionCategoryBash])
+	if dir == "" || s.gate.hasAlways(cred.sessionID, ask.command) || isDestructivePermissionRequest(openCodeBashItem(cred.sessionID, ask.command)) {
+		return ""
+	}
+	root := rec.WorktreePath
+	cwd := firstNonEmptyStr(ask.cwd, root)
+	target := filepath.Join(cwd, dir)
+	if !pathWithin(root, cwd) || !pathWithin(root, target) || isProtectedWorktreePath(root, target) || isSecretFilePath(target) {
+		return ""
+	}
+	hash := sha256.Sum256([]byte(guardKey + "\x00" + target + "\x00" + ask.command))
+	s.gate.mu.Lock()
+	defer s.gate.mu.Unlock()
+	firstCall, seen := cred.discoveryReadHints[hash]
+	// Keep redelivery idempotent and parallel lookups independent. At capacity
+	// subsequent lookups take the existing human approval path.
+	if (seen && firstCall != ask.callID) || (!seen && len(cred.discoveryReadHints) >= 64) {
+		return ""
+	}
+	cred.discoveryReadHints[hash] = ask.callID
+	return "Hoxi did not execute this script because the file to read is selected at runtime. " +
+		"Use list_dir or find_by_name on the directory from the command, then search or read the selected file with its exact path using grep_search or view_file. " +
+		"If these tools cannot produce the required result or the original script is required, repeat the identical command to request user approval."
+}
+
 // isReadToolAllowedInWorktree reports whether a read-class tool may be
 // auto-approved without prompting. Path-scoped filesystem inspection tools
 // must carry a path inside the session worktree; any other read tool that
 // carries a path argument must also stay inside the worktree.
 func isReadToolAllowedInWorktree(worktree, tool string, args map[string]interface{}) bool {
-	if hasEscapingSearchPattern(args) {
+	if hasRiskySearchSelector(tool, args) {
 		return false
 	}
 	if multi := stringList(args["paths"]); len(multi) > 0 {
@@ -116,25 +152,6 @@ func isReadToolAllowedInWorktree(worktree, tool string, args map[string]interfac
 		return path != "" && pathWithin(worktree, path)
 	}
 	return path == "" || pathWithin(worktree, path)
-}
-
-func hasEscapingSearchPattern(args map[string]interface{}) bool {
-	for _, k := range []string{"pattern", "Pattern", "glob", "Glob", "Include", "include"} {
-		p := strings.TrimSpace(firstString(args[k]))
-		if len(p) >= 2 && p[0] == '"' && p[len(p)-1] == '"' {
-			if unquoted, err := strconv.Unquote(p); err == nil {
-				p = strings.TrimSpace(unquoted)
-			}
-		}
-		if p == "" {
-			continue
-		}
-		if strings.HasPrefix(p, "/") || strings.HasPrefix(p, "~") || p == ".." ||
-			strings.HasPrefix(p, "../") || strings.Contains(p, "/../") || strings.HasSuffix(p, "/..") {
-			return true
-		}
-	}
-	return false
 }
 
 // resolveHookToolPath normalizes the file args agy uses across read/write
@@ -297,7 +314,7 @@ func pathWithinAgyOwnBrain(activeConvID, target string) bool {
 }
 
 func isReadToolAllowedInAgyOwnBrain(worktree, activeConvID, tool string, args map[string]interface{}) bool {
-	if activeConvID == "" || hasEscapingSearchPattern(args) {
+	if activeConvID == "" || hasRiskySearchSelector(tool, args) {
 		return false
 	}
 	if multi := stringList(args["paths"]); len(multi) > 0 {
@@ -340,7 +357,7 @@ func (s *Service) inspectHookToolRiskIn(sessionID, tool, cwd string, args map[st
 	if lowerTool == "unsandboxed" {
 		destructive = true
 	}
-	if hasEscapingSearchPattern(args) {
+	if hasRiskySearchSelector(lowerTool, args) {
 		externalDir = true
 		destructive = true
 	}
@@ -385,24 +402,25 @@ func (s *Service) inspectHookToolRiskIn(sessionID, tool, cwd string, args map[st
 			}
 		}
 	}
-	if multi := stringList(args["paths"]); len(multi) > 1 {
-		for _, p := range multi[1:] {
-			subResolved := resolveHookToolPath(baseDir, map[string]interface{}{"path": p})
-			subOut := subResolved
-			if subOut == "" {
-				subOut = p
+	for _, p := range stringList(args["paths"]) {
+		if p == rawPath {
+			continue // already checked as the primary path above
+		}
+		subResolved := resolveHookToolPath(baseDir, map[string]interface{}{"path": p})
+		subOut := subResolved
+		if subOut == "" {
+			subOut = p
+		}
+		if !hookOwnSessionRead(s, sessionID, lowerTool, subOut, p) {
+			if isRiskyPath(subOut) || isRiskyPath(p) {
+				destructive = true
+				filepathOut = subOut
 			}
-			if !hookOwnSessionRead(s, sessionID, lowerTool, subOut, p) {
-				if isRiskyPath(subOut) || isRiskyPath(p) {
-					destructive = true
-					filepathOut = subOut
-				}
-			}
-			if worktree != "" && subResolved != "" && !pathWithin(worktree, subResolved) {
-				externalDir = true
-				if filepathOut == resolved {
-					filepathOut = subResolved
-				}
+		}
+		if worktree != "" && subResolved != "" && !pathWithin(worktree, subResolved) {
+			externalDir = true
+			if filepathOut == resolved {
+				filepathOut = subResolved
 			}
 		}
 	}
@@ -532,11 +550,11 @@ func summarizeHookToolAction(tool string, args map[string]interface{}) string {
 			return redactApprovalText(strings.TrimSpace(strings.Join([]string{method, prof, ep}, " ")), 120)
 		}
 		return act
-	case "hoxi_image":
+	case "hoxi_image", "hoxi_video", "hoxi_speech":
 		if out := strings.TrimSpace(firstString(args["outputPath"])); out != "" {
 			return redactApprovalText(out, 120)
 		}
-		return redactApprovalText(strings.TrimSpace(firstString(args["prompt"])), 80)
+		return redactApprovalText(strings.TrimSpace(firstNonEmptyStr(firstString(args["prompt"]), firstString(args["text"]))), 80)
 	default:
 		return ""
 	}

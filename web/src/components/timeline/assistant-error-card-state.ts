@@ -34,6 +34,7 @@ export interface ErrorCardViewInput {
   hasSelectedModel: boolean;
   hasFallbackModel: boolean;
   isAuthError?: boolean;
+  isNetworkError?: boolean;
   isProviderDegraded?: boolean;
   configOpened?: boolean;
   rawErrorName?: string;
@@ -50,6 +51,7 @@ export interface ErrorCardViewState {
   tone: "notice" | "danger";
   title: string;
   message: string;
+  rawDetails?: string;
   monoMessage: boolean;
   showStatusCode: boolean;
   showHealthBadge: boolean;
@@ -221,6 +223,19 @@ export function resolveErrorCardViewState(input: ErrorCardViewInput): ErrorCardV
         actions.push({ id: "diagnostics", primary: false });
       } else {
         actions.push({ id: "diagnostics", primary: false });
+      }
+
+      if (input.isNetworkError && !input.isAuthError) {
+        return {
+          tone: "notice",
+          title: t("timeline.networkErrorTitle"),
+          message: t("timeline.networkErrorMessage"),
+          rawDetails: input.rawErrorMessage || undefined,
+          monoMessage: false,
+          showStatusCode: true,
+          showHealthBadge: true,
+          actions,
+        };
       }
 
       return {

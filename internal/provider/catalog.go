@@ -43,7 +43,7 @@ func (g *Service) handleModelCatalog(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, modelCatalog{Source: "engine", Providers: providers})
 		return
 	}
-	writeJSON(w, http.StatusOK, modelCatalog{Source: "config", Providers: configModelCatalog(hoxiMap, importedMap, unrevokedAuthProviderIDs(), disabled)})
+	writeJSON(w, http.StatusOK, modelCatalog{Source: "config", Providers: configModelCatalog(hoxiMap, importedMap, g.unrevokedAuthProviderIDs(), disabled)})
 }
 
 // engineModelCatalog lists the engine's connected providers plus any locally
@@ -53,6 +53,7 @@ func (g *Service) engineModelCatalog(parent context.Context, hoxiMap, importedMa
 	if !g.openCode.Available() {
 		return nil, false
 	}
+	dismissed := g.dismissedExternalProvidersSet()
 	ctx, cancel := context.WithTimeout(parent, 8*time.Second)
 	defer cancel()
 	status, body, err := g.openCode.Raw(ctx, http.MethodGet, "/provider", nil, nil)
@@ -82,6 +83,9 @@ func (g *Service) engineModelCatalog(parent context.Context, hoxiMap, importedMa
 		}
 		hProv, inHoxi := hoxiMap[pid].(map[string]interface{})
 		iProv, inImported := importedMap[pid].(map[string]interface{})
+		if (dismissed[pid] || dismissed[strings.ToLower(pid)]) && !inHoxi && !hasHoxiEngineAuthEntry(pid) {
+			continue
+		}
 		if !connected[pid] && !inHoxi && !inImported {
 			continue
 		}

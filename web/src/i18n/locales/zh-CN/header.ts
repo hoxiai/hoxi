@@ -89,6 +89,9 @@ export const header: HeaderI18n = {
   updateSpeedEtaMinutes: "{speed} · 预计剩余 {minutes} 分钟",
   updateSlowHint: "当前从发布源下载较慢，Hoxi 会在后台继续下载；你也可以点击下方手动下载按钮，使用浏览器或下载工具安装",
   updateNativeExplanation: "在应用内下载并安装更新；安装期间暂停新任务",
+  updateManagedByNotice: "当前安装由 {manager} 托管，请使用包管理器升级以避免覆盖受管文件",
+  updateCopyCommand: "复制升级命令",
+  updateCommandCopied: "已复制升级命令",
   updateRestartRequired: "需要重启",
   updateDrainingNotice: "更新完成并重启 Hoxi 前，新任务将暂停",
   updateInstallFailed: "无法打开原生更新器",
@@ -132,8 +135,4 @@ export const header: HeaderI18n = {
   pulseNoModelActivity: "今日暂无模型调用记录",
   pulseConnectedProviders: "已连接 {count} 个服务商",
   pulseViewUsageHistory: "查看完整用量历史",
-  pulseMatrixTitle: "HQ 全矩阵看板",
-  pulseMatrixSummary: "{total} 项目 · {sandboxes} 沙盒",
-  pulseMatrixBlocked: "{count} 阻塞 ({names})",
-  pulseMatrixAllClear: "0 阻塞 · 全部就绪",
 };

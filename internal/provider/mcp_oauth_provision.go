@@ -165,6 +165,7 @@ func (g *Service) persistMCPOAuthProvisioning(
 	g.normalizeAndStoreMultiKeys(pid, nextProv)
 	hoxiMap[pid] = nextProv
 	doc["provider"] = hoxiMap
+	g.clearProviderSuppressionLocked(doc, pid)
 
 	if strings.TrimSpace(mcpURL) != "" && strings.TrimSpace(accessToken) != "" {
 		mcpMap, _ := doc["mcp"].(map[string]interface{})

@@ -349,7 +349,7 @@ func (m sessionNativeBgManager) Start(ctx context.Context, dir, command string) 
 
 	cmd := subproc.Command(bin, args...)
 	cmd.Dir = workDir
-	cmd.Env = nativeSubprocessEnv(rec)
+	cmd.Env = s.applySessionBundleEnv(rec, nativeSubprocessEnv(rec))
 	setProcessGroup(cmd)
 
 	outR, outW, err := os.Pipe()

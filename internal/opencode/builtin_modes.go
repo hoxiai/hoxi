@@ -3,6 +3,9 @@ package opencode
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
+
+	"github.com/hoxiai/hoxi/internal/llm"
 )
 
 // builtinMode is a Hoxi-owned OpenCode agent. Hoxi injects these through the
@@ -57,7 +60,34 @@ func mergeBuiltinModes(config map[string]json.RawMessage) error {
 			return fmt.Errorf("OPENCODE_CONFIG_CONTENT agent must be an object")
 		}
 	}
-	for _, mode := range builtinModes {
+	modes := append([]builtinMode(nil), builtinModes...)
+	for _, spec := range llm.ExtraBuiltinAgents() {
+		if spec.Mode != "primary" && spec.Mode != "all" {
+			continue
+		}
+		name := strings.TrimSpace(spec.Name)
+		if name == "" || strings.EqualFold(name, "build") || strings.EqualFold(name, "plan") ||
+			strings.EqualFold(name, "ask") || strings.EqualFold(name, "debug") {
+			continue
+		}
+		var perm map[string]string
+		if spec.ReadOnly {
+			perm = map[string]string{
+				"edit":          "deny",
+				"bash":          "deny",
+				"hoxi_browser":  "deny",
+				"hoxi_computer": "deny",
+				"hoxi_tools":    "deny",
+			}
+		}
+		modes = append(modes, builtinMode{
+			Name:        name,
+			Description: spec.Description,
+			Prompt:      spec.Prompt,
+			Permission:  perm,
+		})
+	}
+	for _, mode := range modes {
 		entry := map[string]json.RawMessage{}
 		if raw, exists := agents[mode.Name]; exists {
 			if err := json.Unmarshal(raw, &entry); err != nil || entry == nil {

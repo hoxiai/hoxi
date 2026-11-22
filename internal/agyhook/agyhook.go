@@ -20,6 +20,13 @@ const (
 	EnvSessionID = "HOXI_RUNNER_SESSION_ID"
 	EnvHookURL   = "HOXI_HOOK_URL"
 	EnvHookToken = "HOXI_HOOK_TOKEN"
+	EnvHookBin   = "HOXI_HOOK_BIN"
+
+	// MissingBinaryReason is returned as a fail-closed deny reason when a Hoxi
+	// runner session triggers the shell hook but no Hoxi binary exists on disk.
+	// Kept free of shell/cmd metacharacters so both POSIX sh and Windows cmd
+	// can emit it verbatim inside JSON.
+	MissingBinaryReason = "Hoxi approval hook executable not found; restart Hoxi or reinstall the hook in Settings"
 
 	// HeaderSession carries the runner session ID next to the bearer token.
 	HeaderSession = "X-Hoxi-Runner-Session"

@@ -1,9 +1,20 @@
 import { reconcile, unwrap } from "solid-js/store";
+import { surfaceExtension as coreSurfaceExtensionStub } from "../components/layout/surface-extension";
 import { hoxiAPI } from "../services/api";
-import { loadAgents, setWorkspace, submitSessionPrompt, workspace } from "../store/workspace";
+import { DEFAULT_AGENTS, loadAgents, setWorkspace, submitSessionPrompt, workspace } from "../store/workspace";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
 describe("custom agents and /compact slash command", () => {
+  it("keeps DEFAULT_AGENTS free of extension-only modes for open-source builds", () => {
+    assertEqual(
+      DEFAULT_AGENTS.some((a) => a.extension === true),
+      false,
+      "open-source DEFAULT_AGENTS must not include extension-only modes"
+    );
+    if (!coreSurfaceExtensionStub.enabled) {
+      assertEqual(coreSurfaceExtensionStub.extraPrimaryModes, undefined);
+    }
+  });
   it("includes mode='all' custom Markdown agents in workspace.agents while filtering subagents and hidden entries", async () => {
     const savedWorkspace = structuredClone(unwrap(workspace));
     const origListAgents = hoxiAPI.listAgents;

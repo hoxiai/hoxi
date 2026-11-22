@@ -1,0 +1,180 @@
+package gateway
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"testing/fstest"
+
+	"github.com/hoxiai/hoxi/internal/intake"
+	"github.com/hoxiai/hoxi/internal/runner"
+)
+
+func TestIntakePortalIsolationAndSanitizedTimeline(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOXI_HOME", filepath.Join(tmp, "hoxi-home"))
+	proj := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	distFS := fstest.MapFS{
+		"index.html":        &fstest.MapFile{Data: []byte("<!doctype html><html><body>Hoxi QA</body></html>")},
+		"assets/app-123.js": &fstest.MapFile{Data: []byte("console.log('bundle');")},
+		"secret.txt":        &fstest.MapFile{Data: []byte("not-an-asset")},
+	}
+	gw := New(0, "test-pass", proj, distFS, nil)
+	t.Cleanup(gw.CloseBrowser)
+
+	// 1. Desktop creates a tester intake link for proj.
+	createBody, _ := json.Marshal(intake.CreateLinkInput{
+		Directory: proj,
+		Label:     "兼职测试小张",
+	})
+	linkReq := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/hoxi/intake/links", bytes.NewReader(createBody))
+	linkRec := httptest.NewRecorder()
+	gw.ServeHTTP(linkRec, linkReq)
+	if linkRec.Code != http.StatusOK {
+		t.Fatalf("desktop link create failed: %d %s", linkRec.Code, linkRec.Body.String())
+	}
+	var pubLink intake.PublicLink
+	if err := json.Unmarshal(linkRec.Body.Bytes(), &pubLink); err != nil {
+		t.Fatal(err)
+	}
+	qaToken := strings.TrimPrefix(pubLink.PortalPath, "/qa/")
+
+	// 2. Ingress (:5418 Cloudflare Tunnel) serves /qa/<token> and /assets/*,
+	//    but refuses arbitrary static paths (/secret.txt) and malformed /qa/ paths.
+	pageReq := httptest.NewRequest(http.MethodGet, "https://qa.example.com"+pubLink.PortalPath, nil)
+	pageRec := httptest.NewRecorder()
+	gw.ServeIngressRequest(pageRec, pageReq)
+	if pageRec.Code != http.StatusOK || !strings.Contains(pageRec.Body.String(), "Hoxi QA") {
+		t.Fatalf("expected /qa/<token> SPA shell 200, got %d %s", pageRec.Code, pageRec.Body.String())
+	}
+
+	assetReq := httptest.NewRequest(http.MethodGet, "https://qa.example.com/assets/app-123.js", nil)
+	assetRec := httptest.NewRecorder()
+	gw.ServeIngressRequest(assetRec, assetReq)
+	if assetRec.Code != http.StatusOK || !strings.Contains(assetRec.Body.String(), "bundle") {
+		t.Fatalf("expected /assets/* 200, got %d", assetRec.Code)
+	}
+
+	nonAssetReq := httptest.NewRequest(http.MethodGet, "https://qa.example.com/secret.txt", nil)
+	nonAssetRec := httptest.NewRecorder()
+	gw.ServeIngressRequest(nonAssetRec, nonAssetReq)
+	if nonAssetRec.Code == http.StatusOK {
+		t.Fatalf("non-asset path must not be exposed publicly on ingress")
+	}
+
+	// 3. Tester token CANNOT reach desktop intake management, /file/content, /sessions, or /pty over Ingress or LAN!
+	forbiddenPaths := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/hoxi/intake/links"},
+		{http.MethodGet, "/api/hoxi/intake/tasks"},
+		{http.MethodPost, "/api/hoxi/intake/tasks/approve"},
+		{http.MethodGet, "/api/hoxi/file/content?path=" + proj + "/main.go"},
+		{http.MethodGet, "/api/hoxi/sessions"},
+		{http.MethodPost, "/api/hoxi/pty"},
+	}
+	for _, tc := range forbiddenPaths {
+		req := httptest.NewRequest(tc.method, "https://qa.example.com"+tc.path, nil)
+		req.Header.Set("Authorization", "Bearer "+qaToken)
+		req.Header.Set("X-Hoxi-Intake-Token", qaToken)
+		rec := httptest.NewRecorder()
+		gw.ServeIngressRequest(rec, req)
+		if rec.Code != http.StatusUnauthorized && rec.Code != http.StatusForbidden {
+			t.Fatalf("tester token must be rejected on %s %s, got %d", tc.method, tc.path, rec.Code)
+		}
+	}
+
+	// GoPanel tunnel callers also get 403 on intake routes.
+	tunRec := httptest.NewRecorder()
+	gw.serveTunnelRequest(tunRec, httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/hoxi/intake/links", nil))
+	if tunRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for tunnel caller on /api/hoxi/intake/links, got %d", tunRec.Code)
+	}
+
+	// 4. Tester submits staged task via Ingress -> succeeds and stays staged.
+	submitBody, _ := json.Marshal(intake.SubmitTaskInput{
+		Title:       "按钮点击无响应",
+		Description: "在登录弹窗点确认按钮没有反应",
+	})
+	subReq := httptest.NewRequest(http.MethodPost, "https://qa.example.com/api/hoxi/intake/portal/tasks", bytes.NewReader(submitBody))
+	subReq.Header.Set("X-Hoxi-Intake-Token", qaToken)
+	subRec := httptest.NewRecorder()
+	gw.ServeIngressRequest(subRec, subReq)
+	if subRec.Code != http.StatusOK {
+		t.Fatalf("portal submit failed: %d %s", subRec.Code, subRec.Body.String())
+	}
+
+	// 5. Verify gatewayIntakeSessions.SanitizedTimeline strips reasoning, raw tool output/diffs, and code blocks.
+	info, _, err := gw.runner.CreateConversation(t.Context(), runner.CreateSessionRequest{
+		Title:       "QA Fix",
+		Directory:   proj,
+		SandboxMode: "local",
+	}, proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw.runner.Store().Update(info.ID, func(rec *runner.SessionRecord) {
+		rec.Turns = []runner.MessageTurn{{
+			Info: runner.MessageInfo{ID: "msg_a1", SessionID: info.ID, Role: "assistant"},
+			Parts: []runner.MessagePart{
+				{
+					ID:   "prt_reason",
+					Type: "reasoning",
+					Text: "Let me inspect secret token SECRET_INTERNAL_REASONING in auth.go",
+				},
+				{
+					ID:   "prt_tool",
+					Type: "tool",
+					Tool: "edit_file",
+					State: &runner.ToolState{
+						Status:   "completed",
+						Input:    map[string]interface{}{"Path": proj + "/src/LoginModal.tsx", "Replacement": "const TOP_SECRET = 1;"},
+						Output:   "diff --git a/LoginModal.tsx ... const TOP_SECRET = 1;",
+						Metadata: map[string]interface{}{"diff": "+const TOP_SECRET = 1;"},
+					},
+				},
+				{
+					ID:   "prt_text",
+					Type: "text",
+					Text: "已修复按钮事件绑定：\n```tsx\nconst TOP_SECRET = 1;\n```\n请重新点击确认按钮复测。",
+				},
+			},
+		}}
+	})
+
+	bridge := &gatewayIntakeSessions{runner: gw.runner}
+	tl, ok := bridge.SanitizedTimeline(info.ID)
+	if !ok {
+		t.Fatal("expected timeline found")
+	}
+	encodedTL, _ := json.Marshal(tl)
+	rawJSON := string(encodedTL)
+	for _, forbidden := range []string{"SECRET_INTERNAL_REASONING", "TOP_SECRET", proj} {
+		if strings.Contains(rawJSON, forbidden) {
+			t.Fatalf("sanitized timeline leaked %q: %s", forbidden, rawJSON)
+		}
+	}
+	if !strings.Contains(rawJSON, "修改 LoginModal.tsx") || !strings.Contains(rawJSON, "请重新点击确认按钮复测") {
+		t.Fatalf("expected sanitized step and summary in timeline, got: %s", rawJSON)
+	}
+
+	// 6. EnsureSession must refuse non-Git directories rather than falling back to unisolated local mode.
+	if _, ensureErr := bridge.EnsureSession(t.Context(), intake.RunSessionRequest{
+		Directory: proj,
+		Title:     "QA Unisolated Check",
+		Prompt:    "fix",
+		Mode:      "build",
+	}); ensureErr == nil || !strings.Contains(ensureErr.Error(), "isolated worktree") {
+		t.Fatalf("expected EnsureSession to reject non-Git directory without committed HEAD, got: %v", ensureErr)
+	}
+}

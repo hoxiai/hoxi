@@ -17,7 +17,7 @@ func (s *Service) Resolve(providerID, modelID, baseURL, npm string) llm.Target {
 	pid, mid := s.resolveBackendAutoCandidate(strings.TrimSpace(providerID), strings.TrimSpace(modelID))
 	target := llm.Target{ProviderID: pid, ModelID: mid, BaseURL: baseURL, NPM: npm}
 	if pid != "" {
-		resolvedBase, _, _, _ := s.resolveProviderConnection(pid, baseURL, npm)
+		resolvedBase, _, _, _ := s.resolveEffectiveProviderConnection(pid, baseURL, npm)
 		target.HasEndpoint = isHTTPEndpoint(resolvedBase)
 	}
 	return target
@@ -29,7 +29,7 @@ func (s *Service) Complete(ctx context.Context, target llm.Target, req llm.Reque
 	if !target.HasModel() {
 		return "", llm.ErrUnavailable
 	}
-	baseURL, apiKey, npm, headers := s.resolveProviderConnection(target.ProviderID, target.BaseURL, target.NPM)
+	baseURL, apiKey, npm, headers := s.resolveEffectiveProviderConnection(target.ProviderID, target.BaseURL, target.NPM)
 	if !isHTTPEndpoint(baseURL) {
 		return "", llm.ErrUnavailable
 	}

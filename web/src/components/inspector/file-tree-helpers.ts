@@ -74,6 +74,51 @@ export function isImagePreviewable(p: string, meta?: FileContentResponse | null)
   return /\.(png|jpe?g|gif|webp|ico|bmp|avif|svg)$/i.test(p.trim());
 }
 
+export function isVideoPreviewable(p: string, mime?: string): boolean {
+  const lower = (mime || "").toLowerCase();
+  if (lower.startsWith("video/")) return true;
+  return /\.(mp4|mov|webm|mkv|avi|m4v)$/i.test(p.trim());
+}
+
+export function isAudioPreviewable(p: string, mime?: string): boolean {
+  const lower = (mime || "").toLowerCase();
+  if (lower.startsWith("audio/")) return true;
+  return /\.(mp3|wav|m4a|aac|ogg|oga|opus|flac)$/i.test(p.trim());
+}
+
+export function detectMediaPreviewMime(p: string): string {
+  const ext = (p.trim().split(".").pop() || "").toLowerCase();
+  switch (ext) {
+    case "mp4":
+    case "m4v":
+      return "video/mp4";
+    case "mov":
+      return "video/quicktime";
+    case "webm":
+      return "video/webm";
+    case "mkv":
+      return "video/x-matroska";
+    case "avi":
+      return "video/x-msvideo";
+    case "mp3":
+      return "audio/mpeg";
+    case "wav":
+      return "audio/wav";
+    case "m4a":
+      return "audio/mp4";
+    case "aac":
+      return "audio/aac";
+    case "ogg":
+    case "oga":
+    case "opus":
+      return "audio/ogg";
+    case "flac":
+      return "audio/flac";
+    default:
+      return "application/octet-stream";
+  }
+}
+
 export function formatByteSize(bytes?: number): string {
   if (typeof bytes !== "number" || Number.isNaN(bytes) || bytes < 0) return "—";
   if (bytes < 1024) return `${bytes} B`;

@@ -2,8 +2,29 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+// ErrInvalidMediaRole indicates a malformed media role specification or unknown field.
+var ErrInvalidMediaRole = errors.New("invalid media role specification")
+
+// MediaRolePrefs stores optional user-selected default models for media
+// generation and voice transcription when multiple local providers are configured.
+// Empty strings mean "auto-select best configured model".
+type MediaRolePrefs struct {
+	ImageModel      string `json:"imageModel,omitempty"`
+	VideoModel      string `json:"videoModel,omitempty"`
+	SpeechModel     string `json:"speechModel,omitempty"`
+	TranscribeModel string `json:"transcribeModel,omitempty"`
+}
+
+// AudioModelOption describes one configured speech synthesis (TTS) or ASR model.
+type AudioModelOption struct {
+	ProviderID string `json:"providerID"`
+	ModelID    string `json:"modelID"`
+	Name       string `json:"name,omitempty"`
+}
 
 // AudioTranscribeRequest describes a single speech-to-text transcription call
 // routed strictly to a user-configured ASR or multimodal Gemini provider.
@@ -25,7 +46,27 @@ type AudioTranscribeResponse struct {
 	ModelID    string `json:"modelID"`
 }
 
-// AudioClient executes speech-to-text transcription on user-configured endpoints.
+// SpeechRequest describes one text-to-speech synthesis turn.
+type SpeechRequest struct {
+	ProviderID string
+	ModelID    string
+	Input      string
+	Voice      string
+	Format     string
+	Speed      float64
+	Timeout    time.Duration
+}
+
+// SpeechResponse carries synthesized audio bytes and resolved model metadata.
+type SpeechResponse struct {
+	ProviderID string
+	ModelID    string
+	Mime       string
+	Data       []byte
+}
+
+// AudioClient executes speech-to-text transcription and text-to-speech synthesis
+// on user-configured endpoints.
 type AudioClient interface {
 	HasAudioTranscriber() bool
 	TranscribeAudio(ctx context.Context, req AudioTranscribeRequest) (AudioTranscribeResponse, error)

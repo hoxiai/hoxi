@@ -340,6 +340,7 @@ func probeQoderBinaryModels(bin string) ([]qoderBaseModel, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), qoderProbeTimeout)
 	defer cancel()
 	cmd := subproc.CommandContext(ctx, bin, "--list-models")
+	cmd.Env = WithSystemProxy(WithUserBinPath(os.Environ()))
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	if err != nil && len(bytes.TrimSpace(out)) == 0 {

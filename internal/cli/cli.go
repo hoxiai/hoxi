@@ -44,10 +44,13 @@ var knownSubcommands = map[string]bool{
 	"codeindex":   true,
 	"doc":         true,
 	"image":       true,
+	"video":       true,
+	"speech":      true,
 	"sessions":    true,
-	"status":      true,
-	"install-cli": true,
-	"help":        true,
+	"status":        true,
+	"install-cli":   true,
+	"uninstall-cli": true,
+	"help":          true,
 	"--help":      true,
 	"-h":          true,
 }
@@ -191,6 +194,10 @@ func Run(
 			return runDocCommand(args[2:], cwd, stdin, stdout, stderr)
 		case "image":
 			return runImageCommand(ctx, args[2:], cwd, defaultBridgeAddr, bootHeadless, stdout, stderr)
+		case "video":
+			return runVideoCommand(ctx, args[2:], cwd, defaultBridgeAddr, bootHeadless, stdout, stderr)
+		case "speech":
+			return runSpeechCommand(ctx, args[2:], cwd, defaultBridgeAddr, bootHeadless, stdout, stderr)
 		case "host":
 			return runHostCommand(ctx, args[2:], cwd, stdout, stderr)
 		case "handoff":
@@ -199,6 +206,8 @@ func Run(
 			return runStatusCommand(ctx, cwd, defaultBridgeAddr, stdout, stderr)
 		case "install-cli":
 			return runInstallCLICommand(args[2:], stdout, stderr)
+		case "uninstall-cli":
+			return runInstallCLICommand(append([]string{"--uninstall"}, args[2:]...), stdout, stderr)
 		case "tui":
 			return runNativeOpenCodeTUI(ctx, args[2:], cwd, defaultBridgeAddr, bootHeadless, stdin, stdout, stderr)
 		}
@@ -343,7 +352,7 @@ Usage:
   hoxi sessions                       List sessions in the current directory
   hoxi handoff [list|import]          Inspect or import sessions across Claude/Codex/AGY/OpenCode
   hoxi worktree [list|diff|apply]     Manage isolated Git worktree sandboxes
-  hoxi code-index <action> [flags]    Navigate code via worktree index (context|search|inspect|callers|callees|impact|refresh)
+  hoxi code-index <action> [flags]    Navigate code via worktree index (map|context|search|inspect|callers|callees|impact|refresh|status)
   hoxi doc <action> [flags]           Read, inspect, create or edit PDF/Excel/Word/CSV documents (inspect|read|write-xlsx|set-cell|write-docx|write-pdf)
   hoxi image <generate|models>        Generate or edit images via configured image models
   hoxi tui                            Launch native OpenCode TUI with Hoxi plugins

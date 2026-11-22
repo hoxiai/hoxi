@@ -125,7 +125,7 @@ func (g *Gateway) routeConversation(w http.ResponseWriter, r *http.Request) bool
 	owned := g.runner.OwnsSession(id)
 	if g.openCode.Available() && action != "runtime" && action != "stop-tool" && !owned {
 		hasExtCtx := g.hasExtensionSessionContext(id)
-		needsRunner := (action == "prompt" || action == "prompt_async") && (hasExtCtx || requestNeedsRunner(r, g.runner.IsImageModel))
+		needsRunner := (action == "prompt" || action == "prompt_async") && (hasExtCtx || requestNeedsRunner(r, g.runner.IsDedicatedMediaModel))
 		if !needsRunner {
 			if r.Method == http.MethodDelete && action == "" {
 				g.runner.DeleteSessionAttachments(id)

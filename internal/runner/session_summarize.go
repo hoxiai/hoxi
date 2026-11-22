@@ -172,9 +172,18 @@ func (s *Service) handleNativeSessionSummarize(
 
 	ctx, cancel := context.WithTimeout(r.Context(), summarizeTimeout)
 	defer cancel()
-	summary, err := eng.Summarize(ctx, providerID, modelID, transcript)
-	if err != nil {
-		writeJSONError(w, http.StatusBadGateway, err.Error())
+	var usage NativeTokenUsage
+	var summary string
+	var summaryErr error
+	if metered, ok := eng.(interface {
+		SummarizeWithUsage(context.Context, string, string, string, func(NativeTokenUsage)) (string, error)
+	}); ok {
+		summary, summaryErr = metered.SummarizeWithUsage(ctx, providerID, modelID, transcript, usage.Add)
+	} else {
+		summary, summaryErr = eng.Summarize(ctx, providerID, modelID, transcript)
+	}
+	if summaryErr != nil && usage == (NativeTokenUsage{}) {
+		writeJSONError(w, http.StatusBadGateway, summaryErr.Error())
 		return
 	}
 
@@ -211,7 +220,12 @@ func (s *Service) handleNativeSessionSummarize(
 		Text:      summaryBody,
 		Time:      &PartTime{Start: nowMs, End: nowMs + 1},
 	}
-	estTokens := max(1, len(summaryBody)/4)
+	tokens := buildNativeMessageTokens(usage, NativeTokenUsage{}, usage)
+	if summaryErr == nil {
+		// The checkpoint occupies the new context; only provider receipts are billable.
+		tokens.Context = max(1, len(summaryBody)/4)
+		tokens.Total = tokens.Context
+	}
 	checkpointTurn := MessageTurn{
 		Info: MessageInfo{
 			ID:         asstMsgID,
@@ -223,11 +237,18 @@ func (s *Service) handleNativeSessionSummarize(
 			ProviderID: providerID,
 			ModelID:    modelID,
 			Finish:     "stop",
-			Tokens:     &MessageTokens{Total: estTokens, Context: estTokens, Output: estTokens},
+			Tokens:     tokens,
+			Cost:       usage.CostUSD,
 		},
 		Parts: []MessagePart{compPart, asstPart},
 	}
 
+	if summaryErr != nil {
+		// Persist paid segments even when the remaining request fails. An empty
+		// accounting message has no checkpoint or model-visible history content.
+		checkpointTurn.Info.Finish = "error"
+		checkpointTurn.Parts = []MessagePart{}
+	}
 	_, ok, err := s.store.Update(rec.ID, func(sr *SessionRecord) {
 		sr.Turns = append(sr.Turns, checkpointTurn)
 	})
@@ -242,6 +263,10 @@ func (s *Service) handleNativeSessionSummarize(
 	s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": checkpointTurn.Info}})
 	for _, part := range checkpointTurn.Parts {
 		s.broadcast(rec.ID, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": part}})
+	}
+	if summaryErr != nil {
+		writeJSONError(w, http.StatusBadGateway, summaryErr.Error())
+		return
 	}
 	s.syncSessionMemoryFile(rec.ID)
 	writeJSON(w, http.StatusOK, true)

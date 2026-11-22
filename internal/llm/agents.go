@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
@@ -25,21 +26,82 @@ type AgentSpec struct {
 	Disable     bool     `json:"disable,omitempty"`
 	Native      bool     `json:"native,omitempty"`
 	BuiltIn     bool     `json:"builtIn,omitempty"`
+	Extension   bool     `json:"extension,omitempty"`
 	ReadOnly    bool     `json:"readOnly,omitempty"`
 	TaskPolicy  any      `json:"-"`
+}
+
+var (
+	extraBuiltinAgentsMu sync.RWMutex
+	extraBuiltinAgents   []AgentSpec
+)
+
+// RegisterBuiltinAgent registers an additional host-extension primary or subagent
+// profile. Duplicate names (case-insensitive) replace earlier registrations in place.
+func RegisterBuiltinAgent(spec AgentSpec) {
+	spec.Name = strings.TrimSpace(spec.Name)
+	if spec.Name == "" {
+		return
+	}
+	if strings.TrimSpace(spec.Mode) == "" {
+		spec.Mode = "primary"
+	}
+	spec.Native = true
+	spec.BuiltIn = true
+	spec.Extension = true
+
+	extraBuiltinAgentsMu.Lock()
+	defer extraBuiltinAgentsMu.Unlock()
+	for i := range extraBuiltinAgents {
+		if strings.EqualFold(extraBuiltinAgents[i].Name, spec.Name) {
+			extraBuiltinAgents[i] = spec
+			return
+		}
+	}
+	extraBuiltinAgents = append(extraBuiltinAgents, spec)
+}
+
+// UnregisterBuiltinAgent removes a previously registered host-extension agent by name.
+func UnregisterBuiltinAgent(name string) {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return
+	}
+	extraBuiltinAgentsMu.Lock()
+	defer extraBuiltinAgentsMu.Unlock()
+	filtered := extraBuiltinAgents[:0]
+	for _, spec := range extraBuiltinAgents {
+		if !strings.EqualFold(spec.Name, trimmed) {
+			filtered = append(filtered, spec)
+		}
+	}
+	extraBuiltinAgents = filtered
+}
+
+// ExtraBuiltinAgents returns a snapshot of host-extension built-in agents.
+func ExtraBuiltinAgents() []AgentSpec {
+	extraBuiltinAgentsMu.RLock()
+	defer extraBuiltinAgentsMu.RUnlock()
+	if len(extraBuiltinAgents) == 0 {
+		return nil
+	}
+	out := make([]AgentSpec, len(extraBuiltinAgents))
+	copy(out, extraBuiltinAgents)
+	return out
 }
 
 const (
 	builtinAskGuidance     = "Answer codebase and architecture questions accurately using read-only inspection tools, citing exact file paths and line numbers without modifying files."
 	builtinDebugGuidance   = "Diagnose bugs systematically: trace the failure path, inspect callers/callees and recent changes, verify the root cause, apply a minimal targeted fix, and run verification tests."
-	builtinExploreGuidance = "Fast, strictly read-only codebase and web researcher. Batch read-only search/inspect calls concurrently and return a concise report with exact file paths and line numbers."
-	builtinGeneralGuidance = "General-purpose multi-step research and workspace execution subagent. Complete the delegated work, verify outcomes, and summarize findings and changes."
-	builtinScoutGuidance   = "Lightweight read-only symbol and file locator. Quickly pinpoint exact files, definitions, and entry points using AST search, glob, and grep."
+	builtinExploreGuidance = "Broad, strictly read-only codebase and web researcher. Batch read-only search/inspect calls concurrently and return a concise report with exact file paths and line numbers."
+	builtinGeneralGuidance = "General-purpose multi-step research and workspace execution subagent. Keep initial discovery focused, start implementing edits promptly rather than exhausting steps on broad reading, verify outcomes with targeted checks, and summarize findings and changes."
+	builtinScoutGuidance   = "Lightweight read-only multi-area symbol and file locator. Quickly pinpoint relevant files, definitions, and entry points across unfamiliar directories using hoxi_code_index, glob, and grep."
 )
 
-// BuiltinAgents returns Hoxi's default primary modes and subagent profiles.
+// BuiltinAgents returns Hoxi's default primary modes and subagent profiles,
+// merged with any optional host-extension built-in agents.
 func BuiltinAgents() []AgentSpec {
-	return []AgentSpec{
+	primaries := []AgentSpec{
 		{
 			Name:        "build",
 			Description: "Full-capability coding agent with parallel search, atomic edits, diagnostics, and sandboxed shell",
@@ -74,19 +136,21 @@ func BuiltinAgents() []AgentSpec {
 			BuiltIn:     true,
 			ReadOnly:    false,
 		},
+	}
+	subagents := []AgentSpec{
 		{
 			Name:        "general",
 			Description: "General-purpose multi-step research and execution subagent with full tool access",
 			Mode:        "subagent",
 			Prompt:      builtinGeneralGuidance,
-			Steps:       24,
+			Steps:       36,
 			Native:      true,
 			BuiltIn:     true,
 			ReadOnly:    false,
 		},
 		{
 			Name:        "explore",
-			Description: "Fast read-only codebase and web exploration subagent",
+			Description: "Broad read-only codebase and web exploration subagent",
 			Mode:        "subagent",
 			Prompt:      builtinExploreGuidance,
 			Steps:       12,
@@ -96,7 +160,7 @@ func BuiltinAgents() []AgentSpec {
 		},
 		{
 			Name:        "scout",
-			Description: "Lightweight read-only symbol and file locator subagent",
+			Description: "Lightweight read-only multi-area symbol and file locator subagent",
 			Mode:        "subagent",
 			Prompt:      builtinScoutGuidance,
 			Steps:       8,
@@ -105,6 +169,22 @@ func BuiltinAgents() []AgentSpec {
 			ReadOnly:    true,
 		},
 	}
+
+	extras := ExtraBuiltinAgents()
+	out := make([]AgentSpec, 0, len(primaries)+len(subagents)+len(extras))
+	out = append(out, primaries...)
+	for _, ext := range extras {
+		if ext.Mode != "subagent" {
+			out = append(out, ext)
+		}
+	}
+	out = append(out, subagents...)
+	for _, ext := range extras {
+		if ext.Mode == "subagent" {
+			out = append(out, ext)
+		}
+	}
+	return out
 }
 
 // LoadAgents loads and merges built-in, Markdown-file, and JSON-configured agents.
@@ -212,6 +292,80 @@ func LoadAgents(worktreeDir string, extraCfg map[string]any) ([]AgentSpec, map[s
 // IsSubagentAllowed evaluates global `permission.task` and primary-agent `permission.task` rules.
 func IsSubagentAllowed(primaryMode, targetSubagent string, byKey map[string]AgentSpec, cfgDoc map[string]any) bool {
 	return EvalTaskPolicyDecision(primaryMode, targetSubagent, byKey, cfgDoc) != "deny"
+}
+
+// HasAnyAllowedSubagent reports whether primaryMode can invoke at least one
+// subagent ("allow" or "ask") under the loaded agent roster and permission.task
+// policy. Returning false allows the engine to omit the `task` tool schema up
+// front instead of letting the model waste a step on a denied delegation.
+func HasAnyAllowedSubagent(primaryMode string, byKey map[string]AgentSpec, cfgDoc map[string]any) bool {
+	primaryLower := strings.ToLower(strings.TrimSpace(primaryMode))
+	var effectivePolicy any
+	if pSpec, ok := byKey[primaryLower]; ok && pSpec.TaskPolicy != nil {
+		effectivePolicy = pSpec.TaskPolicy
+	} else if cfgDoc != nil {
+		if perm, ok := cfgDoc["permission"].(map[string]any); ok {
+			effectivePolicy = perm["task"]
+		}
+	}
+	if rawStr, ok := effectivePolicy.(string); ok {
+		if act := normalizePolicyAction(rawStr); act == "deny" {
+			return false
+		}
+	}
+	if len(byKey) == 0 {
+		if polMap, ok := effectivePolicy.(map[string]any); ok {
+			return taskPolicyMapAllowsAny(polMap, nil)
+		}
+		return true
+	}
+	for _, spec := range byKey {
+		if spec.Disable || strings.EqualFold(strings.TrimSpace(spec.Mode), "primary") {
+			continue
+		}
+		if EvalTaskPolicyDecision(primaryMode, spec.Name, byKey, cfgDoc) != "deny" {
+			return true
+		}
+	}
+	if polMap, ok := effectivePolicy.(map[string]any); ok {
+		return taskPolicyMapAllowsAny(polMap, byKey)
+	}
+	return false
+}
+
+func taskPolicyMapAllowsAny(polMap map[string]any, byKey map[string]AgentSpec) bool {
+	hasCatchAllDeny := false
+	hasNonDenyEntry := false
+	for rawPat, rawAct := range polMap {
+		pat := strings.TrimSpace(rawPat)
+		actStr, ok := rawAct.(string)
+		if pat == "" || !ok {
+			continue
+		}
+		act := normalizePolicyAction(actStr)
+		if pat == "*" {
+			if act == "deny" {
+				hasCatchAllDeny = true
+			} else if act == "allow" || act == "ask" {
+				hasNonDenyEntry = true
+			}
+			continue
+		}
+		if act != "allow" && act != "ask" {
+			continue
+		}
+		if !hasGlobMeta(pat) && byKey != nil {
+			if spec, exists := byKey[strings.ToLower(pat)]; exists &&
+				(spec.Disable || strings.EqualFold(strings.TrimSpace(spec.Mode), "primary")) {
+				continue
+			}
+		}
+		return true
+	}
+	if len(byKey) == 0 {
+		return !hasCatchAllDeny || hasNonDenyEntry
+	}
+	return false
 }
 
 // EvalTaskPolicyDecision resolves "allow" | "ask" | "deny" for delegating to

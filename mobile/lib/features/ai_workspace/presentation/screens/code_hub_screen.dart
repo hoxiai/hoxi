@@ -23,12 +23,15 @@ import 'code_project_terminal_sheet.dart';
 import 'code_session_sheet.dart';
 import 'code_terminal_screen.dart';
 
-enum CodeHubTab { recent, projects }
+enum CodeHubTab { recent, projects, apps }
 
 class CodeHubScreen extends ConsumerStatefulWidget {
   final List<Widget> extraActions;
   final Future<void> Function()? onRefreshExtra;
   final bool showAppBar;
+  final Widget? nodeDirectory;
+  final String? nodeDirectoryLabel;
+  final int? nodeDirectoryCount;
   final CodeHubTab initialTab;
 
   const CodeHubScreen({
@@ -36,6 +39,9 @@ class CodeHubScreen extends ConsumerStatefulWidget {
     this.extraActions = const [],
     this.onRefreshExtra,
     this.showAppBar = true,
+    this.nodeDirectory,
+    this.nodeDirectoryLabel,
+    this.nodeDirectoryCount,
     this.initialTab = CodeHubTab.recent,
   });
 
@@ -57,6 +63,14 @@ class _CodeHubScreenState extends ConsumerState<CodeHubScreen> {
   void initState() {
     super.initState();
     unawaited(_restoreCollapsedState());
+  }
+
+  @override
+  void didUpdateWidget(covariant CodeHubScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.nodeDirectory == null && _selectedTab == CodeHubTab.apps) {
+      _selectedTab = CodeHubTab.recent;
+    }
   }
 
   Future<void> _restoreCollapsedState() async {
@@ -243,6 +257,18 @@ class _CodeHubScreenState extends ConsumerState<CodeHubScreen> {
   Widget build(BuildContext context) {
     final workspace = ref.watch(aiWorkspaceControllerProvider);
     final attention = ref.watch(codeAttentionControllerProvider);
+    final hasDirectoryTab = widget.nodeDirectory != null;
+    final effectiveTab = (!hasDirectoryTab && _selectedTab == CodeHubTab.apps)
+        ? CodeHubTab.recent
+        : _selectedTab;
+    final int? tabCount = switch (effectiveTab) {
+      CodeHubTab.projects => workspace.projects.length,
+      CodeHubTab.recent =>
+        workspace.tasks.isNotEmpty
+            ? workspace.tasks.length
+            : workspace.sessions.length,
+      CodeHubTab.apps => widget.nodeDirectoryCount,
+    };
 
     return Scaffold(
       appBar: widget.showAppBar
@@ -289,36 +315,57 @@ class _CodeHubScreenState extends ConsumerState<CodeHubScreen> {
             const SizedBox(height: 18),
             Row(
               children: [
-                _buildTabButton(
-                  key: const ValueKey('code_hub_tab_recent'),
-                  label: context.l10n.codeWsHubRecentTasks,
-                  selected: _selectedTab == CodeHubTab.recent,
-                  onTap: () => setState(() => _selectedTab = CodeHubTab.recent),
-                ),
-                const SizedBox(width: 8),
-                _buildTabButton(
-                  key: const ValueKey('code_hub_tab_projects'),
-                  label: context.l10n.codeWsHubProjectsTab,
-                  selected: _selectedTab == CodeHubTab.projects,
-                  onTap: () => setState(() => _selectedTab = CodeHubTab.projects),
-                ),
-                const Spacer(),
-                Text(
-                  context.l10n.codeWsHubSessionCount(
-                    _selectedTab == CodeHubTab.projects
-                        ? workspace.projects.length
-                        : (workspace.tasks.isNotEmpty
-                              ? workspace.tasks.length
-                              : workspace.sessions.length),
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        _buildTabButton(
+                          key: const ValueKey('code_hub_tab_recent'),
+                          label: context.l10n.codeWsHubRecentTasks,
+                          selected: effectiveTab == CodeHubTab.recent,
+                          onTap: () =>
+                              setState(() => _selectedTab = CodeHubTab.recent),
+                        ),
+                        const SizedBox(width: 8),
+                        _buildTabButton(
+                          key: const ValueKey('code_hub_tab_projects'),
+                          label: context.l10n.codeWsHubProjectsTab,
+                          selected: effectiveTab == CodeHubTab.projects,
+                          onTap: () => setState(
+                            () => _selectedTab = CodeHubTab.projects,
+                          ),
+                        ),
+                        if (hasDirectoryTab) ...[
+                          const SizedBox(width: 8),
+                          _buildTabButton(
+                            key: const ValueKey('code_hub_tab_apps'),
+                            label: widget.nodeDirectoryLabel ?? context.l10n.codeWsHubProjectsTab,
+                            selected: effectiveTab == CodeHubTab.apps,
+                            onTap: () =>
+                                setState(() => _selectedTab = CodeHubTab.apps),
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: AppTheme.textSecondary,
-                  ),
                 ),
+                if (tabCount != null) ...[
+                  const SizedBox(width: 8),
+                  Text(
+                    context.l10n.codeWsHubSessionCount(tabCount),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: AppTheme.textSecondary,
+                    ),
+                  ),
+                ],
               ],
             ),
             const SizedBox(height: 12),
-            ..._buildTaskList(workspace),
+            if (effectiveTab == CodeHubTab.apps)
+              widget.nodeDirectory!
+            else
+              ..._buildTaskList(workspace),
           ],
         ),
       ),

@@ -403,43 +403,8 @@ func memoryCandidates(rec SessionRecord, rel string) []string {
 // <session_handoff_memory> blocks for native CLI runtimes on their initial turn
 // or after a runtime switch (when ExternalID == "" or ContextPending is true).
 func runtimeMemoryContext(rec SessionRecord) string {
-	if rec.ExternalID != "" && !rec.ContextPending {
-		return ""
-	}
-	if projectMemoryDir(rec) == "" {
-		return ""
-	}
-
-	projMem := readFirstNonEmptyFile(memoryCandidates(rec, "project.md")...)
-	sessMem := readFirstNonEmptyFile(memoryCandidates(rec, filepath.Join("sessions", rec.ID+".md"))...)
-	if rec.ExternalID != "" && sessMem == "" {
-		sessMem = readFirstNonEmptyFile(memoryCandidates(rec, filepath.Join("sessions", rec.ExternalID+".md"))...)
-	}
-	if sessMem == "" && len(rec.Turns) > 0 {
-		sessMem = buildEightDimSessionMarkdown(rec)
-	}
-
-	projClean := stripVolatileMemoryHeader(projMem)
-	sessClean := sanitizeSessionMemoryMarkdown(stripVolatileMemoryHeader(sessMem))
-	if (rec.ContextPending || strings.TrimSpace(rec.ExternalID) == "") && len(rec.Turns) > 0 && sessClean != "" {
-		sessClean = dedupHandoffMemorySection6(sessClean)
-	}
-	if projClean == "" && sessClean == "" {
-		return ""
-	}
-
-	var b strings.Builder
-	if projClean != "" {
-		b.WriteString("<project_memory>\n")
-		b.WriteString(projClean)
-		b.WriteString("\n</project_memory>\n\n")
-	}
-	if sessClean != "" {
-		b.WriteString("<session_handoff_memory>\n")
-		b.WriteString(sessClean)
-		b.WriteString("\n</session_handoff_memory>\n\n")
-	}
-	return b.String()
+	project, handoff := RuntimeMemoryBlocks(rec)
+	return project + handoff
 }
 
 // SyncSessionMemoryRecord synthesizes and atomically writes the 8-dimension

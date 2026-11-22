@@ -9,9 +9,13 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/hoxiai/hoxi/internal/appbridge"
 	"github.com/hoxiai/hoxi/internal/auth"
 	"github.com/hoxiai/hoxi/internal/browser"
+	"github.com/hoxiai/hoxi/internal/llm"
+	"github.com/hoxiai/hoxi/internal/reclaim"
 	"github.com/hoxiai/hoxi/internal/runner"
+	"github.com/hoxiai/hoxi/internal/skills"
 )
 
 // Extension wires an optional desktop-only host module into Gateway without
@@ -21,6 +25,12 @@ type Extension interface {
 	ForgetSession(sessionID string)
 	RegisterRoutes(mux *http.ServeMux)
 	Close()
+}
+
+// SessionMCPExtension may be implemented by an Extension to contribute
+// session-scoped MCP server definitions (keyed by server name) to native turns.
+type SessionMCPExtension interface {
+	SessionMCPServers(sessionID, directory string) map[string]any
 }
 
 // ExtensionFactory constructs an Extension bound to a Gateway instance.
@@ -67,6 +77,42 @@ func (g *Gateway) forgetExtensionSession(sessionID string) {
 	}
 }
 
+func (g *Gateway) extensionSessionMCPServers(sessionID, directory string) map[string]any {
+	if g == nil || strings.TrimSpace(sessionID) == "" {
+		return nil
+	}
+	var merged map[string]any
+	for _, ext := range g.extensions {
+		provider, ok := ext.(SessionMCPExtension)
+		if !ok {
+			continue
+		}
+		entries := provider.SessionMCPServers(sessionID, directory)
+		if len(entries) == 0 {
+			continue
+		}
+		if merged == nil {
+			merged = make(map[string]any, len(entries))
+		}
+		for k, v := range entries {
+			merged[k] = v
+		}
+	}
+	return merged
+}
+
+// LoopbackBaseURL returns the local HTTP origin of this Gateway listener, or "" when unset.
+func (g *Gateway) LoopbackBaseURL() string {
+	if g == nil {
+		return ""
+	}
+	ws := strings.TrimRight(strings.TrimSpace(g.wsBaseURL), "/")
+	if ws == "" {
+		return ""
+	}
+	return strings.Replace(strings.Replace(ws, "wss://", "https://", 1), "ws://", "http://", 1)
+}
+
 func (g *Gateway) registerExtensionRoutes() {
 	if g == nil || g.mux == nil {
 		return
@@ -97,15 +143,32 @@ func (g *Gateway) AttachExtension(ext Extension) {
 func (g *Gateway) AuthService() *auth.Service       { return g.auth }
 func (g *Gateway) BrowserService() *browser.Service { return g.browser }
 func (g *Gateway) RunnerService() *runner.Service   { return g.runner }
+func (g *Gateway) SkillsService() *skills.Service   { return g.skills }
 func (g *Gateway) Mux() *http.ServeMux              { return g.mux }
+func (g *Gateway) RootDir() string                  { return g.rootDir }
+func (g *Gateway) LLMClient() llm.Client {
+	if g == nil || g.providers == nil {
+		return nil
+	}
+	return g.providers
+}
+func (g *Gateway) ReclaimLedger() *reclaim.Ledger {
+	if g == nil {
+		return nil
+	}
+	g.originMu.RLock()
+	defer g.originMu.RUnlock()
+	return g.ledger
+}
 
 // NewExtensionTestGateway constructs a minimal Gateway suitable for host extension unit tests.
 func NewExtensionTestGateway(rootDir string, runnerSvc *runner.Service, browserSvc *browser.Service) *Gateway {
 	return &Gateway{
-		rootDir: rootDir,
-		runner:  runnerSvc,
-		browser: browserSvc,
-		mux:     http.NewServeMux(),
+		rootDir:   rootDir,
+		runner:    runnerSvc,
+		browser:   browserSvc,
+		appBridge: appbridge.NewService(),
+		mux:       http.NewServeMux(),
 	}
 }
 

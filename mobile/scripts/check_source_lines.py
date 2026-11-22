@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enforce the mobile source-file size limit without inspecting build outputs."""
+"""Enforce the mobile source-file and script size limit without inspecting build outputs."""
 from pathlib import Path
 import sys
 
@@ -10,6 +10,7 @@ violations = []
 for folder in [
     'lib',
     'test',
+    'scripts',
     'ios/Runner',
     'macos/Runner',
     'android/app/src/main/kotlin',
@@ -19,11 +20,11 @@ for folder in [
     if not folder_path.exists():
         continue
     for path in folder_path.rglob('*'):
-        if path.suffix not in {'.dart', '.swift', '.kt', '.ets'}:
+        if path.suffix not in {'.dart', '.swift', '.kt', '.ets', '.py'}:
             continue
         if any(parent in generated for parent in path.parents):
             continue
-        count = len(path.read_text().splitlines())
+        count = len(path.read_text(encoding='utf-8').splitlines())
         if count > 800:
             violations.append(f'{path.relative_to(root)}: {count} lines (max 800)')
 if violations:

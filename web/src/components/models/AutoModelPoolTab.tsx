@@ -47,6 +47,7 @@ import {
   type FreeTierGuideItem,
 } from "../../store/workspace";
 import { ProviderIcon } from "../icons";
+import { HelpTip } from "../settings/setting-controls";
 import CandidateModelPicker from "./CandidateModelPicker";
 import { locale, t } from "../../i18n";
 
@@ -408,9 +409,7 @@ export default function AutoModelPoolTab() {
             <span class="text-[13px] font-semibold text-[var(--text-primary)]">
               {getAutoPoolDisplayName(selectedPoolID())}
             </span>
-            <span class="text-[12px] text-[var(--text-muted)]">
-              · {getAutoPoolDescription(selectedPoolID())}
-            </span>
+            <HelpTip text={getAutoPoolDescription(selectedPoolID())} />
           </div>
 
           <div class="flex items-center gap-1.5 shrink-0 flex-wrap">
@@ -652,9 +651,7 @@ export default function AutoModelPoolTab() {
             <h3 class="text-[13px] font-semibold text-[var(--text-primary)]">
               {t("models.freeHubTitle")}
             </h3>
-            <span class="text-[12px] text-[var(--text-muted)]">
-              · {t("models.freeHubSubtitle")}
-            </span>
+            <HelpTip text={t("models.freeHubSubtitle")} />
           </div>
 
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">

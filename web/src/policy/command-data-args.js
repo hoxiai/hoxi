@@ -173,7 +173,9 @@ function tokenize(s) {
         let closed = false;
         while (j < s.length) {
           if (s[j] === "\\" && j + 1 < s.length) {
-            value += s[j + 1];
+            const next = s[j + 1];
+            if (!['\\', '"', '$', '`', '\n'].includes(next)) value += "\\";
+            if (next !== "\n") value += next;
             j += 2;
             continue;
           }
@@ -254,7 +256,7 @@ function gitDataArguments(seg) {
   if (sub === "log" || sub === "shortlog") {
     return [...flagValueReplacements(seg, i + 1, setOf("--grep", "-S", "-G"), false), ...gitFormatArguments(seg, i + 1)];
   }
-  if (sub === "show" || sub === "diff") return gitFormatArguments(seg, i + 1);
+  if (sub === "show" || sub === "diff") return [...gitFormatArguments(seg, i + 1), ...gitDiffSearchArguments(seg, i + 1)];
   return [];
 }
 
@@ -292,33 +294,74 @@ function ghDataArguments(seg) {
   return flagValueReplacements(seg, i + 2, setOf("-t", "--title", "-b", "--body", "-n", "--notes"), false);
 }
 
-function searchPatternArguments(seg, valueFlags) {
-  const explicit = [];
+// Only mask an operand when every preceding option has known arity.
+const SEARCH_SWITCHES = setOf("--line-number", "--ignore-case", "--case-sensitive", "--smart-case",
+  "--fixed-strings", "--word-regexp", "--line-regexp", "--invert-match", "--only-matching",
+  "--with-filename", "--no-filename", "--hidden", "--no-ignore", "--no-heading",
+  "--heading", "--count", "--files-with-matches", "--files-without-match", "--multiline", "--no-messages");
+const DIFF_SEARCH_SWITCHES = setOf("--cached", "--staged", "--stat", "--name-only", "--name-status", "--patch", "--pickaxe-all", "--pickaxe-regex");
+
+function gitDiffSearchArguments(seg, start) {
+  const out = [];
+  for (let i = start; i < seg.length; i++) {
+    const { value, literal } = seg[i];
+    if (!literal) break;
+    if (DIFF_SEARCH_SWITCHES.has(value)) continue;
+    if (!value.startsWith("-G") && !value.startsWith("-S")) break;
+    if (value.length === 2) i++;
+    appendWholeWordMask(out, seg, i);
+  }
+  return out;
+}
+
+function searchDataArguments(seg) {
+  const out = [];
+  let explicit = false;
   let positional = -1;
-  let usesPatternFile = false;
-  let endOfOptions = false;
-  for (let j = 1; j < seg.length; j++) {
-    const v = seg[j].value;
-    if (!endOfOptions && v.startsWith("-") && v !== "-") {
-      if (v === "--") {
-        endOfOptions = true;
-      } else if (v === "-e" || v === "--regexp") {
-        if (j + 1 < seg.length) {
-          explicit.push(j + 1);
-          j++;
-        }
-      } else if (v === "-f" || v === "--file" || v.startsWith("--file=")) {
-        usesPatternFile = true;
-        if (v === "-f" || v === "--file") j++;
-      } else if (valueFlags.has(v)) {
-        j++;
-      }
+  const grep = baseName(seg[0].value) !== "rg";
+  const valueFlags = grep ? GREP_VALUE_FLAGS : RG_VALUE_FLAGS;
+  const shortSwitches = grep ? "abcEFGHiIhlLnoPqRrsvVwxZ" : ".0abcFhHiIlLnNopPqsSuUvVwxz";
+  for (let i = 1; i < seg.length; i++) {
+    const { value, literal } = seg[i];
+    if (value === "--" && literal) {
+      if (positional < 0) positional = i + 1;
+      break;
+    }
+    if (!value.startsWith("-") || value === "-") {
+      if (positional < 0) positional = i;
       continue;
     }
-    if (positional < 0) positional = j;
+    if (!literal || positional >= 0) return out;
+    let flag = value;
+    let attached = false;
+    if (value.startsWith("--")) {
+      const eq = value.indexOf("=");
+      if (eq >= 0) {
+        flag = value.slice(0, eq);
+        attached = true;
+      }
+    } else {
+      let j = 1;
+      while (j < value.length && shortSwitches.includes(value[j])) j++;
+      if (j === value.length) continue;
+      flag = "-" + value[j];
+      attached = j + 1 < value.length;
+    }
+    if (SEARCH_SWITCHES.has(flag)) continue;
+    // Some grep implementations have optional values for context and color.
+    if (grep && !attached && ["-C", "--context", "--color", "--colour"].includes(flag)) return out;
+    const pattern = flag === "-e" || flag === "--regexp";
+    const file = flag === "-f" || flag === "--file";
+    if (!pattern && !file && !valueFlags.has(flag)) return out;
+    if (!attached) {
+      i++;
+      if (!seg[i]?.literal) return out;
+    }
+    if (pattern || file) explicit = true;
+    if (pattern) appendWholeWordMask(out, seg, i);
   }
-  if (explicit.length > 0 || usesPatternFile) return explicit;
-  return positional > 0 ? [positional] : [];
+  if (!explicit) appendWholeWordMask(out, seg, positional);
+  return out;
 }
 
 function dataArgumentReplacements(seg) {
@@ -347,13 +390,10 @@ function dataArgumentReplacements(seg) {
         ? flagValueReplacements(seg, 2, setOf("-t", "--testNamePattern"), false)
         : [];
     case "rg":
-      idxs = searchPatternArguments(seg, RG_VALUE_FLAGS);
-      break;
     case "grep":
     case "egrep":
     case "fgrep":
-      idxs = searchPatternArguments(seg, GREP_VALUE_FLAGS);
-      break;
+      return searchDataArguments(seg);
     default:
       return [];
   }

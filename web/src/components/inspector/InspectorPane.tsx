@@ -4,7 +4,14 @@ import MemoryBankView from "./MemoryBankView";
 import FileTreeView from "./FileTreeView";
 import SkillsInspectorView from "../skills/SkillsInspectorView";
 import TaskOverviewView from "../tasks/TaskOverviewView";
-import { isSessionBusy, setWorkspace, workspace } from "../../store/workspace";
+import {
+  activeDirectory,
+  isSessionBusy,
+  loadIntakeTasks,
+  pendingIntakeCount,
+  setWorkspace,
+  workspace,
+} from "../../store/workspace";
 import { collectCycleChangedFiles } from "../timeline/tool-card-state";
 import { isWorkSurface, surfaceExtension } from "../layout/surface-extension";
 import { t } from "../../i18n";
@@ -30,10 +37,32 @@ export default function InspectorPane() {
     computer: workspace.inspectorTab === "computer",
     tasks: workspace.inspectorTab === "tasks",
   });
+  const [activeCustomTabID, setActiveCustomTabID] = createSignal<string | null>(null);
+
+  const customTabs = createMemo(() =>
+    isWorkSurface() && surfaceExtension.customInspectorTabs
+      ? surfaceExtension.customInspectorTabs()
+      : []
+  );
+
+  createEffect(() => {
+    const cur = activeCustomTabID();
+    if (cur && !customTabs().some((item) => item.id === cur)) {
+      setActiveCustomTabID(null);
+    }
+  });
 
   createEffect(() => {
     const active = workspace.inspectorTab;
     setVisitedTabs((prev) => (prev[active] ? prev : { ...prev, [active]: true }));
+  });
+
+  createEffect(() => {
+    if (!workspace.inspectorOpen) return;
+    const dir = (activeDirectory() ?? "").trim();
+    if (dir) {
+      void loadIntakeTasks(dir).catch(() => {});
+    }
   });
 
   createEffect(() => {
@@ -102,7 +131,9 @@ export default function InspectorPane() {
       case "browser":
         return t("inspector.tabs.browser");
       case "tasks":
-        return t("inspector.tabs.tasks");
+        return pendingIntakeCount() > 0
+          ? `${t("inspector.tabs.tasks")} (${pendingIntakeCount()})`
+          : t("inspector.tabs.tasks");
     }
   };
 
@@ -115,13 +146,31 @@ export default function InspectorPane() {
               <button
                 type="button"
                 class={`hoxi-press relative shrink-0 whitespace-nowrap rounded-lg px-2.5 py-1 text-xs font-medium cursor-pointer ${
-                  workspace.inspectorTab === tab.id
+                  !activeCustomTabID() && workspace.inspectorTab === tab.id
                     ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
                     : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
                 }`}
-                onClick={() => setWorkspace("inspectorTab", tab.id)}
+                onClick={() => {
+                  setActiveCustomTabID(null);
+                  setWorkspace("inspectorTab", tab.id);
+                }}
               >
                 {tabLabel(tab.id)}
+              </button>
+            )}
+          </For>
+          <For each={customTabs()}>
+            {(ctab) => (
+              <button
+                type="button"
+                class={`hoxi-press relative shrink-0 whitespace-nowrap rounded-lg px-2.5 py-1 text-xs font-medium cursor-pointer ${
+                  activeCustomTabID() === ctab.id
+                    ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+                }`}
+                onClick={() => setActiveCustomTabID(ctab.id)}
+              >
+                {ctab.label}
               </button>
             )}
           </For>
@@ -152,6 +201,16 @@ export default function InspectorPane() {
 
       <div class="hoxi-tab-stack selectable-text flex-1 min-h-0">
         <Suspense>
+          <Show
+            when={!activeCustomTabID()}
+            fallback={
+              <div class="hoxi-tab-panel h-full" data-active="true">
+                {customTabs()
+                  .find((item) => item.id === activeCustomTabID())
+                  ?.render()}
+              </div>
+            }
+          >
           <Show when={workspace.inspectorOpen && workspace.inspectorTab === "diffs"}>
             <div class="hoxi-tab-panel" data-active="true">
               <PierreDiffViewer />
@@ -191,6 +250,7 @@ export default function InspectorPane() {
             <div class="hoxi-tab-panel" data-active="true">
               <TaskOverviewView />
             </div>
+          </Show>
           </Show>
         </Suspense>
       </div>

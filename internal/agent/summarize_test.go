@@ -45,7 +45,7 @@ func (c *summaryTestClient) OpenStream(ctx context.Context, req llm.StreamHTTPRe
 	if err != nil {
 		return nil, err
 	}
-	delta, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"content": answer}}}})
+	delta, _ := json.Marshal(map[string]any{"usage": map[string]any{"prompt_tokens": 21, "completion_tokens": 3}, "choices": []any{map[string]any{"delta": map[string]any{"content": answer}}}})
 	sse := "data: " + string(delta) + "\n\ndata: [DONE]\n\n"
 	return &http.Response{Body: io.NopCloser(strings.NewReader(sse))}, nil
 }
@@ -70,7 +70,7 @@ func TestOverflowSummaryIncludesMiddleRequirementsAndFullToolEvidence(t *testing
 		{Role: RoleUser, Content: []ContentBlock{{Type: ContentText, Text: "continue exactly here"}}},
 	}
 	before, _ := json.Marshal(msgs)
-	got, info, ok := NewDefaultEngine(c).compactContextOverflow(context.Background(), "selected", "selected-model", msgs, 3, 1)
+	got, info, ok := NewDefaultEngine(c).compactContextOverflow(context.Background(), "selected", "selected-model", msgs, 3, 1, nil)
 	if !ok || info == nil || len(c.inputs) < 3 {
 		t.Fatalf("expected chunked checkpoint: ok=%t info=%+v calls=%d", ok, info, len(c.inputs))
 	}
@@ -129,7 +129,7 @@ func TestSummaryFailureNeverCommitsPartialCheckpoint(t *testing.T) {
 		{Role: RoleAssistant, Content: []ContentBlock{{Type: ContentText, Text: "working"}}},
 		{Role: RoleUser, Content: []ContentBlock{{Type: ContentText, Text: "continue"}}},
 	}
-	got, checkpoint, ok := eng.compactContextOverflow(context.Background(), "selected", "selected-model", msgs, 2, 1)
+	got, checkpoint, ok := eng.compactContextOverflow(context.Background(), "selected", "selected-model", msgs, 2, 1, nil)
 	if ok || got != nil || checkpoint != nil {
 		t.Fatal("failed summary must not silently fall back to deleting content")
 	}
@@ -155,5 +155,19 @@ func TestSummaryCancellationAndNonConvergence(t *testing.T) {
 	}}
 	if summary, err := NewDefaultEngine(c).Summarize(context.Background(), "selected", "selected-model", strings.Repeat("x", 20000)); err == nil || summary != "" {
 		t.Fatal("non-converging summaries must fail explicitly")
+	}
+}
+
+func TestSummaryRetainsUsageWhenLaterSegmentFails(t *testing.T) {
+	c := &summaryTestClient{limit: 8192, reply: func(n int, _ string) (string, error) {
+		if n == 2 {
+			return "", errors.New("second segment failed")
+		}
+		return "checkpoint", nil
+	}}
+	var usage TokenUsage
+	summary, err := NewDefaultEngine(c).SummarizeWithUsage(context.Background(), "selected", "selected-model", strings.Repeat("x", 20000), usage.Add)
+	if err == nil || summary != "" || usage.Input != 21 || usage.Output != 3 {
+		t.Fatalf("result=%q usage=%+v err=%v", summary, usage, err)
 	}
 }

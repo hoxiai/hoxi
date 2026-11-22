@@ -6,6 +6,7 @@
   "properties": {
     "$schema": { "type": "string" },
     "version": { "const": 1 },
+    "hostToolLoading": { "enum": ["eager", "on-demand"] },
     "permission": {
       "type": "object",
       "propertyNames": { "enum": ["*", "read", "glob", "grep", "edit", "write", "multiedit", "apply_patch", "bash", "webfetch", "skill", "task", "question", "todoread", "todowrite", "goal_report", "code_search", "symbol_inspect", "impact_analysis", "hoxi_code_index", "mcp_list_tools", "mcp_call_tool", "hoxi_browser", "hoxi_computer", "hoxi_image", "hoxi_tools", "hoxi_data"] },

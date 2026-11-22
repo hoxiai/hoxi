@@ -16,6 +16,7 @@ import {
   READ_PERMISSIONS,
   externalDirectoryTargets,
   extractToolArgPaths,
+  hasRiskySearchSelector,
   isOwnSessionRecordRead,
   isClaudeSkillReadRequest,
   hasUnsafeClaudeSkillShellAccess,
@@ -64,7 +65,7 @@ const DESTRUCTIVE_RE = new RegExp(
     String.raw`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?(?:\.config\/opencode|\.local\/share\/opencode)\/`,
     String.raw`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:netrc|npmrc|git-credentials|credentials\.json)(?:$|[\s;&|)'"*?])`,
     String.raw`\.claude\/\.credentials\.json`,
-    String.raw`\.hoxi\/(?:models|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|work-apps|dataprofiles|approval-policy|hoxi)\.(?:json|db)`,
+    String.raw`\.hoxi\/(?:models|media-roles|intake|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|work-apps|dataprofiles|approval-policy|hoxi)\.(?:json|db)`,
     String.raw`\.docker\/config\.json`,
     // .env / .env.* / .envrc and private key files
     ENV_FILE_PATTERN,
@@ -77,7 +78,7 @@ const DESTRUCTIVE_RE = new RegExp(
     String.raw`\bterraform\s+(?:destroy|apply)\b`,
     String.raw`\bkubectl\s+delete\b`,
     String.raw`\bdocker\s+(?:system\s+prune|rm|rmi)\b`,
-    String.raw`\/api\/hoxi\/(?:tools\/run|dataprofiles\b|computer\/(?:action|grant|pause|stop))\b`,
+    String.raw`\/api\/hoxi\/(?:tools\/run|dataprofiles\b|intake\b|computer\/(?:action|grant|pause|stop))\b`,
   ].join("|"),
   "i",
 );
@@ -138,7 +139,7 @@ const GO_UNSAFE_FLAGS = new Set([
   "coverprofile", "cpuprofile", "memprofile", "blockprofile", "mutexprofile", "trace", "outputdir",
 ]);
 const GO_ENV_WRITE_FLAGS = new Set(["w", "u"]);
-const HOXI_CODE_INDEX_SUBCOMMANDS = new Set(["search", "inspect", "callers", "callees", "impact", "context", "explore", "refresh", "status"]);
+const HOXI_CODE_INDEX_SUBCOMMANDS = new Set(["map", "search", "inspect", "callers", "callees", "impact", "context", "explore", "refresh", "status"]);
 const HOXI_DOC_READ_SUBCOMMANDS = new Set(["inspect", "read"]);
 const TOOLCHAIN_BASES = new Set(["go", "npm", "pnpm", "yarn", "cargo", "pytest", "tsc", "npx", "node", "git", "hoxi"]);
 const SYSTEM_TOOL_DIRS = new Set([
@@ -688,6 +689,7 @@ export function isDestructivePermissionRequest(input) {
   if (EDIT_PERMISSIONS.has(permission) || permission === "tool") {
     if (toolName === "unsandboxed") return true;
     const meta = input?.metadata || {};
+    if (readOnlyTool && hasRiskySearchSelector(toolName, meta.args)) return true;
     const candidates = [
       ...(permission === "tool" ? [] : Array.isArray(input?.patterns) ? input.patterns : []),
       ...(permission === "tool" ? [] : [input?.pattern]),

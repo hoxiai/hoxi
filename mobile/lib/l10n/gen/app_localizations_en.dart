@@ -15,6 +15,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get commonCancel => 'Cancel';
 
   @override
+  String get commonCopy => 'Copy';
+
+  @override
+  String get commonRetry => 'Retry';
+
+  @override
   String get commonRefresh => 'Refresh';
 
   @override
@@ -1273,4 +1279,13 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get chatActionPickGallery => 'Choose from Photo Library';
+
+  @override
+  String get commonCopied => 'Copied';
+
+  @override
+  String get chatReportAction => 'Report';
+
+  @override
+  String get chatReportedBadge => 'Reported';
 }

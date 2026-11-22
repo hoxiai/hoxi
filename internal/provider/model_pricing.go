@@ -122,11 +122,15 @@ func knownModelPricing(canon string) (llm.ModelPricing, bool) {
 	case strings.HasPrefix(canon, "claude-3-5-haiku"):
 		return llm.ModelPricing{InputPerM: 0.80, OutputPerM: 4.0, CacheReadPerM: 0.08, CacheWritePerM: 1.0}, true
 
-	// OpenAI GPT-5 / GPT-4.1 / GPT-4o / o-series
-	case strings.Contains(canon, "gpt-5") && strings.Contains(canon, "nano"):
+	// OpenAI GPT-6 / GPT-5 / GPT-4.1 / GPT-4o / o-series
+	case (strings.Contains(canon, "gpt-6") || strings.Contains(canon, "gpt-5")) && strings.Contains(canon, "nano"):
 		return llm.ModelPricing{InputPerM: 0.05, OutputPerM: 0.40, CacheReadPerM: 0.005, CacheWritePerM: 0.05}, true
-	case strings.Contains(canon, "gpt-5") && strings.Contains(canon, "mini"):
-		return llm.ModelPricing{InputPerM: 0.25, OutputPerM: 2.0, CacheReadPerM: 0.025, CacheWritePerM: 0.25}, true
+	case (strings.Contains(canon, "gpt-6") || strings.Contains(canon, "gpt-5")) && (strings.Contains(canon, "mini") || strings.Contains(canon, "luna")):
+		return llm.ModelPricing{InputPerM: 0.25, OutputPerM: 1.0, CacheReadPerM: 0.025, CacheWritePerM: 0.25}, true
+	case strings.HasPrefix(canon, "gpt-6") || strings.HasPrefix(canon, "gpt-5-6") || strings.Contains(canon, "astra"):
+		return llm.ModelPricing{InputPerM: 6.0, OutputPerM: 24.0, CacheReadPerM: 0.60, CacheWritePerM: 6.0}, true
+	case strings.HasPrefix(canon, "gpt-5-5") || strings.Contains(canon, "-sol"):
+		return llm.ModelPricing{InputPerM: 3.0, OutputPerM: 12.0, CacheReadPerM: 0.30, CacheWritePerM: 3.0}, true
 	case strings.HasPrefix(canon, "gpt-5"):
 		return llm.ModelPricing{InputPerM: 1.25, OutputPerM: 10.0, CacheReadPerM: 0.125, CacheWritePerM: 1.25}, true
 	case strings.HasPrefix(canon, "gpt-4-1-nano"):

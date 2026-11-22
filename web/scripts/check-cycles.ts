@@ -177,3 +177,35 @@ if (cycles.size > 0) {
   process.exit(1);
 }
 console.log(`[lint:cycles] ✓ No circular runtime imports across ${graph.size} source files.`);
+
+if (WORK_WEB) {
+  const workTsconfig = path.resolve(WORK_WEB, "../tsconfig.json");
+  if (fs.existsSync(workTsconfig)) {
+    const cfgFile = ts.readConfigFile(workTsconfig, ts.sys.readFile);
+    if (cfgFile.error) {
+      console.error(ts.flattenDiagnosticMessageText(cfgFile.error.messageText, "\n"));
+      process.exit(1);
+    }
+    const parsed = ts.parseJsonConfigFileContent(
+      cfgFile.config,
+      ts.sys,
+      path.dirname(workTsconfig),
+    );
+    const program = ts.createProgram(parsed.fileNames, parsed.options);
+    const diagnostics = [
+      ...parsed.errors,
+      ...ts.getPreEmitDiagnostics(program),
+    ];
+    if (diagnostics.length > 0) {
+      const host: tsType.FormatDiagnosticsHost = {
+        getCanonicalFileName: (p) => p,
+        getCurrentDirectory: () => REPO_ROOT,
+        getNewLine: () => "\n",
+      };
+      console.error(`[lint:work-tsc] ✗ TypeScript errors in ${path.relative(REPO_ROOT, workTsconfig)}:`);
+      console.error(ts.formatDiagnosticsWithColorAndContext(diagnostics, host));
+      process.exit(1);
+    }
+    console.log(`[lint:work-tsc] ✓ Work surface TypeScript check passed (${parsed.fileNames.length} files).`);
+  }
+}

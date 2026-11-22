@@ -7,10 +7,11 @@ import {
   type TableAlign,
 } from "./markdown-parser";
 import { Icon } from "../icons";
-import { isSubtaskPlanCodeBlockLang } from "../../store/workspace";
+import { isMermaidCodeBlockLang, isSubtaskPlanCodeBlockLang, isTesterPortalMode } from "../../store/workspace";
 import CodeBlockCard from "./CodeBlockCard";
 import InlineSubtaskPlanCard from "./InlineSubtaskPlanCard";
 import MarkdownInline from "./MarkdownInline";
+import MermaidBlockCard from "./MermaidBlockCard";
 import { createRevealBirths, revealBlock } from "./stream-reveal";
 
 function alignClass(align?: TableAlign): string {
@@ -82,10 +83,22 @@ export default function MarkdownBlocks(props: {
           <Match
             when={
               block().type === "code" &&
+              !isTesterPortalMode() &&
               isSubtaskPlanCodeBlockLang((block() as Extract<BlockToken, { type: "code" }>).lang)
             }
           >
             <InlineSubtaskPlanCard
+              ref={(el) => revealBlock(el, blockBirth(blockIdx))}
+              code={(block() as Extract<BlockToken, { type: "code" }>).code}
+            />
+          </Match>
+          <Match
+            when={
+              block().type === "code" &&
+              isMermaidCodeBlockLang((block() as Extract<BlockToken, { type: "code" }>).lang)
+            }
+          >
+            <MermaidBlockCard
               ref={(el) => revealBlock(el, blockBirth(blockIdx))}
               code={(block() as Extract<BlockToken, { type: "code" }>).code}
             />

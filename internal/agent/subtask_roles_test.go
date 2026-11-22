@@ -289,4 +289,92 @@ func TestPrimaryCustomAgentReadOnlyAndTaskPolicyDeny(t *testing.T) {
 	if hasToolNamed(first.ToolNames, "write") || hasToolNamed(first.ToolNames, "edit") {
 		t.Fatalf("expected read-only primary agent to exclude write/edit tools, got: %v", first.ToolNames)
 	}
+	if !hasToolNamed(first.ToolNames, "task") {
+		t.Fatalf("expected allowlist primary agent (explore=allow) to retain task tool, got: %v", first.ToolNames)
+	}
+}
+
+func TestTaskToolOmittedWhenPermissionTaskDeniesAllAndUnlockedOnPlanPromote(t *testing.T) {
+	t.Setenv("HOXI_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	wsDir := t.TempDir()
+
+	// 1. Global permission.task=deny omits `task` from the tool schema up front.
+	globalDenyStream := &inspectableStreamClient{
+		responder: func(_ int, _ recordedLLMCall) string {
+			return "data: {\"choices\":[{\"delta\":{\"content\":\"done directly\"}}]}\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\ndata: [DONE]\n"
+		},
+	}
+	eng := agent.NewDefaultEngine(globalDenyStream)
+	if err := eng.RunTurn(context.Background(), agent.TurnRequest{
+		SessionID:   "ses_global_deny_task",
+		WorktreeDir: wsDir,
+		Mode:        "build",
+		ProviderID:  "openai",
+		ModelID:     "gpt-5",
+		UserPrompt:  "Answer directly",
+		MCPConfig: func() map[string]any {
+			return map[string]any{"permission": map[string]any{"task": "deny"}}
+		},
+		Sink: agent.EventSinkFunc(func(agent.EngineEvent) {}),
+	}); err != nil {
+		t.Fatalf("RunTurn failed: %v", err)
+	}
+	if hasToolNamed(globalDenyStream.calls[0].ToolNames, "task") {
+		t.Fatalf("expected global permission.task=deny to omit task schema, got: %v", globalDenyStream.calls[0].ToolNames)
+	}
+
+	// 2. Plan mode with task=deny omits `task`, then unlocks `task` when promoted to Build.
+	promoteStream := &inspectableStreamClient{
+		responder: func(idx int, _ recordedLLMCall) string {
+			if idx == 0 {
+				consentArgs, _ := json.Marshal(map[string]any{
+					"title":   "Small refactor",
+					"summary": "Update helper",
+					"steps":   []string{"Edit helper", "Run tests"},
+				})
+				return strings.Join([]string{
+					`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"pc_1","function":{"name":"plan_consent","arguments":` + mustJSONString(string(consentArgs)) + `}}]}}]}`,
+					`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+					`data: [DONE]`,
+				}, "\n") + "\n"
+			}
+			return "data: {\"choices\":[{\"delta\":{\"content\":\"implemented\"}}]}\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\ndata: [DONE]\n"
+		},
+	}
+	eng2 := agent.NewDefaultEngine(promoteStream)
+	if err := eng2.RunTurn(context.Background(), agent.TurnRequest{
+		SessionID:   "ses_plan_deny_task",
+		WorktreeDir: wsDir,
+		Mode:        "plan",
+		ProviderID:  "openai",
+		ModelID:     "gpt-5",
+		UserPrompt:  "Plan a refactor",
+		MCPConfig: func() map[string]any {
+			return map[string]any{
+				"agent": map[string]any{
+					"plan": map[string]any{
+						"permission": map[string]any{"task": "deny"},
+					},
+				},
+			}
+		},
+		AskQuestion: func(_ context.Context, _ string, _ string) (string, map[string]any, error) {
+			return agent.PlanConsentApproveAndBuild, map[string]any{
+				"answers": [][]string{{agent.PlanConsentApproveAndBuild}},
+			}, nil
+		},
+		Sink: agent.EventSinkFunc(func(agent.EngineEvent) {}),
+	}); err != nil {
+		t.Fatalf("RunTurn plan promote failed: %v", err)
+	}
+	if len(promoteStream.calls) < 2 {
+		t.Fatalf("expected at least 2 LLM steps, got %d", len(promoteStream.calls))
+	}
+	if hasToolNamed(promoteStream.calls[0].ToolNames, "task") {
+		t.Fatalf("expected plan mode with task=deny to omit task schema, got: %v", promoteStream.calls[0].ToolNames)
+	}
+	if !hasToolNamed(promoteStream.calls[1].ToolNames, "task") {
+		t.Fatalf("expected promoted build mode to restore task schema, got: %v", promoteStream.calls[1].ToolNames)
+	}
 }

@@ -20,6 +20,7 @@ import {
 } from "../../store/workspace";
 import { t } from "../../i18n";
 import { ProviderIcon } from "../icons";
+import { HelpTip } from "../settings/setting-controls";
 
 function modelPointsLabel(
   m: { perCallPoints: number; inputPointsPerM: number; outputPointsPerM: number }
@@ -94,17 +95,13 @@ export default function OfficialChannelTab() {
   return (
     <div class="flex-1 overflow-y-auto p-6 sm:p-8">
       <div class="mx-auto w-full max-w-4xl space-y-5">
-        <div class="flex items-start justify-between gap-4 rounded-2xl border border-[var(--accent-border)] bg-[var(--accent-surface)]/35 p-4">
+        <div class="flex items-center justify-between gap-4 rounded-2xl border border-[var(--accent-border)] bg-[var(--accent-surface)]/35 p-4">
           <div class="flex items-center gap-3 min-w-0">
             <ProviderIcon id={OFFICIAL_PROVIDER_ID} class="w-6 h-6 shrink-0" />
-            <div class="min-w-0">
-              <div class="flex items-center gap-1.5 text-[14px] font-semibold text-[var(--text-primary)]">
-                <Sparkles size={14} class="text-[var(--accent-primary)] shrink-0" />
-                <span>{t("models.officialCardTitle")}</span>
-              </div>
-              <p class="text-[12px] text-[var(--text-secondary)]">
-                {t("models.officialCardDesc")}
-              </p>
+            <div class="flex items-center gap-2 min-w-0 text-[14px] font-semibold text-[var(--text-primary)]">
+              <Sparkles size={14} class="text-[var(--accent-primary)] shrink-0" />
+              <span class="truncate">{t("models.officialCardTitle")}</span>
+              <HelpTip text={t("models.officialCardDesc")} />
             </div>
           </div>
           <span class="shrink-0 rounded-full bg-[var(--bg-inset)] px-3 py-1.5 text-[12px] font-semibold text-[var(--accent-primary)]">

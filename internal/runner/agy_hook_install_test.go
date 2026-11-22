@@ -2,6 +2,7 @@ package runner
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,16 +10,29 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hoxiai/hoxi/internal/agyhook"
 	"github.com/hoxiai/hoxi/internal/testutil/execstub"
 )
+
+func setTestHookExecutable(fn func() (string, error)) {
+	agyHookMu.Lock()
+	hookExecutable = fn
+	agyHookMu.Unlock()
+}
 
 func withHookPaths(t *testing.T, exe string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config", "hooks.json")
+	agyHookMu.Lock()
 	prevPath, prevExe := agyHooksPathFor, hookExecutable
 	agyHooksPathFor = func() string { return path }
 	hookExecutable = func() (string, error) { return exe, nil }
-	t.Cleanup(func() { agyHooksPathFor, hookExecutable = prevPath, prevExe })
+	agyHookMu.Unlock()
+	t.Cleanup(func() {
+		agyHookMu.Lock()
+		agyHooksPathFor, hookExecutable = prevPath, prevExe
+		agyHookMu.Unlock()
+	})
 	return path
 }
 
@@ -88,7 +102,7 @@ func TestInstallAgyHookCreatesMergesAndRefreshes(t *testing.T) {
 		t.Fatalf("idempotent install rewrote the file")
 	}
 
-	hookExecutable = func() (string, error) { return "/Applications/Hoxi 2.app/Contents/MacOS/hoxi", nil }
+	setTestHookExecutable(func() (string, error) { return "/Applications/Hoxi 2.app/Contents/MacOS/hoxi", nil })
 	if st := AgyApprovalHookStatus(); !st.Installed || st.Current {
 		t.Fatalf("moved binary should be stale: %+v", st)
 	}
@@ -132,47 +146,183 @@ func TestAutoInstallIsOptIn(t *testing.T) {
 }
 
 // The hook command runs under `sh -c`; it must short-circuit in shell when
-// HOXI_RUNNER_SESSION_ID is unset, exec Hoxi when set and present, and fall
-// back to a passthrough allow when the binary is gone.
+// HOXI_RUNNER_SESSION_ID is unset (even when the binary is gone), exec Hoxi or
+// its per-turn / installed fallbacks when inside a Hoxi session, and fail
+// closed (`deny`) when inside a Hoxi session with every binary missing.
 func TestAgyHookCommandShellBehavior(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX sh wrapper test")
+	}
 	dir := filepath.Join(t.TempDir(), "it's here")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	exe := execstub.Write(t, dir, "hoxi", "echo \"ran $1\"\n")
+	exe := execstub.Write(t, dir, "hoxi", "echo \"ran primary $1\"\n")
+	envExe := execstub.Write(t, dir, "hoxi-env", "echo \"ran env $1\"\n")
+	fallbackExe := execstub.Write(t, dir, "hoxi-fallback", "echo \"ran fallback $1\"\n")
+	missingExe := filepath.Join(dir, "missing")
 
-	// Outside Hoxi (no HOXI_RUNNER_SESSION_ID): shell fast-path without spawning Hoxi.
-	cmdUnset := exec.Command("sh", "-c", agyHookCommand(exe))
-	cmdUnset.Env = append(os.Environ(), "HOXI_RUNNER_SESSION_ID=")
+	// Outside Hoxi (no HOXI_RUNNER_SESSION_ID): shell fast-path without spawning Hoxi,
+	// even when every binary is uninstalled.
+	cmdUnset := exec.Command("sh", "-c", agyHookCommandWithFallbacks("darwin", missingExe, nil))
+	cmdUnset.Env = append(os.Environ(), "HOXI_RUNNER_SESSION_ID=", "HOXI_HOOK_BIN=")
 	out, err := cmdUnset.Output()
 	if err != nil || strings.TrimSpace(string(out)) != `{"decision":"allow"}` {
 		t.Fatalf("unset session fast-path: %q %v", out, err)
 	}
 
-	// Inside a Hoxi runner session: execs the Hoxi binary.
-	cmdSet := exec.Command("sh", "-c", agyHookCommand(exe))
-	cmdSet.Env = append(os.Environ(), "HOXI_RUNNER_SESSION_ID=sess-1")
+	// Inside a Hoxi runner session: execs the primary Hoxi binary.
+	cmdSet := exec.Command("sh", "-c", agyHookCommandWithFallbacks("darwin", exe, []string{fallbackExe}))
+	cmdSet.Env = append(os.Environ(), "HOXI_RUNNER_SESSION_ID=sess-1", "HOXI_HOOK_BIN="+envExe)
 	out, err = cmdSet.Output()
-	if err != nil || strings.TrimSpace(string(out)) != "ran agy-hook" {
+	if err != nil || strings.TrimSpace(string(out)) != "ran primary agy-hook" {
 		t.Fatalf("present binary: %q %v", out, err)
 	}
 
-	cmdMissing := exec.Command("sh", "-c", agyHookCommand(filepath.Join(dir, "missing")))
-	cmdMissing.Env = append(os.Environ(), "HOXI_RUNNER_SESSION_ID=sess-1")
+	// Stale primary in hooks.json falls back to per-turn HOXI_HOOK_BIN.
+	cmdEnvFallback := exec.Command("sh", "-c", agyHookCommandWithFallbacks("darwin", missingExe, []string{fallbackExe}))
+	cmdEnvFallback.Env = append(os.Environ(), "HOXI_RUNNER_SESSION_ID=sess-1", "HOXI_HOOK_BIN="+envExe)
+	out, err = cmdEnvFallback.Output()
+	if err != nil || strings.TrimSpace(string(out)) != "ran env agy-hook" {
+		t.Fatalf("HOXI_HOOK_BIN fallback: %q %v", out, err)
+	}
+
+	// Mid-turn deleted build/bin/Hoxi.app falls back to installed /Applications bundle.
+	cmdAppFallback := exec.Command("sh", "-c", agyHookCommandWithFallbacks("darwin", missingExe, []string{fallbackExe}))
+	cmdAppFallback.Env = append(os.Environ(), "HOXI_RUNNER_SESSION_ID=sess-1", "HOXI_HOOK_BIN="+missingExe)
+	out, err = cmdAppFallback.Output()
+	if err != nil || strings.TrimSpace(string(out)) != "ran fallback agy-hook" {
+		t.Fatalf("installed app fallback: %q %v", out, err)
+	}
+
+	// Inside a Hoxi session with ALL binaries missing: fail-closed deny (never allow).
+	cmdMissing := exec.Command("sh", "-c", agyHookCommandWithFallbacks("darwin", missingExe, nil))
+	cmdMissing.Env = append(os.Environ(), "HOXI_RUNNER_SESSION_ID=sess-1", "HOXI_HOOK_BIN=")
 	out, err = cmdMissing.Output()
-	if err != nil || strings.TrimSpace(string(out)) != `{"decision":"allow"}` {
-		t.Fatalf("missing binary: %q %v", out, err)
+	if err != nil {
+		t.Fatalf("missing binary exit error: %v (%q)", err, out)
+	}
+	var d agyhook.Decision
+	if err := json.Unmarshal(out, &d); err != nil {
+		t.Fatalf("missing binary output %q is not valid JSON: %v", out, err)
+	}
+	if d.Decision != "deny" || d.Reason != agyhook.MissingBinaryReason {
+		t.Fatalf("missing binary inside Hoxi session must fail closed, got %+v", d)
 	}
 }
 
 func TestAgyHookCommandForWindowsUsesCmdIfExist(t *testing.T) {
 	winCmd := agyHookCommandForOS("windows", `C:\Program Files\Hoxi\Hoxi.exe`)
-	want := `if defined HOXI_RUNNER_SESSION_ID (if exist "C:\Program Files\Hoxi\Hoxi.exe" ("C:\Program Files\Hoxi\Hoxi.exe" agy-hook) else (echo {"decision":"allow"})) else (echo {"decision":"allow"})`
+	denyRaw := `{"decision":"deny","reason":"` + agyhook.MissingBinaryReason + `"}`
+	want := `if not defined HOXI_RUNNER_SESSION_ID (echo {"decision":"allow"}) else if exist "C:\Program Files\Hoxi\Hoxi.exe" ("C:\Program Files\Hoxi\Hoxi.exe" agy-hook) else if defined HOXI_HOOK_BIN (if exist "%HOXI_HOOK_BIN%" ("%HOXI_HOOK_BIN%" agy-hook) else (echo ` + denyRaw + `)) else (echo ` + denyRaw + `)`
 	if winCmd != want {
 		t.Fatalf("agyHookCommandForOS(windows) = %q, want %q", winCmd, want)
 	}
-	unixCmd := agyHookCommandForOS("darwin", "/Applications/Hoxi.app/Contents/MacOS/hoxi")
-	if !strings.HasPrefix(unixCmd, `[ -n "$HOXI_RUNNER_SESSION_ID" ] && [ -x '/Applications/Hoxi.app/Contents/MacOS/hoxi' ] && exec `) {
-		t.Fatalf("agyHookCommandForOS(darwin) = %q", unixCmd)
+	darwinProd := agyHookCommandForOS("darwin", "/Applications/Hoxi.app/Contents/MacOS/Hoxi")
+	if !strings.HasPrefix(darwinProd, `if [ -z "$HOXI_RUNNER_SESSION_ID" ]; then echo '{"decision":"allow"}'; elif [ -x '/Applications/Hoxi.app/Contents/MacOS/Hoxi' ]; then exec `) {
+		t.Fatalf("agyHookCommandForOS(darwin prod) = %q", darwinProd)
+	}
+	if strings.Count(darwinProd, "/Applications/Hoxi.app/Contents/MacOS/Hoxi") != 2 {
+		t.Fatalf("prod path should not duplicate fallback branch: %q", darwinProd)
+	}
+	darwinBuild := agyHookCommandForOS("darwin", "/Users/dev/hoxi/build/bin/Hoxi.app/Contents/MacOS/Hoxi")
+	if !strings.Contains(darwinBuild, "elif [ -x '/Applications/Hoxi.app/Contents/MacOS/Hoxi' ]; then exec '/Applications/Hoxi.app/Contents/MacOS/Hoxi' agy-hook") {
+		t.Fatalf("non-Applications darwin path should include /Applications fallback: %q", darwinBuild)
+	}
+}
+
+func TestResolveHookExecutableHandlesMovedAndUnlinkedAppBundles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX executable bit test")
+	}
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeStub := func(dir, name string) string {
+		if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
+			t.Fatal(mkErr)
+		}
+		p := filepath.Join(dir, name)
+		if wErr := os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755); wErr != nil {
+			t.Fatal(wErr)
+		}
+		return p
+	}
+	movedExe := writeStub(filepath.Join(root, "Desktop", "Hoxi.app", "Contents", "MacOS"), "Hoxi")
+	installedProd := writeStub(filepath.Join(root, "Applications", "Hoxi.app", "Contents", "MacOS"), "Hoxi")
+	installedDev := writeStub(filepath.Join(root, "Applications", "Hoxi Dev.app", "Contents", "MacOS"), "Hoxi")
+	staleBuild := filepath.Join(root, "build", "bin", "Hoxi.app", "Contents", "MacOS", "Hoxi")
+	staleDevBuild := filepath.Join(root, "build", "bin", "Hoxi Dev.app", "Contents", "MacOS", "Hoxi")
+
+	// 1. Live proc_pidpath (Finder move on same volume) wins over stale os.Executable().
+	got, err := resolveHookExecutable("darwin", movedExe, staleBuild, []string{installedProd})
+	if err != nil || got != movedExe {
+		t.Fatalf("moved live path: got %q (%v), want %q", got, err, movedExe)
+	}
+
+	// 2. Unlinked build/bin/Hoxi.app (proc_pidpath empty, os.Executable missing) falls back to installed bundle.
+	got, err = resolveHookExecutable("darwin", "", staleBuild, []string{installedProd, installedDev})
+	if err != nil || got != installedProd {
+		t.Fatalf("unlinked prod fallback: got %q (%v), want %q", got, err, installedProd)
+	}
+	fallbacksDev := fallbackHookExecutables("darwin", staleDevBuild, root, "", "")
+	var tempOnlyFallbacks []string
+	for _, fb := range fallbacksDev {
+		if strings.HasPrefix(fb, root) {
+			tempOnlyFallbacks = append(tempOnlyFallbacks, fb)
+		}
+	}
+	got, err = resolveHookExecutable("darwin", "", staleDevBuild, tempOnlyFallbacks)
+	if err != nil || got != installedDev {
+		t.Fatalf("unlinked dev bundle should prefer Hoxi Dev.app: got %q (%v), want %q", got, err, installedDev)
+	}
+
+	// 3. Reject non-executable files, directories, and dangling symlinks; fail with error when nothing exists.
+	nonExec := filepath.Join(root, "not-executable")
+	if err := os.WriteFile(nonExec, []byte("plain"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dangling := filepath.Join(root, "dangling-link")
+	if err := os.Symlink(staleBuild, dangling); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveHookExecutable("darwin", dangling, nonExec, []string{root, staleBuild}); err == nil {
+		t.Fatal("expected error when every candidate is missing, a directory, non-executable, or a dangling symlink")
+	}
+}
+
+func TestMissingExecutableReportsErrorAndStillAllowsUninstall(t *testing.T) {
+	path := withHookPaths(t, "/Users/dev/build/bin/Hoxi.app/Contents/MacOS/Hoxi")
+	if st, err := InstallAgyApprovalHook(); err != nil || !st.Current {
+		t.Fatalf("initial install: %+v %v", st, err)
+	}
+
+	// Simulate the binary disappearing with no fallback installed anywhere.
+	setTestHookExecutable(func() (string, error) {
+		return "", errors.New("Hoxi executable no longer exists on disk")
+	})
+	st := AgyApprovalHookStatus()
+	if st.Path != path || !st.Installed || st.Current || st.Error == "" {
+		t.Fatalf("missing binary must report installed=true, current=false, error!=empty; got %+v", st)
+	}
+	if _, err := InstallAgyApprovalHook(); err == nil {
+		t.Fatal("expected InstallAgyApprovalHook to fail when executable is missing")
+	}
+
+	// User can still cleanly uninstall Hoxi's entry from hooks.json.
+	after, err := UninstallAgyApprovalHook()
+	if err != nil || after.Installed {
+		t.Fatalf("uninstall with missing executable failed: %+v %v", after, err)
+	}
+}
+
+func TestLiveProcessExecutablePathCurrentProcess(t *testing.T) {
+	live := liveProcessExecutablePath()
+	if live == "" {
+		return
+	}
+	if resolved, ok := usableExecutableForOS(runtime.GOOS, live); !ok || resolved == "" {
+		t.Fatalf("liveProcessExecutablePath() = %q was rejected by usableExecutableForOS", live)
 	}
 }

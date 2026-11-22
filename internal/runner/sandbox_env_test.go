@@ -72,3 +72,68 @@ func TestRuntimeProcessEnvScrubsOnlySandboxedSessions(t *testing.T) {
 		t.Fatalf("an unsandboxed session must keep the user's environment: %v", plain)
 	}
 }
+
+func TestRuntimeProcessEnvMergesNoProxyWithoutDuplicates(t *testing.T) {
+	base := []string{
+		"PATH=/usr/bin",
+		"HTTPS_PROXY=http://127.0.0.1:7890",
+		"NO_PROXY=*.local,169.254.0.0/16,127.0.0.1",
+	}
+	hook := []string{
+		claudeHookTokenEnv + "=hook",
+		"NO_PROXY=127.0.0.1,localhost,::1",
+	}
+	got := runtimeProcessEnv(SessionRecord{Runtime: string(RuntimeAntigravity), CommandSandbox: true}, base, hook)
+	var noProxyVals []string
+	var httpsProxy string
+	for _, kv := range got {
+		name, val, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		switch name {
+		case "NO_PROXY":
+			noProxyVals = append(noProxyVals, val)
+		case "HTTPS_PROXY":
+			httpsProxy = val
+		}
+	}
+	if httpsProxy != "http://127.0.0.1:7890" {
+		t.Fatalf("HTTPS_PROXY = %q, want http://127.0.0.1:7890", httpsProxy)
+	}
+	if len(noProxyVals) != 1 {
+		t.Fatalf("expected single deduplicated NO_PROXY entry, got %v", noProxyVals)
+	}
+	if want := "*.local,169.254.0.0/16,127.0.0.1,localhost,::1"; noProxyVals[0] != want {
+		t.Fatalf("NO_PROXY = %q, want %q", noProxyVals[0], want)
+	}
+}
+
+func TestRuntimeProcessEnvInjectsSystemProxyForExternalCLIsOnly(t *testing.T) {
+	prev := applyRuntimeSystemProxy
+	applyRuntimeSystemProxy = func(env []string) []string {
+		return append(append([]string(nil), env...),
+			"HTTPS_PROXY=http://127.0.0.1:7890",
+			"NO_PROXY=127.0.0.1,localhost,::1",
+		)
+	}
+	t.Cleanup(func() { applyRuntimeSystemProxy = prev })
+
+	agyEnv := envNames(runtimeProcessEnv(
+		SessionRecord{Runtime: string(RuntimeAntigravity), CommandSandbox: true},
+		[]string{"PATH=/usr/bin", "GH_TOKEN=drop"},
+		nil,
+	))
+	if !agyEnv["HTTPS_PROXY"] || !agyEnv["NO_PROXY"] || agyEnv["GH_TOKEN"] {
+		t.Fatalf("expected system proxy preserved and GH_TOKEN scrubbed for antigravity, got %v", agyEnv)
+	}
+
+	nativeEnv := envNames(runtimeProcessEnv(
+		SessionRecord{Runtime: "native", CommandSandbox: true},
+		[]string{"PATH=/usr/bin"},
+		nil,
+	))
+	if nativeEnv["HTTPS_PROXY"] {
+		t.Fatalf("native bash env should not auto-inject CLI system proxy: %v", nativeEnv)
+	}
+}

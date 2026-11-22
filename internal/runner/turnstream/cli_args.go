@@ -183,9 +183,24 @@ func BuildGeminiArgs(mode, modelID, _, externalSessionID string) []string {
 }
 
 func BuildCodexArgs(mode, modelID, effort, externalThreadID string) []string {
+	return BuildCodexArgsWithFast(mode, modelID, effort, externalThreadID, false)
+}
+
+func supportsCodexCLIFastMode(modelID string) bool {
+	lower := strings.ToLower(strings.TrimSpace(modelID))
+	if lower == "" || lower == "auto" {
+		return true
+	}
+	return !strings.Contains(lower, "oss-") &&
+		!strings.Contains(lower, "nano") &&
+		!strings.Contains(lower, "mini")
+}
+
+func BuildCodexArgsWithFast(mode, modelID, effort, externalThreadID string, fastMode bool) []string {
 	m := strings.TrimSpace(modelID)
 	eff := agentcli.NormalizeEffortName(effort)
 	tid := strings.TrimSpace(externalThreadID)
+	enableFast := fastMode && supportsCodexCLIFastMode(m)
 	if tid != "" {
 		args := []string{"exec", "resume", tid, "--json", "--skip-git-repo-check"}
 		if m != "" && !strings.EqualFold(m, "auto") {
@@ -193,6 +208,9 @@ func BuildCodexArgs(mode, modelID, effort, externalThreadID string) []string {
 		}
 		if eff != "" {
 			args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", eff))
+		}
+		if enableFast {
+			args = append(args, "-c", `service_tier="fast"`)
 		}
 		args = append(args, "-")
 		return args
@@ -208,6 +226,9 @@ func BuildCodexArgs(mode, modelID, effort, externalThreadID string) []string {
 	}
 	if eff != "" {
 		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", eff))
+	}
+	if enableFast {
+		args = append(args, "-c", `service_tier="fast"`)
 	}
 	args = append(args, "-")
 	return args

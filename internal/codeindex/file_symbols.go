@@ -97,6 +97,13 @@ func declaredSymbolsInFile(directory, relPath string, maxFileBytes int64) (strin
 	lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
 	seen := make(map[string]struct{})
 	var syms []string
+	for _, m := range typeScriptMethods(cleanRel, string(raw)) {
+		name := m.Receiver + "." + m.Symbol
+		if _, ok := seen[name]; !ok {
+			syms = append(syms, name)
+			seen[name] = struct{}{}
+		}
+	}
 	for _, line := range lines {
 		if isGoFile && leadingIndentWidth(line) > 0 {
 			continue

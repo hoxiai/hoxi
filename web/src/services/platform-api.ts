@@ -34,7 +34,22 @@ export interface UpdateMirrors {
 export interface NativeUpdateStatus {
   available: boolean;
   draining: boolean;
+  managedBy?: string;
+  upgradeCommand?: string;
   progress?: NativeUpdateProgress;
+}
+
+export interface CliLinkStatus {
+  installed: boolean;
+  current: boolean;
+  external?: boolean;
+  inPath: boolean;
+  linkPath?: string;
+  targetPath?: string;
+  executable?: string;
+  suggestedDir?: string;
+  pathHint?: string;
+  error?: string;
 }
 
 export interface NativeUpdateProgress {
@@ -237,6 +252,18 @@ export const updaterAPI = {
   },
   checkUpdate(): Promise<UpdateCheckResult> {
     return requestJSON("/api/hoxi/updater/check");
+  },
+};
+
+export const cliLinkAPI = {
+  getStatus(): Promise<CliLinkStatus> {
+    return requestJSON("/api/hoxi/system/cli-link");
+  },
+  install(): Promise<CliLinkStatus> {
+    return requestJSON("/api/hoxi/system/cli-link", { method: "POST" });
+  },
+  uninstall(): Promise<CliLinkStatus> {
+    return requestJSON("/api/hoxi/system/cli-link", { method: "DELETE" });
   },
 };
 

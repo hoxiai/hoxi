@@ -20,8 +20,18 @@ const maxLocalMediaUploadBytes = 25 << 20
 
 func (g *Gateway) registerMediaRoutes() {
 	g.mux.HandleFunc("/api/hoxi/media/capabilities", g.handleMediaCapabilities)
+	g.mux.HandleFunc("/api/hoxi/media/roles", g.handleMediaRoles)
 	g.mux.HandleFunc("/api/hoxi/media/image", g.handleMediaImage)
+	g.mux.HandleFunc("/api/hoxi/media/video", g.handleMediaVideo)
+	g.mux.HandleFunc("/api/hoxi/media/speech", g.handleMediaSpeech)
 	g.mux.HandleFunc("/api/hoxi/media/transcribe", g.handleMediaTranscribe)
+}
+
+func (g *Gateway) sessionActiveModel(sessionID string) (string, string) {
+	if g == nil || g.runner == nil || strings.TrimSpace(sessionID) == "" {
+		return "", ""
+	}
+	return g.runner.SessionModel(sessionID)
 }
 
 func (g *Gateway) handleMediaCapabilities(w http.ResponseWriter, r *http.Request) {
@@ -34,19 +44,33 @@ func (g *Gateway) handleMediaCapabilities(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var imageModels []llm.ImageModelOption
+	var videoModels []llm.VideoModelOption
+	var speechModels []llm.AudioModelOption
+	var transcribeModels []llm.AudioModelOption
+	var roles llm.MediaRolePrefs
 	hasASR := false
 	hasEmbedding := false
 	if g.providers != nil {
 		imageModels = g.providers.ListImageModels()
+		videoModels = g.providers.ListVideoModels()
+		speechModels = g.providers.ListSpeechModels()
+		transcribeModels = g.providers.ListAudioTranscriberModels()
+		roles = g.providers.LoadMediaRolePrefs()
 		hasASR = g.providers.HasAudioTranscriber()
 		hasEmbedding = g.providers.HasEmbeddingModel()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":                  true,
 		"hasImageModel":       len(imageModels) > 0,
+		"hasVideoModel":       len(videoModels) > 0,
+		"hasSpeechModel":      len(speechModels) > 0,
 		"hasAudioTranscriber": hasASR,
 		"hasEmbeddingModel":   hasEmbedding,
 		"imageModels":         imageModels,
+		"videoModels":         videoModels,
+		"speechModels":        speechModels,
+		"transcribeModels":    transcribeModels,
+		"roles":               roles,
 	})
 }
 
@@ -68,6 +92,53 @@ type mediaImageSavedItem struct {
 	Mime     string `json:"mime"`
 	URL      string `json:"url,omitempty"`
 	Path     string `json:"path,omitempty"`
+}
+
+func checkWorkspaceRelMediaRules(slashRel, target string, allowAttachmentSubdir bool) error {
+	if allowAttachmentSubdir && strings.HasPrefix(slashRel, ".hoxi/attachments/") {
+		return nil
+	}
+	if hoxipaths.IsDeniedDocOrSpreadsheetPath(target) {
+		return errors.New("refusing to access protected or credential path")
+	}
+	lowerRel := strings.ToLower(slashRel)
+	for _, prefix := range []string{".git/", ".opencode/", ".claude/", ".hoxi/", ".agents/", ".gemini/"} {
+		if strings.HasPrefix(lowerRel, prefix) || lowerRel == strings.TrimSuffix(prefix, "/") {
+			return errors.New("refusing to access protected dot-directory")
+		}
+	}
+	baseName := strings.ToLower(filepath.Base(target))
+	if baseName == ".env" || strings.HasPrefix(baseName, ".env.") || baseName == ".envrc" {
+		return errors.New("refusing to access secret environment file")
+	}
+	return nil
+}
+
+func evalExistingAncestorSymlinks(absPath string) (string, error) {
+	cur := filepath.Clean(absPath)
+	var suffix []string
+	for {
+		_, err := os.Lstat(cur)
+		if err == nil {
+			resolved, evalErr := filepath.EvalSymlinks(cur)
+			if evalErr != nil {
+				return "", errors.New("refusing broken or unresolvable symlink path")
+			}
+			for i := len(suffix) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, suffix[i])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return filepath.Clean(absPath), nil
+		}
+		suffix = append(suffix, filepath.Base(cur))
+		cur = parent
+	}
 }
 
 func resolveSafeWorkspaceMediaPath(worktreeDir, relOrAbs string, allowAttachmentSubdir bool) (string, error) {
@@ -93,24 +164,50 @@ func resolveSafeWorkspaceMediaPath(worktreeDir, relOrAbs string, allowAttachment
 	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", errors.New("target path must stay inside the workspace directory")
 	}
-	slashRel := filepath.ToSlash(rel)
-	if allowAttachmentSubdir && strings.HasPrefix(slashRel, ".hoxi/attachments/") {
-		return target, nil
+	if err := checkWorkspaceRelMediaRules(filepath.ToSlash(rel), target, allowAttachmentSubdir); err != nil {
+		return "", err
 	}
-	if hoxipaths.IsDeniedDocOrSpreadsheetPath(target) {
-		return "", errors.New("refusing to access protected or credential path")
+
+	realBase := base
+	if evalBase, bErr := filepath.EvalSymlinks(base); bErr == nil && strings.TrimSpace(evalBase) != "" {
+		realBase = filepath.Clean(evalBase)
 	}
-	lowerRel := strings.ToLower(slashRel)
-	for _, prefix := range []string{".git/", ".opencode/", ".claude/", ".hoxi/", ".agents/", ".gemini/"} {
-		if strings.HasPrefix(lowerRel, prefix) || lowerRel == strings.TrimSuffix(prefix, "/") {
-			return "", errors.New("refusing to access protected dot-directory")
-		}
+	realTarget, symErr := evalExistingAncestorSymlinks(target)
+	if symErr != nil {
+		return "", symErr
 	}
-	baseName := strings.ToLower(filepath.Base(target))
-	if baseName == ".env" || strings.HasPrefix(baseName, ".env.") || baseName == ".envrc" {
-		return "", errors.New("refusing to access secret environment file")
+	realRel, relErr := filepath.Rel(realBase, realTarget)
+	if relErr != nil || realRel == "." || realRel == ".." || strings.HasPrefix(realRel, ".."+string(filepath.Separator)) {
+		return "", errors.New("target path escapes workspace directory via symlink")
 	}
-	return target, nil
+	if err := checkWorkspaceRelMediaRules(filepath.ToSlash(realRel), realTarget, allowAttachmentSubdir); err != nil {
+		return "", err
+	}
+	return realTarget, nil
+}
+
+func writeMediaOutputFile(worktreeDir, dst string, data []byte) (string, error) {
+	safeDst, err := resolveSafeWorkspaceMediaPath(worktreeDir, dst, true)
+	if err != nil {
+		return "", err
+	}
+	if st, statErr := os.Lstat(safeDst); statErr == nil && st.IsDir() {
+		return "", errors.New("outputPath points to an existing directory")
+	}
+	if err := os.MkdirAll(filepath.Dir(safeDst), 0o755); err != nil {
+		return "", err
+	}
+	if err := hoxipaths.WriteFileAtomic(safeDst, data, 0o644); err != nil {
+		return "", err
+	}
+	realBase := filepath.Clean(worktreeDir)
+	if evalBase, bErr := filepath.EvalSymlinks(realBase); bErr == nil && strings.TrimSpace(evalBase) != "" {
+		realBase = filepath.Clean(evalBase)
+	}
+	if rel, relErr := filepath.Rel(realBase, safeDst); relErr == nil && !strings.HasPrefix(rel, "..") {
+		return filepath.ToSlash(rel), nil
+	}
+	return safeDst, nil
 }
 
 func mediaExtForMime(mime string) string {
@@ -140,10 +237,19 @@ func (g *Gateway) handleMediaImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req mediaImageRequest
-	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&req); err != nil {
+	if isAppMediaRequest(r) {
+		if !decodeAppJSON(w, r, &req, 4<<20) {
+			return
+		}
+	} else if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON payload")
 		return
 	}
+	if isAppMediaRequest(r) && (req.Directory != "" || r.URL.Query().Has("directory") || req.OutputPath != "" || req.SessionID != "" || len(req.InputPaths) != 0) {
+		writeAppError(w, http.StatusForbidden, "FILES_FORBIDDEN", "application media endpoints do not access local files or desktop sessions")
+		return
+	}
+
 	dir := strings.TrimSpace(req.Directory)
 	if dir == "" {
 		dir = strings.TrimSpace(r.URL.Query().Get("directory"))
@@ -191,9 +297,26 @@ func (g *Gateway) handleMediaImage(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	sessPID, sessMID := g.sessionActiveModel(req.SessionID)
+	resolvedPID, resolvedMID, resolution, hasImgModel := g.providers.ResolveImageModelForSession(
+		req.ProviderID, req.ModelID, sessPID, sessMID,
+	)
+	if !hasImgModel {
+		if writeAppMediaFailure(w, r, llm.ErrUnavailable) {
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":                false,
+			"missingCapability": "image",
+			"fallbackTool":      "hoxi_tools",
+			"error":             "neither the active model nor any configured local provider supports image generation; configure a Gemini Image, Imagen, GPT-Image, Flux, or Seedream model in Settings -> Providers, or fall back to hoxi_tools (discover -> inspect -> run) if cloud media APIs are available",
+		})
+		return
+	}
+
 	resp, err := g.providers.GenerateImage(r.Context(), llm.ImageRequest{
-		ProviderID:  req.ProviderID,
-		ModelID:     req.ModelID,
+		ProviderID:  resolvedPID,
+		ModelID:     resolvedMID,
 		Prompt:      req.Prompt,
 		AspectRatio: req.AspectRatio,
 		ImageSize:   req.ImageSize,
@@ -201,14 +324,29 @@ func (g *Gateway) handleMediaImage(w http.ResponseWriter, r *http.Request) {
 		InputImages: inputImages,
 	})
 	if err != nil {
+		if writeAppMediaFailure(w, r, err) {
+			return
+		}
 		if errors.Is(err, llm.ErrUnavailable) {
 			writeJSON(w, http.StatusOK, map[string]any{
-				"ok":    false,
-				"error": "no image generation model is configured; add a Gemini Image, GPT-Image, Flux, or Imagen model in Settings -> Providers",
+				"ok":                false,
+				"missingCapability": "image",
+				"fallbackTool":      "hoxi_tools",
+				"error":             "neither the active model nor any configured local provider supports image generation; configure a Gemini Image, Imagen, GPT-Image, Flux, or Seedream model in Settings -> Providers, or fall back to hoxi_tools (discover -> inspect -> run) if cloud media APIs are available",
 			})
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+
+	if isAppMediaRequest(r) {
+		items := make([]appMediaOutput, 0, len(resp.Images))
+		for _, item := range resp.Images {
+			items = append(items, appMediaOutput{Mime: item.Mime, Data: item.Data})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "providerID": resp.ProviderID,
+			"modelID": resp.ModelID, "resolution": resolution, "images": items})
 		return
 	}
 
@@ -263,15 +401,12 @@ func (g *Gateway) handleMediaImage(w http.ResponseWriter, r *http.Request) {
 			} else if filepath.Ext(dst) == "" {
 				dst += ext
 			}
-			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err == nil {
-				if wErr := hoxipaths.WriteFileAtomic(dst, img.Data, 0o644); wErr == nil {
-					if rel, relErr := filepath.Rel(dir, dst); relErr == nil {
-						item.Path = filepath.ToSlash(rel)
-					} else {
-						item.Path = dst
-					}
-				}
+			relPath, wErr := writeMediaOutputFile(dir, dst, img.Data)
+			if wErr != nil {
+				writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "failed to write outputPath: " + wErr.Error()})
+				return
 			}
+			item.Path = relPath
 		}
 		savedItems = append(savedItems, item)
 	}
@@ -280,6 +415,7 @@ func (g *Gateway) handleMediaImage(w http.ResponseWriter, r *http.Request) {
 		"ok":         true,
 		"providerID": resp.ProviderID,
 		"modelID":    resp.ModelID,
+		"resolution": resolution,
 		"text":       resp.Text,
 		"images":     savedItems,
 	})
@@ -308,6 +444,7 @@ func (g *Gateway) handleMediaTranscribe(w http.ResponseWriter, r *http.Request) 
 			writeJSONError(w, http.StatusBadRequest, "failed to parse multipart audio: "+err.Error())
 			return
 		}
+		defer r.MultipartForm.RemoveAll()
 		file, hdr, err := r.FormFile("file")
 		if err != nil {
 			writeJSONError(w, http.StatusBadRequest, "file field is required")
@@ -363,6 +500,9 @@ func (g *Gateway) handleMediaTranscribe(w http.ResponseWriter, r *http.Request) 
 		Prompt:     prompt,
 	})
 	if err != nil {
+		if writeAppMediaFailure(w, r, err) {
+			return
+		}
 		if errors.Is(err, llm.ErrUnavailable) {
 			writeJSON(w, http.StatusOK, map[string]any{
 				"ok":    false,

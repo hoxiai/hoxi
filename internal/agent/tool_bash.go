@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,8 +13,6 @@ import (
 	"runtime"
 	"strings"
 	"time"
-
-	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 type bashTool struct{}
@@ -31,19 +30,21 @@ func (t *bashTool) Parameters() map[string]any {
 			"timeoutMs":         map[string]any{"type": "integer", "description": "Timeout in milliseconds for foreground commands (default 120000)"},
 			"run_in_background": map[string]any{"type": "boolean", "description": "Set true ONLY for long-lived dev servers or watchers so the call returns a procId immediately while keeping the server alive across steps/turns"},
 			"action":            map[string]any{"type": "string", "enum": []string{"run", "output", "stop", "list"}, "description": "Background lifecycle action: 'output' reads unread logs for procId, 'stop' terminates procId, 'list' lists background commands in this session"},
-			"procId":            map[string]any{"type": "string", "description": "Background process ID returned by run_in_background (required for action='output' or action='stop')"},
+			"procId":            map[string]any{"type": "string", "description": "Process ID or foreground log ID returned by bash"},
+			"offset":            map[string]any{"type": "integer", "minimum": 0, "description": "Byte offset for a foreground log ID"},
 			"waitMs":            map[string]any{"type": "integer", "description": "Optional wait up to 10000ms for new output or exit when action='output'"},
 		},
 	}
 }
 
-func (t *bashTool) Execute(ctx context.Context, tc ToolContext, input json.RawMessage) (ToolOutput, error) {
+func (t *bashTool) Execute(ctx context.Context, tc ToolContext, input json.RawMessage) (result ToolOutput, execErr error) {
 	var args struct {
 		Command         string `json:"command"`
 		TimeoutMs       int    `json:"timeoutMs"`
 		RunInBackground bool   `json:"run_in_background"`
 		Action          string `json:"action"`
 		ProcID          string `json:"procId"`
+		Offset          int    `json:"offset"`
 		WaitMs          int    `json:"waitMs"`
 	}
 	if err := json.Unmarshal(input, &args); err != nil {
@@ -51,11 +52,14 @@ func (t *bashTool) Execute(ctx context.Context, tc ToolContext, input json.RawMe
 	}
 	act := strings.ToLower(strings.TrimSpace(args.Action))
 	if act != "" && act != "run" {
+		procID := strings.TrimSpace(args.ProcID)
+		if act == "output" && strings.HasPrefix(procID, "log_") {
+			return tc.commandLogs.page(procID, args.Offset)
+		}
 		bgMgr := tc.BackgroundCommands
 		if bgMgr == nil {
 			bgMgr = fallbackBackgroundManagerForSession(tc.SessionID)
 		}
-		procID := strings.TrimSpace(args.ProcID)
 		switch act {
 		case "output":
 			wait := time.Duration(0)
@@ -65,6 +69,14 @@ func (t *bashTool) Execute(ctx context.Context, tc ToolContext, input json.RawMe
 			st, err := bgMgr.Output(ctx, procID, wait)
 			if err != nil {
 				return ToolOutput{Title: "bash output " + procID, IsError: true}, err
+			}
+			if !st.Running && st.ExitCode != 0 {
+				return ToolOutput{
+					Title:    "bash output " + st.ProcID,
+					Output:   formatBackgroundStatusReport("output", st),
+					IsError:  true,
+					Metadata: map[string]any{"procId": st.ProcID, "running": false, "exitCode": st.ExitCode},
+				}, fmt.Errorf("background command %s exited with code %d", st.ProcID, st.ExitCode)
 			}
 			return ToolOutput{
 				Title:    "bash output " + st.ProcID,
@@ -129,6 +141,12 @@ func (t *bashTool) Execute(ctx context.Context, tc ToolContext, input json.RawMe
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	var capture io.Writer
+	if tc.commandLogs != nil && (tc.StreamRunCommand != nil || tc.RunCommand == nil) {
+		log := &commandLogCapture{}
+		capture = log
+		defer func() { tc.commandLogs.finish(log, input, &result) }()
+	}
 	if tc.StreamRunCommand != nil {
 		var onLive func(string)
 		if tc.OnToolOutput != nil {
@@ -136,7 +154,11 @@ func (t *bashTool) Execute(ctx context.Context, tc ToolContext, input json.RawMe
 				tc.OnToolOutput(stripTerminalControlNoise(s))
 			}
 		}
-		out, code, err := tc.StreamRunCommand(runCtx, tc.WorktreeDir, cmdStr, onLive)
+		out, code, err := tc.StreamRunCommand(runCtx, tc.WorktreeDir, cmdStr, capture, onLive)
+		var promotedErr *BackgroundPromotedError
+		if errors.As(err, &promotedErr) && promotedErr != nil {
+			return promotedToolOutput(cmdStr, promotedErr.Status), nil
+		}
 		if err != nil || code != 0 {
 			return ToolOutput{
 				Title:   cmdStr,
@@ -148,6 +170,10 @@ func (t *bashTool) Execute(ctx context.Context, tc ToolContext, input json.RawMe
 	}
 	if tc.RunCommand != nil {
 		out, code, err := tc.RunCommand(runCtx, tc.WorktreeDir, cmdStr)
+		var promotedErr *BackgroundPromotedError
+		if errors.As(err, &promotedErr) && promotedErr != nil {
+			return promotedToolOutput(cmdStr, promotedErr.Status), nil
+		}
 		if err != nil || code != 0 {
 			return ToolOutput{
 				Title:   cmdStr,
@@ -158,23 +184,7 @@ func (t *bashTool) Execute(ctx context.Context, tc ToolContext, input json.RawMe
 		return ToolOutput{Title: cmdStr, Output: out}, nil
 	}
 
-	shell, shellArgs := defaultShellCommand(cmdStr)
-	cmd := subproc.CommandContext(runCtx, shell, shellArgs...)
-	cmd.Dir = tc.WorktreeDir
-	var combined limitedCmdBuffer
-	combined.limit = 128 * 1024
-	cmd.Stdout = &combined
-	cmd.Stderr = &combined
-	err := cmd.Run()
-	out := subproc.DecodeOutputBytes(combined.Bytes())
-	if err != nil {
-		return ToolOutput{
-			Title:   cmdStr,
-			Output:  strings.TrimSpace(out + "\n" + err.Error()),
-			IsError: true,
-		}, err
-	}
-	return ToolOutput{Title: cmdStr, Output: out}, nil
+	return runDirectForegroundBash(runCtx, tc, cmdStr, capture)
 }
 
 type limitedCmdBuffer struct {

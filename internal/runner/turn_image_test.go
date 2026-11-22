@@ -161,3 +161,100 @@ func TestSessionImageGenerationTurnPersistsAttachmentAndStreamsFilePart(t *testi
 		t.Fatalf("expected second turn to attach previous generated image for editing, got %d images", len(fakeImg.requests[1].InputImages))
 	}
 }
+
+type fakeVideoClient struct {
+	mu       sync.Mutex
+	requests []llm.VideoRequest
+	mp4Bytes []byte
+}
+
+func (f *fakeVideoClient) IsVideoModel(_, modelID string) bool {
+	lower := strings.ToLower(modelID)
+	return strings.HasPrefix(lower, "veo-") || strings.HasPrefix(lower, "sora")
+}
+
+func (f *fakeVideoClient) ListVideoModels() []llm.VideoModelOption {
+	return []llm.VideoModelOption{{ProviderID: "custom-gemini", ModelID: "veo-3.0-generate-001", SupportsIn: true}}
+}
+
+func (f *fakeVideoClient) ResolveVideoModel(preferredProviderID, preferredModelID string) (string, string, bool) {
+	if preferredProviderID != "" && preferredModelID != "" {
+		return preferredProviderID, preferredModelID, true
+	}
+	return "custom-gemini", "veo-3.0-generate-001", true
+}
+
+func (f *fakeVideoClient) GenerateVideo(_ context.Context, req llm.VideoRequest) (llm.VideoResponse, error) {
+	f.mu.Lock()
+	f.requests = append(f.requests, req)
+	f.mu.Unlock()
+	return llm.VideoResponse{
+		Text: "Generated ocean cliff video",
+		Videos: []llm.GeneratedVideo{
+			{Mime: "video/mp4", Data: f.mp4Bytes, DurationSeconds: 6},
+		},
+	}, nil
+}
+
+func TestSessionVideoGenerationTurnPersistsAttachmentAndStreamsVideoPart(t *testing.T) {
+	mp4Bytes := []byte{
+		0x00, 0x00, 0x00, 0x18, 'f', 't', 'y', 'p', 'm', 'p', '4', '2',
+		0x00, 0x00, 0x00, 0x00, 'm', 'p', '4', '2', 'i', 's', 'o', 'm',
+	}
+	projectDir := t.TempDir()
+	storeDir := t.TempDir()
+
+	svc := NewService(projectDir, nil, nil, storeDir)
+	defer svc.CloseAll()
+
+	fakeVid := &fakeVideoClient{mp4Bytes: mp4Bytes}
+	svc.SetVideoClient(fakeVid)
+
+	info, status, err := svc.CreateConversation(context.Background(), CreateSessionRequest{
+		Directory:   projectDir,
+		SandboxMode: "local",
+		ProviderID:  "custom-gemini",
+		ModelID:     "veo-3.0-generate-001",
+	}, projectDir)
+	if err != nil || status != 200 {
+		t.Fatalf("CreateConversation failed: status=%d err=%v", status, err)
+	}
+
+	evtCh, unsub := svc.Subscribe(info.ID)
+	defer unsub()
+
+	pStatus, receipt, err := svc.startPromptWithReceipt(context.Background(), info.ID, projectDir, PromptRequest{
+		Text: "生成一段海浪拍打悬崖的航拍视频",
+		Model: &PromptModel{
+			ProviderID: "custom-gemini",
+			ModelID:    "veo-3.0-generate-001",
+		},
+	})
+	if err != nil || pStatus != 200 || !receipt.OK {
+		t.Fatalf("startPromptWithReceipt failed: status=%d receipt=%+v err=%v", pStatus, receipt, err)
+	}
+
+	deadline := time.After(5 * time.Second)
+	sawIdle := false
+	sawVideoPart := false
+	for !sawIdle {
+		select {
+		case evt := <-evtCh:
+			if evt.Type == "message.part.updated" {
+				if p, ok := evt.Properties["part"].(MessagePart); ok && p.Type == "file" && p.Mime == "video/mp4" {
+					sawVideoPart = true
+				}
+			}
+			if evt.Type == "session.status" {
+				if st, ok := evt.Properties["status"].(SessionStatus); ok && st.Type == "idle" {
+					sawIdle = true
+				}
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for video generation turn")
+		}
+	}
+	if !sawVideoPart {
+		t.Fatal("expected video/mp4 file part to be broadcast during native video turn")
+	}
+}

@@ -72,7 +72,7 @@ func (s *Service) ServeRelay(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
 			return
 		}
-		s.serveRelayChat(w, r)
+		s.serveRelayChat(w, r, "")
 	case relayResponsesPath:
 		s.serveRelayResponses(w, r)
 	case relayEmbeddingsPath:
@@ -84,6 +84,18 @@ func (s *Service) ServeRelay(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSONError(w, http.StatusNotFound, "unknown relay endpoint")
 	}
+}
+
+// ServeAuthorizedRelayModels serves GET /v1/models for callers already
+// authenticated by an upstream host gate (for example hoxi-app/v1 scoped tokens).
+func (s *Service) ServeAuthorizedRelayModels(w http.ResponseWriter) {
+	s.serveRelayModels(w)
+}
+
+// ServeAuthorizedRelayChat serves POST /v1/chat/completions for callers already
+// authenticated by an upstream host gate (for example hoxi-app/v1 scoped tokens).
+func (s *Service) ServeAuthorizedRelayChat(w http.ResponseWriter, r *http.Request, grantID string) {
+	s.serveRelayChat(w, r, grantID)
 }
 
 func (s *Service) authorizeRelay(w http.ResponseWriter, r *http.Request) bool {
@@ -308,7 +320,7 @@ func relayProviderHasModel(pObj map[string]any, modelID string) bool {
 	return ok
 }
 
-func (s *Service) serveRelayChat(w http.ResponseWriter, r *http.Request) {
+func (s *Service) serveRelayChat(w http.ResponseWriter, r *http.Request, appGrantID string) {
 	raw, err := io.ReadAll(io.LimitReader(r.Body, maxRelayBody+1))
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, "could not read request body")
@@ -325,6 +337,9 @@ func (s *Service) serveRelayChat(w http.ResponseWriter, r *http.Request) {
 	}
 	requested, _ := payload["model"].(string)
 	sessionKey := deriveRelaySessionKey(r, payload)
+	if appGrantID != "" {
+		sessionKey = "app:" + appGrantID + ":" + sessionKey
+	}
 	providerID, modelID, err := s.relayResolveModelWithSession(requested, sessionKey)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -333,7 +348,7 @@ func (s *Service) serveRelayChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	baseURL, apiKey, npm, headers := s.resolveProviderConnection(providerID, "", "")
+	baseURL, apiKey, npm, headers := s.resolveEffectiveProviderConnection(providerID, "", "")
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if !isHTTPEndpoint(baseURL) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -343,7 +358,7 @@ func (s *Service) serveRelayChat(w http.ResponseWriter, r *http.Request) {
 	}
 	resolvedProto := effectiveProviderProtocol(providerID, npm, baseURL)
 	if resolvedProto == "anthropic" || resolvedProto == "google" {
-		s.serveTranslatedRelayChat(w, r, providerID, modelID, baseURL, apiKey, headers, resolvedProto, payload)
+		s.serveTranslatedRelayChat(w, r, providerID, modelID, baseURL, apiKey, headers, resolvedProto, payload, appGrantID != "")
 		return
 	}
 
@@ -403,6 +418,10 @@ func (s *Service) serveRelayChat(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.recordBreakerFailure(providerID, modelID, classifyCandidateFailure(0, err, nil), 0, elapsedMs(), err.Error())
 		recordRelayFailure(providerID, modelID, 0, started)
+		if appGrantID != "" {
+			writeScopedRelayError(w)
+			return
+		}
 		writeJSON(w, http.StatusBadGateway, map[string]any{
 			"error": map[string]any{"message": "upstream request failed: " + err.Error(), "type": "upstream_error"},
 		})
@@ -414,6 +433,10 @@ func (s *Service) serveRelayChat(w http.ResponseWriter, r *http.Request) {
 		rawErr, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 		s.recordBreakerFailure(providerID, modelID, classifyCandidateFailure(resp.StatusCode, nil, rawErr), resp.StatusCode, elapsedMs(), string(rawErr))
 		recordRelayFailure(providerID, modelID, resp.StatusCode, started)
+		if appGrantID != "" {
+			writeScopedRelayError(w)
+			return
+		}
 		writeRelayUpstreamError(w, resp.StatusCode, rawErr)
 		return
 	}
@@ -422,7 +445,17 @@ func (s *Service) serveRelayChat(w http.ResponseWriter, r *http.Request) {
 	if ttftMs <= 0 {
 		ttftMs = 1
 	}
-	copyRelayHeaders(w.Header(), resp.Header)
+	if appGrantID == "" {
+		copyRelayHeaders(w.Header(), resp.Header)
+	} else {
+		// The app protocol never relays upstream cookies, CORS, or active HTML.
+		contentType := "application/json"
+		if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+			contentType = "text/event-stream"
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+	}
 	w.WriteHeader(resp.StatusCode)
 	if err := streamRelayBody(w, resp.Body); err != nil {
 		s.recordBreakerFailure(providerID, modelID, classifyCandidateFailure(resp.StatusCode, err, nil), resp.StatusCode, ttftMs, err.Error())
@@ -439,6 +472,12 @@ func (s *Service) relayProviderConfig(providerID string) (map[string]any, bool) 
 	}
 	pObj, ok := merged[providerID].(map[string]any)
 	return pObj, ok
+}
+
+func writeScopedRelayError(w http.ResponseWriter) {
+	writeJSON(w, http.StatusBadGateway, map[string]any{"error": map[string]string{
+		"code": "UPSTREAM_ERROR", "message": "configured chat provider failed", "type": "upstream_error",
+	}})
 }
 
 func writeRelayUpstreamError(w http.ResponseWriter, status int, raw []byte) {

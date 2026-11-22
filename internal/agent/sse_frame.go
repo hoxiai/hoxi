@@ -105,23 +105,48 @@ func readSSEFrames(ctx context.Context, body io.Reader, onFrame func(sseRawFrame
 	}
 }
 
-// validateCompletedToolJSON verifies a finalized tool-call JSON argument string.
-// When truncatedByLength is true (the model hit max_tokens mid-tool-call), an
-// incomplete JSON payload is safely dropped (keep=false, err=nil) so sibling
-// completed tool calls and partial text stay intact. Otherwise, malformed JSON
-// fails explicitly as an incomplete stream rather than executing corrupt input.
+// validateCompletedToolJSON verifies and canonicalizes a finalized tool-call
+// JSON argument string. Canonicalizing object key order and whitespace ensures
+// in-turn replayed tool_use arguments match subsequent turns reconstructed from
+// persisted map[string]any inputs byte-for-byte, preserving OpenAI/Codex/DeepSeek
+// KV-cache prefixes across multi-turn sessions. When truncatedByLength is true
+// (the model hit max_tokens mid-tool-call), an incomplete JSON payload is safely
+// dropped (keep=false, err=nil) so sibling completed tool calls and partial text
+// stay intact. Otherwise, malformed JSON fails explicitly as an incomplete stream
+// rather than executing corrupt input.
 func validateCompletedToolJSON(raw string, truncatedByLength bool) (cleaned json.RawMessage, keep bool, err error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return json.RawMessage("{}"), true, nil
 	}
-	if json.Valid([]byte(trimmed)) {
-		return json.RawMessage(trimmed), true, nil
+	if canonical, ok := canonicalizeJSON(trimmed); ok {
+		return canonical, true, nil
 	}
 	if truncatedByLength {
 		return nil, false, nil
 	}
 	return nil, false, fmt.Errorf("incomplete tool call JSON payload: %w", ErrIncompleteStream)
+}
+
+func canonicalizeJSON(trimmed string) (json.RawMessage, bool) {
+	if !json.Valid([]byte(trimmed)) {
+		return nil, false
+	}
+	dec := json.NewDecoder(strings.NewReader(trimmed))
+	dec.UseNumber()
+	var parsed any
+	if err := dec.Decode(&parsed); err != nil {
+		return nil, false
+	}
+	var trailing any
+	if err := dec.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return nil, false
+	}
+	normalized, err := json.Marshal(parsed)
+	if err != nil {
+		return json.RawMessage(trimmed), true
+	}
+	return json.RawMessage(normalized), true
 }
 
 type inlineThinkSegment struct {

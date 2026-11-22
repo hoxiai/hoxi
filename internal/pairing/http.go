@@ -13,6 +13,7 @@ import (
 func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/pairing/qr", s.handleQR)
 	mux.HandleFunc("/api/hoxi/pairing/rotate", s.handleRotate)
+	mux.HandleFunc("/api/hoxi/pairing/short-code", s.handleShortCode)
 }
 
 func (s *Service) handleQR(w http.ResponseWriter, r *http.Request) {
@@ -39,6 +40,38 @@ func (s *Service) handleRotate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, code)
+}
+
+func (s *Service) handleShortCode(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	switch r.Method {
+	case http.MethodPost:
+		var body struct {
+			RelayURL string `json:"relayUrl"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid json body")
+			return
+		}
+		relayURL := strings.TrimSpace(body.RelayURL)
+		if relayURL == "" {
+			relayURL = DefaultShortCodeRelayURL()
+		}
+		pub, err := s.PublishShortCode(r.Context(), relayURL)
+		if err != nil {
+			writeShortCodeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, pub)
+	case http.MethodDelete:
+		if err := s.CancelShortCode(r.Context()); err != nil {
+			writeShortCodeError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "POST or DELETE required")
+	}
 }
 
 // Authorize reports whether the request carries this desktop's LAN pairing

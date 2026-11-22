@@ -36,7 +36,7 @@ import {
   workspace,
 } from "../../store/workspace";
 import AccountLoginForm from "../layout/AccountLoginForm";
-import { SettingGroup, SettingRow } from "./setting-controls";
+import { HelpTip, SettingGroup, SettingRow } from "./setting-controls";
 
 const actionRowClass =
   "w-full flex items-center justify-between gap-3 px-5 py-3 text-left text-[13px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/60 transition-colors cursor-pointer";
@@ -86,13 +86,11 @@ export function AccountSettingsTab() {
           <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-surface)] text-[var(--accent-primary)]">
             <User size={16} />
           </div>
-          <div class="min-w-0">
-            <h3 class="text-[13px] font-semibold text-[var(--text-primary)]">
+          <div class="flex items-center gap-2 min-w-0">
+            <h3 class="text-[13px] font-semibold text-[var(--text-primary)] truncate">
               {t("settings.accountPageTitle")}
             </h3>
-            <p class="text-[12px] text-[var(--text-secondary)]">
-              {t("settings.accountPageSubtitle")}
-            </p>
+            <HelpTip text={t("settings.accountPageSubtitle")} />
           </div>
         </div>
         <Show when={isLoggedIn()}>

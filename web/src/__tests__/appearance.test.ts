@@ -42,6 +42,7 @@ import {
   wallpaperState,
 } from "../store/wallpaper";
 import { applyDesktopIntent, setWorkspace, workspace } from "../store/workspace";
+import { computeHelpTipCoords } from "../components/settings/setting-controls";
 import { assertEqual, describe, it } from "./test-harness";
 
 function withAppearanceFixture(run: (root: HTMLElement, saved: Map<string, string>) => void) {
@@ -114,6 +115,7 @@ describe("appearance preferences", () => {
     withAppearanceFixture((root, saved) => {
       resetWallpaperSliders();
       assertEqual(wallpaperState.enabled, false);
+      assertEqual(resolveActiveWallpaperStandee(), null);
       assertEqual(root.dataset.wallpaperActive, undefined);
       assertEqual(root.dataset.wallpaperBlur, undefined);
       selectWallpaperPreset("cyber-shibuya");
@@ -123,7 +125,12 @@ describe("appearance preferences", () => {
       assertEqual(activeWallpaperMaterialMode(), "frosted");
       assertEqual(root.dataset.wallpaperBlur, "true");
       assertEqual(resolveActiveWallpaperUrl(), "/wallpapers/cyber-shibuya.svg");
-      assertEqual(resolveActiveWallpaperStandee(), null);
+      assertEqual(resolveActiveWallpaperStandee()?.url, "/wallpapers/cyber-shibuya-standee.png");
+
+      selectWallpaperPreset("sakura-breeze");
+      assertEqual(resolveActiveWallpaperUrl(), "/wallpapers/sakura-breeze.svg");
+      assertEqual(resolveActiveWallpaperStandee()?.url, "/wallpapers/sakura-breeze-standee.png");
+      assertEqual(resolveActiveWallpaperStandee()?.positionX, "85%");
 
       selectWallpaperPreset("academy-sky");
       assertEqual(resolveActiveWallpaperUrl(), "/wallpapers/academy-sky.svg");
@@ -419,5 +426,22 @@ describe("appearance preferences", () => {
     } finally {
       hoxiAPI.setBrowserIdleMinutes = origSetIdle;
     }
+  });
+
+  it("positions HelpTip above by default, flips below near top edge, and clamps horizontally", () => {
+    const mid = computeHelpTipCoords({ left: 493, width: 14, top: 300, bottom: 314 }, 1000, 800);
+    assertEqual(mid.above, true);
+    assertEqual(mid.x, 500);
+    assertEqual(mid.y, 800 - 300 + 8);
+
+    const nearTop = computeHelpTipCoords({ left: 320, width: 14, top: 72, bottom: 86 }, 1000, 800);
+    assertEqual(nearTop.above, false);
+    assertEqual(nearTop.y, 86 + 8);
+
+    const nearLeft = computeHelpTipCoords({ left: 20, width: 14, top: 240, bottom: 254 }, 1000, 800);
+    assertEqual(nearLeft.x, 12 + 140);
+
+    const nearRight = computeHelpTipCoords({ left: 970, width: 14, top: 240, bottom: 254 }, 1000, 800);
+    assertEqual(nearRight.x, 1000 - 12 - 140);
   });
 });

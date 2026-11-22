@@ -23,6 +23,10 @@ func (g *Gateway) ServeLANRequest(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusForbidden, "the LAN pairing listener only serves local-network clients")
 		return
 	}
+	if isIntakePublicSurfaceRequest(r) {
+		g.serveIntakePublicSurface(w, r)
+		return
+	}
 	g.servePairedRequest(w, r, remoteSourceLAN)
 }
 

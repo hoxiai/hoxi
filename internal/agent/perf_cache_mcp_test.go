@@ -271,8 +271,8 @@ func TestAnthropicCacheBreakpointsStayWithinFourBlockLimit(t *testing.T) {
 	if payload.Tools[len(payload.Tools)-1]["cache_control"] == nil {
 		t.Fatal("expected cache_control breakpoint on final tool entry")
 	}
-	if totalBP := strings.Count(string(client.lastReq.Body), `"cache_control"`); totalBP != 3 {
-		t.Fatalf("expected exactly 3 cache_control blocks (<= 4 Anthropic hard limit), got %d", totalBP)
+	if totalBP := strings.Count(string(client.lastReq.Body), `"cache_control"`); totalBP != 4 {
+		t.Fatalf("expected 4 cache_control blocks (tools[last], system[0], penultimate user, final user; <= 4 Anthropic hard limit), got %d", totalBP)
 	}
 }
 

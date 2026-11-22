@@ -406,7 +406,10 @@ export function WorktreeVerifySection(props: {
 
       {/* 6. Live Process Output Tail */}
       <Show when={showOutput() && state()?.output}>
-        <div class="rounded-xl border border-[var(--border-subtle)] bg-[#0b0d12] p-2 space-y-1">
+        <div
+          data-terminal-surface="true"
+          class="rounded-xl border border-[var(--border-subtle)] bg-[#0b0d12] p-2 space-y-1"
+        >
           <div class="flex items-center justify-between text-[11px] font-mono text-gray-400">
             <span>
               {state()?.activeKind === "test"

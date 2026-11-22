@@ -2,6 +2,8 @@ package gateway
 
 import (
 	"context"
+	"errors"
+	"io"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,8 +31,11 @@ type gatewayNativeAgent struct {
 	codeSearch      func(ctx context.Context, dir, query, pathPrefix string, limit int) ([]nativeSearchHit, error)
 	symbolInspect   func(ctx context.Context, dir, relPath, symbol string, includeCallers bool) (string, error)
 	impactInspect   func(ctx context.Context, dir, relPath, symbol string, depth, limit int) (string, error)
+	repoMap         agent.RepoMapHook
+	codeIndexDirty  func(dir string)
 	mcpConfig       func() map[string]any
 	directoryConfig func(string) map[string]any
+	sessionMCP      func(sessionID, directory string) map[string]any
 	hostInvoke      agent.HostInvokeHook
 	skillCatalog    func(ctx context.Context, sessionID, worktreeDir string) string
 
@@ -93,6 +98,7 @@ func (g *gatewayNativeAgent) ForgetSession(sessionID string) {
 	if sid != "" {
 		agent.DeleteSessionTodos(sid)
 		agent.DeleteSessionBackgroundProcs(sid)
+		agent.DeleteSessionSubtasks(sid)
 	}
 	if g == nil || sid == "" {
 		return
@@ -109,6 +115,10 @@ func (g *gatewayNativeAgent) ForgetSession(sessionID string) {
 			break
 		}
 	}
+}
+
+func (g *gatewayNativeAgent) SummarizeWithUsage(ctx context.Context, providerID, modelID, transcript string, record func(agent.TokenUsage)) (string, error) {
+	return g.engine.SummarizeWithUsage(ctx, providerID, modelID, transcript, record)
 }
 
 func (g *gatewayNativeAgent) Summarize(ctx context.Context, providerID, modelID, transcript string) (string, error) {
@@ -161,6 +171,19 @@ func mapAgentBlocksToNative(src []agent.ContentBlock) []runner.NativeContentBloc
 	return blocks
 }
 
+func wrapNativeRunnerError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var promErr *runner.NativeBackgroundPromotedError
+	if errors.As(err, &promErr) && promErr != nil {
+		return &agent.BackgroundPromotedError{
+			Status: mapNativeBgStatus(promErr.Proc),
+		}
+	}
+	return err
+}
+
 func (g *gatewayNativeAgent) RunTurn(ctx context.Context, req runner.NativeTurnRequest) error {
 	history := make([]agent.Message, 0, len(req.History))
 	for _, m := range req.History {
@@ -187,17 +210,6 @@ func (g *gatewayNativeAgent) RunTurn(ctx context.Context, req runner.NativeTurnR
 	var sink agent.EventSink
 	if req.Emit != nil {
 		sink = agent.EventSinkFunc(func(evt agent.EngineEvent) {
-			var u *runner.NativeTokenUsage
-			if evt.Usage != nil {
-				u = &runner.NativeTokenUsage{
-					Input:      evt.Usage.Input,
-					Output:     evt.Usage.Output,
-					Reasoning:  evt.Usage.Reasoning,
-					CacheRead:  evt.Usage.CacheRead,
-					CacheWrite: evt.Usage.CacheWrite,
-					CostUSD:    evt.Usage.CostUSD,
-				}
-			}
 			req.Emit(runner.NativeEvent{
 				Kind:         string(evt.Kind),
 				ParentCallID: evt.ParentCallID,
@@ -213,7 +225,7 @@ func (g *gatewayNativeAgent) RunTurn(ctx context.Context, req runner.NativeTurnR
 				Metadata:     evt.Metadata,
 				Media:        mapAgentBlocksToNative(evt.Media),
 				ErrorText:    evt.ErrorText,
-				Usage:        u,
+				Usage:        evt.Usage,
 			})
 		})
 	}
@@ -284,33 +296,97 @@ func (g *gatewayNativeAgent) RunTurn(ctx context.Context, req runner.NativeTurnR
 		bgMgr = nativeBgManagerAdapter{inner: req.BackgroundManager}
 	}
 
-	config := g.mcpConfig
+	var cmdRunner func(ctx context.Context, dir, command string) (string, int, error)
+	if req.CommandRunner != nil {
+		cmdRunner = func(ctx context.Context, dir, command string) (string, int, error) {
+			out, code, err := req.CommandRunner(ctx, dir, command)
+			return out, code, wrapNativeRunnerError(err)
+		}
+	}
+	var streamCmdRunner func(ctx context.Context, dir, command string, capture io.Writer, onOutput func(string)) (string, int, error)
+	if req.StreamCommandRunner != nil {
+		streamCmdRunner = func(ctx context.Context, dir, command string, capture io.Writer, onOutput func(string)) (string, int, error) {
+			out, code, err := req.StreamCommandRunner(ctx, dir, command, capture, onOutput)
+			return out, code, wrapNativeRunnerError(err)
+		}
+	}
+
+	baseConfig := g.mcpConfig
 	if g.directoryConfig != nil {
-		config = func() map[string]any { return g.directoryConfig(req.WorktreeDir) }
+		baseConfig = func() map[string]any { return g.directoryConfig(req.WorktreeDir) }
+	}
+	config := baseConfig
+	if g.sessionMCP != nil {
+		config = func() map[string]any {
+			var doc map[string]any
+			if baseConfig != nil {
+				doc = baseConfig()
+			}
+			extra := g.sessionMCP(req.SessionID, req.WorktreeDir)
+			if len(extra) == 0 {
+				return doc
+			}
+			cloned := make(map[string]any, len(doc)+1)
+			for k, v := range doc {
+				cloned[k] = v
+			}
+			mcpMap := make(map[string]any, len(extra))
+			if existing, ok := doc["mcp"].(map[string]any); ok {
+				for k, v := range existing {
+					mcpMap[k] = v
+				}
+			}
+			for k, v := range extra {
+				if _, exists := mcpMap[k]; !exists {
+					mcpMap[k] = v
+				}
+			}
+			cloned["mcp"] = mcpMap
+			return cloned
+		}
+	}
+	recordEdit := req.RecordFileEdit
+	if g.codeIndexDirty != nil && strings.TrimSpace(req.WorktreeDir) != "" {
+		dir := req.WorktreeDir
+		dirtyFn := g.codeIndexDirty
+		prev := req.RecordFileEdit
+		recordEdit = func(paths []string) {
+			dirtyFn(dir)
+			if prev != nil {
+				prev(paths)
+			}
+		}
 	}
 	return g.engine.RunTurn(ctx, agent.TurnRequest{
-		SessionID:           req.SessionID,
-		WorktreeDir:         req.WorktreeDir,
-		Mode:                req.Mode,
-		ProviderID:          req.ProviderID,
-		ModelID:             req.ModelID,
-		Effort:              req.Effort,
-		System:              sysPrompt,
-		History:             history,
-		UserPrompt:          req.UserPrompt,
-		UserBlocks:          mapNativeBlocksToAgent(req.UserBlocks),
-		FileRevisions:       g.revisionTrackerForSession(req.SessionID),
-		CoordinateFileEdit:  coordEditHook,
-		RecordFileEdit:      req.RecordFileEdit,
-		Steer:               nativeSteerAdapter{drainStr: req.SteerDrain, drainItems: req.SteerDrainItems},
+		SessionID:          req.SessionID,
+		WorktreeDir:        req.WorktreeDir,
+		Mode:               req.Mode,
+		ProviderID:         req.ProviderID,
+		ModelID:            req.ModelID,
+		Effort:             req.Effort,
+		FastMode:           req.FastMode,
+		System:             sysPrompt,
+		History:            history,
+		UserPrompt:         req.UserPrompt,
+		UserBlocks:         mapNativeBlocksToAgent(req.UserBlocks),
+		FileRevisions:      g.revisionTrackerForSession(req.SessionID),
+		CoordinateFileEdit: coordEditHook,
+		RecordFileEdit:     recordEdit,
+		Steer: nativeSteerAdapter{
+			drainStr:   req.SteerDrain,
+			drainItems: req.SteerDrainItems,
+			hasPending: req.SteerHasPending,
+			notifyCh:   req.SteerNotify,
+		},
 		PermissionHook:      permHook,
-		CommandRunner:       req.CommandRunner,
-		StreamCommandRunner: req.StreamCommandRunner,
+		CommandRunner:       cmdRunner,
+		StreamCommandRunner: streamCmdRunner,
 		BackgroundCommands:  bgMgr,
 		Diagnostics:         req.Diagnostics,
 		CodeSearch:          searchHook,
 		SymbolInspect:       g.symbolInspect,
 		ImpactInspect:       g.impactInspect,
+		RepoMap:             g.repoMap,
 		AskQuestion:         req.AskQuestion,
 		MCPConfig:           config,
 		HostInvoke:          g.hostInvoke,
@@ -365,6 +441,22 @@ func (a nativeBgManagerAdapter) List(ctx context.Context) ([]agent.BackgroundPro
 type nativeSteerAdapter struct {
 	drainStr   func() []string
 	drainItems func() []runner.NativeSteerItem
+	hasPending func() bool
+	notifyCh   func() <-chan struct{}
+}
+
+func (a nativeSteerAdapter) HasPending() bool {
+	if a.hasPending == nil {
+		return false
+	}
+	return a.hasPending()
+}
+
+func (a nativeSteerAdapter) NotifyCh() <-chan struct{} {
+	if a.notifyCh == nil {
+		return nil
+	}
+	return a.notifyCh()
 }
 
 func (a nativeSteerAdapter) Drain() []string {
@@ -527,6 +619,42 @@ func buildNativeCodeIndexHooks(
 		return strings.TrimSpace(b.String()), nil
 	}
 	return searchFn, inspectFn, impactFn
+}
+
+func buildNativeRepoMapHook(idx *codeindex.Service) agent.RepoMapHook {
+	if idx == nil {
+		return nil
+	}
+	return func(ctx context.Context, dir, pathPrefix, query string, limit int) (string, error) {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		res, err := idx.Map(dir, pathPrefix, query, limit)
+		if err != nil {
+			return "", err
+		}
+		if len(res.Entries) == 0 {
+			return "No indexed files matched the requested scope.", nil
+		}
+		var b strings.Builder
+		b.WriteString("Repository Map (" + strconv.Itoa(len(res.Entries)) + " of " + strconv.Itoa(res.Files) + " indexed files):\n")
+		for _, e := range res.Entries {
+			b.WriteString(e.Path + " (rank " + strconv.Itoa(e.Score) + ")\n")
+			for _, sym := range e.Symbols {
+				line := "  L" + strconv.Itoa(sym.StartLine) + "-" + strconv.Itoa(sym.EndLine) + " "
+				if sym.Signature != "" {
+					line += sym.Signature
+				} else {
+					line += sym.Symbol
+				}
+				if sym.References > 0 {
+					line += " (" + strconv.Itoa(sym.References) + " refs)"
+				}
+				b.WriteString(line + "\n")
+			}
+		}
+		return strings.TrimSpace(b.String()), nil
+	}
 }
 
 func (g *Gateway) loadNativeAgentsForDir(dir string) []llm.AgentSpec {

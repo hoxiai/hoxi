@@ -77,7 +77,7 @@ func (s *Service) nativeDiagnostics(rec SessionRecord) func(ctx context.Context,
 
 		ext := strings.ToLower(filepath.Ext(filePath))
 		if isDiagToolCoolingDown(rec.ID, ext) {
-			return ""
+			return "Not run: checker cooling down after a timeout."
 		}
 
 		diagCtx, cancel := context.WithTimeout(ctx, nativeDiagTimeout)
@@ -102,8 +102,15 @@ func (s *Service) nativeDiagnostics(rec SessionRecord) func(ctx context.Context,
 		default:
 			return ""
 		}
-		if diagCtx.Err() == context.DeadlineExceeded && (ctx == nil || ctx.Err() == nil) {
+		if diagCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
 			noteDiagToolBudgetExceeded(rec.ID, ext)
+			return "Timed out: static check did not finish."
+		}
+		if ctx.Err() != nil {
+			return "Not completed: static check cancelled."
+		}
+		if res == "" {
+			return "Not run: checker or project configuration unavailable."
 		}
 		return res
 	}
@@ -127,12 +134,15 @@ func (s *Service) runNativeGoVetDiagnostic(ctx context.Context, rec SessionRecor
 		pkgTarget = "./" + filepath.ToSlash(relPkg)
 	}
 	out, code, err := s.execNativeConfined(ctx, rec, nil, modRoot, goBin, []string{"vet", pkgTarget}, "", nativeDiagMaxOutputBytes*2)
-	if err == nil && code == 0 || ctx.Err() != nil {
+	if ctx.Err() != nil {
 		return ""
+	}
+	if err == nil && code == 0 {
+		return "Passed: go vet."
 	}
 	formatted := formatDiagnosticLines(out, "", nativeDiagMaxLines, nativeDiagMaxOutputBytes)
 	if formatted == "" {
-		return ""
+		return diagnosticExitStatus(code, err)
 	}
 	return fmt.Sprintf("[go vet %s]\n%s", pkgTarget, formatted)
 }
@@ -156,8 +166,11 @@ func (s *Service) runNativeTSCDiagnostic(ctx context.Context, rec SessionRecord,
 	if (err != nil || code != 0) && len(args) > len(baseArgs) && isUnsupportedTSCIncrementalError(out) && ctx.Err() == nil {
 		out, code, err = s.execNativeConfined(ctx, rec, nil, tsRoot, tscBin, baseArgs, "", nativeDiagMaxOutputBytes*4)
 	}
-	if err == nil && code == 0 || ctx.Err() != nil {
+	if ctx.Err() != nil {
 		return ""
+	}
+	if err == nil && code == 0 {
+		return "Passed: tsc --noEmit."
 	}
 	relFile := filepath.Base(filePath)
 	if rel, relErr := filepath.Rel(tsRoot, filePath); relErr == nil && !strings.HasPrefix(rel, "..") {
@@ -165,7 +178,7 @@ func (s *Service) runNativeTSCDiagnostic(ctx context.Context, rec SessionRecord,
 	}
 	formatted := formatDiagnosticLines(out, relFile, nativeDiagMaxLines, nativeDiagMaxOutputBytes)
 	if formatted == "" {
-		return ""
+		return diagnosticExitStatus(code, err)
 	}
 	return "[tsc --noEmit]\n" + formatted
 }
@@ -252,8 +265,11 @@ func (s *Service) runNativeVueDiagnostic(ctx context.Context, rec SessionRecord,
 			tsconfigPath := filepath.Join(tsRoot, "tsconfig.json")
 			args := []string{"--project", tsconfigPath, "--noEmit", "--pretty", "false"}
 			out, code, err := s.execNativeConfined(ctx, rec, nil, tsRoot, vueTscBin, args, "", nativeDiagMaxOutputBytes*4)
-			if err == nil && code == 0 || ctx.Err() != nil {
+			if ctx.Err() != nil {
 				return ""
+			}
+			if err == nil && code == 0 {
+				return "Passed: vue-tsc --noEmit."
 			}
 			relFile := filepath.Base(filePath)
 			if rel, relErr := filepath.Rel(tsRoot, filePath); relErr == nil && !strings.HasPrefix(rel, "..") {
@@ -262,7 +278,7 @@ func (s *Service) runNativeVueDiagnostic(ctx context.Context, rec SessionRecord,
 			if formatted := formatDiagnosticLines(out, relFile, nativeDiagMaxLines, nativeDiagMaxOutputBytes); formatted != "" {
 				return "[vue-tsc --noEmit]\n" + formatted
 			}
-			return ""
+			return diagnosticExitStatus(code, err)
 		}
 	}
 	pkgRoot := findAncestorWithFile(filepath.Dir(filePath), worktreeRoot, "package.json")
@@ -271,12 +287,16 @@ func (s *Service) runNativeVueDiagnostic(ctx context.Context, rec SessionRecord,
 	}
 	if oxlintBin := resolveWorkspaceNodeBin(rec, pkgRoot, worktreeRoot, "oxlint"); oxlintBin != "" {
 		out, code, err := s.execNativeConfined(ctx, rec, nil, pkgRoot, oxlintBin, []string{"--quiet", filePath}, "", nativeDiagMaxOutputBytes*2)
-		if err == nil && code == 0 || ctx.Err() != nil {
+		if ctx.Err() != nil {
 			return ""
+		}
+		if err == nil && code == 0 {
+			return "Passed: oxlint."
 		}
 		if formatted := formatDiagnosticLines(out, filepath.Base(filePath), nativeDiagMaxLines, nativeDiagMaxOutputBytes); formatted != "" {
 			return "[oxlint]\n" + formatted
 		}
+		return diagnosticExitStatus(code, err)
 	}
 	return ""
 }
@@ -300,20 +320,23 @@ func (s *Service) runNativeRustDiagnostic(ctx context.Context, rec SessionRecord
 		"",
 		nativeDiagMaxOutputBytes*4,
 	)
-	if err == nil && code == 0 || ctx.Err() != nil {
+	if ctx.Err() != nil {
 		return ""
+	}
+	if err == nil && code == 0 {
+		return "Passed: cargo check --offline."
 	}
 	relFile := filepath.Base(filePath)
 	if rel, relErr := filepath.Rel(cargoRoot, filePath); relErr == nil && !strings.HasPrefix(rel, "..") {
 		relFile = filepath.ToSlash(rel)
 	}
 	if strings.Contains(out, "--offline") && !strings.Contains(out, relFile) {
-		return ""
+		return "Not completed: cargo dependencies unavailable offline."
 	}
 	if formatted := formatDiagnosticLines(out, relFile, nativeDiagMaxLines, nativeDiagMaxOutputBytes); formatted != "" {
 		return "[cargo check]\n" + formatted
 	}
-	return ""
+	return diagnosticExitStatus(code, err)
 }
 
 func (s *Service) runNativePHPDiagnostic(ctx context.Context, rec SessionRecord, worktreeRoot, filePath string) string {
@@ -322,25 +345,31 @@ func (s *Service) runNativePHPDiagnostic(ctx context.Context, rec SessionRecord,
 		return ""
 	}
 	out, code, err := s.execNativeConfined(ctx, rec, nil, worktreeRoot, phpBin, []string{"-l", filePath}, "", nativeDiagMaxOutputBytes*2)
-	if err == nil && code == 0 || ctx.Err() != nil {
+	if ctx.Err() != nil {
 		return ""
+	}
+	if err == nil && code == 0 {
+		return "Passed: php -l."
 	}
 	if formatted := formatDiagnosticLines(out, filepath.Base(filePath), nativeDiagMaxLines, nativeDiagMaxOutputBytes); formatted != "" {
 		return "[php -l]\n" + formatted
 	}
-	return ""
+	return diagnosticExitStatus(code, err)
 }
 
 func (s *Service) runNativePythonDiagnostic(ctx context.Context, rec SessionRecord, worktreeRoot, filePath string) string {
 	if ruffBin := resolveWorkspacePythonBin(rec, filepath.Dir(filePath), worktreeRoot, "ruff"); ruffBin != "" {
 		out, code, err := s.execNativeConfined(ctx, rec, nil, worktreeRoot, ruffBin, []string{"check", "--output-format=concise", "--no-cache", filePath}, "", nativeDiagMaxOutputBytes*2)
-		if err == nil && code == 0 || ctx.Err() != nil {
+		if ctx.Err() != nil {
 			return ""
+		}
+		if err == nil && code == 0 {
+			return "Passed: ruff check."
 		}
 		if formatted := formatDiagnosticLines(out, filepath.Base(filePath), nativeDiagMaxLines, nativeDiagMaxOutputBytes); formatted != "" {
 			return "[ruff check]\n" + formatted
 		}
-		return ""
+		return diagnosticExitStatus(code, err)
 	}
 	pyBin := resolveWorkspacePythonBin(rec, filepath.Dir(filePath), worktreeRoot, "python3")
 	if pyBin == "" {
@@ -351,13 +380,16 @@ func (s *Service) runNativePythonDiagnostic(ctx context.Context, rec SessionReco
 	}
 	const astScript = "import ast, tokenize, sys; p = sys.argv[1]; f = tokenize.open(p); src = f.read(); f.close(); ast.parse(src, filename=p)"
 	out, code, err := s.execNativeConfined(ctx, rec, nil, worktreeRoot, pyBin, []string{"-I", "-B", "-c", astScript, filePath}, "", nativeDiagMaxOutputBytes*2)
-	if err == nil && code == 0 || ctx.Err() != nil {
+	if ctx.Err() != nil {
 		return ""
+	}
+	if err == nil && code == 0 {
+		return "Passed: Python syntax."
 	}
 	if formatted := formatDiagnosticLines(out, filepath.Base(filePath), nativeDiagMaxLines, nativeDiagMaxOutputBytes); formatted != "" {
 		return "[python ast.parse]\n" + formatted
 	}
-	return ""
+	return diagnosticExitStatus(code, err)
 }
 
 func resolveWorkspacePythonBin(rec SessionRecord, startDir, worktreeRoot, toolName string) string {
@@ -411,13 +443,16 @@ func (s *Service) runNativeDartDiagnostic(ctx context.Context, rec SessionRecord
 		pubRoot = worktreeRoot
 	}
 	out, code, err := s.execNativeConfined(ctx, rec, nil, pubRoot, dartBin, []string{"analyze", "--format=machine", filePath}, "", nativeDiagMaxOutputBytes*2)
-	if err == nil && code == 0 || ctx.Err() != nil {
+	if ctx.Err() != nil {
 		return ""
+	}
+	if err == nil && code == 0 {
+		return "Passed: dart analyze."
 	}
 	if formatted := formatDiagnosticLines(out, filepath.Base(filePath), nativeDiagMaxLines, nativeDiagMaxOutputBytes); formatted != "" {
 		return "[dart analyze]\n" + formatted
 	}
-	return ""
+	return diagnosticExitStatus(code, err)
 }
 
 func formatDiagnosticLines(raw, priorityNeedle string, maxLines, maxBytes int) string {
@@ -462,4 +497,11 @@ func formatDiagnosticLines(raw, priorityNeedle string, maxLines, maxBytes int) s
 		joined += fmt.Sprintf("\n... (%d more diagnostic lines)", truncatedLines)
 	}
 	return joined
+}
+
+func diagnosticExitStatus(code int, err error) string {
+	if err != nil {
+		return fmt.Sprintf("Check failed: %v", err)
+	}
+	return fmt.Sprintf("Check exited with code %d and no diagnostic output.", code)
 }

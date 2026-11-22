@@ -8,6 +8,7 @@ import {
   IMAGE_SIZE_TIERS,
   isAutoModel,
   isImageGenerationModel,
+  isVideoGenerationModel,
   refreshMediaCapabilities,
   selectedImageAspectRatio,
   selectedImageSize,
@@ -25,9 +26,15 @@ export function ComposerImageOptionsBar(props: { sessionID: string | null }) {
     if (!model || isAutoModel(model)) return false;
     return isImageGenerationModel(model.providerID, model.modelID);
   });
+  const activeVideoModel = createMemo(() => {
+    const cfg = sessionAIConfig(props.sessionID);
+    const model = cfg.model || workspace.selectedModel;
+    if (!model || isAutoModel(model)) return false;
+    return isVideoGenerationModel(model.providerID, model.modelID);
+  });
 
   return (
-    <Show when={activeImageModel()}>
+    <Show when={activeImageModel() || activeVideoModel()}>
       <div class="inline-flex items-center gap-1.5 flex-wrap">
         <div
           class="inline-flex items-center gap-0.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5"
@@ -50,26 +57,28 @@ export function ComposerImageOptionsBar(props: { sessionID: string | null }) {
           </For>
         </div>
 
-        <div
-          class="inline-flex items-center gap-0.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5"
-          title={t("timeline.imageResolutionLabel")}
-        >
-          <For each={IMAGE_SIZE_TIERS}>
-            {(tier) => (
-              <button
-                type="button"
-                onClick={() => setSelectedImageSize(tier)}
-                class={`rounded-md px-1.5 py-0.5 font-mono text-[11px] transition-colors cursor-pointer ${
-                  selectedImageSize() === tier
-                    ? "bg-[var(--bg-elevated)] font-semibold text-[var(--accent-primary)] shadow-2xs"
-                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                }`}
-              >
-                {tier}
-              </button>
-            )}
-          </For>
-        </div>
+        <Show when={activeImageModel()}>
+          <div
+            class="inline-flex items-center gap-0.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5"
+            title={t("timeline.imageResolutionLabel")}
+          >
+            <For each={IMAGE_SIZE_TIERS}>
+              {(tier) => (
+                <button
+                  type="button"
+                  onClick={() => setSelectedImageSize(tier)}
+                  class={`rounded-md px-1.5 py-0.5 font-mono text-[11px] transition-colors cursor-pointer ${
+                    selectedImageSize() === tier
+                      ? "bg-[var(--bg-elevated)] font-semibold text-[var(--accent-primary)] shadow-2xs"
+                      : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  {tier}
+                </button>
+              )}
+            </For>
+          </div>
+        </Show>
       </div>
     </Show>
   );

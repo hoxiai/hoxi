@@ -1,5 +1,5 @@
 // web/src/components/layout/cross-project-nav.ts
-// Pure projections for the cross-project sidebar views (Attention / Running).
+// Pure projections for the cross-project sidebar views (Recent / Attention / Running).
 // They read only already-cached session lists plus global status flags, so the
 // sidebar can answer "what needs me now?" without loading any transcript.
 import type { SessionInfo } from "../../services/sse-types";
@@ -13,6 +13,11 @@ import {
 import type { ProjectNavEntry } from "./left-nav-helpers";
 import { compareSessionRunning } from "./session-history";
 import { matchesProjectSearch, matchesSessionSearch } from "./session-search";
+
+export const RECENT_TASKS_MAX = 30;
+export const RECENT_TASKS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+export const RECENT_TASKS_MIN_FALLBACK = 5;
+export const CROSS_PROJECT_SEARCH_MAX = 30;
 
 export interface CrossProjectSession {
   session: SessionInfo;
@@ -31,6 +36,13 @@ export type AttentionSectionID = "approvals" | "completed" | "paused";
 export interface AttentionSection {
   id: AttentionSectionID;
   items: CrossProjectSession[];
+}
+
+export interface RecentCrossProjectSelection {
+  items: CrossProjectSession[];
+  hiddenCount: number;
+  totalMatches: number;
+  isSearchTruncated: boolean;
 }
 
 function isRunning(sessionID: string): boolean {
@@ -77,6 +89,87 @@ export function collectCrossProjectSessions(source: CrossProjectSource): CrossPr
     }
   }
   return out;
+}
+
+/**
+ * Selects bounded cross-project Recent Tasks:
+ * - Always exempts running, pending-approval, unread-completed, and active sessions.
+ * - Normal view: keeps sessions active within 7 days, with a 5-item fallback so
+ *   returning after a break never renders blank, and caps total at 30.
+ * - Search view: bypasses the 7-day window and caps rendered matches at 30.
+ */
+export function selectRecentCrossProjectSessions(
+  items: readonly CrossProjectSession[],
+  options: {
+    now?: number;
+    query?: string;
+    pendingSessions: ReadonlySet<string>;
+    activeRootSessionID?: string | null;
+  },
+): RecentCrossProjectSelection {
+  if (items.length === 0) {
+    return { items: [], hiddenCount: 0, totalMatches: 0, isSearchTruncated: false };
+  }
+  const now = options.now ?? Date.now();
+  const searching = Boolean(options.query?.trim());
+  const activeRoot = normalizeFolderPath(workspace.rootDir);
+  const activeID = options.activeRootSessionID ?? null;
+
+  const sorted = [...items].sort(
+    (a, b) =>
+      compareSessionRunning(a.session, b.session, workspace.statusBySession) ||
+      sessionActivityTime(b.session) - sessionActivityTime(a.session),
+  );
+
+  const protectedIDs = new Set<string>();
+  for (const item of sorted) {
+    const id = item.session.id;
+    const isActiveRow =
+      Boolean(activeID && id === activeID) &&
+      normalizeFolderPath(item.proj.path) === activeRoot;
+    const isUrgent =
+      isActiveRow ||
+      isRunning(id) ||
+      options.pendingSessions.has(id) ||
+      Boolean(workspace.unreadCompletedBySession[id]) ||
+      Boolean(
+        item.subagents?.some(
+          (sub) => isRunning(sub.id) || options.pendingSessions.has(sub.id),
+        ),
+      );
+    if (isUrgent) protectedIDs.add(id);
+  }
+
+  const cap = searching ? CROSS_PROJECT_SEARCH_MAX : RECENT_TASKS_MAX;
+  const maxUnprotected = Math.max(0, cap - protectedIDs.size);
+  const minFallback = Math.max(0, RECENT_TASKS_MIN_FALLBACK - protectedIDs.size);
+  const cutoff = now - RECENT_TASKS_WINDOW_MS;
+
+  let unprotectedKept = 0;
+  const selected: CrossProjectSession[] = [];
+  for (const item of sorted) {
+    if (protectedIDs.has(item.session.id)) {
+      selected.push(item);
+      continue;
+    }
+    if (unprotectedKept >= maxUnprotected) continue;
+    if (
+      searching ||
+      sessionActivityTime(item.session) >= cutoff ||
+      unprotectedKept < minFallback
+    ) {
+      selected.push(item);
+      unprotectedKept++;
+    }
+  }
+
+  const hiddenCount = Math.max(0, sorted.length - selected.length);
+  return {
+    items: selected,
+    hiddenCount,
+    totalMatches: sorted.length,
+    isSearchTruncated: searching && hiddenCount > 0,
+  };
 }
 
 export interface RunningGroup {

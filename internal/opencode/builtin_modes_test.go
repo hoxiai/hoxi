@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/hoxiai/hoxi/internal/llm"
 )
 
 func TestBuiltinModesOverlayEnforcesReadOnlyAsk(t *testing.T) {
@@ -68,4 +70,59 @@ func TestBuiltinModesRejectMalformedAgentWithoutLeakingOverlay(t *testing.T) {
 		t.Fatal("error path must return a cleanup function for the overlay directory")
 	}
 	cleanup()
+}
+
+func TestBuiltinModesOverlayIncludesExtensionPrimaryModeOnlyWhenRegistered(t *testing.T) {
+	llm.UnregisterBuiltinAgent("ext-builder")
+	t.Cleanup(func() { llm.UnregisterBuiltinAgent("ext-builder") })
+
+	t.Setenv("OPENCODE_CONFIG_CONTENT", `{"agent":{"ext-builder":{"model":"openai/gpt-5"}}}`)
+
+	llm.RegisterBuiltinAgent(llm.AgentSpec{
+		Name:        "ext-builder",
+		Description: "Extension builder mode",
+		Mode:        "primary",
+		Prompt:      "Build extension packages carefully.",
+	})
+
+	env, cleanup, err := PrepareBrowserPlugin("http://127.0.0.1:9000", "secret", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(cleanup)
+
+	var config struct {
+		Agent map[string]struct {
+			Mode        string `json:"mode"`
+			Description string `json:"description"`
+			Prompt      string `json:"prompt"`
+			Model       string `json:"model"`
+		} `json:"agent"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(env[0], "OPENCODE_CONFIG_CONTENT=")), &config); err != nil {
+		t.Fatal(err)
+	}
+
+	ext := config.Agent["ext-builder"]
+	if ext.Mode != "primary" || ext.Description != "Extension builder mode" || ext.Prompt != "Build extension packages carefully." || ext.Model != "openai/gpt-5" {
+		t.Fatalf("unexpected overlaid extension mode: %+v", ext)
+	}
+
+	llm.UnregisterBuiltinAgent("ext-builder")
+	t.Setenv("OPENCODE_CONFIG_CONTENT", `{}`)
+	cleanEnv, cleanCleanup, err := PrepareBrowserPlugin("http://127.0.0.1:9000", "secret", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(cleanCleanup)
+
+	var cleanCfg struct {
+		Agent map[string]json.RawMessage `json:"agent"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(cleanEnv[0], "OPENCODE_CONFIG_CONTENT=")), &cleanCfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := cleanCfg.Agent["ext-builder"]; exists {
+		t.Fatalf("expected unregistered extension mode to be omitted in OSS overlay, got %v", cleanCfg.Agent)
+	}
 }

@@ -104,8 +104,9 @@ func (g *Service) handleTestProviderModel(w http.ResponseWriter, r *http.Request
 				}
 			}
 		}
-		cfgURL, _, cfgNPM, cfgHeaders := g.resolveProviderConnection(pid, baseURL, npm)
-		if baseURL == "" && cfgURL != "" {
+		cfgURL, cfgKey, cfgNPM, cfgHeaders := g.resolveEffectiveProviderConnection(pid, baseURL, npm)
+		hasExplicitKey := strings.TrimSpace(req.APIKey) != "" && strings.TrimSpace(req.APIKey) != "********"
+		if (baseURL == "" || (!hasExplicitKey && isDefaultOpenAIBaseURL(baseURL) && isCodexChatGPTBackendURL(cfgURL))) && cfgURL != "" {
 			baseURL = cfgURL
 		}
 		if npm == "" && cfgNPM != "" {
@@ -115,6 +116,9 @@ func (g *Service) handleTestProviderModel(w http.ResponseWriter, r *http.Request
 			if _, exists := headers[hk]; !exists {
 				headers[hk] = hv
 			}
+		}
+		if !hasExplicitKey && isCodexChatGPTBackendURL(baseURL) && cfgKey != "" {
+			req.APIKey = cfgKey
 		}
 	}
 	if baseURL == "" && pid != "" {
@@ -141,6 +145,16 @@ func (g *Service) handleTestProviderModel(w http.ResponseWriter, r *http.Request
 	var err error
 	if g.IsImageModel(pid, modelID) || IsImageGenerationModel(modelID, "", "") {
 		err = g.probeImageModel(r.Context(), imageGenConn{
+			ProviderID: pid,
+			ModelID:    modelID,
+			BaseURL:    baseURL,
+			APIKey:     apiKey,
+			NPM:        npm,
+			Headers:    headers,
+		})
+	} else if g.IsVideoModel(pid, modelID) || IsVideoGenerationModel(modelID, "", "") ||
+		g.IsSpeechModel(pid, modelID) || inferModelCategory(modelID, "", "") == "asr" {
+		err = g.probeVideoModel(r.Context(), imageGenConn{
 			ProviderID: pid,
 			ModelID:    modelID,
 			BaseURL:    baseURL,
@@ -189,8 +203,9 @@ func (g *Service) handleTestProviderModel(w http.ResponseWriter, r *http.Request
 
 func extractAPIErrorMessage(statusCode int, raw []byte) string {
 	var parsed struct {
-		Error any    `json:"error"`
-		Msg   string `json:"message"`
+		Error  any    `json:"error"`
+		Msg    string `json:"message"`
+		Detail any    `json:"detail"`
 	}
 	if json.Unmarshal(raw, &parsed) == nil {
 		switch v := parsed.Error.(type) {
@@ -205,6 +220,9 @@ func extractAPIErrorMessage(statusCode int, raw []byte) string {
 		}
 		if strings.TrimSpace(parsed.Msg) != "" {
 			return "HTTP " + strconv.Itoa(statusCode) + ": " + strings.TrimSpace(parsed.Msg)
+		}
+		if d, ok := parsed.Detail.(string); ok && strings.TrimSpace(d) != "" {
+			return "HTTP " + strconv.Itoa(statusCode) + ": " + strings.TrimSpace(d)
 		}
 	}
 	snippet := strings.TrimSpace(string(raw))

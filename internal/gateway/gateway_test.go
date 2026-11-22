@@ -200,6 +200,37 @@ func TestGatewayHealthBootstrapDialogAndSystemInfo(t *testing.T) {
 		t.Fatalf("expected error in dialog response, got %s", recDialogErr.Body.String())
 	}
 
+	// 3b. POST /api/hoxi/dialog/open-directory passes sanitized title/defaultDir, blocks protected dirs when restricted, and blocks remote callers
+	existingDefault := t.TempDir()
+	var seenOpts OpenDirectoryOptions
+	gw.SetOpenDirectoryDialogWithOptions(func(opts OpenDirectoryOptions) (string, error) {
+		seenOpts = opts
+		return existingDefault, nil
+	})
+	recDialogOpts := httptest.NewRecorder()
+	gw.ServeHTTP(recDialogOpts, localRequest(http.MethodPost, "/api/hoxi/dialog/open-directory",
+		strings.NewReader(`{"title":"Pick HQ Root\n","defaultDir":"`+strings.ReplaceAll(existingDefault, `\`, `\\`)+`","restrictSensitive":true}`)))
+	if recDialogOpts.Code != http.StatusOK || seenOpts.Title != "Pick HQ Root" || seenOpts.DefaultDirectory != existingDefault {
+		t.Fatalf("unexpected dialog opts result: code=%d opts=%+v body=%s", recDialogOpts.Code, seenOpts, recDialogOpts.Body.String())
+	}
+
+	// Protected directory (filesystem root / ~/.hoxi) must be rejected when restrictSensitive=true
+	gw.SetOpenDirectoryDialogWithOptions(func(OpenDirectoryOptions) (string, error) {
+		return "/", nil
+	})
+	recProtected := httptest.NewRecorder()
+	gw.ServeHTTP(recProtected, localRequest(http.MethodPost, "/api/hoxi/dialog/open-directory",
+		strings.NewReader(`{"restrictSensitive":true}`)))
+	if recProtected.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for protected picked directory, got %d: %s", recProtected.Code, recProtected.Body.String())
+	}
+
+	recRemoteDialog := httptest.NewRecorder()
+	gw.ServeHTTP(recRemoteDialog, WithRemoteSource(localRequest(http.MethodPost, "/api/hoxi/dialog/open-directory", nil), "gopanel"))
+	if recRemoteDialog.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for remote directory dialog, got %d", recRemoteDialog.Code)
+	}
+
 	// 4. GET & POST /api/hoxi/system-info
 	recSysPost := httptest.NewRecorder()
 	gw.ServeHTTP(recSysPost, localRequest(http.MethodPost, "/api/hoxi/system-info", nil))

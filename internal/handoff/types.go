@@ -202,7 +202,8 @@ type LocalCLIStatusResponse struct {
 }
 
 type LocalCLIImportRequest struct {
-	ToolID ExternalToolID `json:"toolID"`
+	ToolID    ExternalToolID `json:"toolID"`
+	Overwrite bool           `json:"overwrite,omitempty"`
 }
 
 type LocalCLIImportResponse struct {
@@ -211,6 +212,17 @@ type LocalCLIImportResponse struct {
 	ProviderID string   `json:"providerID"`
 	Models     []string `json:"models,omitempty"`
 	Error      string   `json:"error,omitempty"`
+}
+
+type LocalCLIDisconnectRequest struct {
+	ToolID ExternalToolID `json:"toolID"`
+}
+
+type LocalCLIDisconnectResponse struct {
+	OK           bool     `json:"ok"`
+	ToolID       string   `json:"toolID"`
+	Disconnected []string `json:"disconnected,omitempty"`
+	Error        string   `json:"error,omitempty"`
 }
 
 func normalizeExternalToolName(raw string) string {

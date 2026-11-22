@@ -91,6 +91,9 @@ import "../src/__tests__/context-watermark.test";
 import "../src/__tests__/request-ledger.test";
 import "../src/__tests__/request-recovery.test";
 import "../src/__tests__/plan-consent.test";
+import "../src/__tests__/intake.test";
+import "../src/__tests__/fast-mode.test";
+import "../src/__tests__/media-loopback.test";
 
 console.log("[test] Running Hoxi frontend unit tests...");
 runAllTests().then((failed) => {

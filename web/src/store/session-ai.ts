@@ -1,5 +1,7 @@
+import { produce } from "solid-js/store";
 import {
   DEFAULT_AGENT_KEY,
+  OFFICIAL_PROVIDER_ID,
   SESSION_AI_KEY,
   setWorkspace,
   workspace,
@@ -102,4 +104,130 @@ export function setActiveAgent(agent: string, sessionID = workspace.activeSessio
 export function forgetPendingSessionAI(sessionID: string): void {
   if (!sessionID) return;
   pendingHistoryPatches.delete(sessionID);
+}
+
+const OPENAI_FAST_MODEL_RE = /(?:^|[/-])(?:gpt-(?:4o|5|6|7)|o[34](?:$|[.-])|codex)/i;
+
+function isOfficialFastHost(rawURL?: string | null): boolean {
+  const trimmed = (rawURL || "").trim();
+  if (!trimmed) return true;
+  try {
+    const u = new URL(trimmed);
+    const host = u.hostname.toLowerCase();
+    const path = u.pathname.toLowerCase().replace(/\/+$/, "");
+    if (
+      host === "api.anthropic.com" ||
+      host.endsWith(".anthropic.com") ||
+      host === "api.openai.com" ||
+      host.endsWith(".openai.com")
+    ) {
+      return true;
+    }
+    return path === "/backend-api/codex" || path === "/backend-api/codex/responses";
+  } catch {
+    return false;
+  }
+}
+
+export function inferModelFastModeCapability(
+  providerID?: string | null,
+  modelID?: string | null,
+  mInfo?: Record<string, any> | null,
+  cfgModel?: Record<string, any> | null,
+  customBaseURL?: string | null
+): boolean {
+  const explicit = mInfo?.fastMode ?? cfgModel?.fastMode;
+  if (typeof explicit === "boolean") return explicit;
+
+  const p = (providerID || "").trim().toLowerCase();
+  const m = (modelID || "").trim().toLowerCase();
+  if (!p || !m) return false;
+  if (p === "hoxi-auto") return true;
+
+  if (
+    m.includes("haiku") ||
+    m.includes("sonnet") ||
+    m.includes("flash") ||
+    m.includes("mini") ||
+    m.includes("nano") ||
+    m.includes("lite") ||
+    m.includes("oss-") ||
+    m.includes("image") ||
+    m.includes("video") ||
+    m.includes("audio") ||
+    m.includes("realtime") ||
+    m.includes("tts") ||
+    m.includes("whisper") ||
+    m.includes("embed")
+  ) {
+    return false;
+  }
+
+  if (p !== OFFICIAL_PROVIDER_ID && p !== "claude-code" && p !== "codex" && !isOfficialFastHost(customBaseURL)) {
+    return false;
+  }
+
+  if (p === "anthropic" || p === "claude-code" || (p === OFFICIAL_PROVIDER_ID && m.includes("claude"))) {
+    return m.includes("opus") || m.includes("fable") || m.includes("mythos");
+  }
+
+  if (p === "openai" || p === "codex" || p === OFFICIAL_PROVIDER_ID) {
+    return OPENAI_FAST_MODEL_RE.test(m);
+  }
+
+  return false;
+}
+
+export function resolveEffectiveFastMode(
+  model: SelectedModel | null | undefined,
+  requested?: boolean
+): boolean {
+  if (!requested || !model?.providerID || !model?.modelID) return false;
+  const prov = workspace.providers.find((p) => p.id === model.providerID);
+  const mInfo = prov?.models?.[model.modelID] as Record<string, any> | undefined;
+  const hoxiProv = workspace.hoxiProviders?.[model.providerID];
+  const globalProv = workspace.globalConfig?.provider?.[model.providerID];
+  const cfgModel = (hoxiProv?.models?.[model.modelID] ?? globalProv?.models?.[model.modelID]) as
+    | Record<string, any>
+    | undefined;
+  const customBaseURL = hoxiProv?.options?.baseURL ?? globalProv?.options?.baseURL ?? null;
+  return inferModelFastModeCapability(model.providerID, model.modelID, mInfo, cfgModel, customBaseURL);
+}
+
+export function setFastMode(enabled: boolean, sessionID = workspace.activeSessionID): void {
+  const nextVal = enabled ? true : undefined;
+  if (sessionID) {
+    if (
+      (!workspace.aiBySession[sessionID] || pendingHistoryPatches.has(sessionID)) &&
+      workspace.loadingMessagesBySession[sessionID]
+    ) {
+      const prev = { ...pendingHistoryPatches.get(sessionID) };
+      if (enabled) prev.fastMode = true;
+      else delete prev.fastMode;
+      pendingHistoryPatches.set(sessionID, prev);
+    }
+    initializeSessionAI(sessionID);
+    setWorkspace(
+      produce((state) => {
+        const entry = state.aiBySession[sessionID];
+        if (!entry) return;
+        if (nextVal) entry.fastMode = true;
+        else delete entry.fastMode;
+      })
+    );
+    persistSessionAI();
+  } else {
+    setWorkspace(
+      produce((state) => {
+        if (nextVal) state.defaultAI.fastMode = true;
+        else delete state.defaultAI.fastMode;
+      })
+    );
+  }
+}
+
+export function toggleFastMode(sessionID = workspace.activeSessionID): boolean {
+  const next = !Boolean(sessionAIConfig(sessionID).fastMode);
+  setFastMode(next, sessionID);
+  return next;
 }

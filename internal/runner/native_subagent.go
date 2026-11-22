@@ -6,6 +6,8 @@ import (
 	"sync"
 )
 
+const nativeSubagentHeartbeatIntervalMs int64 = 5000
+
 // nativeSubagentBridge maps in-process NativeEngine subagent events (`task`)
 // onto Hoxi child sessions (`TurnTranslator.openChild` / `childSink`) so the
 // web & mobile timeline UI renders live subagent step counts, current tool
@@ -17,23 +19,29 @@ type nativeSubagentBridge struct {
 	modelID         string
 	tr              *TurnTranslator
 
-	mu               sync.Mutex
-	taskParts        map[string]MessagePart    // parent CallID -> latest task MessagePart
-	lastActByID      map[string]int64          // parent CallID -> latest activity ms
-	childMetaByID    map[string]map[string]any // parent CallID -> resolved child model/role metadata
-	childMutatedByID map[string]bool           // parent CallID -> whether child started/ran a mutating tool
+	mu                sync.Mutex
+	taskParts         map[string]MessagePart    // parent CallID -> latest task MessagePart
+	lastActByID       map[string]int64          // parent CallID -> latest activity ms
+	lastParentEmitAt  map[string]int64          // parent CallID -> last time parent task part was re-broadcast
+	lastParentMutated map[string]bool           // parent CallID -> last mutated flag broadcast on parent task part
+	lastParentChildID map[string]string         // parent CallID -> last child sessionId broadcast on parent task part
+	childMetaByID     map[string]map[string]any // parent CallID -> resolved child model/role metadata
+	childMutatedByID  map[string]bool           // parent CallID -> whether child started/ran a mutating tool
 }
 
 func newNativeSubagentBridge(svc *Service, parentSessionID, modelID string, tr *TurnTranslator) *nativeSubagentBridge {
 	return &nativeSubagentBridge{
-		svc:              svc,
-		parentSessionID:  parentSessionID,
-		modelID:          modelID,
-		tr:               tr,
-		taskParts:        make(map[string]MessagePart),
-		lastActByID:      make(map[string]int64),
-		childMetaByID:    make(map[string]map[string]any),
-		childMutatedByID: make(map[string]bool),
+		svc:               svc,
+		parentSessionID:   parentSessionID,
+		modelID:           modelID,
+		tr:                tr,
+		taskParts:         make(map[string]MessagePart),
+		lastActByID:       make(map[string]int64),
+		lastParentEmitAt:  make(map[string]int64),
+		lastParentMutated: make(map[string]bool),
+		lastParentChildID: make(map[string]string),
+		childMetaByID:     make(map[string]map[string]any),
+		childMutatedByID:  make(map[string]bool),
 	}
 }
 
@@ -92,6 +100,13 @@ func (b *nativeSubagentBridge) enrichParentTaskPart(part *MessagePart, nowMs int
 		part.State.Metadata["mutated"] = true
 	}
 	b.taskParts[callID] = clonePart(*part)
+	b.lastParentEmitAt[callID] = nowMs
+	if childID != "" {
+		b.lastParentChildID[callID] = childID
+	}
+	if b.childMutatedByID[callID] {
+		b.lastParentMutated[callID] = true
+	}
 }
 
 // handleChildEvent processes a NativeEvent tagged with a non-empty ParentCallID.
@@ -205,8 +220,19 @@ func (b *nativeSubagentBridge) handleChildEvent(evt NativeEvent, nowMs int64) []
 			cp.State.Metadata["mutated"] = true
 		}
 		b.taskParts[parentCallID] = cp
-		if evt.Kind == NativeEventSubtaskStart || evt.Kind == NativeEventToolRunning ||
-			evt.Kind == NativeEventToolCompleted || evt.Kind == NativeEventToolError || evt.Kind == NativeEventSubtaskEnd {
+		isLifecycle := evt.Kind == NativeEventSubtaskStart || evt.Kind == NativeEventSubtaskEnd
+		isToolEvt := evt.Kind == NativeEventToolRunning || evt.Kind == NativeEventToolCompleted || evt.Kind == NativeEventToolError
+		stateChanged := (childID != "" && childID != b.lastParentChildID[parentCallID]) ||
+			(b.childMutatedByID[parentCallID] && !b.lastParentMutated[parentCallID])
+		heartbeatDue := isToolEvt && (b.lastParentEmitAt[parentCallID] == 0 || nowMs-b.lastParentEmitAt[parentCallID] >= nativeSubagentHeartbeatIntervalMs)
+		if isLifecycle || stateChanged || heartbeatDue {
+			b.lastParentEmitAt[parentCallID] = nowMs
+			if childID != "" {
+				b.lastParentChildID[parentCallID] = childID
+			}
+			if b.childMutatedByID[parentCallID] {
+				b.lastParentMutated[parentCallID] = true
+			}
 			evts = append(evts, partUpdated(cp))
 		}
 	}

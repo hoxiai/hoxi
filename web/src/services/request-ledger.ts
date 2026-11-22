@@ -57,6 +57,7 @@ export function inspectHoxiRequest<T = unknown>(input: {
   scope: string;
   directory?: string;
   digest?: string;
+  turnResult?: boolean;
 }): Promise<RequestInspectResponse<T>> {
   const params = new URLSearchParams({
     kind: input.kind,
@@ -64,6 +65,7 @@ export function inspectHoxiRequest<T = unknown>(input: {
   });
   if (input.directory) params.set("directory", input.directory);
   if (input.digest) params.set("digest", input.digest);
+  if (input.turnResult) params.set("turnResult", "1");
   return requestJSON<RequestInspectResponse<T>>(
     `/api/hoxi/requests/${encodeURIComponent(input.clientRequestId)}?${params.toString()}`
   );

@@ -196,7 +196,7 @@ func TestImageResponseParsers(t *testing.T) {
 			},
 		}},
 	})
-	cResp, err := svc.parseOpenAIChatImageResponse(context.Background(), chatRaw, 5*time.Second)
+	cResp, err := svc.parseOpenAIChatImageResponse(context.Background(), chatRaw, imageGenConn{BaseURL: "https://api.openai.com/v1"}, 5*time.Second)
 	if err != nil || len(cResp.Images) != 1 || cResp.Text != "Here is the artwork:" {
 		t.Fatalf("unexpected chat image parse result: resp=%+v err=%v", cResp, err)
 	}

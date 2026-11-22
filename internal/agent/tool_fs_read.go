@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -10,13 +9,15 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
-	"sync"
+	"time"
 )
 
-const maxReadMediaBytes = 10 * 1024 * 1024
+const (
+	maxReadMediaBytes  = 10 * 1024 * 1024
+	maxReadOutputBytes = maxToolOutputBytes - 512
+)
 
 type readTool struct{}
 
@@ -150,15 +151,40 @@ func (t *readTool) Execute(_ context.Context, tc ToolContext, input json.RawMess
 	}
 	end := min(len(allLines), start+limit-1)
 	var b strings.Builder
+	anyLineTruncated := false
+	stoppedByBytes := false
+	actualEnd := start - 1
 	for i := start; i <= end; i++ {
-		fmt.Fprintf(&b, "%d: %s\n", i, allLines[i-1])
+		formatted, trunc := formatReadLine(i, allLines[i-1])
+		if i > start && b.Len()+len(formatted) > maxReadOutputBytes {
+			stoppedByBytes = true
+			break
+		}
+		b.WriteString(formatted)
+		actualEnd = i
+		if trunc {
+			anyLineTruncated = true
+		}
 	}
-	if end < len(allLines) {
-		fmt.Fprintf(&b, "\n(showing lines %d-%d of %d)", start, end, len(allLines))
+	renderedLines := b.String()
+	if actualEnd < len(allLines) {
+		if stoppedByBytes {
+			remainingBytes := 0
+			for i := actualEnd + 1; i <= end; i++ {
+				remainingBytes += len(allLines[i-1]) + 1
+			}
+			fmt.Fprintf(&b, "\n(showing lines %d-%d of %d; %d bytes truncated at line boundary — pass offset=%d to continue)", start, actualEnd, len(allLines), remainingBytes, actualEnd+1)
+		} else {
+			fmt.Fprintf(&b, "\n(showing lines %d-%d of %d; pass offset=%d to continue)", start, actualEnd, len(allLines), actualEnd+1)
+		}
 	}
-	outText := appendSubdirectoryRules(tc, realTarget, b.String())
-	deliveredComplete := len(ensureValidUTF8(outText)) <= maxToolOutputBytes
-	tc.FileRevisions.RecordReadLines(realTarget, raw, start, end, len(allLines), deliveredComplete)
+	body := b.String()
+	if notice, ok := tryBuildUnchangedReadNotice(tc.VisibleMessages, tc.WorktreeDir, realTarget, p, renderedLines, raw, start, actualEnd, len(allLines)); ok {
+		body = notice
+	}
+	outText := appendSubdirectoryRules(tc, realTarget, body)
+	deliveredComplete := !anyLineTruncated && !stoppedByBytes && len(ensureValidUTF8(body)) <= maxToolOutputBytes
+	tc.FileRevisions.RecordReadLines(realTarget, raw, start, actualEnd, len(allLines), deliveredComplete)
 	return ToolOutput{Title: p, Output: outText}, nil
 }
 
@@ -166,7 +192,7 @@ type globTool struct{}
 
 func (t *globTool) Name() string { return "glob" }
 func (t *globTool) Description() string {
-	return "Find files matching a glob pattern (e.g. *.go, internal/**/*.ts) inside the workspace."
+	return "Find files matching a glob pattern (e.g. *.go, internal/**/*.ts) inside the workspace, ordered by most recently modified first."
 }
 func (t *globTool) IsReadOnly() bool { return true }
 func (t *globTool) Parameters() map[string]any {
@@ -175,6 +201,7 @@ func (t *globTool) Parameters() map[string]any {
 		"properties": map[string]any{
 			"pattern": map[string]any{"type": "string", "description": "Glob pattern to match"},
 			"path":    map[string]any{"type": "string", "description": "Optional directory to search"},
+			"offset":  map[string]any{"type": "integer", "minimum": 0, "description": "Skip this many matching files; use returned nextOffset to continue"},
 		},
 		"required": []string{"pattern"},
 	}
@@ -184,9 +211,13 @@ func (t *globTool) Execute(ctx context.Context, tc ToolContext, input json.RawMe
 	var args struct {
 		Pattern string `json:"pattern"`
 		Path    string `json:"path"`
+		Offset  int    `json:"offset"`
 	}
 	if err := json.Unmarshal(input, &args); err != nil {
 		return ToolOutput{Title: "glob", IsError: true}, err
+	}
+	if args.Offset < 0 {
+		return ToolOutput{Title: "glob", IsError: true}, fmt.Errorf("offset must be nonnegative")
 	}
 	root := tc.WorktreeDir
 	if strings.TrimSpace(args.Path) != "" {
@@ -207,9 +238,17 @@ func (t *globTool) Execute(ctx context.Context, tc ToolContext, input json.RawMe
 	if pat == "" {
 		pat = "*"
 	}
+	type globEntry struct {
+		path    string
+		modTime time.Time
+	}
 	ignorer := newWorkspaceIgnorer(tc.WorktreeDir, root)
-	var matches []string
-	const maxMatches = 200
+	var matches []globEntry
+	const (
+		maxMatches = 200
+		maxCollect = 5000
+	)
+	cappedCollect := false
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -247,8 +286,13 @@ func (t *globTool) Execute(ctx context.Context, tc ToolContext, input json.RawMe
 		}
 		relSlash := filepath.ToSlash(rel)
 		if matchGlob(pat, relSlash) {
-			matches = append(matches, relSlash)
-			if len(matches) >= maxMatches {
+			var modTime time.Time
+			if info, iErr := d.Info(); iErr == nil {
+				modTime = info.ModTime()
+			}
+			matches = append(matches, globEntry{path: relSlash, modTime: modTime})
+			if len(matches) >= maxCollect {
+				cappedCollect = true
 				return fs.SkipAll
 			}
 		}
@@ -257,217 +301,34 @@ func (t *globTool) Execute(ctx context.Context, tc ToolContext, input json.RawMe
 	if err != nil && err != fs.SkipAll {
 		return ToolOutput{Title: pat, IsError: true}, err
 	}
-	sort.Strings(matches)
+	sort.Slice(matches, func(i, j int) bool {
+		if !matches[i].modTime.Equal(matches[j].modTime) {
+			return matches[i].modTime.After(matches[j].modTime)
+		}
+		return matches[i].path < matches[j].path
+	})
 	if len(matches) == 0 {
 		return ToolOutput{Title: pat, Output: "(no matching files)"}, nil
 	}
-	out := strings.Join(matches, "\n")
-	if len(matches) >= maxMatches {
-		out += fmt.Sprintf("\n(truncated at %d matches)", maxMatches)
+	if args.Offset >= len(matches) {
+		return ToolOutput{Title: pat, Output: "(no more matching files at this offset)"}, nil
 	}
-	return ToolOutput{Title: pat, Output: out}, nil
-}
-
-type grepTool struct{}
-
-func (t *grepTool) Name() string { return "grep" }
-func (t *grepTool) Description() string {
-	return "Search file contents in the workspace using a regular expression or literal string."
-}
-func (t *grepTool) IsReadOnly() bool { return true }
-func (t *grepTool) Parameters() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"pattern": map[string]any{"type": "string", "description": "Regex or text pattern to search for"},
-			"path":    map[string]any{"type": "string", "description": "Optional file or directory to search"},
-			"include": map[string]any{"type": "string", "description": "Optional filename glob filter (e.g. *.go)"},
-		},
-		"required": []string{"pattern"},
+	pageEnd := min(len(matches), args.Offset+maxMatches)
+	page := make([]string, 0, pageEnd-args.Offset)
+	for _, m := range matches[args.Offset:pageEnd] {
+		page = append(page, m.path)
 	}
-}
-
-func (t *grepTool) Execute(ctx context.Context, tc ToolContext, input json.RawMessage) (ToolOutput, error) {
-	var args struct {
-		Pattern string `json:"pattern"`
-		Path    string `json:"path"`
-		Include string `json:"include"`
-	}
-	if err := json.Unmarshal(input, &args); err != nil {
-		return ToolOutput{Title: "grep", IsError: true}, err
-	}
-	re, err := regexp.Compile(args.Pattern)
-	if err != nil {
-		re = regexp.MustCompile(regexp.QuoteMeta(args.Pattern))
-	}
-	root := tc.WorktreeDir
-	if strings.TrimSpace(args.Path) != "" {
-		resolved, err := resolveWorkspacePath(tc.WorktreeDir, args.Path, false)
-		if err != nil {
-			return ToolOutput{Title: args.Pattern, IsError: true}, err
-		}
-		root = resolved
-	}
-	realRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return ToolOutput{Title: args.Pattern, IsError: true}, err
-	}
-	rootInfo, err := os.Stat(realRoot)
-	if err != nil {
-		return ToolOutput{Title: args.Pattern, IsError: true}, err
-	}
-	if !tc.PermissionVetted {
-		if !isRealPathWithin(tc.WorktreeDir, realRoot) {
-			return ToolOutput{Title: args.Pattern, IsError: true}, fmt.Errorf("grep path %q resolves outside workspace", args.Path)
-		}
-		if !rootInfo.IsDir() && (isSensitiveAgentPath(root) || isSensitiveAgentPath(realRoot)) {
-			return ToolOutput{Title: args.Pattern, IsError: true}, fmt.Errorf("searching sensitive credential or key file %q is blocked", filepath.Base(realRoot))
+	out := strings.Join(page, "\n")
+	meta := map[string]any{}
+	if pageEnd < len(matches) || cappedCollect {
+		if pageEnd < len(matches) {
+			meta["nextOffset"] = pageEnd
+			out += fmt.Sprintf("\n(truncated at %d matches of %d; repeat glob with offset=%d)", maxMatches, len(matches), pageEnd)
+		} else {
+			out += fmt.Sprintf("\n(truncated at %d matches)", len(matches))
 		}
 	}
-
-	type grepCandidate struct {
-		displayPath string
-		openPath    string
-		expectInfo  os.FileInfo
-	}
-	var files []grepCandidate
-	const maxGrepFileSize = 2 * 1024 * 1024
-
-	if !rootInfo.IsDir() {
-		if rootInfo.Mode().IsRegular() && rootInfo.Size() <= maxGrepFileSize {
-			if args.Include == "" || matchGlob(args.Include, filepath.Base(root)) {
-				files = append(files, grepCandidate{displayPath: root, openPath: realRoot, expectInfo: rootInfo})
-			}
-		}
-	} else {
-		ignorer := newWorkspaceIgnorer(tc.WorktreeDir, root)
-		_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			if walkErr != nil {
-				return nil
-			}
-			if d.IsDir() {
-				if p != root {
-					if shouldSkipSearchDir(d.Name()) {
-						return filepath.SkipDir
-					}
-					if ignorer != nil && ignorer.IsIgnored(p, true) && !ignorer.CanReincludeUnderDir(p) {
-						return filepath.SkipDir
-					}
-				}
-				ignorer.EnterDir(p)
-				return nil
-			}
-			if isSensitiveAgentPathLexical(p) {
-				return nil
-			}
-			if ignorer != nil && ignorer.IsIgnored(p, false) {
-				return nil
-			}
-			if args.Include != "" {
-				relInc, relErr := filepath.Rel(root, p)
-				relIncSlash := d.Name()
-				if relErr == nil && relInc != "." {
-					relIncSlash = filepath.ToSlash(relInc)
-				}
-				if !matchGlob(args.Include, relIncSlash) {
-					return nil
-				}
-			}
-			realFile, rErr := filepath.EvalSymlinks(p)
-			if rErr != nil {
-				return nil
-			}
-			if !isLexicalPathWithin(realRoot, realFile) || hasSkippedSearchSegment(realRoot, realFile) {
-				return nil
-			}
-			if isSensitiveAgentPathLexical(realFile) {
-				return nil
-			}
-			if realSt, sErr := os.Stat(realFile); sErr == nil && realSt.Mode().IsRegular() && realSt.Size() <= maxGrepFileSize {
-				files = append(files, grepCandidate{displayPath: p, openPath: realFile, expectInfo: realSt})
-			}
-			return nil
-		})
-	}
-
-	type hit struct {
-		rel  string
-		line int
-		text string
-	}
-	var mu sync.Mutex
-	var hits []hit
-	const maxHits = 150
-	sem := make(chan struct{}, 8)
-	var wg sync.WaitGroup
-
-	for _, f := range files {
-		if ctx.Err() != nil {
-			break
-		}
-		mu.Lock()
-		full := len(hits) >= maxHits
-		mu.Unlock()
-		if full {
-			break
-		}
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(cand grepCandidate) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			fh, err := os.Open(cand.openPath)
-			if err != nil {
-				return
-			}
-			defer fh.Close()
-			fhSt, err := fh.Stat()
-			if err != nil || !fhSt.Mode().IsRegular() || (cand.expectInfo != nil && !os.SameFile(cand.expectInfo, fhSt)) {
-				return
-			}
-			rel, relErr := filepath.Rel(tc.WorktreeDir, cand.displayPath)
-			if relErr != nil || strings.HasPrefix(rel, "..") {
-				rel = cand.displayPath
-			}
-			relSlash := filepath.ToSlash(rel)
-			sc := bufio.NewScanner(fh)
-			sc.Buffer(make([]byte, 32*1024), 1024*1024)
-			lineNo := 0
-			for sc.Scan() {
-				lineNo++
-				b := sc.Bytes()
-				if bytes.IndexByte(b, 0) >= 0 {
-					return
-				}
-				if re.Match(b) {
-					mu.Lock()
-					if len(hits) < maxHits {
-						hits = append(hits, hit{rel: relSlash, line: lineNo, text: strings.TrimSpace(string(b))})
-					}
-					mu.Unlock()
-				}
-			}
-		}(f)
-	}
-	wg.Wait()
-
-	if len(hits) == 0 {
-		return ToolOutput{Title: args.Pattern, Output: "(no matches found)"}, nil
-	}
-	sort.Slice(hits, func(i, j int) bool {
-		if hits[i].rel != hits[j].rel {
-			return hits[i].rel < hits[j].rel
-		}
-		return hits[i].line < hits[j].line
-	})
-	var out strings.Builder
-	for _, h := range hits {
-		fmt.Fprintf(&out, "%s:%d: %s\n", h.rel, h.line, h.text)
-	}
-	return ToolOutput{Title: args.Pattern, Output: out.String()}, nil
+	return ToolOutput{Title: pat, Output: out, Metadata: meta}, nil
 }
 
 func shouldSkipSearchDir(name string) bool {

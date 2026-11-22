@@ -12,7 +12,7 @@ import {
 import SkillsInspectorView from "../skills/SkillsInspectorView";
 import { DataProfilesSection } from "./DataProfilesSection";
 import { RemoteHostsSection } from "./RemoteHostsSection";
-import { SettingGroup } from "./setting-controls";
+import { HelpTip, SettingGroup } from "./setting-controls";
 
 export function SettingsExtensionsTab() {
   const [mcpServers, setMcpServers] = createSignal<Record<string, any>>({});
@@ -86,13 +86,11 @@ export function SettingsExtensionsTab() {
           <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-surface)] text-[var(--accent-primary)]">
             <Blocks size={16} />
           </div>
-          <div class="min-w-0">
-            <h3 class="text-[13px] font-semibold text-[var(--text-primary)]">
+          <div class="flex items-center gap-2 min-w-0">
+            <h3 class="text-[13px] font-semibold text-[var(--text-primary)] truncate">
               {t("settings.extensionsTitle")}
             </h3>
-            <p class="text-[12px] text-[var(--text-secondary)]">
-              {t("settings.extensionsSubtitle")}
-            </p>
+            <HelpTip text={t("settings.extensionsSubtitle")} />
           </div>
         </div>
         <button

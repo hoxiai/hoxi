@@ -64,7 +64,7 @@ agy 发起 run_command
 
 ### 3.2 Hook 安装位置：全局 `~/.gemini/config/hooks.json`，加环境变量守卫（推荐）
 
-- Hoxi 只维护自己的命名键 `hoxi-approval-gate`。读取 → 合并 → 原子写回，保留用户已有的其他 hook。在第一次启动 Antigravity Runner 时安装，二进制路径变化时更新；设置里提供"卸载"。
+- Hoxi 只维护自己的命名键 `hoxi-approval-gate`。读取 → 合并 → 原子写回，保留用户已有的其他 hook。在每轮启动 Antigravity Runner 前自动校验可执行文件真实路径（macOS 下结合 `proc_pidpath` 跟踪运行期移动的 `.app`，若原编译/DMG 启动路径已被删除则自动回退到已安装的 `/Applications/Hoxi.app` 或 `~/Applications/Hoxi.app` 并刷新 `hooks.json`）；设置里提供状态检查、重新安装与卸载。
 - 工作区 `.agents/hooks.json` **不推荐**：local 模式下会往用户仓库里写文件，还可能覆盖仓库自带的 hooks.json。worktree 模式下虽然可以用（另需写 `.git/info/exclude`），但两种模式的行为会不一致。
 - 写入的 hook 配置（macOS / Linux）：
 
@@ -74,7 +74,8 @@ agy 发起 run_command
     "PreToolUse": [{
       "matcher": "*",
       "hooks": [{
-        "command": "[ -x '/Applications/Hoxi.app/Contents/MacOS/hoxi' ] && exec '/Applications/Hoxi.app/Contents/MacOS/hoxi' agy-hook || echo '{\"decision\":\"allow\"}'",
+        "type": "command",
+        "command": "if [ -z \"$HOXI_RUNNER_SESSION_ID\" ]; then echo '{\"decision\":\"allow\"}'; elif [ -x '/Applications/Hoxi.app/Contents/MacOS/Hoxi' ]; then exec '/Applications/Hoxi.app/Contents/MacOS/Hoxi' agy-hook; elif [ -n \"$HOXI_HOOK_BIN\" ] && [ -x \"$HOXI_HOOK_BIN\" ]; then exec \"$HOXI_HOOK_BIN\" agy-hook; else echo '{\"decision\":\"deny\",\"reason\":\"Hoxi approval hook executable not found; restart Hoxi or reinstall the hook in Settings\"}'; fi",
         "timeout": 600
       }]
     }]
@@ -83,11 +84,12 @@ agy 发起 run_command
 ```
 
   在 Windows（`runtime.GOOS == "windows"`，`internal/runner/agy_hook_install.go`）下命令为：
-  `if exist "C:\...\Hoxi.exe" ("C:\...\Hoxi.exe" agy-hook) else (echo {"decision":"allow"})`。
+  `if not defined HOXI_RUNNER_SESSION_ID (echo {"decision":"allow"}) else if exist "C:\...\Hoxi.exe" ("C:\...\Hoxi.exe" agy-hook) else if defined HOXI_HOOK_BIN (if exist "%HOXI_HOOK_BIN%" ("%HOXI_HOOK_BIN%" agy-hook) else (echo {"decision":"deny","reason":"..."})) else (echo {"decision":"deny","reason":"..."})`。
 
   matcher 是正则：`"*"` / `""` 匹配所有工具，`"run_command|view_file"` 匹配其中之一，`"browser_.*"` 匹配前缀。Hoxi 用通配符 `"*"` 覆盖全部工具，再由 `hook_gate.go` / `agy_hook_tools.go` 按工具分类，避免 agy 新增工具（如 1.4.3 的 `read_file`）时漏配 matcher 被无头模式软拒。
 
-  `[ -x … ] || echo '{"decision":"allow"}'`（Windows 下 `if exist … else …`）这层守卫是必须的。I2 证明 hook 失败会让工具报错，如果 Hoxi 被移走或卸载，用户自己的 agy / IDE 命令就会全部失败。
+  - **Hoxi 会话外（`HOXI_RUNNER_SESSION_ID` 未设置）**：在 Shell 层直接返回 `{"decision":"allow"}` 透传，不拉起 Hoxi 进程；即便用户直接卸载删除了 Hoxi，日常终端或 Antigravity IDE 里的 `agy` 仍完全正常。
+  - **Hoxi 会话内（`HOXI_RUNNER_SESSION_ID` 非空）**：依次尝试 `hooks.json` 主路径、当轮注入的 `HOXI_HOOK_BIN` 以及（macOS 非 `/Applications` 启动时的）`/Applications/Hoxi.app/Contents/MacOS/Hoxi`；若全部缺失则严格按 **fail-closed** 输出 `{"decision":"deny","reason":"..."}`，既防止静默绕过 `.env`/受保护路径门控，也避免退化为 `allow` 后触发令人困惑的无头软拒绝提示。
 
 ### 3.3 `hoxi agy-hook` 子命令（`cmd/hoxi`）
 
@@ -120,6 +122,8 @@ agy 发起 run_command
     - 未知工具 → 推送 `permission:"tool"` 审批卡片。无头模式会把需要权限的未知工具直接 soft-deny 并结束轮次，交给 Hoxi 审批才能让用户有机会放行。
   - 命令归一化：`permission_policy.go` 在单次解析后的命令段上校验并去掉位于会话 worktree 内的无引号简单 `cd <dir>` 首段（不重新拼接字符串解析），并把受信目录下的绝对工具链路径（如 `/usr/local/go/bin/go`、`/opt/homebrew/bin/npm`）按 basename 归一，避免 agent 常见写法被误判为 `ask`。
   - 原有的 `denied_actions` 提示保留作兜底（hook 没装上，或其它未覆盖工具需要权限时），文案改成引导用户检查 hook 安装状态。
+
+在自动模式下，若 `node -e` 用 `readdirSync(...).find(...)` 从工作树内的普通目录选出文件，再拼接目录与文件名读取（含 `path.join`），原脚本仍需审批。Hook 首次遇到这种请求时会拒绝执行，并提示模型先列目录，再用具体路径调用文件读取或搜索工具。每次工具调用独立检查目标。若任务要求执行原脚本，模型可在新的工具调用中原样重试，进入人工审批。手动模式及匹配的命令询问规则直接进入原有审批流程。
 
 ### 3.5 前端
 

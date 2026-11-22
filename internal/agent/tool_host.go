@@ -122,7 +122,7 @@ type hoxiImageTool struct{}
 
 func (t *hoxiImageTool) Name() string { return "hoxi_image" }
 func (t *hoxiImageTool) Description() string {
-	return "Generate or edit images using Hoxi's configured image generation models and save outputs to disk."
+	return "Generate or edit images: checks the active session model's native image capability first, then configured local image models, and saves outputs to disk (fall back to hoxi_tools only if unavailable)."
 }
 func (t *hoxiImageTool) IsReadOnly() bool { return false }
 func (t *hoxiImageTool) Parameters() map[string]any {
@@ -141,6 +141,59 @@ func (t *hoxiImageTool) Parameters() map[string]any {
 	}
 }
 func (t *hoxiImageTool) Execute(ctx context.Context, tc ToolContext, input json.RawMessage) (ToolOutput, error) {
+	return execHostTool(ctx, tc, t.Name(), input)
+}
+
+type hoxiVideoTool struct{}
+
+func (t *hoxiVideoTool) Name() string { return "hoxi_video" }
+func (t *hoxiVideoTool) Description() string {
+	return "Generate text-to-video or image-to-video clips: checks the active session model's native video capability first, then configured local video models (Veo, Sora, Wan, Seedance, Kling, CogVideo), and saves outputs to disk (fall back to hoxi_tools only if unavailable)."
+}
+func (t *hoxiVideoTool) IsReadOnly() bool { return false }
+func (t *hoxiVideoTool) Parameters() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"prompt":          map[string]any{"type": "string", "description": "Detailed video motion, scene, and camera prompt"},
+			"outputPath":      map[string]any{"type": "string", "description": "Optional workspace-relative output video file path (e.g. 'public/intro.mp4')"},
+			"inputPaths":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Optional workspace-relative first-frame reference image path(s)"},
+			"aspectRatio":     map[string]any{"type": "string", "enum": []string{"16:9", "9:16", "1:1", "4:3", "3:4"}},
+			"resolution":      map[string]any{"type": "string", "enum": []string{"720p", "1080p"}},
+			"durationSeconds": map[string]any{"type": "integer", "description": "Optional target clip duration in seconds (2-20)"},
+			"providerID":      map[string]any{"type": "string", "description": "Optional provider override"},
+			"modelID":         map[string]any{"type": "string", "description": "Optional model override"},
+		},
+		"required": []string{"prompt"},
+	}
+}
+func (t *hoxiVideoTool) Execute(ctx context.Context, tc ToolContext, input json.RawMessage) (ToolOutput, error) {
+	return execHostTool(ctx, tc, t.Name(), input)
+}
+
+type hoxiSpeechTool struct{}
+
+func (t *hoxiSpeechTool) Name() string { return "hoxi_speech" }
+func (t *hoxiSpeechTool) Description() string {
+	return "Synthesize spoken audio (TTS / voiceover) from text: checks the active session model's native audio output capability first, then configured local TTS models, and saves outputs to disk (fall back to hoxi_tools only if unavailable)."
+}
+func (t *hoxiSpeechTool) IsReadOnly() bool { return false }
+func (t *hoxiSpeechTool) Parameters() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"text":       map[string]any{"type": "string", "description": "Spoken script or text to synthesize into audio"},
+			"outputPath": map[string]any{"type": "string", "description": "Optional workspace-relative output audio file path (e.g. 'public/voiceover.mp3')"},
+			"voice":      map[string]any{"type": "string", "description": "Optional voice name (e.g. 'alloy', 'nova', 'Kore')"},
+			"format":     map[string]any{"type": "string", "enum": []string{"mp3", "wav", "opus", "flac", "aac"}},
+			"speed":      map[string]any{"type": "number", "description": "Optional playback speed (0.25 - 4.0)"},
+			"providerID": map[string]any{"type": "string", "description": "Optional provider override"},
+			"modelID":    map[string]any{"type": "string", "description": "Optional model override"},
+		},
+		"required": []string{"text"},
+	}
+}
+func (t *hoxiSpeechTool) Execute(ctx context.Context, tc ToolContext, input json.RawMessage) (ToolOutput, error) {
 	return execHostTool(ctx, tc, t.Name(), input)
 }
 

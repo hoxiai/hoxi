@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -104,6 +105,12 @@ func (g *Service) persistEngineProviderAuthMap(providerID string, cred map[strin
 		}
 		merged[providerID] = cred
 		persistErr = writeJSONMapFile(path, merged)
+	}
+	if persistErr == nil && isValidUnrevokedAuthEntry(cred) {
+		doc := g.loadHoxiConfigDoc()
+		if g.clearProviderSuppressionLocked(doc, providerID) {
+			_ = g.persistHoxiConfigFiles(doc)
+		}
 	}
 	g.configPersistMu.Unlock()
 	if persistErr != nil {
@@ -206,7 +213,15 @@ func (g *Service) handleGlobalConfigProxy(w http.ResponseWriter, r *http.Request
 					doc := g.loadHoxiConfigDoc()
 					overlayHoxiGlobalConfig(cfg, doc)
 					if provMap, ok := cfg["provider"].(map[string]interface{}); ok {
-						filterProviderModelsByHoxi(provMap, g.loadHoxiProvidersMap())
+						hoxiMap := g.loadHoxiProvidersMap()
+						filterProviderModelsByHoxi(provMap, hoxiMap)
+						if dismissed := g.dismissedExternalProvidersSet(); len(dismissed) > 0 {
+							for pid := range provMap {
+								if (dismissed[pid] || dismissed[strings.ToLower(pid)]) && hoxiMap[pid] == nil && !hasHoxiEngineAuthEntry(pid) {
+									delete(provMap, pid)
+								}
+							}
+						}
 						if g.officialBlocked.Load() {
 							delete(provMap, officialProviderID)
 						}
@@ -314,6 +329,38 @@ func (g *Service) filterProviderProxyPayload(payload map[string]interface{}) {
 		}
 	}
 	hoxiMap := g.loadHoxiProvidersMap()
+	dismissed := g.dismissedExternalProvidersSet()
+	isDismissedExternalOnly := func(pid string) bool {
+		pid = strings.TrimSpace(pid)
+		return pid != "" && (dismissed[pid] || dismissed[strings.ToLower(pid)]) && hoxiMap[pid] == nil && !hasHoxiEngineAuthEntry(pid)
+	}
+	if len(dismissed) > 0 {
+		if connArr, ok := payload["connected"].([]interface{}); ok {
+			kept := make([]interface{}, 0, len(connArr))
+			for _, item := range connArr {
+				id, _ := item.(string)
+				if !isDismissedExternalOnly(id) {
+					kept = append(kept, item)
+				}
+			}
+			payload["connected"] = kept
+		}
+		if allArr, ok := payload["all"].([]interface{}); ok {
+			kept := make([]interface{}, 0, len(allArr))
+			for _, item := range allArr {
+				if pObj, ok := item.(map[string]interface{}); ok {
+					pid, _ := pObj["id"].(string)
+					if isDismissedExternalOnly(pid) {
+						if _, _, hasTpl := builtinProviderConfigMap(pid); !hasTpl {
+							continue
+						}
+					}
+				}
+				kept = append(kept, item)
+			}
+			payload["all"] = kept
+		}
+	}
 	if allArr, ok := payload["all"].([]interface{}); ok {
 		for _, item := range allArr {
 			if pObj, ok := item.(map[string]interface{}); ok {
@@ -341,7 +388,7 @@ func (g *Service) buildOfflineProviderListPayload() map[string]interface{} {
 	hoxiMap := g.loadHoxiProvidersMap()
 	importedMap := g.loadOpenCodeImportedProviderMap()
 	disabled := g.disabledProvidersSet()
-	authIDs := unrevokedAuthProviderIDs()
+	authIDs := g.unrevokedAuthProviderIDs()
 
 	all := make([]interface{}, 0, len(hoxiMap)+len(importedMap)+len(builtinProviderTemplates))
 	connected := make([]string, 0, len(hoxiMap)+len(authIDs))
@@ -377,12 +424,10 @@ func (g *Service) buildOfflineProviderListPayload() map[string]interface{} {
 		if len(modelsRaw) == 0 && hasTpl {
 			modelsRaw, _ = tplMap["models"].(map[string]interface{})
 		}
+		opts, _ := pMap["options"].(map[string]interface{})
 		modelsOut := map[string]interface{}{}
-		firstModelID := ""
+		sortedIDs := make([]string, 0, len(modelsRaw))
 		for mid, mRaw := range modelsRaw {
-			if firstModelID == "" {
-				firstModelID = mid
-			}
 			if mObj, ok := mRaw.(map[string]interface{}); ok {
 				cp := make(map[string]interface{}, len(mObj)+2)
 				for k, v := range mObj {
@@ -395,7 +440,23 @@ func (g *Service) buildOfflineProviderListPayload() map[string]interface{} {
 					cp["name"] = mid
 				}
 				modelsOut[mid] = cp
+				sortedIDs = append(sortedIDs, mid)
 			}
+		}
+		sort.Strings(sortedIDs)
+		firstModelID := ""
+		if defOpt, _ := opts["defaultModel"].(string); strings.TrimSpace(defOpt) != "" && modelsOut[strings.TrimSpace(defOpt)] != nil {
+			firstModelID = strings.TrimSpace(defOpt)
+		} else if rawOrder, ok := opts["modelOrder"].([]interface{}); ok {
+			for _, item := range rawOrder {
+				if id, ok := item.(string); ok && modelsOut[id] != nil {
+					firstModelID = id
+					break
+				}
+			}
+		}
+		if firstModelID == "" && len(sortedIDs) > 0 {
+			firstModelID = sortedIDs[0]
 		}
 		if firstModelID == "" && tplDefault != "" {
 			firstModelID = tplDefault
@@ -403,7 +464,6 @@ func (g *Service) buildOfflineProviderListPayload() map[string]interface{} {
 		if firstModelID != "" {
 			defaults[pid] = firstModelID
 		}
-		opts, _ := pMap["options"].(map[string]interface{})
 		apiKey, _ := opts["apiKey"].(string)
 		baseURL, _ := opts["baseURL"].(string)
 		isConnected := authIDs[pid] || strings.TrimSpace(apiKey) != "" || g.ResolveStoredProviderKey(pid, baseURL) != "" || isLoopbackURL(baseURL)

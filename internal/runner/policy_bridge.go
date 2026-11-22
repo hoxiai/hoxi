@@ -88,6 +88,9 @@ func grantableEditFiles(item map[string]interface{}, worktree string) []string {
 	return shellpolicy.GrantableEditFiles(item, worktree)
 }
 func isAbsOrRootedPath(p string) bool { return shellpolicy.IsAbsOrRootedPath(p) }
+func hasRiskySearchSelector(tool string, args map[string]interface{}) bool {
+	return shellpolicy.HasRiskySearchSelector(tool, args)
+}
 func isAttributionPreferenceReadRequest(item map[string]interface{}, worktree string) bool {
 	return shellpolicy.IsAttributionPreferenceReadRequest(item, worktree)
 }

@@ -278,6 +278,8 @@ export function getProviderSourceLabel(p: ProviderInfo): string {
     if (p.id === "gemini-cli") return t("timeline.runtimeGeminiCLILocal");
     if (p.id === "codebuddy") return t("timeline.runtimeCodeBuddyLocal");
     if (p.id === "qoder") return t("timeline.runtimeQoderLocal");
+    if (p.id === "codex") return t("timeline.runtimeCodexLocal");
+    if (p.id === "opencode") return t("timeline.runtimeOpenCodeLocal");
     return t("timeline.runtimeClaudeCodeLocal");
   }
   if (isHoxiCustomProvider(p.id)) return t("models.sourceHoxi");
@@ -322,6 +324,20 @@ export function getModelSourceInfo(model: FlattenedModel): ModelSourceInfo {
     return {
       label: t("timeline.runtimeQoderLocal"),
       configHint: "qodercli / qoderclicn",
+      isImported: false,
+    };
+  }
+  if (pid === "codex" && !isHoxiCustomProvider(pid)) {
+    return {
+      label: t("timeline.runtimeCodexLocal"),
+      configHint: "codex",
+      isImported: false,
+    };
+  }
+  if (pid === "opencode" && model.source === "runner" && !isHoxiCustomProvider(pid)) {
+    return {
+      label: t("timeline.runtimeOpenCodeLocal"),
+      configHint: "opencode",
       isImported: false,
     };
   }

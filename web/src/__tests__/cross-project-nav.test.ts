@@ -4,21 +4,37 @@ import {
   collectCrossProjectSessions,
   groupRunningByProject,
   partitionAttentionSessions,
+  RECENT_TASKS_MAX,
+  RECENT_TASKS_MIN_FALLBACK,
+  RECENT_TASKS_WINDOW_MS,
+  selectRecentCrossProjectSessions,
 } from "../components/layout/cross-project-nav";
 import { stripSubagentTitleSuffix } from "../store/session-title";
 import type { ProjectNavEntry } from "../components/layout/left-nav-helpers";
 import {
   childSubagentIDsFromTurns,
   clearSessionPendingApprovals,
+  clearSubagentDrawerOverride,
   countRunningSubagents,
+  DEFAULT_VISIBLE_SUBAGENTS,
+  getSubagentVisibleLimit,
   groupSubagentsByRoot,
+  healTransientSidebarProjectMode,
   isSubagentDrawerExpanded,
   isWorkSurfacePath,
+  loadMoreSubagents,
+  partitionVisibleSubagents,
+  removeStorageItem,
   sessionsWithPendingPermission,
+  setSidebarProjectMode,
   setSubagentDrawerExpanded,
   setWorkspace,
   shouldAutoExpandSubagents,
+  SIDEBAR_NAV_TAB_KEY,
+  SIDEBAR_PROJECT_MODE_KEY,
+  switchSidebarNavTab,
   workspace,
+  writeStorageItem,
   type WorkspaceState,
 } from "../store/workspace";
 import { assertDeepEqual, assertEqual, describe, it } from "./test-harness";
@@ -367,5 +383,174 @@ describe("Cross-project sidebar views", () => {
     ];
     assertDeepEqual(childSubagentIDsFromTurns(turns), ["ses_sub_1", "ses_sub_2"]);
     assertDeepEqual(childSubagentIDsFromTurns(undefined), []);
+  });
+
+  it("caps recent cross-project tasks at 30, enforces 7-day window with 5-item fallback, and exempts urgent sessions", () => {
+    const baseNow = 1_800_000_000_000;
+    const dayMs = 86_400_000;
+    withWorkspace(
+      {
+        rootDir: "/repo-a",
+        bootstrappingSessions: false,
+        sessions: [],
+        statusBySession: {},
+        unreadCompletedBySession: {},
+        sessionFinishedAt: {},
+      },
+      () => {
+        // 1) 40 sessions active today -> capped at 30, hiddenCount = 10
+        const burstToday = Array.from({ length: 40 }, (_, i) =>
+          session(`ses_today_${i}`, baseNow - i * 60_000),
+        );
+        const burstResult = selectRecentCrossProjectSessions(
+          collectCrossProjectSessions({
+            allProjects: PROJECTS,
+            projectSessions: { "/repo-b": burstToday },
+            filterQuery: "",
+          }),
+          { now: baseNow, pendingSessions: new Set() },
+        );
+        assertEqual(burstResult.items.length, RECENT_TASKS_MAX);
+        assertEqual(burstResult.hiddenCount, 10);
+        assertEqual(burstResult.isSearchTruncated, false);
+
+        // 2) 8 sessions within 7 days + 15 sessions 20 days old -> keeps only the 8 recent ones
+        const eightRecent = Array.from({ length: 8 }, (_, i) =>
+          session(`ses_week_${i}`, baseNow - (i + 1) * 12 * 3_600_000),
+        );
+        const fifteenStale = Array.from({ length: 15 }, (_, i) =>
+          session(`ses_stale_${i}`, baseNow - RECENT_TASKS_WINDOW_MS - (i + 1) * dayMs),
+        );
+        const windowResult = selectRecentCrossProjectSessions(
+          collectCrossProjectSessions({
+            allProjects: PROJECTS,
+            projectSessions: { "/repo-b": [...eightRecent, ...fifteenStale] },
+            filterQuery: "",
+          }),
+          { now: baseNow, pendingSessions: new Set() },
+        );
+        assertEqual(windowResult.items.length, 8);
+        assertEqual(windowResult.hiddenCount, 15);
+
+        // 3) Only 2 sessions within 7 days + 10 stale sessions -> 5-item fallback prevents empty/tiny list
+        const fallbackResult = selectRecentCrossProjectSessions(
+          collectCrossProjectSessions({
+            allProjects: PROJECTS,
+            projectSessions: { "/repo-b": [...eightRecent.slice(0, 2), ...fifteenStale.slice(0, 10)] },
+            filterQuery: "",
+          }),
+          { now: baseNow, pendingSessions: new Set() },
+        );
+        assertEqual(fallbackResult.items.length, RECENT_TASKS_MIN_FALLBACK);
+        assertEqual(fallbackResult.hiddenCount, 7);
+
+        // 4) Urgent/active sessions older than 7 days and beyond rank 30 are unconditionally retained
+        setWorkspace("statusBySession", { ses_old_busy: { type: "busy" } });
+        setWorkspace("unreadCompletedBySession", { ses_old_unread: true });
+        setWorkspace("sessionFinishedAt", { ses_stale_promoted: baseNow - 1_000 });
+        const mixed = [
+          ...burstToday,
+          session("ses_old_busy", baseNow - 30 * dayMs),
+          session("ses_old_approval", baseNow - 25 * dayMs),
+          session("ses_old_unread", baseNow - 20 * dayMs),
+          session("ses_stale_promoted", baseNow - 40 * dayMs),
+        ];
+        const urgentResult = selectRecentCrossProjectSessions(
+          collectCrossProjectSessions({
+            allProjects: PROJECTS,
+            projectSessions: { "/repo-b": mixed },
+            filterQuery: "",
+          }),
+          {
+            now: baseNow,
+            pendingSessions: new Set(["ses_old_approval"]),
+          },
+        );
+        assertEqual(urgentResult.items.length, RECENT_TASKS_MAX);
+        const keptIDs = urgentResult.items.map((item) => item.session.id);
+        assertEqual(keptIDs[0], "ses_old_busy");
+        assertEqual(keptIDs.includes("ses_old_approval"), true);
+        assertEqual(keptIDs.includes("ses_old_unread"), true);
+        assertEqual(keptIDs.includes("ses_stale_promoted"), true);
+
+        // 5) Search bypasses 7-day cutoff and caps rendered matches at 30
+        const fortyStaleMatches = Array.from({ length: 40 }, (_, i) =>
+          session(`ses_match_${i}`, baseNow - (10 + i) * dayMs),
+        );
+        const searchResult = selectRecentCrossProjectSessions(
+          collectCrossProjectSessions({
+            allProjects: PROJECTS,
+            projectSessions: { "/repo-b": fortyStaleMatches },
+            filterQuery: "ses_match",
+          }),
+          { now: baseNow, query: "ses_match", pendingSessions: new Set() },
+        );
+        assertEqual(searchResult.items.length, 30);
+        assertEqual(searchResult.totalMatches, 40);
+        assertEqual(searchResult.isSearchTruncated, true);
+      },
+    );
+  });
+
+  it("caps subagent drawer items by default and resets paging on collapse", () => {
+    withWorkspace(
+      {
+        statusBySession: { sub_14: { type: "busy" } },
+      },
+      () => {
+        const subs = Array.from({ length: 16 }, (_, i) => session(`sub_${i}`, i + 1));
+        clearSubagentDrawerOverride("ses_parent");
+        assertEqual(getSubagentVisibleLimit("ses_parent"), DEFAULT_VISIBLE_SUBAGENTS);
+
+        const initial = partitionVisibleSubagents(
+          subs,
+          getSubagentVisibleLimit("ses_parent"),
+          new Set(["sub_15"]),
+          "sub_13",
+        );
+        assertEqual(initial.visible.length, DEFAULT_VISIBLE_SUBAGENTS);
+        assertEqual(initial.hiddenCount, 6);
+        assertEqual(initial.visible.some((s) => s.id === "sub_13"), true);
+        assertEqual(initial.visible.some((s) => s.id === "sub_14"), true);
+        assertEqual(initial.visible.some((s) => s.id === "sub_15"), true);
+
+        loadMoreSubagents("ses_parent");
+        const expanded = partitionVisibleSubagents(
+          subs,
+          getSubagentVisibleLimit("ses_parent"),
+          new Set(),
+          null,
+        );
+        assertEqual(expanded.visible.length, 16);
+        assertEqual(expanded.hiddenCount, 0);
+
+        setSubagentDrawerExpanded("ses_parent", false, false);
+        assertEqual(getSubagentVisibleLimit("ses_parent"), DEFAULT_VISIBLE_SUBAGENTS);
+        clearSubagentDrawerOverride("ses_parent");
+      },
+    );
+  });
+
+  it("separates Recent Tasks tab state from Project View mode and migrates legacy stored mode", () => {
+    withWorkspace(
+      {
+        sidebarNavTab: "projects",
+        sidebarProjectMode: "single",
+      },
+      () => {
+        switchSidebarNavTab("recent");
+        assertEqual(workspace.sidebarNavTab, "recent");
+        assertEqual(workspace.sidebarProjectMode, "single");
+
+        setSidebarProjectMode("multi");
+        assertEqual(workspace.sidebarNavTab, "projects");
+        assertEqual(workspace.sidebarProjectMode, "multi");
+
+        removeStorageItem(SIDEBAR_NAV_TAB_KEY);
+        writeStorageItem(SIDEBAR_PROJECT_MODE_KEY, "recent");
+        healTransientSidebarProjectMode();
+        assertEqual(workspace.sidebarNavTab, "recent");
+      },
+    );
   });
 });

@@ -74,6 +74,12 @@ func TestNativeHostOfflineRoutesAndSkillTool(t *testing.T) {
 	if raw := checkGET("/project/current"); !strings.Contains(string(raw), wsDir) {
 		t.Fatalf("unexpected /project/current payload: %s", string(raw))
 	}
+	if raw := checkGET("/api/hoxi/projects"); !strings.Contains(string(raw), wsDir) {
+		t.Fatalf("unexpected /api/hoxi/projects payload: %s", string(raw))
+	}
+	if raw := checkGET("/api/hoxi/projects/current"); !strings.Contains(string(raw), wsDir) {
+		t.Fatalf("unexpected /api/hoxi/projects/current payload: %s", string(raw))
+	}
 	if raw := checkGET("/find/file?query=hello_native"); !strings.Contains(string(raw), "hello_native.go") {
 		t.Fatalf("unexpected /find/file payload: %s", string(raw))
 	}

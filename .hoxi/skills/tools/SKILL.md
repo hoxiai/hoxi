@@ -100,15 +100,10 @@ curl -sS -X POST "$HOXI_GATEWAY_URL/api/hoxi/tools/run" -H "Content-Type: applic
 
 ---
 
-## 四、与一人公司垂直运营 Skill 的闭环联动
+## 四、在行业应用中使用工具数据
 
-`amazon-ops`、`tiktok-shop-ops`、`shopify-ops`、`ads-growth-ops`、`xiaohongshu-ops` 等领域技能属于 **Skills 技能市场可选扩展包**（并非预装内置技能，可在桌面端「技能」面板一键安装到 `~/.hoxi/skills/`）。当用户已安装并执行跨境电商、独立站、社媒种草或买量投放任务时，可将 `tools` 作为 **前置真实数据源** 与这些技能组合：
+进行跨境电商、社媒运营或广告分析时，先切换到已安装的行业应用。用 `tools` 获取任务所需的数据，再用该应用的技能或内置工具分析结果。
 
-1. **配合 `/amazon-ops`（亚马逊运营）**：
-   先用 `tools` 调用 `dataforseo` / `apify` 拉取竞品 ASIN 差评（VOC）与搜索词数据 → 交由 `amazon-ops` 生成 COSMO 五点描述、A+ 脚本与 250B Search Terms → 经 `hoxi_browser`（Chrome Link）填入卖家后台。
-2. **配合 `/tiktok-shop-ops`（TikTok 小店与带货）**：
-   先用 `tools` 调用 `apify` / `anyapi` 拉取同类目热门带货视频数据与达人信息 → 交由 `tiktok-shop-ops` 拆解黄金前 3 秒钩子、生成挂车脚本与达人建联 DM。
-3. **配合 `/shopify-ops` & `/ads-growth-ops`（独立站与出海买量）**：
-   先用 `tools` 调用 `ahrefs` / `dataforseo` / `apollo` 获取高转化长尾词、竞品外链与潜客决策人邮箱 → 生成高转化着陆页与 Meta/Google 广告测试矩阵。
-4. **配合 `/xiaohongshu-ops`（国内内容种草）**：
-   结合 `tools` 行业趋势数据与本地合规校验，完成从选题调研到小红书 KFS 矩阵种草的全链路闭环。
+1. **前置取数（`tools`）**：先用 `dataforseo` / `apify` / `ahrefs` / `apollo` 拉取竞品评论、关键词、外链、社媒趋势或潜客数据并落盘至工作区。
+2. **本地精算与合规体检（应用内置 `tools/bin/`）**：由对应应用包自带的确定性脚本完成利润、广告报表诊断、Listing 合规校验或 CSV 导出（0 积分）。
+3. **浏览器隔离协同（`hoxi_browser`）**：通过当前店铺隔离的 Chrome Link / 专属浏览器回填草稿，并在高危发布前经桌面审批确认。

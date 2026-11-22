@@ -3,8 +3,16 @@ import { createSignal } from "solid-js";
 import {
   hoxiAPI,
   type MediaCapabilitiesResponse,
+  type MediaRolePrefs,
   type PromptImageOptions,
 } from "../services/api";
+import {
+  AUTO_PROVIDER_ID,
+  isImageGenerationModel,
+  isSpeechSynthesisModel,
+  isVideoGenerationModel,
+} from "./auto-pool-defaults";
+import type { ConnectedProviderGroup } from "./provider-catalog";
 import { workspace } from "./workspace-state";
 
 export const IMAGE_ASPECT_RATIOS = ["1:1", "16:9", "9:16", "4:3", "3:4"] as const;
@@ -22,10 +30,108 @@ const [mediaCapabilities, setMediaCapabilities] =
   createSignal<MediaCapabilitiesResponse>({
     ok: true,
     hasImageModel: false,
+    hasVideoModel: false,
+    hasSpeechModel: false,
     hasAudioTranscriber: false,
     hasEmbeddingModel: false,
     imageModels: [],
+    videoModels: [],
+    speechModels: [],
+    transcribeModels: [],
+    roles: {},
   });
+
+export type MediaRoleKind = "image" | "video" | "speech" | "transcribe";
+
+export function mediaRolePrefs(): MediaRolePrefs {
+  return mediaCapabilities().roles || {};
+}
+
+export async function updateMediaRolePrefs(
+  patch: Partial<Record<keyof MediaRolePrefs, string | null>>
+): Promise<MediaRolePrefs> {
+  const res = await hoxiAPI.updateMediaRoles(patch);
+  const nextRoles = res?.roles || {};
+  setMediaCapabilities((prev) => ({
+    ...prev,
+    roles: nextRoles,
+  }));
+  return nextRoles;
+}
+
+export function getMediaRoleModelGroups(kind: MediaRoleKind): ConnectedProviderGroup[] {
+  const caps = mediaCapabilities();
+  const byProv = new Map<string, { name: string; models: Map<string, string> }>();
+  const provNameLookup = new Map<string, string>();
+  for (const p of workspace.providers) {
+    if (p?.id) provNameLookup.set(p.id, p.name || p.id);
+  }
+  for (const [pid, pVal] of Object.entries(workspace.hoxiProviders || {})) {
+    if (pid && !provNameLookup.has(pid)) {
+      provNameLookup.set(pid, (pVal as any)?.name || pid);
+    }
+  }
+
+  const addEntry = (pid?: string, mid?: string, name?: string) => {
+    const p = (pid || "").trim();
+    const m = (mid || "").trim();
+    if (!p || !m || p === AUTO_PROVIDER_ID) return;
+    let group = byProv.get(p);
+    if (!group) {
+      group = { name: provNameLookup.get(p) || p, models: new Map() };
+      byProv.set(p, group);
+    }
+    if (!group.models.has(m)) {
+      group.models.set(m, (name || "").trim() || m);
+    }
+  };
+
+  const serverList =
+    kind === "image"
+      ? caps.imageModels
+      : kind === "video"
+      ? caps.videoModels
+      : kind === "speech"
+      ? caps.speechModels
+      : caps.transcribeModels;
+  for (const item of serverList || []) {
+    addEntry(item.providerID, item.modelID, item.name);
+  }
+
+  for (const prov of workspace.providers) {
+    if (!prov || prov.id === AUTO_PROVIDER_ID) continue;
+    for (const [mid, mInfo] of Object.entries(prov.models || {})) {
+      const id = mid.toLowerCase();
+      const match =
+        kind === "image"
+          ? isImageGenerationModel(prov.id, mid)
+          : kind === "video"
+          ? isVideoGenerationModel(prov.id, mid)
+          : kind === "speech"
+          ? isSpeechSynthesisModel(prov.id, mid)
+          : id.includes("whisper") ||
+            id.includes("sensevoice") ||
+            id.includes("paraformer") ||
+            id.includes("transcribe") ||
+            (id.includes("gemini") &&
+              !id.includes("image") &&
+              !id.includes("embed") &&
+              Boolean(mInfo?.capabilities?.input?.audio || mInfo?.modalities?.input?.includes("audio")));
+      if (match) addEntry(prov.id, mid, mInfo?.name);
+    }
+  }
+
+  return Array.from(byProv.entries()).map(([providerID, g]) => ({
+    providerID,
+    providerName: g.name,
+    models: Array.from(g.models.entries()).map(([id, name]) => ({
+      id,
+      name,
+      fullKey: `${providerID}/${id}`,
+      free: false,
+    })),
+  }));
+}
 
 export {
   mediaCapabilities,

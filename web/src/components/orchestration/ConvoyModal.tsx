@@ -17,6 +17,7 @@ import {
   XCircle,
 } from "lucide-solid";
 import { locale, t } from "../../i18n";
+import { HelpTip } from "../settings/setting-controls";
 import {
   cancelConvoyPlan,
   createConvoyHistoryLoader,
@@ -332,11 +333,11 @@ export default function ConvoyModal(props: {
         }}
       >
         <div class="hoxi-modal-panel hoxi-elevation-4 w-full max-w-3xl overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)]">
-          <div class="flex items-center gap-2 border-b border-[var(--border-subtle)] px-3 py-2">
+          <div class="flex items-center gap-2 border-b border-[var(--border-subtle)] px-3.5 py-2.5">
             <Workflow size={15} class="shrink-0 text-[var(--accent-primary)]" />
-            <div class="min-w-0">
-              <div class="text-[13px] font-semibold text-[var(--text-primary)]">{t("timeline.convoyTitle")}</div>
-              <div class="truncate text-[11px] text-[var(--text-muted)]">{t("timeline.convoySubtitle")}</div>
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="text-[13px] font-semibold text-[var(--text-primary)] truncate">{t("timeline.convoyTitle")}</span>
+              <HelpTip text={t("timeline.convoySubtitle")} />
             </div>
             <button
               type="button"

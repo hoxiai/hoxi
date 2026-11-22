@@ -38,4 +38,5 @@ export const commandPalette = {
   slashBuildDesc: "切换为构建模式（可直接附带指令）",
   slashDiffDesc: "打开当前会话变更面板",
   slashUndoDesc: "撤回当前会话的上一轮消息与改动",
+  slashFastDesc: "切换高速推理通道（不降智，约 2 倍费用或配额消耗）",
 };

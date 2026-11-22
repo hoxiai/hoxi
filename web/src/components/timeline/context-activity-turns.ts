@@ -1,5 +1,5 @@
 // web/src/components/timeline/context-activity-turns.ts
-import type { MessageInfo, MessagePart } from "../../services/sse-types";
+import type { MessageInfo, MessagePart, ToolPart } from "../../services/sse-types";
 import { isSessionBusy, type MessageTurn } from "../../store/workspace";
 import {
   expandInlineThinkingParts,
@@ -9,12 +9,60 @@ import {
   isVisibleTextPart,
   isWorkPart,
 } from "./context-activity-parts";
+import { resolveToolMediaAttachments } from "./tool-card-helpers";
+import { isImageGenTool, isSpeechGenTool, isVideoGenTool } from "./tool-taxonomy";
 
 export type TurnRenderItem =
   | { kind: "single"; part: MessagePart }
   | { kind: "activity-group"; parts: MessagePart[] };
 
 const TRANSITIONAL_TEXT_MAX_CHARS = 180;
+const MARKDOWN_IMAGE_URL_RE = /!\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+["'][^"']*["'])?\s*\)/g;
+
+type SyntheticFilePart = Extract<MessagePart, { type: "file" }>;
+const promotedToolMediaCache = new WeakMap<object, SyntheticFilePart[]>();
+
+function isPromotableMediaTool(tool: string): boolean {
+  return isImageGenTool(tool) || isVideoGenTool(tool) || isSpeechGenTool(tool);
+}
+
+function collectEmbeddedMediaURLs(parts: MessagePart[]): Set<string> {
+  const urls = new Set<string>();
+  for (const part of parts) {
+    if (isVisibleFilePart(part)) {
+      const u = part.url.trim();
+      if (u) urls.add(u);
+    } else if (isVisibleTextPart(part)) {
+      const text = extractVisibleAssistantText(part.text);
+      MARKDOWN_IMAGE_URL_RE.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = MARKDOWN_IMAGE_URL_RE.exec(text)) !== null) {
+        const u = (m[1] || "").trim();
+        if (u) urls.add(u);
+      }
+    }
+  }
+  return urls;
+}
+
+function resolvePromotedMediaParts(part: ToolPart): SyntheticFilePart[] {
+  if (!isPromotableMediaTool(part.tool) || part.state.status !== "completed") return [];
+  const cached = promotedToolMediaCache.get(part.state);
+  if (cached) return cached;
+  const atts = resolveToolMediaAttachments(part.state);
+  if (atts.length === 0) return [];
+  const built: SyntheticFilePart[] = atts.map((att, idx) => ({
+    id: `${part.id}#media:${idx}`,
+    sessionID: part.sessionID,
+    messageID: part.messageID,
+    type: "file",
+    mime: att.mime,
+    filename: att.filename,
+    url: att.url,
+  }));
+  promotedToolMediaCache.set(part.state, built);
+  return built;
+}
 
 /**
  * Identifies brief 1–2 line procedural narration ("Let me check the files:",
@@ -42,11 +90,25 @@ export function isShortTransitionalText(rawText: string): boolean {
 export function groupAssistantParts(parts: MessagePart[]): TurnRenderItem[] {
   const expanded = expandInlineThinkingParts(parts);
   const items: TurnRenderItem[] = [];
+  const seenMediaURLs = collectEmbeddedMediaURLs(expanded);
   let buffer: MessagePart[] = [];
 
   const flushBuffer = () => {
     if (buffer.length === 0) return;
+    const promoted: SyntheticFilePart[] = [];
+    for (const step of buffer) {
+      if (step.type !== "tool") continue;
+      for (const mediaPart of resolvePromotedMediaParts(step)) {
+        const key = mediaPart.url.trim();
+        if (!key || seenMediaURLs.has(key)) continue;
+        seenMediaURLs.add(key);
+        promoted.push(mediaPart);
+      }
+    }
     items.push({ kind: "activity-group", parts: buffer });
+    for (const mediaPart of promoted) {
+      items.push({ kind: "single", part: mediaPart });
+    }
     buffer = [];
   };
 
@@ -98,7 +160,17 @@ export function stabilizeTurnRenderItems(
       return item;
     }
     if (item.kind === "single" && prior.kind === "single") {
-      if (prior.part === item.part) return prior;
+      if (
+        prior.part === item.part ||
+        (prior.part.type === "file" &&
+          item.part.type === "file" &&
+          prior.part.id === item.part.id &&
+          prior.part.url === item.part.url &&
+          prior.part.mime === item.part.mime &&
+          prior.part.filename === item.part.filename)
+      ) {
+        return prior;
+      }
       reusedAll = false;
       return item;
     }

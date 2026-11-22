@@ -213,6 +213,29 @@ func SyncConsoleState(ext *ConsoleState, dstDB string) error {
 	return nil
 }
 
+// ClearConsoleState removes mirrored OpenCode Console login rows from Hoxi's
+// local engine database (never touching the user's external opencode.db).
+func ClearConsoleState(dstDB string) error {
+	dstDB = strings.TrimSpace(dstDB)
+	if dstDB == "" {
+		return nil
+	}
+	st, err := os.Stat(dstDB)
+	if err != nil || st.IsDir() || st.Size() == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), sqliteWriteTimeout)
+	defer cancel()
+	return sqlitecli.WithImmediateTx(ctx, dstDB, 3*time.Second, func(ctx context.Context, conn *sql.Conn) error {
+		for _, stmt := range []string{"DELETE FROM account_state;", "DELETE FROM account;"} {
+			if _, execErr := conn.ExecContext(ctx, stmt); execErr != nil && !strings.Contains(execErr.Error(), "no such table") {
+				return execErr
+			}
+		}
+		return nil
+	})
+}
+
 // HasEngineSchema reports whether dbPath already holds an initialized OpenCode
 // schema (`session` table). Creating `account` tables in an empty SQLite file
 // before `opencode serve` runs causes OpenCode 1.19+ to abort startup with

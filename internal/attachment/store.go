@@ -21,6 +21,8 @@ import (
 const (
 	// MaxAttachmentBytes is the maximum allowed raw file size (15 MB).
 	MaxAttachmentBytes = 15 * 1024 * 1024
+	// MaxVideoAttachmentBytes is the maximum size for locally saved generated video outputs (100 MB).
+	MaxVideoAttachmentBytes = 100 * 1024 * 1024
 )
 
 type Kind string
@@ -53,6 +55,7 @@ type SaveRequest struct {
 	Mime      string `json:"mime"`
 	DataURL   string `json:"dataUrl,omitempty"`
 	Data      []byte `json:"-"`
+	MaxBytes  int    `json:"-"`
 }
 
 type Store struct {
@@ -398,8 +401,12 @@ func (s *Store) Save(req SaveRequest) (Metadata, error) {
 	if len(raw) == 0 {
 		return Metadata{}, errors.New("attachment file is empty")
 	}
-	if len(raw) > MaxAttachmentBytes {
-		return Metadata{}, fmt.Errorf("attachment exceeds maximum size of %d MB", MaxAttachmentBytes/(1024*1024))
+	limit := req.MaxBytes
+	if limit <= 0 {
+		limit = MaxAttachmentBytes
+	}
+	if len(raw) > limit {
+		return Metadata{}, fmt.Errorf("attachment exceeds maximum size of %d MB", limit/(1024*1024))
 	}
 
 	kind, normMime, err := ClassifyFile(req.Filename, mimeType)
@@ -524,6 +531,17 @@ func (s *Store) MaterializeToDir(id, targetDir string) (Metadata, string, error)
 	return meta, dst, nil
 }
 
+// Delete removes a single stored attachment directory by ID.
+func (s *Store) Delete(id string) error {
+	trimmed := strings.TrimSpace(id)
+	if !isValidAttachmentID(trimmed) {
+		return os.ErrNotExist
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return os.RemoveAll(s.itemDir(trimmed))
+}
+
 // DeleteBySession removes all stored attachment directories belonging to sessionID.
 func (s *Store) DeleteBySession(sessionID string) int {
 	sid := strings.TrimSpace(sessionID)
@@ -619,8 +637,8 @@ func (s *Store) handleUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Store) handleItem(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		writeJSONError(w, http.StatusMethodNotAllowed, "GET or HEAD required")
 		return
 	}
 	trimmed := strings.TrimPrefix(r.URL.Path, "/api/hoxi/attachments/")

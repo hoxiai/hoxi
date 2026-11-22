@@ -270,7 +270,7 @@ func (g *Service) selectFastReviewCandidate() (string, string) {
 		if pid == AutoProviderID || disabledSet[pid] || disabledSet[strings.ToLower(pid)] {
 			continue
 		}
-		baseURL, apiKey, _, _ := g.resolveProviderConnection(pid, "", "")
+		baseURL, apiKey, _, _ := g.resolveEffectiveProviderConnection(pid, "", "")
 		if !isHTTPEndpoint(baseURL) || (apiKey == "" && !isLoopbackURL(baseURL)) {
 			continue
 		}

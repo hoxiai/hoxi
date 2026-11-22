@@ -17,6 +17,10 @@ func validate(root string, doc map[string]any) error {
 			if _, ok := value.(string); !ok {
 				return fmt.Errorf("$schema must be a string")
 			}
+		case "hostToolLoading":
+			if value != "eager" && value != "on-demand" {
+				return fmt.Errorf("hostToolLoading must be eager or on-demand")
+			}
 		case "version":
 			if number, ok := value.(float64); !ok || number != 1 {
 				return fmt.Errorf("version must be 1")
@@ -88,11 +92,11 @@ func validate(root string, doc map[string]any) error {
 var permissionNames = map[string]bool{
 	"*": true, "read": true, "glob": true, "grep": true, "edit": true,
 	"write": true, "multiedit": true, "apply_patch": true, "bash": true,
-	"webfetch": true, "skill": true, "task": true, "question": true,
+	"webfetch": true, "websearch": true, "skill": true, "task": true, "question": true,
 	"todoread": true, "todowrite": true, "goal_report": true,
 	"code_search": true, "symbol_inspect": true, "impact_analysis": true,
 	"hoxi_code_index": true, "mcp_list_tools": true, "mcp_call_tool": true,
-	"hoxi_browser": true, "hoxi_computer": true, "hoxi_image": true,
+	"hoxi_browser": true, "hoxi_computer": true, "hoxi_image": true, "hoxi_video": true, "hoxi_speech": true,
 	"hoxi_tools": true, "hoxi_data": true,
 }
 

@@ -82,4 +82,23 @@ describe("image memory lifecycle", () => {
       URL.revokeObjectURL = originalRevoke;
     }
   });
+
+  it("loads local SVG text files as safe UTF-8 data URLs for MarkdownImage", async () => {
+    const original = hoxiAPI.readFileContent;
+    const sid = "ses_image_svg";
+    hoxiAPI.readFileContent = async () => ({
+      type: "text",
+      content: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"></svg>',
+      mimeType: "image/svg+xml",
+      size: 68,
+    });
+    try {
+      const url = await loadMarkdownImage("assets/logo.svg", "/repo", sid);
+      assertTrue(Boolean(url && url.startsWith("data:image/svg+xml;utf8,")));
+      assertEqual(getCachedMarkdownImage("assets/logo.svg", "/repo", sid), url ?? undefined);
+    } finally {
+      hoxiAPI.readFileContent = original;
+      forgetSessionMarkdownImages([sid]);
+    }
+  });
 });

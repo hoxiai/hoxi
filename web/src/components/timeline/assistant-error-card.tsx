@@ -150,9 +150,11 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
       (h.status === "degraded" || h.status === "warning" || h.riskTags.length > 0)
     );
   });
-  const isAuthError = createMemo(() =>
-    props.info.error ? decideAutoFailover(props.info.error, 0).reason === "auth" : false
+  const failoverDecision = createMemo(() =>
+    props.info.error ? decideAutoFailover(props.info.error, 0) : null
   );
+  const isAuthError = createMemo(() => failoverDecision()?.reason === "auth");
+  const isNetworkError = createMemo(() => failoverDecision()?.reason === "network");
   const isCliRuntimeTurn = createMemo(() => LOCAL_CLI_RUNTIME_PROVIDERS.has(providerID()));
 
   const recommendedFallback = createMemo(() =>
@@ -240,6 +242,7 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
       hasSelectedModel: Boolean(workspace.selectedModel),
       hasFallbackModel: Boolean(fallbackTarget()),
       isAuthError: isAuthError(),
+      isNetworkError: isNetworkError(),
       isProviderDegraded: isProviderDegraded(),
       configOpened: configOpened(),
       rawErrorName: props.info.error?.name,
@@ -535,6 +538,17 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
               >
                 {view().message}
               </div>
+
+              <Show when={view().rawDetails}>
+                {(detail) => (
+                  <details class="text-[11px] opacity-80">
+                    <summary class="cursor-pointer select-none">
+                      {t("timeline.autoFailoverShowError")}
+                    </summary>
+                    <div class="mt-1 font-mono break-words">{detail()}</div>
+                  </details>
+                )}
+              </Show>
 
               <Show when={view().actions.length > 0 || compactNotice()}>
                 <div class="pt-0.5 flex items-center gap-2 flex-wrap">

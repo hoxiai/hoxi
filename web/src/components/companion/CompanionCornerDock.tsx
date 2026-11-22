@@ -33,15 +33,18 @@ function readThemeCssVar(name: string, fallback: string): string {
   return val || fallback;
 }
 
-async function rasterizeSvgElementToPngDataUrl(svgEl: SVGSVGElement | null): Promise<string> {
-  if (
-    !svgEl ||
-    typeof XMLSerializer === "undefined" ||
-    typeof Image === "undefined" ||
-    typeof document === "undefined"
-  ) {
-    return "";
-  }
+function loadImageElement(src: string): Promise<HTMLImageElement | null> {
+  if (!src || typeof Image === "undefined") return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+}
+
+function serializeSvgToDataUrl(svgEl: SVGSVGElement): string {
+  if (typeof XMLSerializer === "undefined") return "";
   const accent = readThemeCssVar("--accent-primary", "#2563eb");
   const textPrimary = readThemeCssVar("--text-primary", "#0f172a");
   const textSecondary = readThemeCssVar("--text-secondary", "#475569");
@@ -61,29 +64,49 @@ async function rasterizeSvgElementToPngDataUrl(svgEl: SVGSVGElement | null): Pro
     .replace(/var\(--bg-elevated\)/g, bgElevated)
     .replace(/var\(--border-strong\)/g, borderStrong);
 
-  const svgDataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(serialized)}`;
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      try {
-        const size = 264;
-        const canvas = document.createElement("canvas");
-        canvas.width = size;
-        canvas.height = size;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          resolve("");
-          return;
-        }
-        ctx.drawImage(img, 0, 0, size, size);
-        resolve(canvas.toDataURL("image/png"));
-      } catch {
-        resolve("");
-      }
-    };
-    img.onerror = () => resolve("");
-    img.src = svgDataUrl;
-  });
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(serialized)}`;
+}
+
+async function rasterizeHostToPngDataUrl(hostEl: HTMLElement | undefined): Promise<string> {
+  if (!hostEl || typeof document === "undefined") return "";
+  const imgEl = hostEl.querySelector("img");
+  const svgEl = hostEl.querySelector("svg");
+  if (!imgEl && !svgEl) return "";
+
+  const size = 264;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return "";
+
+  let drewAny = false;
+  if (imgEl) {
+    const src = imgEl.getAttribute("src") || imgEl.src;
+    const baseImg =
+      imgEl.complete && imgEl.naturalWidth > 0 ? imgEl : await loadImageElement(src);
+    if (baseImg && baseImg.naturalWidth > 0 && baseImg.naturalHeight > 0) {
+      const scale = Math.min(size / baseImg.naturalWidth, size / baseImg.naturalHeight);
+      const dw = baseImg.naturalWidth * scale;
+      const dh = baseImg.naturalHeight * scale;
+      ctx.drawImage(baseImg, (size - dw) / 2, (size - dh) / 2, dw, dh);
+      drewAny = true;
+    }
+  }
+  if (svgEl) {
+    const svgUrl = serializeSvgToDataUrl(svgEl);
+    const overlayImg = await loadImageElement(svgUrl);
+    if (overlayImg) {
+      ctx.drawImage(overlayImg, 0, 0, size, size);
+      drewAny = true;
+    }
+  }
+  if (!drewAny) return "";
+  try {
+    return canvas.toDataURL("image/png");
+  } catch {
+    return "";
+  }
 }
 
 export default function CompanionCornerDock(props: { hiddenByStage?: boolean }) {
@@ -168,10 +191,9 @@ export default function CompanionCornerDock(props: { hiddenByStage?: boolean }) 
         }
         const cached = RASTERIZED_SVG_CACHE.get(avatarKey);
         if (cached) return cached;
-        // Wait one microtask so the offscreen SVG reflects the latest reactive mood/theme.
+        // Wait one microtask so the offscreen avatar reflects the latest reactive mood/theme.
         await Promise.resolve();
-        const svgEl = offscreenSvgHostRef?.querySelector("svg") ?? null;
-        const pngUrl = await rasterizeSvgElementToPngDataUrl(svgEl);
+        const pngUrl = await rasterizeHostToPngDataUrl(offscreenSvgHostRef);
         if (pngUrl) {
           if (RASTERIZED_SVG_CACHE.size >= MAX_SVG_CACHE_ENTRIES) {
             const oldest = RASTERIZED_SVG_CACHE.keys().next().value;
@@ -192,6 +214,10 @@ export default function CompanionCornerDock(props: { hiddenByStage?: boolean }) 
     companionState.showCornerDock &&
     !props.hiddenByStage;
 
+  const hasUploadedCustomStandee = () =>
+    companionState.persona === "custom" &&
+    Boolean(companionState.customAvatarDataUrl || companionState.customAvatarObjectUrl);
+
   const onAvatarActivate = () => {
     if (isUrgentGate()) {
       const target = snap().targetSessionID;
@@ -208,7 +234,7 @@ export default function CompanionCornerDock(props: { hiddenByStage?: boolean }) 
 
   return (
     <>
-      <Show when={companionState.enabled && companionState.showCornerDock && companionState.persona !== "custom"}>
+      <Show when={companionState.enabled && companionState.showCornerDock && !hasUploadedCustomStandee()}>
         <div
           ref={offscreenSvgHostRef}
           aria-hidden="true"

@@ -21,7 +21,7 @@ var (
 // scanLocalSkills discovers SKILL.md files directly from workspace and user
 // skill directories so Hoxi's skill catalog and inline skill loader work 100%
 // natively without requiring an OpenCode daemon.
-func scanLocalSkills(directory, projectRoot string) ([]OpenCodeSkillInfo, error) {
+func scanLocalSkills(directory, projectRoot string, extraSkillDirs ...string) ([]OpenCodeSkillInfo, error) {
 	project, err := hoxiconfig.Load(directory)
 	if err != nil {
 		return nil, err
@@ -42,6 +42,11 @@ func scanLocalSkills(directory, projectRoot string) ([]OpenCodeSkillInfo, error)
 		}
 		seenDirs[c] = true
 		searchDirs = append(searchDirs, c)
+	}
+	for _, extraDir := range extraSkillDirs {
+		if strings.TrimSpace(extraDir) != "" {
+			addSkillRoot(extraDir)
+		}
 	}
 	for _, path := range hoxiconfig.SkillPaths(directory, project) {
 		// Resolve symlinks too: a project path must not become a credential
@@ -193,4 +198,32 @@ func firstParagraphSummary(body string) string {
 		return t
 	}
 	return ""
+}
+
+func scanExtraSkillRoots(extraSkillDirs []string) ([]OpenCodeSkillInfo, error) {
+	var results []OpenCodeSkillInfo
+	seenDirs := make(map[string]bool)
+	seenNames := make(map[string]bool)
+	for _, rawRoot := range extraSkillDirs {
+		root := canonicalizeDir(rawRoot)
+		if root == "" || seenDirs[root] {
+			continue
+		}
+		seenDirs[root] = true
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			if e.IsDir() || e.Type()&os.ModeSymlink != 0 {
+				names = append(names, e.Name())
+			}
+		}
+		sort.Strings(names)
+		for _, slug := range names {
+			appendSkillIfValid(&results, seenNames, filepath.Join(root, slug, "SKILL.md"), slug)
+		}
+	}
+	return results, nil
 }

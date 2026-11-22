@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/statusbar"
 	"github.com/hoxiai/hoxi/internal/tunnel"
 )
@@ -101,6 +102,8 @@ var tunnelRoutes = []tunnelRoute{
 	// ~/.hoxi and stays desktop-only.
 	{http.MethodGet, "/api/hoxi/skills/marketplace"},
 	{http.MethodGet, "/api/hoxi/workspaces"},
+	{http.MethodGet, workAppRegistryPath},
+	{http.MethodGet, workPackageSessionsPattern},
 
 	// Local file reads, confined to workspace folders and session worktrees
 	// for tunnel requests (see tunnelFilePathAllowed). The content routes
@@ -161,6 +164,9 @@ func tunnelRequestAllowed(r *http.Request) bool {
 		return false
 	}
 	if !tunnelRouteAllowed(r.Method, r.URL.Path) {
+		return false
+	}
+	if (r.URL.Path == workAppRegistryPath || strings.HasPrefix(r.URL.Path, workPackageSessionsPrefix)) && r.URL.RawQuery != "" {
 		return false
 	}
 	if tunnelFileContentRoutes[r.URL.Path] && strings.TrimSpace(r.URL.Query().Get("path")) == "" {
@@ -290,6 +296,9 @@ func isRemoteRequest(r *http.Request) bool { return remoteSource(r) != "" }
 // gateway token is never attached to tunnel requests, so the token-guarded
 // raw OpenCode passthrough stays unreachable even if a route slipped through.
 func (g *Gateway) serveTunnelRequest(w http.ResponseWriter, r *http.Request) {
+	if denyRemoteAppProtocol(w, r.URL.Path) {
+		return
+	}
 	source := remoteSourceTunnel
 	if strings.TrimSpace(r.Header.Get("X-Hoxi-Relay-Auth")) != "" ||
 		strings.TrimSpace(r.Header.Get("X-Hoxi-Relay-Token")) != "" ||
@@ -331,6 +340,9 @@ func sanitizeRemoteRequest(r *http.Request) {
 // paired-controller route allow-list and file confinement, tags the request
 // with its transport source for the approval audit, and serves it in-process.
 func (g *Gateway) serveRemoteRequest(w http.ResponseWriter, r *http.Request, source string) {
+	if denyRemoteAppProtocol(w, r.URL.Path) {
+		return
+	}
 	if !tunnelRequestAllowed(r) {
 		writeJSONError(w, http.StatusForbidden, "route is not available for remote controllers")
 		return
@@ -496,6 +508,9 @@ func (g *Gateway) tunnelAllowedRoots(sessionID string) []string {
 				}
 			}
 		}
+	}
+	if defDir := strings.TrimSpace(hoxipaths.DefaultWorkspaceDir()); defDir != "" {
+		roots = append(roots, defDir)
 	}
 	if sessionID = strings.TrimSpace(sessionID); sessionID != "" && g.worktrees != nil {
 		if binding, known, err := g.worktrees.BindingForSession(sessionID); err == nil && known && binding.Directory != "" {

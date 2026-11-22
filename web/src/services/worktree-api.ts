@@ -277,9 +277,9 @@ export const worktreeAndWorkspaceAPI = {
     });
   },
 
-  // OpenCode Project / Workspace Manager (Kilo Desktop)
+  // Hoxi Native Project & Workspace Manager
   listProjects(): Promise<ProjectInfo[]> {
-    return requestJSON("/project");
+    return requestJSON("/api/hoxi/projects");
   },
   listWorkspaces(): Promise<{ workspaces: WorkspaceProfile[]; dismissed?: string[] }> {
     return requestJSON("/api/hoxi/workspaces");
@@ -336,7 +336,16 @@ export const worktreeAndWorkspaceAPI = {
   getLocalCLIStatus(): Promise<LocalCLIStatusResponse> {
     return requestJSON("/api/hoxi/local-cli/status");
   },
-  importLocalCLI(toolID: string): Promise<LocalCLIImportResponse> {
-    return requestJSON("/api/hoxi/local-cli/import", { method: "POST", body: JSON.stringify({ toolID }) });
+  importLocalCLI(toolID: string, options?: { overwrite?: boolean }): Promise<LocalCLIImportResponse> {
+    return requestJSON("/api/hoxi/local-cli/import", {
+      method: "POST",
+      body: JSON.stringify({ toolID, ...(options?.overwrite ? { overwrite: true } : {}) }),
+    });
+  },
+  disconnectLocalCLI(toolID: string): Promise<import("./handoff-types").LocalCLIDisconnectResponse> {
+    return requestJSON("/api/hoxi/local-cli/disconnect", {
+      method: "POST",
+      body: JSON.stringify({ toolID }),
+    });
   },
 };

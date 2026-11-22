@@ -81,9 +81,11 @@ type Service struct {
 	nativeEngine       NativeEngine
 	streamClient       llm.StreamClient
 	imageClient        llm.ImageClient
+	videoClient        llm.VideoClient
 	audioClient        llm.AudioClient
 	skillResolver      func(ctx context.Context, directory, sessionID string, sel SkillSelection) (ResolvedSkill, error)
 	sessionContext     func(sessionID, directory string) string
+	sessionMCP         SessionMCPResolver
 	projectResolver    ProjectResolver
 	permissionRules    func() map[string]interface{}
 	dataProfileChecker DataProfileSafetyChecker

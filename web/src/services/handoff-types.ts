@@ -131,3 +131,10 @@ export interface LocalCLIImportResponse {
   models?: string[];
   error?: string;
 }
+
+export interface LocalCLIDisconnectResponse {
+  ok: boolean;
+  toolID: string;
+  disconnected?: string[];
+  error?: string;
+}

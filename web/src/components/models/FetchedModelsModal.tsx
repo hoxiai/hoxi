@@ -13,6 +13,7 @@ import {
 } from "lucide-solid";
 import type { CustomProviderModelDraft } from "../../store/workspace";
 import { t } from "../../i18n";
+import { HelpTip } from "../settings/setting-controls";
 import { guessFetchedModelDraft, type ModelProbeResult } from "./custom-endpoint-helpers";
 import { appendModels, verifyBatch, type ModelProbeFn } from "./model-probe-batch";
 
@@ -163,14 +164,12 @@ export function FetchedModelsModal(props: {
           onClick={(e) => e.stopPropagation()}
         >
           {/* Modal Header */}
-          <div class="flex items-start justify-between gap-3 border-b border-[var(--border-subtle)] px-5 py-4">
-            <div>
-              <h3 class="text-[15px] font-semibold text-[var(--text-primary)]">
+          <div class="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] px-5 py-3.5">
+            <div class="flex items-center gap-2 min-w-0">
+              <h3 class="text-[15px] font-semibold text-[var(--text-primary)] truncate">
                 {t("models.fetchedModelsCount", { count: props.fetchedModels().length })}
               </h3>
-              <p class="mt-0.5 text-[12px] text-[var(--text-muted)]">
-                {t("models.fetchedModelsModalSubtitle")}
-              </p>
+              <HelpTip text={t("models.fetchedModelsModalSubtitle")} />
             </div>
             <button
               type="button"

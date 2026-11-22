@@ -1,7 +1,7 @@
 // web/src/store/updater-state.ts
 import { createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
-import { updaterAPI, type NativeUpdateProgress, type UpdateCheckResult } from "../services/api";
+import { cliLinkAPI, updaterAPI, type CliLinkStatus, type NativeUpdateProgress, type UpdateCheckResult } from "../services/api";
 import { errorMessageOf } from "../services/http";
 import { t } from "../i18n";
 import { appSettings, sendDesktopNotification } from "./settings";
@@ -12,6 +12,8 @@ export interface DesktopUpdaterState {
   isInstalling: boolean;
   nativeAvailable: boolean;
   draining: boolean;
+  managedBy: string | null;
+  upgradeCommand: string | null;
   hasChecked: boolean;
   result: UpdateCheckResult | null;
   error: string | null;
@@ -25,6 +27,8 @@ export const [desktopUpdater, setDesktopUpdater] = createStore<DesktopUpdaterSta
   isInstalling: false,
   nativeAvailable: false,
   draining: false,
+  managedBy: null,
+  upgradeCommand: null,
   hasChecked: false,
   result: null,
   error: null,
@@ -261,6 +265,8 @@ export async function refreshDesktopUpdateStatus(): Promise<void> {
     setDesktopUpdater({
       nativeAvailable: status.available,
       draining: status.draining,
+      managedBy: status.managedBy || null,
+      upgradeCommand: status.upgradeCommand || null,
       progress: nextProgress,
       downloadSpeedBps: metrics.speedBps,
       downloadSlow: metrics.slow,
@@ -395,4 +401,16 @@ export function hasDesktopUpdate(): boolean {
 /** True once Sparkle accepted the install; new mutations stay paused until relaunch. */
 export function isUpdateDraining(): boolean {
   return desktopUpdater.draining;
+}
+
+export function fetchCliLinkStatus(): Promise<CliLinkStatus> {
+  return cliLinkAPI.getStatus();
+}
+
+export function installCliLink(): Promise<CliLinkStatus> {
+  return cliLinkAPI.install();
+}
+
+export function uninstallCliLink(): Promise<CliLinkStatus> {
+  return cliLinkAPI.uninstall();
 }

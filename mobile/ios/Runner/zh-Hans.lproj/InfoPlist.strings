@@ -3,3 +3,4 @@
 "NSCameraUsageDescription" = "Hoxi 使用相机扫描配对二维码，以及拍摄你主动发送的聊天照片";
 "NSLocalNetworkUsageDescription" = "Hoxi 需要访问本地局域网以连接您同一 Wi-Fi 下的本地研发工作站与自托管 GoPanel 节点";
 "NSPhotoLibraryUsageDescription" = "Hoxi 需要访问您的相册以选择个人头像或上传您在对话中主动选择的图片";
+"NSSiriUsageDescription" = "Hoxi 使用 Siri 与快捷指令打开语音通话和待审批入口；批准操作仍需在 App 内确认";

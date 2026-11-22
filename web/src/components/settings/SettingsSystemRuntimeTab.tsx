@@ -1,6 +1,6 @@
 // web/src/components/settings/SettingsSystemRuntimeTab.tsx
 import { createSignal, For, onMount, Show } from "solid-js";
-import { Activity, ArrowUpCircle, CheckCircle2, ChevronRight, Download, ExternalLink, KeyRound, RefreshCw, RotateCcw, ShieldCheck } from "lucide-solid";
+import { Activity, ArrowUpCircle, CheckCircle2, ChevronRight, Copy, Download, ExternalLink, KeyRound, RefreshCw, RotateCcw, ShieldCheck } from "lucide-solid";
 import type { SystemRuntimeInfo } from "../../services/api";
 import {
   appSettings,
@@ -29,6 +29,7 @@ import UpdateProgressBar from "../layout/UpdateProgressBar";
 import { t } from "../../i18n";
 import { SettingGroup, SettingRow, ToggleSwitch } from "./setting-controls";
 import { confirmAction } from "./confirm-dialog";
+import { CliCommandSection } from "./CliCommandSection";
 import { StorageCleanupSection } from "./StorageCleanupSection";
 
 export function SystemRuntimeSettingsTab() {
@@ -140,43 +141,42 @@ export function SystemRuntimeSettingsTab() {
                 </Show>
               </div>
 
-              <div class="text-[12px] text-[var(--text-muted)] truncate">
-                <Show
-                  when={!desktopUpdater.error}
-                  fallback={
-                    <span class="text-rose-500">
-                      {hasNewVersion()
-                        ? t("header.updateError", { error: desktopUpdater.error || "" })
-                        : `${t("settings.updaterCheckFailed")} (${desktopUpdater.error})`}
-                    </span>
-                  }
-                >
+              <Show when={desktopUpdater.error || desktopUpdater.result}>
+                <div class="text-[12px] text-[var(--text-muted)] truncate">
                   <Show
-                    when={desktopUpdater.result}
-                    fallback={<span>{t("settings.sectionUpdaterDesc")}</span>}
+                    when={!desktopUpdater.error}
+                    fallback={
+                      <span class="text-rose-500">
+                        {hasNewVersion()
+                          ? t("header.updateError", { error: desktopUpdater.error || "" })
+                          : `${t("settings.updaterCheckFailed")} (${desktopUpdater.error})`}
+                      </span>
+                    }
                   >
-                    {(res) => (
-                      <Show
-                        when={res().needUpdate}
-                        fallback={
-                          <span class="inline-flex items-center gap-1.5 text-emerald-500 font-medium">
-                            <span class="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                            {t("settings.updaterAlreadyLatest")}
+                    <Show when={desktopUpdater.result}>
+                      {(res) => (
+                        <Show
+                          when={res().needUpdate}
+                          fallback={
+                            <span class="inline-flex items-center gap-1.5 text-emerald-500 font-medium">
+                              <span class="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                              {t("settings.updaterAlreadyLatest")}
+                            </span>
+                          }
+                        >
+                          <span class="text-[var(--text-secondary)]">
+                            {desktopUpdater.nativeAvailable
+                              ? t("header.updateNativeExplanation")
+                              : t("settings.updaterNewVersionFound", {
+                                  version: `v${res().latestVersion}`,
+                                })}
                           </span>
-                        }
-                      >
-                        <span class="text-[var(--text-secondary)]">
-                          {desktopUpdater.nativeAvailable
-                            ? t("header.updateNativeExplanation")
-                            : t("settings.updaterNewVersionFound", {
-                                version: `v${res().latestVersion}`,
-                              })}
-                        </span>
-                      </Show>
-                    )}
+                        </Show>
+                      )}
+                    </Show>
                   </Show>
-                </Show>
-              </div>
+                </div>
+              </Show>
             </div>
           </div>
 
@@ -269,6 +269,32 @@ export function SystemRuntimeSettingsTab() {
           </div>
         </Show>
 
+        {/* Package-Manager Managed Install Notice */}
+        <Show when={desktopUpdater.managedBy}>
+          <div class="px-5 py-3 bg-[var(--bg-inset)]/55 flex flex-wrap items-center justify-between gap-2 text-[12px] text-[var(--text-secondary)]">
+            <span>
+              {t("header.updateManagedByNotice", { manager: desktopUpdater.managedBy || "" })}
+            </span>
+            <Show when={desktopUpdater.upgradeCommand}>
+              <button
+                type="button"
+                onClick={() => {
+                  const cmd = desktopUpdater.upgradeCommand;
+                  if (cmd && navigator.clipboard) {
+                    void navigator.clipboard.writeText(cmd);
+                    showToast(t("header.updateCommandCopied"));
+                  }
+                }}
+                title={t("header.updateCopyCommand")}
+                class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-2.5 py-1 font-mono text-[11.5px] text-[var(--text-primary)] transition-colors cursor-pointer"
+              >
+                <code>{desktopUpdater.upgradeCommand}</code>
+                <Copy size={12} class="text-[var(--text-muted)]" />
+              </button>
+            </Show>
+          </div>
+        </Show>
+
         {/* Draining Notice */}
         <Show when={desktopUpdater.draining}>
           <div class="px-5 py-3 bg-amber-500/8 text-[12px] text-amber-600 dark:text-amber-400 flex items-center gap-2">
@@ -355,6 +381,9 @@ export function SystemRuntimeSettingsTab() {
           )}
         </Show>
       </SettingGroup>
+
+      {/* 1b. Terminal Command-Line Tool (hoxi) */}
+      <CliCommandSection onToast={showToast} />
 
       {/* 2. Hoxi Native Engine & Gateway Diagnostics */}
       <SettingGroup

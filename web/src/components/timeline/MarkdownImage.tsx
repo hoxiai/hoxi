@@ -2,6 +2,7 @@ import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import {
   activeDirectory,
   appSettings,
+  isTesterPortalMode,
   openExternalURL,
   openFileInInspector,
   openImagePreview,
@@ -38,8 +39,11 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
 
   const rawSrc = () => (props.src || "").trim();
   const isRemote = () => /^https?:\/\//i.test(rawSrc());
-  const isGatewayAttachment = () => /^\/api\/hoxi\/attachments\//i.test(rawSrc());
-  const isDataImage = () => /^data:image\/(?:png|jpe?g|gif|webp|avif);base64,/i.test(rawSrc());
+  const isGatewayAttachment = () =>
+    /^\/api\/hoxi\/(?:attachments|intake\/portal\/attachments)\//i.test(rawSrc());
+  const isDataImage = () =>
+    /^data:image\/(?:png|jpe?g|gif|webp|avif|svg\+xml)(?:;charset=[^;,]+)?;(?:base64|utf8),/i.test(rawSrc()) ||
+    /^data:image\/svg\+xml,/i.test(rawSrc());
   const isDirectImage = () => isRemote() || isGatewayAttachment() || isDataImage();
   const isLocal = () =>
     !isDirectImage() &&
@@ -68,7 +72,7 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
 
     const directory = activeDirectory() || workspace.rootDir || "";
     const sessionID = workspace.activeSessionID || undefined;
-    if (!workspace.connected && !directory) {
+    if (isTesterPortalMode() || (!workspace.connected && !directory)) {
       setLoading(false);
       setFailed(true);
       return;
@@ -116,8 +120,9 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
 
   const handleOpen = (e: MouseEvent) => {
     e.preventDefault();
+    const portalMode = isTesterPortalMode();
     const path = localPath();
-    if (path) {
+    if (path && !portalMode) {
       openImagePreview({
         src: displaySrc(),
         alt: props.alt || path,
@@ -131,8 +136,9 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
       openImagePreview({ src: rawSrc(), alt: props.alt || "" });
       return;
     }
-    const target =
-      e.metaKey || e.ctrlKey
+    const target = portalMode
+      ? "external"
+      : e.metaKey || e.ctrlKey
         ? appSettings.linkOpenTarget === "external"
           ? "inspector"
           : "external"
@@ -150,6 +156,9 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
   };
 
   const openTitle = () => {
+    if (isTesterPortalMode()) {
+      return isRemote() ? t("timeline.openInExternalBrowserTooltip") : undefined;
+    }
     if (localPath()) return t("timeline.openInInspectorTooltip");
     return appSettings.linkOpenTarget === "external"
       ? t("timeline.openInExternalBrowserTooltip")

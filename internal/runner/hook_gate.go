@@ -33,6 +33,8 @@ type hookCredential struct {
 	runtime   string
 	sessionID string
 	messageID string
+	// Shared by hook calls using this turn's token. Protected by approvalGate.mu.
+	discoveryReadHints map[[sha256.Size]byte]string
 }
 
 // approvalAsk is one shell command a runner CLI wants to run, normalized
@@ -143,7 +145,11 @@ func (s *Service) issueHookCredential(runtime, sessionID, messageID string) (str
 	}
 	key := sha256.Sum256([]byte(token))
 	g.mu.Lock()
-	g.tokens[key] = hookCredential{runtime: runtime, sessionID: sessionID, messageID: messageID}
+	cred := hookCredential{runtime: runtime, sessionID: sessionID, messageID: messageID}
+	if runtime == string(RuntimeAntigravity) {
+		cred.discoveryReadHints = make(map[[sha256.Size]byte]string)
+	}
+	g.tokens[key] = cred
 	g.mu.Unlock()
 	return base, token, func() {
 		g.mu.Lock()
@@ -158,10 +164,15 @@ func (s *Service) issueHookEnv(sessionID, messageID string) ([]string, func()) {
 	if base == "" {
 		return nil, revoke
 	}
+	hookBin := ""
+	if exe, err := currentHookExecutable(); err == nil && !looksLikeGoTestBinary(exe) {
+		hookBin = exe
+	}
 	return []string{
 		agyhook.EnvSessionID + "=" + sessionID,
 		agyhook.EnvHookURL + "=" + base + hookPreToolPath,
 		agyhook.EnvHookToken + "=" + token,
+		agyhook.EnvHookBin + "=" + hookBin,
 	}, revoke
 }
 
@@ -231,7 +242,9 @@ func (s *Service) handleHookPreTool(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var payload hookPayload
+	// Step zero is valid. An omitted (or null) index has no stable tool call
+	// identity for retries or approval coalescing.
+	payload := hookPayload{StepIdx: -1}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&payload); err != nil {
 		writeHookDecision(w, hookDecisionDeny, "Hoxi could not parse the tool call")
 		return
@@ -250,21 +263,38 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 		return hookDecisionDeny, "Antigravity conversation does not belong to this Hoxi session"
 	}
 	args, _ := json.Marshal(p.ToolCall.Args)
-	callID := origin.callID(cred.messageID, p.StepIdx)
+	var callID string
+	if p.StepIdx >= 0 {
+		callID = origin.callID(cred.messageID, p.StepIdx)
+	}
 	action := hookToolActionWithArgs(p.ToolCall.Name, p.ToolCall.Args)
+	guardKey := origin.guardKey(cred.sessionID)
 	activeConvID := origin.convID
 	if action == hookActionRead || action == hookActionEdit {
 		if reason := agyHookForeignBrainReason(rec.WorktreePath, activeConvID, p.ToolCall.Args); reason != "" {
 			return hookDecisionDeny, reason
 		}
 	}
-	if _, _, destructive, _ := s.inspectHookToolRisk(cred.sessionID, p.ToolCall.Name, p.ToolCall.Args); !destructive &&
+	_, _, destructive, _ := s.inspectHookToolRisk(cred.sessionID, p.ToolCall.Name, p.ToolCall.Args)
+	if !destructive &&
 		action != hookActionCommand &&
 		action != hookActionQuestion &&
 		s.gate.hasToolAlways(cred.sessionID, hookToolGrantKey(p.ToolCall.Name, p.ToolCall.Args)) {
 		return hookDecisionApprove, ""
 	}
-	if ok, reason := s.gateDoomLoopKeyed(r, cred, origin.guardKey(cred.sessionID), p.ToolCall.Name, args, callID); !ok {
+	var ask approvalAsk
+	if action == hookActionCommand {
+		command, _ := p.ToolCall.Args["CommandLine"].(string)
+		cwd, _ := p.ToolCall.Args["Cwd"].(string)
+		summary, _ := p.ToolCall.Args["toolSummary"].(string)
+		ask = approvalAsk{command: command, cwd: cwd, description: summary, callID: callID, source: string(RuntimeAntigravity)}
+		// A refused discovery call never runs. Its redeliveries should receive
+		// the same hint without counting as repeated executions.
+		if hint := s.discoveryReadHint(cred, rec, ask, guardKey); hint != "" {
+			return hookDecisionDeny, hint
+		}
+	}
+	if ok, reason := s.gateDoomLoopKeyed(r, cred, guardKey, p.ToolCall.Name, args, callID); !ok {
 		return hookDecisionDeny, reason
 	}
 
@@ -272,9 +302,9 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 	case hookActionQuestion:
 		return s.gateQuestion(r, cred, rec, p.ToolCall.Name, p.ToolCall.Args, callID)
 	case hookActionRead:
-		if (isReadToolAllowedInWorktree(rec.WorktreePath, p.ToolCall.Name, p.ToolCall.Args) &&
+		if !destructive && ((isReadToolAllowedInWorktree(rec.WorktreePath, p.ToolCall.Name, p.ToolCall.Args) &&
 			!isSecretFilePath(resolveHookToolPath(rec.WorktreePath, p.ToolCall.Args))) ||
-			isReadToolAllowedInAgyOwnBrain(rec.WorktreePath, activeConvID, p.ToolCall.Name, p.ToolCall.Args) {
+			isReadToolAllowedInAgyOwnBrain(rec.WorktreePath, activeConvID, p.ToolCall.Name, p.ToolCall.Args)) {
 			return hookDecisionApprove, ""
 		}
 		approved, reason := s.gateToolCall(r, cred, p.ToolCall.Name, p.ToolCall.Args, callID)
@@ -315,16 +345,7 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 		}
 		return hookDecisionDeny, reason
 	case hookActionCommand:
-		command, _ := p.ToolCall.Args["CommandLine"].(string)
-		cwd, _ := p.ToolCall.Args["Cwd"].(string)
-		summary, _ := p.ToolCall.Args["toolSummary"].(string)
-		approved, reason := s.gateCommand(r, cred, rec, approvalAsk{
-			command:     command,
-			cwd:         cwd,
-			description: summary,
-			callID:      callID,
-			source:      string(RuntimeAntigravity),
-		})
+		approved, reason := s.gateCommand(r, cred, rec, ask)
 		if approved {
 			return hookDecisionApprove, ""
 		}

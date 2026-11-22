@@ -23,6 +23,7 @@ import {
 } from "../../store/workspace";
 import { formatCompactTokens, formatDurationMs, formatUsd } from "./usage-format";
 import { UsageHeatmap } from "./UsageHeatmap";
+import { HelpTip } from "./setting-controls";
 
 const button =
   "inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1.5 text-[12px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer";
@@ -285,14 +286,12 @@ export default function UsageHistoryTab() {
 
   return (
     <div class="space-y-5 select-text">
-      <div class="flex flex-wrap items-start justify-between gap-3">
-        <div class="space-y-1">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center gap-2">
           <h3 class="text-[15px] font-semibold text-[var(--text-primary)]">
             {t("settings.usageTitle")}
           </h3>
-          <p class="text-[12px] leading-relaxed text-[var(--text-muted)]">
-            {t("settings.usageSubtitle")}
-          </p>
+          <HelpTip text={t("settings.usageSubtitle")} />
         </div>
         <div class="flex flex-wrap items-center gap-1.5">
           <div class="flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-0.5">

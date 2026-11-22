@@ -25,6 +25,11 @@ import ChangedFilesSummary from "./ChangedFilesSummary";
 import SandboxMergePromptCard from "./SandboxMergePromptCard";
 import TurnTelemetryPopover from "./TurnTelemetryPopover";
 
+function summaryTokenCount(info: MessageInfo): number {
+  const usage = info.tokens?.summary;
+  return usage ? usage.input + usage.output + usage.reasoning + usage.cacheRead + usage.cacheWrite : 0;
+}
+
 export function AssistantTurnFooter(props: {
   info: MessageInfo;
   parts: MessagePart[];
@@ -144,16 +149,20 @@ export function AssistantTurnFooter(props: {
       let outputTokens = 0;
       let reasoningTokens = 0;
       let cacheReadTokens = 0;
+      let summaryTokens = 0;
       let cost = 0;
+      let serviceTier = props.info.serviceTier || "";
       const textChunks: string[] = [];
 
       for (const step of cycleTurns) {
         if (step.info.providerID) providerID = step.info.providerID;
         if (step.info.modelID) modelID = step.info.modelID;
+        if (step.info.serviceTier) serviceTier = step.info.serviceTier;
         inputTokens += step.info.tokens?.input ?? 0;
         outputTokens += step.info.tokens?.output ?? 0;
         reasoningTokens += step.info.tokens?.reasoning ?? 0;
         cacheReadTokens += step.info.tokens?.cache?.read ?? 0;
+        summaryTokens += summaryTokenCount(step.info);
         cost += step.info.cost ?? 0;
         for (const p of step.parts) {
           if (p.type === "tool" && !isTodoTool(p)) toolCount++;
@@ -195,7 +204,9 @@ export function AssistantTurnFooter(props: {
         outputTokens,
         reasoningTokens,
         cacheReadTokens,
+        summaryTokens,
         cost,
+        serviceTier,
         finalText: textChunks.join("\n\n").trim() || fallbackReasoningText(),
         changedFiles: collectCycleChangedFiles(cycleTurns, props.info.sessionID),
         revertMessageID,
@@ -219,7 +230,9 @@ export function AssistantTurnFooter(props: {
       outputTokens: props.info.tokens?.output ?? 0,
       reasoningTokens: props.info.tokens?.reasoning ?? 0,
       cacheReadTokens: props.info.tokens?.cache?.read ?? 0,
+      summaryTokens: summaryTokenCount(props.info),
       cost: props.info.cost ?? 0,
+      serviceTier: props.info.serviceTier || "",
       finalText: texts || fallbackReasoningText(),
       changedFiles: collectCycleChangedFiles(
         [{ info: props.info, parts: props.parts }],
@@ -395,7 +408,9 @@ export function AssistantTurnFooter(props: {
                     outputTokens={summary().outputTokens}
                     reasoningTokens={summary().reasoningTokens}
                     cacheReadTokens={summary().cacheReadTokens}
+                    summaryTokens={summary().summaryTokens}
                     cost={summary().cost}
+                    serviceTier={summary().serviceTier}
                   />
                 </Show>
               </div>

@@ -1,4 +1,4 @@
-import { Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
+import { Show, Suspense, createEffect, createSignal, lazy, onCleanup, onMount } from "solid-js";
 import ThreePaneShell from "./components/layout/ThreePaneShell";
 import { hoxiAPI } from "./services/api";
 import { connectEventStream } from "./services/sse";
@@ -30,6 +30,7 @@ import {
   isInvalidProjectPath,
   isManagedSession,
   isSessionBusy,
+  isTesterPortalMode,
   indexSessionFromEvent,
   lastPromptDispatchedAt,
   loadAgents,
@@ -76,7 +77,20 @@ import {
 import { isWorkSurface, surfaceExtension } from "./components/layout/surface-extension";
 import { t } from "./i18n";
 
+const TesterPortalApp = lazy(() => import("./components/tasks/TesterPortalApp"));
+
 export default function App() {
+  if (isTesterPortalMode()) {
+    return (
+      <Suspense>
+        <TesterPortalApp />
+      </Suspense>
+    );
+  }
+  return <DesktopApp />;
+}
+
+function DesktopApp() {
   const [online, setOnline] = createSignal(typeof navigator === "undefined" || navigator.onLine);
   const [eventStreamStarted, setEventStreamStarted] = createSignal(false);
   let retryEventStream: (() => void) | undefined;

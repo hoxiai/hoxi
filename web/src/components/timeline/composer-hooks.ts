@@ -3,6 +3,7 @@ import { type Accessor, createSignal } from "solid-js";
 import { t } from "../../i18n";
 import {
   createPromptHistory,
+  stagePromptFile,
   uploadPromptAttachment,
 } from "../../store/workspace";
 import { hoxiAPI, type PromptAttachment } from "../../services/api";
@@ -76,7 +77,17 @@ const DIRECT_IMAGE_MIMES = new Set([
 
 const IMAGE_FILENAME_RE = /\.(png|jpe?g|webp|gif|bmp|tiff?|svg|heic|heif|avif)$/i;
 const AUDIO_FILENAME_RE = /\.(mp3|wav|m4a|aac|ogg|oga|opus|flac)$/i;
-const VIDEO_FILENAME_RE = /\.(mp4|mov|webm|mkv|avi)$/i;
+const VIDEO_FILENAME_RE = /\.(mp4|mov|webm|mkv|avi|m4v)$/i;
+const STAGED_MEDIA_OR_ARCHIVE_RE =
+  /\.(mp4|mov|mkv|webm|avi|m4v|mp3|wav|m4a|aac|flac|ogg|opus|srt|vtt|ass|zip|tar|gz)$/i;
+
+export function shouldStageFileToWorkspace(file: File): boolean {
+  const mime = (file.type || "").toLowerCase();
+  const name = file.name || "";
+  if (mime.startsWith("video/") || mime.startsWith("audio/")) return true;
+  if (STAGED_MEDIA_OR_ARCHIVE_RE.test(name)) return true;
+  return file.size > MAX_ATTACHMENT_BYTES;
+}
 const SPREADSHEET_FILENAME_RE = /\.(xlsx|xls|ods|csv|tsv)$/i;
 const DOCUMENT_FILENAME_RE = /\.(docx|doc|pptx|ppt|rtf)$/i;
 const TEXT_FILENAME_RE =
@@ -281,7 +292,10 @@ function convertDataUrlToPngIfNeeded(
  */
 export function createImageAttachments(
   sessionID?: Accessor<string | null>,
-  directory?: Accessor<string>
+  directory?: Accessor<string>,
+  options?: {
+    resolveStageDirectory?: () => Promise<string | null> | string | null;
+  }
 ) {
   const [images, setImages] = createSignal<ImageItem[]>([]);
   const [dragging, setDragging] = createSignal(false);
@@ -294,29 +308,41 @@ export function createImageAttachments(
     targetKey: string,
     targetEpoch: number,
     item: ImageItem
-  ) => {
-    if (targetEpoch !== getDraftEpoch(targetKey)) return;
+  ): boolean => {
+    if (targetEpoch !== getDraftEpoch(targetKey)) return false;
     if (currentKey() !== targetKey) {
       const existing = sessionDrafts.get(targetKey) ?? {
         text: "",
         images: [],
         pastes: [],
       };
-      if (existing.images.length < MAX_ATTACHMENTS) {
-        setSessionDraft(targetKey, {
-          ...existing,
-          images: [...existing.images, item],
-        });
-      }
-      return;
+      if (existing.images.length >= MAX_ATTACHMENTS) return false;
+      setSessionDraft(targetKey, {
+        ...existing,
+        images: [...existing.images, item],
+      });
+      return true;
     }
+    let committed = false;
     setImages((prev) => {
       if (prev.length >= MAX_ATTACHMENTS) {
         setNotice(t("timeline.attachmentLimitReached", { max: MAX_ATTACHMENTS }));
         return prev;
       }
+      committed = true;
       return [...prev, item];
     });
+    return committed;
+  };
+
+  const revokeBlobPreviewUrl = (url?: string) => {
+    if (url && url.startsWith("blob:") && typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
+      try {
+        URL.revokeObjectURL(url);
+      } catch {
+        /* ignore */
+      }
+    }
   };
 
   const addDataUrlImage = (
@@ -377,9 +403,81 @@ export function createImageAttachments(
     });
   };
 
+  const stageFileToWorkspace = async (
+    file: File,
+    targetKey = currentKey(),
+    targetEpoch = getDraftEpoch(targetKey)
+  ) => {
+    if (images().length + pendingCount() >= MAX_ATTACHMENTS) {
+      setNotice(t("timeline.attachmentLimitReached", { max: MAX_ATTACHMENTS }));
+      return;
+    }
+    setPendingCount((n) => n + 1);
+    try {
+      const targetDir = options?.resolveStageDirectory
+        ? await options.resolveStageDirectory()
+        : directory?.() || null;
+      if (!targetDir) {
+        setNotice("Workspace directory is not ready");
+        return;
+      }
+      // If resolveStageDirectory switched the active workspace on a new draft,
+      // re-anchor the target draft key so the staged item lands in the visible composer.
+      if (!sessionID?.()) {
+        targetKey = currentKey();
+        targetEpoch = getDraftEpoch(targetKey);
+      }
+      const data = await stagePromptFile(targetDir, file);
+      if (!data.ok || !data.path) {
+        setNotice(data.error || `Failed to stage ${file.name}`);
+        return;
+      }
+      const finalName = data.filename || file.name || "media.bin";
+      const finalMime = data.mime || file.type || "application/octet-stream";
+      const kind = classifyAttachmentKind(finalName, finalMime) ?? "document";
+      const mediaUrl =
+        data.url ||
+        `/api/hoxi/file/content?path=${encodeURIComponent(data.path)}&directory=${encodeURIComponent(targetDir)}&raw=1`;
+      let localPreviewUrl: string | undefined;
+      if (
+        (kind === "video" || kind === "image") &&
+        typeof URL !== "undefined" &&
+        typeof URL.createObjectURL === "function"
+      ) {
+        try {
+          localPreviewUrl = URL.createObjectURL(file);
+        } catch {
+          localPreviewUrl = undefined;
+        }
+      }
+      const committed = commitAttachmentForTarget(targetKey, targetEpoch, {
+        id: `staged_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        filename: finalName,
+        mime: finalMime,
+        dataUrl: mediaUrl,
+        previewUrl: localPreviewUrl || mediaUrl,
+        size: data.size ?? file.size,
+        kind,
+      });
+      if (!committed && localPreviewUrl) {
+        revokeBlobPreviewUrl(localPreviewUrl);
+      }
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : String(err || "Stage failed"));
+    } finally {
+      setPendingCount((n) => Math.max(0, n - 1));
+    }
+  };
+
   const addFile = (file: File) => {
     setNotice(null);
     const rawName = file.name || "screenshot.png";
+    if (shouldStageFileToWorkspace(file) && (options?.resolveStageDirectory || directory?.())) {
+      const originKey = currentKey();
+      const originEpoch = getDraftEpoch(originKey);
+      void stageFileToWorkspace(file, originKey, originEpoch);
+      return;
+    }
     const kind = classifyAttachmentKind(rawName, file.type || "");
     if (!kind) {
       setNotice(t("timeline.attachmentUnsupportedType", { name: rawName }));
@@ -435,10 +533,17 @@ export function createImageAttachments(
   };
 
   const removeImage = (id: string) => {
-    setImages((prev) => prev.filter((item) => item.id !== id));
+    setImages((prev) => {
+      const removed = prev.find((item) => item.id === id);
+      if (removed) revokeBlobPreviewUrl(removed.previewUrl);
+      return prev.filter((item) => item.id !== id);
+    });
   };
 
   const clearImages = () => {
+    for (const item of images()) {
+      revokeBlobPreviewUrl(item.previewUrl);
+    }
     setImages([]);
     setNotice(null);
   };
@@ -451,17 +556,20 @@ export function createImageAttachments(
     const originEpoch = getDraftEpoch(originKey);
     const items = Array.from(ev.clipboardData?.items ?? []);
     const itemFiles: File[] = [];
+    const isAcceptedClipboardFile = (f: File) =>
+      classifyAttachmentKind(f.name || "", f.type || "") !== null ||
+      shouldStageFileToWorkspace(f);
     for (const item of items) {
       if (item.kind === "file") {
         const f = item.getAsFile();
-        if (f && classifyAttachmentKind(f.name || "", f.type || "") !== null) {
+        if (f && isAcceptedClipboardFile(f)) {
           itemFiles.push(f);
         }
       }
     }
     if (itemFiles.length === 0 && ev.clipboardData?.files?.length) {
       for (const f of Array.from(ev.clipboardData.files)) {
-        if (classifyAttachmentKind(f.name || "", f.type || "") !== null) {
+        if (isAcceptedClipboardFile(f)) {
           itemFiles.push(f);
         }
       }
@@ -470,8 +578,9 @@ export function createImageAttachments(
     const plainText = ev.clipboardData?.getData("text/plain") ?? "";
 
     // macOS Finder Cmd+C on an image file puts the filename in text/plain (and Finder's file icon in image/*).
-    // Prefer reading the actual file URL from NSPasteboard first.
-    if (looksLikeCopiedImageFilenames(plainText)) {
+    // Prefer reading the actual file URL from NSPasteboard first, except when clipboard already carries
+    // a staged media/large file that should stream directly to workspace inputs/.
+    if (looksLikeCopiedImageFilenames(plainText) && !itemFiles.some(shouldStageFileToWorkspace)) {
       ev.preventDefault();
       setPendingCount((n) => n + 1);
       void hoxiAPI

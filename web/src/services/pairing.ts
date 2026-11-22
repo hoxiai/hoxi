@@ -14,6 +14,14 @@ export interface PairingCode {
   available: boolean;
   /** data: URL PNG of the QR code; empty when no LAN address was found. */
   qrPng: string;
+  /** Build/env default 6-digit pairing relay URL (empty in OSS builds). */
+  shortCodeRelayUrl?: string;
+}
+
+export interface PublishedShortCode {
+  code: string;
+  expiresAtMs: number;
+  relayUrl: string;
 }
 
 export const pairingAPI = {
@@ -22,5 +30,14 @@ export const pairingAPI = {
   },
   rotate(): Promise<PairingCode> {
     return requestJSON("/api/hoxi/pairing/rotate", { method: "POST", body: "{}" });
+  },
+  publishShortCode(relayUrl: string): Promise<PublishedShortCode> {
+    return requestJSON("/api/hoxi/pairing/short-code", {
+      method: "POST",
+      body: JSON.stringify({ relayUrl }),
+    });
+  },
+  cancelShortCode(): Promise<void> {
+    return requestJSON<void>("/api/hoxi/pairing/short-code", { method: "DELETE" });
   },
 };

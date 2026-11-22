@@ -14,19 +14,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/agentcli"
 	"github.com/hoxiai/hoxi/internal/sqlitecli"
 	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
 func codexHomeDir() string {
-	if env := strings.TrimSpace(os.Getenv("CODEX_HOME")); env != "" {
-		return filepath.Clean(env)
-	}
-	home, _ := os.UserHomeDir()
-	if home == "" {
-		return ""
-	}
-	return filepath.Join(home, ".codex")
+	return agentcli.CodexHomeDir()
 }
 
 func findCodexStateDB() string {
@@ -492,16 +486,9 @@ func extractCodexMessageText(content interface{}) string {
 
 func detectCodexCLIStatus(g *Service, hoxiMap map[string]interface{}) LocalCLIStatusItem {
 	cDir := codexHomeDir()
-	sessions, stats := scanCodexSessions("", "")
+	_, stats := scanCodexSessions("", "")
+	codexBin := agentcli.ResolveCodexBinary()
 	defaultModel, version, models := readCodexLocalConfig()
-	for _, s := range sessions {
-		if s.Model != "" {
-			models = appendUniqueString(models, s.Model)
-			if defaultModel == "" {
-				defaultModel = s.Model
-			}
-		}
-	}
 	var authMode, accessToken, apiKey string
 	if cDir != "" {
 		if raw, err := os.ReadFile(filepath.Join(cDir, "auth.json")); err == nil {
@@ -520,7 +507,7 @@ func detectCodexCLIStatus(g *Service, hoxiMap map[string]interface{}) LocalCLISt
 	return LocalCLIStatusItem{
 		ID:            ExternalToolCodex,
 		Name:          "OpenAI Codex",
-		Installed:     stats.Installed,
+		Installed:     stats.Installed || codexBin != "",
 		Authenticated: accessToken != "" || apiKey != "" || hasStoredAuth,
 		Connected:     inHoxi,
 		Version:       version,
@@ -534,45 +521,92 @@ func detectCodexCLIStatus(g *Service, hoxiMap map[string]interface{}) LocalCLISt
 }
 
 func readCodexLocalConfig() (defaultModel, version string, models []string) {
-	cDir := codexHomeDir()
-	if cDir == "" {
-		return "", "", nil
+	snap := agentcli.DiscoverCodexCatalog(false)
+	models = make([]string, 0, len(snap.Models))
+	for _, m := range snap.Models {
+		if m.Slug != "" {
+			models = appendUniqueString(models, m.Slug)
+		}
 	}
-	if tomlBytes, err := os.ReadFile(filepath.Join(cDir, "config.toml")); err == nil {
-		for _, line := range strings.Split(string(tomlBytes), "\n") {
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "model") && strings.Contains(trimmed, "=") {
-				parts := strings.SplitN(trimmed, "=", 2)
-				if strings.TrimSpace(parts[0]) == "model" {
-					if m := strings.Trim(strings.TrimSpace(parts[1]), `"'`); m != "" {
-						defaultModel = m
-						models = appendUniqueString(models, m)
-					}
-					break
-				}
+	return snap.DefaultModel, snap.Version, models
+}
+
+func buildCodexProviderEntry(snap agentcli.CodexCatalogSnapshot, apiKey string, existingOpts map[string]interface{}) (map[string]interface{}, []string) {
+	specs := snap.Models
+	if len(specs) == 0 {
+		specs = agentcli.DefaultCodexCatalogModels()
+	}
+	modelsMap := make(map[string]interface{}, len(specs))
+	slugs := make([]string, 0, len(specs))
+	orderSlice := make([]interface{}, 0, len(specs))
+	for _, spec := range specs {
+		slug := strings.TrimSpace(spec.Slug)
+		if slug == "" {
+			continue
+		}
+		if _, exists := modelsMap[slug]; exists {
+			continue
+		}
+		slugs = append(slugs, slug)
+		orderSlice = append(orderSlice, slug)
+
+		label := strings.TrimSpace(spec.DisplayName)
+		if label == "" {
+			label = slug
+		}
+		if !strings.Contains(strings.ToLower(label), "(codex)") {
+			label = label + " (Codex)"
+		}
+		inputs := []interface{}{"text"}
+		if spec.Image {
+			inputs = []interface{}{"text", "image"}
+		}
+		entry := map[string]interface{}{
+			"name":       label,
+			"tool_call":  true,
+			"reasoning":  true,
+			"attachment": spec.Image,
+			"modalities": map[string]interface{}{
+				"input":  inputs,
+				"output": []interface{}{"text"},
+			},
+		}
+		if len(spec.Efforts) > 0 {
+			variants := make(map[string]interface{}, len(spec.Efforts))
+			for _, eff := range spec.Efforts {
+				variants[eff] = map[string]interface{}{"reasoningEffort": eff}
 			}
+			entry["variants"] = variants
 		}
+		modelsMap[slug] = entry
 	}
-	if modBytes, err := os.ReadFile(filepath.Join(cDir, "models_cache.json")); err == nil {
-		var modDoc struct {
-			ClientVersion string `json:"client_version"`
-			Models        []struct {
-				Slug string `json:"slug"`
-			} `json:"models"`
-		}
-		if json.Unmarshal(modBytes, &modDoc) == nil {
-			version = strings.TrimSpace(modDoc.ClientVersion)
-			for _, item := range modDoc.Models {
-				if s := strings.TrimSpace(item.Slug); s != "" {
-					models = appendUniqueString(models, s)
-				}
-			}
-		}
+
+	opts := map[string]interface{}{}
+	for k, v := range existingOpts {
+		opts[k] = v
 	}
-	if defaultModel == "" && len(models) > 0 {
-		defaultModel = models[0]
+	opts["modelOrder"] = orderSlice
+	defaultModel := strings.TrimSpace(snap.DefaultModel)
+	if defaultModel == "" && len(slugs) > 0 {
+		defaultModel = slugs[0]
 	}
-	return defaultModel, version, models
+	if defaultModel != "" {
+		opts["defaultModel"] = defaultModel
+	}
+	if ver := strings.TrimPrefix(strings.TrimSpace(snap.Version), "v"); ver != "" {
+		opts["codexVersion"] = ver
+	}
+	if apiKey != "" {
+		opts["apiKey"] = apiKey
+	}
+
+	provEntry := map[string]interface{}{
+		"name":    "OpenAI Codex (Local)",
+		"npm":     "@ai-sdk/openai",
+		"models":  modelsMap,
+		"options": opts,
+	}
+	return provEntry, slugs
 }
 
 func (g *Service) importCodexCLIProvider() LocalCLIImportResponse {
@@ -580,60 +614,42 @@ func (g *Service) importCodexCLIProvider() LocalCLIImportResponse {
 	if cDir == "" {
 		return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolCodex), Error: "~/.codex not found"}
 	}
+	provCfg := agentcli.ReadCodexProviderConfig()
 	authPath := filepath.Join(cDir, "auth.json")
-	raw, err := os.ReadFile(authPath)
-	if err != nil {
+	var authBody map[string]interface{}
+	if raw, err := os.ReadFile(authPath); err == nil {
+		var doc map[string]interface{}
+		if json.Unmarshal(raw, &doc) != nil {
+			return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolCodex), Error: "Invalid ~/.codex/auth.json"}
+		}
+		authBody = readCodexAuthBody(authPath)
+	} else if provCfg.BaseURL == "" {
 		return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolCodex), Error: "~/.codex/auth.json not found"}
 	}
-	var doc map[string]interface{}
-	if json.Unmarshal(raw, &doc) != nil {
-		return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolCodex), Error: "Invalid ~/.codex/auth.json"}
-	}
-
-	authBody := readCodexAuthBody(authPath)
-	apiKey := ""
-	if authBody != nil {
-		apiKey = strings.TrimSpace(asString(authBody["key"]))
+	if authBody == nil && provCfg.BaseURL != "" {
+		envName := firstNonEmpty(provCfg.EnvKey, "OPENAI_API_KEY")
+		if envKey := strings.TrimSpace(os.Getenv(envName)); envKey != "" {
+			authBody = map[string]interface{}{"type": "api", "key": envKey}
+		}
 	}
 	if authBody == nil {
 		return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolCodex), Error: "No valid tokens in ~/.codex/auth.json"}
 	}
+	apiKey := strings.TrimSpace(asString(authBody["key"]))
 
 	if !isEngineOAuthNewer(readEngineOpenCodeAuthEntry("openai"), authBody) {
 		g.mergeOpenCodeEngineAuthFile(map[string]interface{}{"openai": authBody})
 		g.sendEngineAuth("openai", authBody, 5*time.Second)
 	}
 
-	_, _, models := readCodexLocalConfig()
-	sessions, _ := scanCodexSessions("", "")
-	for _, s := range sessions {
-		if s.Model != "" {
-			models = appendUniqueString(models, s.Model)
-		}
+	var initOpts map[string]interface{}
+	if apiKey != "" && provCfg.BaseURL != "" {
+		initOpts = map[string]interface{}{"baseURL": provCfg.BaseURL}
 	}
-	if len(models) == 0 {
-		models = []string{"gpt-5-codex", "o4-mini"}
-	}
-	modelsMap := map[string]interface{}{}
-	for _, m := range models {
-		modelsMap[m] = map[string]interface{}{
-			"name":       m + " (Codex)",
-			"tool_call":  true,
-			"reasoning":  true,
-			"attachment": true,
-			"modalities": map[string]interface{}{
-				"input":  []string{"text", "image"},
-				"output": []string{"text"},
-			},
-		}
-	}
-	provEntry := map[string]interface{}{
-		"name":   "OpenAI Codex (Local)",
-		"npm":    "@ai-sdk/openai",
-		"models": modelsMap,
-	}
-	if apiKey != "" {
-		provEntry["options"] = map[string]interface{}{"apiKey": apiKey}
+	snap := agentcli.DiscoverCodexCatalog(true)
+	provEntry, models := buildCodexProviderEntry(snap, apiKey, initOpts)
+	if apiKey != "" && strings.EqualFold(provCfg.WireAPI, "chat") {
+		provEntry["npm"] = "@ai-sdk/openai-compatible"
 	}
 	if err := g.updateHoxiConfigDoc(func(cfgDoc map[string]interface{}) error {
 		provMap, _ := cfgDoc["provider"].(map[string]interface{})

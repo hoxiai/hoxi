@@ -42,6 +42,7 @@ import OfficialChannelTab from "../models/OfficialChannelTab";
 import ProviderCatalogTab from "../models/ProviderCatalogTab";
 import { ChatComposerTab, GeneralAppearanceTab } from "./SettingsGeneralChatTabs";
 import { PrivacySettingsTab } from "./PrivacyControls";
+import { AppGrantsTab } from "./AppGrantsTab";
 import { SettingsExtensionsTab } from "./SettingsExtensionsTab";
 import {
   AgentsSettingsTab,
@@ -223,6 +224,11 @@ export default function SettingsModal() {
           ],
         },
         {
+          id: "app-grants",
+          label: () => t("settings.tabAppGrants"),
+          icon: KeyRound,
+        },
+        {
           id: "privacy",
           label: () => t("privacy.title"),
           icon: Globe,
@@ -239,11 +245,14 @@ export default function SettingsModal() {
           icon: Cpu,
           keywords: () => [
             t("settings.sectionUpdaterTitle"),
+            t("settings.sectionCliTitle"),
             t("settings.sectionRuntimeTitle"),
             t("settings.sectionMaintenanceTitle"),
             t("settings.browserIdleTimeoutLabel"),
             t("diagnostics.errorLogTitle"),
             "Hoxi",
+            "CLI",
+            "Terminal",
             "Native",
             "Engine",
             "OpenCode",
@@ -567,6 +576,7 @@ export default function SettingsModal() {
                       <ChatComposerTab />
                     </div>
                   </Show>
+                  <Show when={activeTab() === "app-grants"}><AppGrantsTab /></Show>
                   <Show when={activeTab() === "extensions"}>
                     <div class="hoxi-view-enter">
                       <SettingsExtensionsTab />

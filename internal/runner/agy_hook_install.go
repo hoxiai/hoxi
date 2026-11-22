@@ -18,9 +18,11 @@ import (
 )
 
 // Hoxi owns exactly one named hook in agy's global hooks.json and leaves
-// every other key untouched. The command degrades to a passthrough `allow`
-// when the Hoxi binary is gone, so agy and the IDE keep working after an
-// uninstall (a failing hook would turn every command into a tool error).
+// every other key untouched. Outside Hoxi sessions (HOXI_RUNNER_SESSION_ID
+// unset), the shell wrapper immediately returns a passthrough `allow` without
+// spawning Hoxi, so terminal/IDE agy keeps working even after an uninstall.
+// Inside Hoxi sessions, a missing binary falls back to HOXI_HOOK_BIN or the
+// installed app bundle and otherwise fails closed (`deny`) with a clear reason.
 
 var (
 	agyHookMu       sync.Mutex
@@ -42,19 +44,121 @@ type AgyHookStatus struct {
 	Error      string `json:"error,omitempty"`
 }
 
+func currentHookExecutable() (string, error) {
+	agyHookMu.Lock()
+	fn := hookExecutable
+	agyHookMu.Unlock()
+	return fn()
+}
+
+func looksLikeGoTestBinary(exe string) bool {
+	lower := strings.ToLower(strings.TrimSpace(exe))
+	return strings.HasSuffix(lower, ".test") || strings.HasSuffix(lower, ".test.exe")
+}
+
+func usableExecutableForOS(goos, raw string) (string, bool) {
+	p := strings.TrimSpace(raw)
+	if p == "" {
+		return "", false
+	}
+	resolved, err := filepath.EvalSymlinks(p)
+	if err != nil || strings.TrimSpace(resolved) == "" {
+		return "", false
+	}
+	st, err := os.Stat(resolved)
+	if err != nil || st.IsDir() {
+		return "", false
+	}
+	if goos != "windows" && st.Mode()&0o111 == 0 {
+		return "", false
+	}
+	return resolved, true
+}
+
+func fallbackHookExecutables(goos, staleExe, homeDir, localAppData, programFiles string) []string {
+	var raw []string
+	switch goos {
+	case "darwin":
+		bundles := []string{"Hoxi.app", "Hoxi Dev.app"}
+		if strings.Contains(staleExe, "Hoxi Dev.app") || strings.Contains(staleExe, "Hoxi-Dev.app") {
+			bundles = []string{"Hoxi Dev.app", "Hoxi.app"}
+		}
+		roots := []string{"/Applications"}
+		if h := strings.TrimSpace(homeDir); h != "" {
+			roots = append(roots, filepath.Join(h, "Applications"))
+		}
+		for _, bundle := range bundles {
+			for _, root := range roots {
+				raw = append(raw, filepath.Join(root, bundle, "Contents", "MacOS", "Hoxi"))
+			}
+		}
+	case "windows":
+		if d := strings.TrimSpace(localAppData); d != "" {
+			raw = append(raw, filepath.Join(d, "Programs", "Hoxi", "Hoxi.exe"))
+		}
+		if d := strings.TrimSpace(programFiles); d != "" {
+			raw = append(raw, filepath.Join(d, "Hoxi", "Hoxi.exe"))
+		}
+	}
+	seen := make(map[string]bool, len(raw))
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		if item == "" || seen[item] {
+			continue
+		}
+		seen[item] = true
+		out = append(out, item)
+	}
+	return out
+}
+
+func resolveHookExecutable(goos, livePath, osExe string, fallbacks []string) (string, error) {
+	if usable, ok := usableExecutableForOS(goos, livePath); ok {
+		return usable, nil
+	}
+	if usable, ok := usableExecutableForOS(goos, osExe); ok {
+		return usable, nil
+	}
+	for _, cand := range fallbacks {
+		if usable, ok := usableExecutableForOS(goos, cand); ok {
+			return usable, nil
+		}
+	}
+	reported := firstNonEmptyStr(strings.TrimSpace(osExe), strings.TrimSpace(livePath), "hoxi")
+	return "", fmt.Errorf("Hoxi executable %q no longer exists on disk; restart Hoxi from its installed application", reported)
+}
+
 func defaultHookExecutable() (string, error) {
-	exe, err := os.Executable()
-	if err != nil {
-		return "", err
+	live := liveProcessExecutablePath()
+	osExe, osErr := os.Executable()
+	home, _ := os.UserHomeDir()
+	fallbacks := fallbackHookExecutables(
+		runtime.GOOS,
+		firstNonEmptyStr(live, osExe),
+		home,
+		os.Getenv("LOCALAPPDATA"),
+		os.Getenv("ProgramFiles"),
+	)
+	exe, err := resolveHookExecutable(runtime.GOOS, live, osExe, fallbacks)
+	if err != nil && osErr != nil && strings.TrimSpace(live) == "" {
+		return "", osErr
 	}
-	if real, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = real
-	}
-	return exe, nil
+	return exe, err
 }
 
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func defaultShellFallbacksForOS(goos, exe string) []string {
+	if goos != "darwin" {
+		return nil
+	}
+	const prodApp = "/Applications/Hoxi.app/Contents/MacOS/Hoxi"
+	if filepath.Clean(exe) == prodApp {
+		return nil
+	}
+	return []string{prodApp}
 }
 
 func agyHookCommand(exe string) string {
@@ -62,12 +166,44 @@ func agyHookCommand(exe string) string {
 }
 
 func agyHookCommandForOS(goos, exe string) string {
+	return agyHookCommandWithFallbacks(goos, exe, defaultShellFallbacksForOS(goos, exe))
+}
+
+func agyHookCommandWithFallbacks(goos, exe string, fallbacks []string) string {
+	denyRaw := string(marshalJSON(agyhook.Decision{
+		Decision: "deny",
+		Reason:   agyhook.MissingBinaryReason,
+	}, false))
 	if goos == "windows" {
 		q := `"` + strings.ReplaceAll(exe, `"`, `""`) + `"`
-		return fmt.Sprintf(`if defined %s (if exist %s (%s %s) else (echo {"decision":"allow"})) else (echo {"decision":"allow"})`, agyhook.EnvSessionID, q, q, agyhook.Subcommand)
+		return fmt.Sprintf(
+			`if not defined %s (echo {"decision":"allow"}) else if exist %s (%s %s) else if defined %s (if exist "%%%s%%" ("%%%s%%" %s) else (echo %s)) else (echo %s)`,
+			agyhook.EnvSessionID,
+			q, q, agyhook.Subcommand,
+			agyhook.EnvHookBin, agyhook.EnvHookBin, agyhook.EnvHookBin, agyhook.Subcommand,
+			denyRaw,
+			denyRaw,
+		)
 	}
 	q := shellQuote(exe)
-	return fmt.Sprintf(`[ -n "$%s" ] && [ -x %s ] && exec %s %s || echo '{"decision":"allow"}'`, agyhook.EnvSessionID, q, q, agyhook.Subcommand)
+	branches := []string{
+		fmt.Sprintf(`elif [ -x %s ]; then exec %s %s`, q, q, agyhook.Subcommand),
+		fmt.Sprintf(`elif [ -n "$%s" ] && [ -x "$%s" ]; then exec "$%s" %s`, agyhook.EnvHookBin, agyhook.EnvHookBin, agyhook.EnvHookBin, agyhook.Subcommand),
+	}
+	for _, fb := range fallbacks {
+		fb = strings.TrimSpace(fb)
+		if fb == "" || fb == exe {
+			continue
+		}
+		qfb := shellQuote(fb)
+		branches = append(branches, fmt.Sprintf(`elif [ -x %s ]; then exec %s %s`, qfb, qfb, agyhook.Subcommand))
+	}
+	return fmt.Sprintf(
+		`if [ -z "$%s" ]; then echo '{"decision":"allow"}'; %s; else echo %s; fi`,
+		agyhook.EnvSessionID,
+		strings.Join(branches, "; "),
+		shellQuote(denyRaw),
+	)
 }
 
 // marshalJSON keeps `&&` and quotes readable in the user's hooks.json.
@@ -141,12 +277,6 @@ func AgyApprovalHookStatus() AgyHookStatus {
 
 func agyHookStatusLocked() AgyHookStatus {
 	st := AgyHookStatus{Path: agyHooksPathFor()}
-	exe, err := hookExecutable()
-	if err != nil {
-		st.Error = err.Error()
-		return st
-	}
-	st.Executable = exe
 	if st.Path == "" {
 		st.Error = "cannot resolve Antigravity config directory"
 		return st
@@ -158,6 +288,12 @@ func agyHookStatusLocked() AgyHookStatus {
 	}
 	cur, ok := doc[agyHookName]
 	st.Installed = ok
+	exe, exeErr := hookExecutable()
+	if exeErr != nil {
+		st.Error = exeErr.Error()
+		return st
+	}
+	st.Executable = exe
 	st.Current = ok && sameJSON(cur, desiredAgyHook(exe))
 	return st
 }
@@ -182,23 +318,27 @@ func InstallAgyApprovalHook() (AgyHookStatus, error) {
 	if err := writeAgyHooksDoc(st.Path, doc, mode); err != nil {
 		return st, err
 	}
+	agyHookWarned = false
 	return agyHookStatusLocked(), nil
 }
 
 func UninstallAgyApprovalHook() (AgyHookStatus, error) {
 	agyHookMu.Lock()
 	defer agyHookMu.Unlock()
-	st := agyHookStatusLocked()
-	if st.Error != "" || !st.Installed {
-		return st, nil
+	path := agyHooksPathFor()
+	if path == "" {
+		return agyHookStatusLocked(), nil
 	}
-	doc, mode, err := readAgyHooksDoc(st.Path)
+	doc, mode, err := readAgyHooksDoc(path)
 	if err != nil {
-		return st, err
+		return agyHookStatusLocked(), nil
+	}
+	if _, ok := doc[agyHookName]; !ok {
+		return agyHookStatusLocked(), nil
 	}
 	delete(doc, agyHookName)
-	if err := writeAgyHooksDoc(st.Path, doc, mode); err != nil {
-		return st, err
+	if err := writeAgyHooksDoc(path, doc, mode); err != nil {
+		return agyHookStatusLocked(), err
 	}
 	return agyHookStatusLocked(), nil
 }

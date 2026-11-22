@@ -27,6 +27,7 @@ import 'hoxi_convoy_adapter.dart';
 import 'hoxi_git_artifact_adapter.dart';
 
 part 'hoxi_session_turn_adapter.dart';
+part 'hoxi_session_list_adapter.dart';
 
 /// Hoxi 节点协议适配器
 /// 将 Hoxi Gateway (/api/hoxi/* 及 OpenCode 接口) 转换为移动端现有的领域模型

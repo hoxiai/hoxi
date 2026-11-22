@@ -308,7 +308,7 @@ func DiscoverAgyCLIModels(forceRefresh bool) (slugs []string, displayBySlug map[
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cancel()
 	cmd := subproc.CommandContext(ctx, agyBin, "models")
-	cmd.Env = WithUserBinPath(os.Environ())
+	cmd.Env = WithSystemProxy(WithUserBinPath(os.Environ()))
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	if err != nil && len(bytes.TrimSpace(out)) == 0 {

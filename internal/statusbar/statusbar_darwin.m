@@ -116,47 +116,26 @@ static NSImage *hoxi_create_statusbar_icon(void) {
             return NO;
         }
         CGContextSaveGState(cg);
-        // Fit the mark itself, rather than the app icon's padded 64-point canvas.
-        CGFloat scale = size.width / 48.0;
-        CGContextScaleCTM(cg, scale, scale);
-        CGContextTranslateCTM(cg, -8.0, -4.0);
-
         [[NSColor blackColor] setFill];
-        [[NSColor blackColor] setStroke];
 
-        // 1. Roof (合之檐)
-        CGMutablePathRef roof = CGPathCreateMutable();
-        CGPathMoveToPoint(roof, NULL, 32.0, 8.0);
-        CGPathAddLineToPoint(roof, NULL, 52.0, 21.0);
-        CGPathAddLineToPoint(roof, NULL, 44.0, 21.0);
-        CGPathAddLineToPoint(roof, NULL, 32.0, 13.0);
-        CGPathAddLineToPoint(roof, NULL, 20.0, 21.0);
-        CGPathAddLineToPoint(roof, NULL, 12.0, 21.0);
-        CGPathCloseSubpath(roof);
-        CGContextAddPath(cg, roof);
-        CGContextFillPath(cg);
-        CGPathRelease(roof);
-
-        // 2. Eyes (H之目)
-        CGPathRef leftEye = CGPathCreateWithRoundedRect(CGRectMake(20.0, 25.0, 6.5, 12.0), 3.25, 3.25, NULL);
-        CGContextAddPath(cg, leftEye);
-        CGContextFillPath(cg);
-        CGPathRelease(leftEye);
-
-        CGPathRef rightEye = CGPathCreateWithRoundedRect(CGRectMake(37.5, 25.0, 6.5, 12.0), 3.25, 3.25, NULL);
-        CGContextAddPath(cg, rightEye);
-        CGContextFillPath(cg);
-        CGPathRelease(rightEye);
-
-        // 3. Smile (喜之弧)
-        CGMutablePathRef smile = CGPathCreateMutable();
-        CGPathMoveToPoint(smile, NULL, 19.0, 42.5);
-        CGPathAddCurveToPoint(smile, NULL, 23.0, 50.0, 41.0, 50.0, 45.0, 42.5);
-        CGContextAddPath(cg, smile);
-        CGContextSetLineWidth(cg, 5.5);
-        CGContextSetLineCap(cg, kCGLineCapRound);
-        CGContextStrokePath(cg);
-        CGPathRelease(smile);
+        // 7x8 fine dot-matrix H (38 circles), crisp at 18pt Retina template resolution.
+        const CGFloat step = 1.95;
+        const CGFloat radius = 0.70;
+        const CGFloat startX = (18.0 - 6.0 * step) / 2.0;
+        const CGFloat startY = (18.0 - 7.0 * step) / 2.0;
+        for (int row = 0; row < 8; row++) {
+            for (int col = 0; col < 7; col++) {
+                BOOL leftStem = col <= 1;
+                BOOL rightStem = col >= 5;
+                BOOL crossBar = (row == 3 || row == 4) && col >= 2 && col <= 4;
+                if (!leftStem && !rightStem && !crossBar) {
+                    continue;
+                }
+                CGFloat cx = startX + (CGFloat)col * step;
+                CGFloat cy = startY + (CGFloat)row * step;
+                CGContextFillEllipseInRect(cg, CGRectMake(cx - radius, cy - radius, radius * 2.0, radius * 2.0));
+            }
+        }
 
         CGContextRestoreGState(cg);
         return YES;

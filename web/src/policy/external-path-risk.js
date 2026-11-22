@@ -279,16 +279,39 @@ const TOOL_ARG_PATH_KEYS = [
   "Directory", "directory", "NotebookPath", "notebook_path",
 ];
 
-export function extractToolArgPaths(rawArgs) {
-  let obj = rawArgs;
+function toolArgsObject(rawArgs) {
   if (typeof rawArgs === "string" && rawArgs.trim().startsWith("{")) {
     try {
-      obj = JSON.parse(rawArgs);
+      return JSON.parse(rawArgs);
     } catch {
-      return [];
+      return null;
     }
   }
-  if (!obj || typeof obj !== "object") return [];
+  return rawArgs && typeof rawArgs === "object" ? rawArgs : null;
+}
+
+export function hasRiskySearchSelector(tool, rawArgs) {
+  const args = toolArgsObject(rawArgs);
+  if (!args) return false;
+  const keys = ["glob", "Glob", "include", "Include"];
+  if (tool !== "grep" && tool !== "search_file_content") keys.push("pattern", "Pattern");
+  for (const key of keys) {
+    for (const value of Array.isArray(args[key]) ? args[key] : [args[key]]) {
+      if (typeof value !== "string") continue;
+      let p = value.trim();
+      if (p.startsWith('"') && p.endsWith('"')) {
+        try { p = JSON.parse(p).trim(); } catch { return true; }
+      }
+      p = p.replaceAll("\\", "/");
+      if (p.startsWith("/") || p.startsWith("~") || p[1] === ":" || `/${p}/`.includes("/../") || isSecretPath(p)) return true;
+    }
+  }
+  return false;
+}
+
+export function extractToolArgPaths(rawArgs) {
+  const obj = toolArgsObject(rawArgs);
+  if (!obj) return [];
   const out = [];
   for (const key of TOOL_ARG_PATH_KEYS) {
     const val = obj[key];

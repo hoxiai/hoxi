@@ -27,10 +27,11 @@ import {
   ActionIconButton,
   extractCommand, extractDescription,
   extractShellOutput, extractTargetFile, formatToolDisplayName, getDirectory, getFilename,
-  hasDistinctShellDescription, InlineDiagnosticsDisplay, isBrowserTool, isComputerTool, isEditingTool, isImageGenTool, isQuestionTool, isReadTool, isShellTool, isShellAwaitingFirstOutput,
+  hasDistinctShellDescription, InlineDiagnosticsDisplay, isBrowserTool, isComputerTool, isEditingTool, isQuestionTool, isReadTool, isShellTool, isShellAwaitingFirstOutput,
   isTaskTool, isTodoTool, kiloToolIconName, processCarriageReturns, resolveToolMediaAttachments,
   ToolCardExpandedBody, type ToolPart,
 } from "./tool-card-helpers";
+import ToolMissingMediaCard from "./ToolMissingMediaCard";
 import {
   extractTargetFiles, resolveLoadedContextFiles, resolveReadLineRange, resolveToolArgPills,
   resolveToolFileDiagnostics, resolveToolFileDiff, resolveToolFileDiffs,
@@ -51,7 +52,7 @@ const MAX_TOOL_CARD_EXPANSION_ENTRIES = 512;
 const toolCardExpansion = new Map<string, boolean>();
 
 export default function ToolCard(props: { part: ToolPart; defaultExpanded?: boolean }) {
-  const initiallyExpanded = toolCardExpansion.get(props.part.id) ?? Boolean(props.defaultExpanded || isImageGenTool(props.part.tool));
+  const initiallyExpanded = toolCardExpansion.get(props.part.id) ?? Boolean(props.defaultExpanded);
   const [expanded, setExpandedSignal] = createSignal(initiallyExpanded);
   const setExpanded = (next: boolean) => {
     if (toolCardExpansion.has(props.part.id)) {
@@ -519,13 +520,13 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
               </ActionIconButton>
             </Show>
 
-            <Show when={!expanded() && mediaAttachments().length > 0}>
+            <Show when={!expanded() && mediaAttachments().some((a) => a.mime.startsWith("image/"))}>
               <ActionIconButton
                 variant="accent"
                 label={t("timeline.previewImageTooltip")}
                 onClick={(e) => {
                   e.stopPropagation();
-                  const first = mediaAttachments()[0];
+                  const first = mediaAttachments().find((a) => a.mime.startsWith("image/"));
                   if (first) openImagePreview({ src: first.url, alt: first.filename || props.part.tool });
                 }}
               >
@@ -606,6 +607,8 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
             {t("toolCard.outputPendingHint")}
           </div>
         </Show>
+
+        <ToolMissingMediaCard part={props.part} />
 
         {/* Inline nested step list for Subagent `task` tool calls */}
         <Show when={everExpanded() && isTask() && childSessionID()}>

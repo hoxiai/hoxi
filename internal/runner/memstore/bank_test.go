@@ -11,6 +11,15 @@ import (
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
+func TestNativeMemoryNotesKeepLegacyDocuments(t *testing.T) {
+	const note = "## Release notes\nUse the existing rounding rule"
+	for _, baseline := range []string{"", note, "# Hoxi Session Memory Baseline\n"} {
+		if got := nativeMemoryNotes(note, baseline); got != note {
+			t.Fatalf("legacy note lost: %q", got)
+		}
+	}
+}
+
 func TestManualSessionMemorySurvivesAutomaticSync(t *testing.T) {
 	t.Parallel()
 	project := t.TempDir()
@@ -30,7 +39,7 @@ func TestManualSessionMemorySurvivesAutomaticSync(t *testing.T) {
 	SyncSessionMemoryRecord(rec)
 
 	target := hoxipaths.ProjectSessionMemoryFile(project, sid)
-	edited := "# User-edited memory\n- MANUAL_RULE_MARKER_987\n"
+	edited := "# User-edited memory\n## Guidelines\n- MANUAL_RULE_MARKER_987\n"
 	if _, _, err := SaveMemoryDocument(project, "session", sid, edited); err != nil {
 		t.Fatal(err)
 	}
@@ -51,6 +60,11 @@ func TestManualSessionMemorySurvivesAutomaticSync(t *testing.T) {
 	}
 	if !strings.Contains(string(got), "Completed first pass") {
 		t.Fatalf("expected updated automatic turn summary alongside manual notes, got:\n%s", string(got))
+	}
+
+	_, notes := NativeMemoryBlocks(rec, false)
+	if !strings.Contains(notes, strings.TrimSpace(edited)) || strings.Contains(notes, autoSessionMemoryHeading) || strings.Contains(notes, "Completed first pass") {
+		t.Fatalf("expected the original authored section alone: %q", notes)
 	}
 
 	// Also verify in-section manual additions inside the 8-dimension structure survive.
@@ -108,6 +122,15 @@ func TestManualCurrentWorkAndStandardSectionEditsSurviveAutomaticSync(t *testing
 	}
 	if !strings.Contains(string(got), "MANUAL_CURRENT_WORK_MARKER") {
 		t.Fatalf("expected manual Current Work edit to survive sync, got:\n%s", string(got))
+	}
+
+	_, ordinary := NativeMemoryBlocks(rec, false)
+	if !strings.Contains(ordinary, "MANUAL_CURRENT_WORK_MARKER") || strings.Contains(ordinary, "Implement a feature") {
+		t.Fatalf("ordinary continuation must send just the authored note: %q", ordinary)
+	}
+	_, recovering := NativeMemoryBlocks(rec, true)
+	if !strings.Contains(recovering, "MANUAL_CURRENT_WORK_MARKER") || !strings.Contains(recovering, "Implement a feature") {
+		t.Fatalf("recovery must also send automatic context: %q", recovering)
 	}
 
 	// Ensure it also survives a subsequent turn where assistant summary updates.

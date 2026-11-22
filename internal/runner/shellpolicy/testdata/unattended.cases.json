@@ -132,5 +132,7 @@
   {"command": "node -e 'console.log(process[\"env\"])'", "expect": "deny", "category": "dynamic"},
   {"command": "node -e 'globalThis[\"ev\"+\"al\"](\"1\")'", "expect": "deny", "category": "dynamic"},
   {"command": "python3 -c 'open(\".e\"+\"nv\",\"r\").read()'", "expect": "deny", "category": "secret"},
-  {"command": "python3 -c 'open(\".git/hooks/pre-commit\",\"w\").write(\"echo hi\")'", "expect": "deny", "category": "secret"}
+  {"command": "python3 -c 'open(\".git/hooks/pre-commit\",\"w\").write(\"echo hi\")'", "expect": "deny", "category": "secret"},
+  {"command": "cat ~/.hoxi/media-roles.json", "expect": "deny", "category": "secret"},
+  {"command": "cat ~/.hoxi/intake.json", "expect": "deny", "category": "secret"}
 ]

@@ -7,7 +7,6 @@ import {
   activeWorkspaceFolders,
   getCachedProjectSessions,
   isSessionArchived,
-  newIsolatedSession,
   normalizeFolderPath,
   openCreateWorkspaceModal,
   openEditWorkspaceModal,
@@ -22,11 +21,9 @@ import {
   workspaceDisplayName,
   workspaceIdentityColor,
 } from "../../store/workspace";
-import type { SessionInfo } from "../../services/sse-types";
 import { Icon, Spinner } from "../icons";
 import {
   basename,
-  dayLabel,
   FolderIcon,
   resolveActiveRootSessionID,
   shortenPath,
@@ -36,9 +33,8 @@ import { SessionNavItem } from "./SessionNavItem";
 import { useAnchoredPopover } from "./anchored-popover";
 import { WorkspaceActionMenu } from "./MultiProjectItem";
 import { t } from "../../i18n";
-import { SessionHistoryList, useSessionHistory } from "./SessionHistory";
-import { compareSessionRunning } from "./session-history";
-import { matchesSessionQueryText, matchesSessionSearch } from "./session-search";
+import { ArchivedSessionsDrawer, SessionHistoryList, useSessionHistory } from "./SessionHistory";
+import { matchesSessionSearch } from "./session-search";
 
 export default function SingleProjectNavView(props: {
   allProjects: ProjectNavEntry[];
@@ -337,55 +333,28 @@ export default function SingleProjectNavView(props: {
           </SessionHistoryList>
         </Show>
 
-        <Show when={archivedSessions().length > 0}>
-          <div class="pt-1 border-t border-[var(--border-subtle)]/40">
-            <button
-              type="button"
-              onClick={() => setShowArchived((v) => !v)}
-              class="w-full flex items-center justify-between gap-1.5 rounded-lg px-2 py-1 text-[12px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/50 transition-colors cursor-pointer"
-            >
-              <div class="flex items-center gap-1.5">
-                <span
-                  class="hoxi-chevron"
-                  data-open={showArchived() || Boolean(props.filterQuery.trim()) ? "true" : "false"}
-                >
-                  <Icon name="chevron-right" size="small" class="w-3 h-3" />
-                </span>
-                <Icon name="archive" size="small" class="w-3 h-3 text-[var(--text-faint)]" />
-                <span>{t("leftNav.archivedSessions")}</span>
-              </div>
-              <span class="rounded-full bg-[var(--bg-inset)] px-1.5 py-0.2 text-[11px] font-mono text-[var(--text-faint)]">
-                {archivedSessions().length}
-              </span>
-            </button>
-
-            <div
-              class="hoxi-drawer-grid"
-              data-open={showArchived() || Boolean(props.filterQuery.trim()) ? "true" : "false"}
-              aria-hidden={!(showArchived() || Boolean(props.filterQuery.trim()))}
-            >
-              <div class="min-h-0 overflow-hidden">
-                <div class="mt-1 space-y-0.5">
-                  <For each={archivedSessions()}>
-                    {(session) => (
-                      <SessionNavItem
-                        session={session}
-                        active={isSelectedSession(session.id)}
-                        canDelete={true}
-                        isArchived={true}
-                        showBranchIcon={true}
-                        pendingSessions={props.pendingSessions}
-                        onSelect={() => void selectSession(session.id)}
-                        onUnarchive={props.onUnarchive}
-                        onDiscard={props.onDiscard}
-                      />
-                    )}
-                  </For>
-                </div>
-              </div>
-            </div>
-          </div>
-        </Show>
+        <ArchivedSessionsDrawer
+          projectKey={workspace.rootDir || "__single__"}
+          sessions={archivedSessions()}
+          open={showArchived() || Boolean(props.filterQuery.trim())}
+          filterQuery={props.filterQuery}
+          bordered={true}
+          onToggle={() => setShowArchived((v) => !v)}
+        >
+          {(session) => (
+            <SessionNavItem
+              session={session}
+              active={isSelectedSession(session.id)}
+              canDelete={true}
+              isArchived={true}
+              showBranchIcon={true}
+              pendingSessions={props.pendingSessions}
+              onSelect={() => void selectSession(session.id)}
+              onUnarchive={props.onUnarchive}
+              onDiscard={props.onDiscard}
+            />
+          )}
+        </ArchivedSessionsDrawer>
 
         {/* Bottom + Import External Task Button */}
         <div class="pt-1">
@@ -401,147 +370,5 @@ export default function SingleProjectNavView(props: {
         </div>
       </div>
     </>
-  );
-}
-
-export function RecentTasksNavView(props: {
-  allProjects: ProjectNavEntry[];
-  projectSessions: Record<string, SessionInfo[]>;
-  filterQuery: string;
-  pendingSessions: Set<string>;
-  onSelectSession: (path: string, sessionID: string) => void;
-  onArchiveSession: (path: string, ev: MouseEvent, sessionID: string) => void;
-  onDiscardSession: (path: string, ev: MouseEvent, sessionID: string) => Promise<void> | void;
-}) {
-  const isSelectedSession = createSelector<string | null, string>(() => resolveActiveRootSessionID());
-
-  const recentData = createMemo(() => {
-    const q = props.filterQuery.trim().toLowerCase();
-    const sessions: SessionInfo[] = [];
-    const projBySession = new Map<string, ProjectNavEntry>();
-    const subagentsByRoot = new Map<string, SessionInfo[]>();
-    const activeRoot = normalizeFolderPath(workspace.rootDir);
-
-    for (const proj of props.allProjects) {
-      const normProjPath = normalizeFolderPath(proj.path);
-      const isActive = normProjPath === activeRoot;
-      const list =
-        isActive && !workspace.bootstrappingSessions
-          ? workspace.sessions
-          : props.projectSessions[normProjPath] || props.projectSessions[proj.path] || [];
-      const { roots, subagentsByRoot: projSubagents } = partitionCodeSessions(list);
-      for (const s of roots) {
-        if (isSessionArchived(s)) continue;
-        const subs = projSubagents.get(s.id);
-        if (subs && subs.length > 0) {
-          subagentsByRoot.set(s.id, subs);
-        }
-        if (
-          q &&
-          !matchesSessionQueryText(s, q) &&
-          !proj.name.toLowerCase().includes(q) &&
-          !subs?.some((sub) => matchesSessionQueryText(sub, q))
-        ) {
-          continue;
-        }
-        sessions.push(s);
-        projBySession.set(s.id, proj);
-      }
-    }
-
-    sessions.sort(
-      (a, b) =>
-        compareSessionRunning(a, b, workspace.statusBySession) ||
-        (b.time.updated || b.time.created) -
-        (a.time.updated || a.time.created)
-    );
-
-    return { sessions, projBySession, subagentsByRoot };
-  });
-
-  const recentSessions = createMemo(
-    () => recentData().sessions,
-    [],
-    { equals: (a, b) => a.length === b.length && a.every((s, i) => s === b[i]) }
-  );
-
-  return (
-    <div class="sidebar-scroll hoxi-view-enter flex-1 min-h-0 overflow-y-auto pl-1 pr-2 py-1 space-y-0.5">
-      <Show
-        when={recentSessions().length > 0}
-        fallback={
-          <div class="px-3 py-6 text-center text-[12px] text-[var(--text-faint)]">
-            {t("leftNav.noThreads")}
-          </div>
-        }
-      >
-        <For each={recentSessions()}>
-          {(session, index) => {
-            const proj = () => recentData().projBySession.get(session.id);
-            const isActiveProj = () =>
-              normalizeFolderPath(proj()?.path) ===
-              normalizeFolderPath(workspace.rootDir);
-            const label = createMemo(() => {
-              const current = dayLabel(session.time.updated || session.time.created);
-              const previous = recentSessions()[index() - 1];
-              const prevLabel = previous
-                ? dayLabel(previous.time.updated || previous.time.created)
-                : "";
-              return prevLabel === current ? "" : current;
-            });
-            return (
-              <div class={label() && index() > 0 ? "pt-2 space-y-0.5" : "space-y-0.5"}>
-                <Show when={label()}>
-                  <div class="px-2 py-0.5 text-[11px] font-medium text-[var(--text-faint)]">
-                    {label()}
-                  </div>
-                </Show>
-                <SessionNavItem
-                  session={session}
-                  active={
-                    isActiveProj() && isSelectedSession(session.id)
-                  }
-                  canDelete={true}
-                  isArchived={false}
-                  showBranchIcon={true}
-                  pendingSessions={props.pendingSessions}
-                  subagents={recentData().subagentsByRoot.get(session.id)}
-                  filterQuery={props.filterQuery}
-                  onSelect={() => {
-                    const p = proj()?.path;
-                    if (p) props.onSelectSession(p, session.id);
-                  }}
-                  onSelectSubagent={(subID) => {
-                    const p = proj()?.path;
-                    if (p) props.onSelectSession(p, subID);
-                  }}
-                  onArchive={(ev, id) => {
-                    const p = proj()?.path;
-                    if (p) props.onArchiveSession(p, ev, id);
-                  }}
-                  onDiscard={(ev, id) => {
-                    const p = proj()?.path;
-                    if (p) return props.onDiscardSession(p, ev, id);
-                  }}
-                />
-              </div>
-            );
-          }}
-        </For>
-      </Show>
-
-      {/* Bottom + Import External Task Button */}
-      <div class="pt-1">
-        <button
-          type="button"
-          onClick={() => openHandoffModal()}
-          class="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-[12px] text-[var(--text-faint)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/60 transition-colors cursor-pointer"
-          title={t("leftNav.handoffTooltip")}
-        >
-          <Plus size={13.5} class="shrink-0 text-[var(--accent-primary)]" />
-          <span>{t("leftNav.handoffBtn")}</span>
-        </button>
-      </div>
-    </div>
   );
 }

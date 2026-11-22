@@ -108,7 +108,9 @@
 > **本地优先 · 零强制登录 · 一键纯离线静默**：Hoxi 已内置 Go Native 自研执行引擎，支持 100% 纯本地自备 Key 运行——直接填入你自己的模型 API Key（Anthropic、OpenAI、Gemini、DeepSeek、本地 Ollama/vLLM 或任意 OpenAI 兼容网关），或按需接管本机已安装的 `claude`、`codex`、`opencode`、`gemini`、`agy` CLI 即可开箱使用，无需注册或登录 `hoxi.ai` 账号。源码自编译与开发模式**默认关闭**匿名启动上报，还可在 **设置 → 网络与隐私**（或设置 `HOXI_OFFLINE=1`）开启**纯离线静默模式**一键停止全部 `hoxi.ai` 后台同步与更新请求（详见 [docs/telemetry.md](docs/telemetry.md)）。
 
 ### 1. 直接下载安装（普通用户推荐）
-- **macOS (Apple Silicon `arm64`, `>= 13.0`)**：前往 [GitHub Releases](https://github.com/hoxiai/hoxi/releases) 下载 `Hoxi-<version>-darwin-arm64.dmg`，拖入 `Applications` 即可。
+- **macOS (Apple Silicon `arm64`, `>= 13.0`) & Linux (`x86_64` 桌面 / 无头宿主)**：
+  - **macOS 图形化安装包**：前往 [GitHub Releases](https://github.com/hoxiai/hoxi/releases) 下载 `Hoxi-<version>-darwin-arm64.dmg`，拖入 `Applications` 即可；首次打开后可在 **设置 → 运行环境与更新 → 终端命令行工具 (`hoxi`)** 一键把 `hoxi` 命令绑定到终端（或运行 `/Applications/Hoxi.app/Contents/MacOS/Hoxi install-cli`）。
+  - **macOS / Linux 命令行安装脚本（[`scripts/install.sh`](scripts/install.sh)）**：支持自动拉取官方 SHA-256 校验值、macOS 代码签名验证、Linux 桌面图标 / 无头宿主部署与 `hoxi` 软链注册（支持 `--version`、`--mirror <加速前缀>`、`--proxy`、`--uninstall` 与 `--purge`）。
 - **Windows 10 / 11 (64-bit `x64`)**：
   - **图形化安装包**：下载 [`Hoxi-<version>-windows-amd64-setup.exe`](https://github.com/hoxiai/hoxi/releases) 双击安装（自动部署至 `%LOCALAPPDATA%\Programs\Hoxi`、内置 Go Native 自研引擎与纯 Go SQLite、自动检测安装 WebView2 Runtime、创建桌面与开始菜单快捷方式并注册 `hoxi://` 登录回调协议，支持应用内自更新）。
   - **PowerShell 一行命令安装**：

@@ -6,6 +6,9 @@ import "net/http"
 // pairing token (LAN token for 5417, relay token for 5418) and serves the
 // request under the paired-controller route allow-list.
 func (g *Gateway) servePairedRequest(w http.ResponseWriter, r *http.Request, source string) {
+	if denyRemoteAppProtocol(w, r.URL.Path) {
+		return
+	}
 	if r.URL.RawPath != "" {
 		writeJSONError(w, http.StatusForbidden, "route is not available for remote controllers")
 		return
@@ -37,5 +40,9 @@ func (g *Gateway) servePairedRequest(w http.ResponseWriter, r *http.Request, sou
 // an AES-256-GCM envelope (X-Hoxi-E2EE: v1) so TLS-terminating relays cannot
 // read prompts, diffs, or workspace files.
 func (g *Gateway) ServeIngressRequest(w http.ResponseWriter, r *http.Request) {
+	if isIntakePublicSurfaceRequest(r) {
+		g.serveIntakePublicSurface(w, r)
+		return
+	}
 	g.servePairedRequest(w, r, remoteSourceRelay)
 }

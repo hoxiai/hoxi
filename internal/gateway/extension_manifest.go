@@ -77,7 +77,7 @@ var reservedManifestToolNames = map[string]bool{
 	"glob": true, "grep": true, "bash": true, "task": true, "question": true,
 	"plan_consent": true, "todoread": true, "todowrite": true, "webfetch": true,
 	"mcp_list_tools": true, "mcp_call_tool": true, "hoxi_browser": true,
-	"hoxi_computer": true, "hoxi_image": true, "hoxi_tools": true, "hoxi_data": true,
+	"hoxi_computer": true, "hoxi_image": true, "hoxi_video": true, "hoxi_speech": true, "hoxi_tools": true, "hoxi_data": true,
 	"hoxi_code_index": true, "code_search": true, "symbol_inspect": true,
 	"impact_analysis": true, "skill": true, "goal_report": true,
 }

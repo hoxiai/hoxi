@@ -17,9 +17,11 @@ import {
 import type { FileContentResponse, SpreadsheetSheetPreview } from "../../services/api";
 import type { SnapshotFileDiff } from "../../services/sse-types";
 import {
+  isLoopbackMediaURL,
   openDiffInInspector,
   openExternalFile,
   openImagePreview,
+  resolveMediaPlaybackURL,
   setWorkspace,
   updateInspectedSpreadsheetCells,
   workspace,
@@ -31,12 +33,14 @@ import { highlightCode, fileLanguage, type HighlightedCode } from "../timeline/s
 import { t } from "../../i18n";
 import {
   formatByteSize,
+  isAudioPreviewable,
   isImagePreviewable,
   isMarkdownPath,
   isOfficeDocumentPath,
   isPdfPath,
   isSpreadsheetPath,
   isSvgPath,
+  isVideoPreviewable,
 } from "./file-tree-helpers";
 import MarkdownDocumentReader from "./MarkdownDocumentReader";
 import { PdfPreviewFrame, SpreadsheetPreviewView } from "./SpreadsheetPreviewView";
@@ -66,6 +70,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
   const [copiedContent, setCopiedContent] = createSignal(false);
   const [outlineOpen, setOutlineOpen] = createSignal(false);
   const [editedSheets, setEditedSheets] = createSignal<SpreadsheetSheetPreview[] | null>(null);
+  const [mediaError, setMediaError] = createSignal(false);
   let sourceContainer: HTMLDivElement | undefined;
   let drillPhase = false;
   const drillEnterClass = createMemo(() => {
@@ -78,12 +83,30 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
     void props.previewPath;
     void props.previewMeta;
     setEditedSheets(null);
+    setMediaError(false);
   });
 
   const isBinaryPreview = createMemo(() => props.previewMeta?.type === "binary");
   const isImageFile = createMemo(() =>
     Boolean(props.previewPath && isImagePreviewable(props.previewPath, props.previewMeta))
   );
+  const isVideoFile = createMemo(() => {
+    const p = props.previewMeta?.resolvedPath || props.previewPath || "";
+    return Boolean(p && isVideoPreviewable(p, props.previewMeta?.mimeType));
+  });
+  const isAudioFile = createMemo(() => {
+    const p = props.previewMeta?.resolvedPath || props.previewPath || "";
+    return Boolean(p && !isVideoFile() && isAudioPreviewable(p, props.previewMeta?.mimeType));
+  });
+  const mediaStreamUrl = createMemo(() => {
+    if (!isVideoFile() && !isAudioFile()) return "";
+    const p = props.previewMeta?.resolvedPath || props.previewPath || "";
+    if (!p) return "";
+    const params = new URLSearchParams({ path: p, raw: "1" });
+    if (props.targetDirectory) params.set("directory", props.targetDirectory);
+    if (workspace.activeSessionID) params.set("sessionID", workspace.activeSessionID);
+    return resolveMediaPlaybackURL(`/api/hoxi/file/content?${params.toString()}`);
+  });
   const isPdfFile = createMemo(() => {
     const p = props.previewMeta?.resolvedPath || props.previewPath || "";
     return isPdfPath(p, props.previewMeta?.mimeType);
@@ -492,9 +515,13 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
                   <Show
                     when={props.viewMode === "preview" && isPdfFile() && Boolean(props.previewContent)}
                     fallback={
-                      /* 4. Non-previewable Binary File Card (when no extractedText or in binary fallback) */
+                      /* 3.5. Streaming Video / Audio Preview */
                       <Show
-                        when={isBinaryPreview() && !effectiveSourceText()}
+                        when={(isVideoFile() || isAudioFile()) && Boolean(mediaStreamUrl())}
+                        fallback={
+                          /* 4. Non-previewable Binary File Card (when no extractedText or in binary fallback) */
+                          <Show
+                            when={isBinaryPreview() && !effectiveSourceText()}
                         fallback={
                           /* 5. Markdown or Extracted Office Document Reader */
                           <Show
@@ -604,6 +631,61 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
                               mimeType: props.previewMeta?.mimeType || "application/octet-stream",
                             })}
                           </div>
+                          <div class="flex items-center gap-2 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenExternal("reveal")}
+                              class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-1.5 text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                            >
+                              <FolderOpen size={13} />
+                              <span>{t("inspector.files.revealInFinder")}</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenExternal("open")}
+                              class="inline-flex items-center gap-1.5 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-3 py-1.5 text-[12px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
+                            >
+                              <ExternalLink size={13} />
+                              <span>{t("inspector.files.openInDefaultApp")}</span>
+                            </button>
+                          </div>
+                        </div>
+                      </Show>
+                        }
+                      >
+                        <div class="flex flex-col items-center justify-center p-6 min-h-full bg-[var(--bg-inset)] space-y-3">
+                          <Show
+                            when={!mediaError()}
+                            fallback={
+                              <div class="text-[12px] text-[var(--text-secondary)] text-center max-w-sm">
+                                {t("timeline.videoPlaybackFailed")}
+                              </div>
+                            }
+                          >
+                            <Show
+                              when={isVideoFile()}
+                              fallback={
+                                <audio
+                                  controls
+                                  preload="metadata"
+                                  crossOrigin={isLoopbackMediaURL(mediaStreamUrl()) ? "anonymous" : undefined}
+                                  src={mediaStreamUrl()}
+                                  onError={() => setMediaError(true)}
+                                  class="w-full max-w-md"
+                                />
+                              }
+                            >
+                              <video
+                                controls
+                                preload="metadata"
+                                playsinline
+                                crossOrigin={isLoopbackMediaURL(mediaStreamUrl()) ? "anonymous" : undefined}
+                                src={mediaStreamUrl()}
+                                onError={() => setMediaError(true)}
+                                class="max-w-full max-h-[70vh] rounded-lg border border-[var(--border-subtle)] bg-black object-contain shadow-sm"
+                              />
+                            </Show>
+                          </Show>
                           <div class="flex items-center gap-2 pt-1">
                             <button
                               type="button"

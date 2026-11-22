@@ -238,8 +238,15 @@ func isRoutineAttachmentSubpath(slash string) bool {
 		strings.HasPrefix(slash, ".hoxi/attachments/")
 }
 
+func isRoutinePackageReadSubpath(slash string) bool {
+	return strings.Contains(slash, "/.hoxi/work/packages/") ||
+		strings.Contains(slash, "/.hoxi/work/runtimes/") ||
+		strings.HasPrefix(slash, ".hoxi/work/packages/") ||
+		strings.HasPrefix(slash, ".hoxi/work/runtimes/")
+}
+
 func isRoutineHoxiSubpath(slash string) bool {
-	return isRoutineSkillSubpath(slash) || isRoutineAttachmentSubpath(slash)
+	return isRoutineSkillSubpath(slash) || isRoutineAttachmentSubpath(slash) || isRoutinePackageReadSubpath(slash)
 }
 
 func isProtectedShellReadPath(p string) bool {

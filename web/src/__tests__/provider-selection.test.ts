@@ -3,10 +3,12 @@ import { hoxiAPI, authAPI, runnerAPI, type LocalCLIStatusItem, type ProviderInfo
 import { loadProviders } from "../store/workspace-providers";
 import {
   connectProviderWithKey,
+  disconnectLocalCLIModel,
+  disconnectProvider,
   saveCustomProvider,
   syncLocalCLIModel,
 } from "../store/provider-connections";
-import { setWorkspace, workspace } from "../store/workspace";
+import { localCLIStatusItems, setLocalCLIStatusItems, setWorkspace, workspace } from "../store/workspace";
 import { extractFlattenedModels, resolveEffectiveModelEffort } from "../store/provider-catalog";
 import { desktopAuth, logoutDesktopAccount, setDesktopAuth } from "../store/auth-state";
 import {
@@ -72,6 +74,43 @@ describe("BYOK provider selection", () => {
       for (const effort of ["xhigh", "max"] as const) {
         assertDeepEqual(resolveEffectiveModelEffort({ providerID: "openai", modelID }, effort), effort);
       }
+    });
+  });
+
+  it("preserves Codex priority modelOrder and defaultModel over alphabetical JSON map keys", async () => {
+    await withProviders(async () => {
+      hoxiAPI.listProviders = async () => ({
+        all: [{ id: "openai", name: "OpenAI", models: { "gpt-5": { id: "gpt-5" } } }],
+        connected: ["openai"],
+        default: { openai: "gpt-5" },
+      });
+      hoxiAPI.getHoxiModelsConfig = async () => ({
+        hoxiProviders: {
+          openai: {
+            name: "OpenAI Codex (Local)",
+            npm: "@ai-sdk/openai",
+            options: {
+              defaultModel: "gpt-6.1-sol",
+              modelOrder: ["gpt-6.1-sol", "gpt-6-astra", "gpt-5.5"],
+            },
+            models: {
+              "gpt-5.5": { name: "GPT-5.5 (Codex)", reasoning: true },
+              "gpt-6-astra": { name: "GPT-6-Astra (Codex)", reasoning: true },
+              "gpt-6.1-sol": { name: "GPT-6.1-Sol (Codex)", reasoning: true },
+            },
+          },
+        },
+        openCodeProviders: [],
+        configPath: "test",
+      });
+      await loadProviders(true);
+      assertDeepEqual(workspace.defaultModels.openai, "gpt-6.1-sol");
+      assertDeepEqual(workspace.defaultAI.model, { providerID: "openai", modelID: "gpt-6.1-sol" });
+      const catalog = extractFlattenedModels(workspace.providers, new Set(["openai"]), workspace.globalConfig);
+      assertDeepEqual(
+        catalog.map((m) => m.modelID),
+        ["gpt-6.1-sol", "gpt-6-astra", "gpt-5.5"]
+      );
     });
   });
 
@@ -336,6 +375,138 @@ describe("provider loading account isolation", () => {
     } finally {
       authAPI.logout = oldLogout;
       setDesktopAuth(oldAuth);
+    }
+  });
+});
+
+describe("provider disconnect and CLI re-import lifecycle", () => {
+  it("disconnects Hoxi or OpenCode-imported providers, refreshes CLI status, and reconciles active session model", async () => {
+    const savedCLI = localCLIStatusItems();
+    try {
+      await withProviders(async () => {
+        let disconnectedID = "";
+        let isGrokConnected = true;
+        hoxiAPI.disconnectProvider = async (pid: string) => {
+          disconnectedID = pid;
+          isGrokConnected = false;
+          return { ok: true, providerID: pid };
+        };
+        hoxiAPI.getLocalCLIStatus = async () => ({
+          tools: [
+            {
+              id: "grok-cli",
+              name: "Grok CLI",
+              installed: true,
+              authenticated: true,
+              connected: isGrokConnected,
+              sessionCount: 2,
+              authMode: "xai-grok-cli",
+              providerID: "grok-cli",
+              defaultModel: "grok-4",
+              models: ["grok-4"],
+            },
+          ],
+        });
+        hoxiAPI.listProviders = async () => ({
+          all: [
+            { id: "grok-cli", name: "Grok CLI", models: { "grok-4": { id: "grok-4" } } },
+            { id: "ollama", name: "Ollama", models: { "local-model": { id: "local-model" } } },
+          ] as ProviderInfo[],
+          connected: isGrokConnected ? ["grok-cli", "ollama"] : ["ollama"],
+          default: { ollama: "local-model" },
+        });
+
+        setLocalCLIStatusItems([
+          {
+            id: "grok-cli",
+            name: "Grok CLI",
+            installed: true,
+            authenticated: true,
+            connected: true,
+            sessionCount: 2,
+            authMode: "xai-grok-cli",
+            providerID: "grok-cli",
+          },
+        ]);
+        await loadProviders(true);
+        setWorkspace("defaultAI", "model", { providerID: "grok-cli", modelID: "grok-4" });
+        setWorkspace("activeSessionID", "ses_test_disconnect");
+        setWorkspace("aiBySession", "ses_test_disconnect", {
+          model: { providerID: "grok-cli", modelID: "grok-4" },
+          agent: "build",
+          effort: "",
+        });
+
+        await disconnectProvider("grok-cli");
+
+        assertDeepEqual(disconnectedID, "grok-cli");
+        assertDeepEqual(localCLIStatusItems()[0]?.connected, false);
+        assertDeepEqual(workspace.defaultAI.model, { providerID: "ollama", modelID: "local-model" });
+        assertDeepEqual(workspace.selectedModel, { providerID: "ollama", modelID: "local-model" });
+      });
+    } finally {
+      setLocalCLIStatusItems(savedCLI);
+    }
+  });
+
+  it("supports disconnecting a local CLI import and re-importing with overwrite", async () => {
+    const savedCLI = localCLIStatusItems();
+    try {
+      await withProviders(async () => {
+        const calls: Array<{ op: string; overwrite?: boolean }> = [];
+        let cliConnected = true;
+        const tool: LocalCLIStatusItem = {
+          id: "opencode-cli",
+          name: "OpenCode CLI",
+          installed: true,
+          authenticated: true,
+          connected: true,
+          sessionCount: 1,
+          authMode: "session-handoff",
+          providerID: "mygw",
+          defaultModel: "m-fresh",
+          models: ["m-fresh"],
+        };
+
+        hoxiAPI.disconnectLocalCLI = async (toolID: string) => {
+          calls.push({ op: `disconnect:${toolID}` });
+          cliConnected = false;
+          return { ok: true, toolID, disconnected: ["mygw"] };
+        };
+        hoxiAPI.importLocalCLI = async (toolID: string, opts?: { overwrite?: boolean }) => {
+          calls.push({ op: `import:${toolID}`, overwrite: opts?.overwrite });
+          cliConnected = true;
+          return { ok: true, toolID, providerID: "mygw", models: ["m-fresh"] };
+        };
+        hoxiAPI.getLocalCLIStatus = async () => ({
+          tools: [{ ...tool, connected: cliConnected }],
+        });
+        hoxiAPI.listProviders = async () => ({
+          all: [
+            ...(cliConnected
+              ? [{ id: "mygw", name: "MyGW", models: { "m-fresh": { id: "m-fresh" } } }]
+              : []),
+            { id: "ollama", name: "Ollama", models: { "local-model": { id: "local-model" } } },
+          ] as ProviderInfo[],
+          connected: cliConnected ? ["mygw", "ollama"] : ["ollama"],
+          default: { mygw: "m-fresh", ollama: "local-model" },
+        });
+
+        setWorkspace("defaultAI", "model", { providerID: "mygw", modelID: "m-stale" });
+        const afterDisconnect = await disconnectLocalCLIModel(tool);
+        assertDeepEqual(afterDisconnect[0]?.connected, false);
+        assertDeepEqual(workspace.defaultAI.model, { providerID: "ollama", modelID: "local-model" });
+
+        await syncLocalCLIModel({ ...tool, connected: false }, { overwrite: true });
+        assertDeepEqual(calls, [
+          { op: "disconnect:opencode-cli" },
+          { op: "import:opencode-cli", overwrite: true },
+        ]);
+        assertDeepEqual(localCLIStatusItems()[0]?.connected, true);
+        assertDeepEqual(workspace.selectedModel, { providerID: "mygw", modelID: "m-fresh" });
+      });
+    } finally {
+      setLocalCLIStatusItems(savedCLI);
     }
   });
 });

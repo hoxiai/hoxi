@@ -48,6 +48,7 @@ type InflightTurnEntry struct {
 	ProviderID      string `json:"providerID,omitempty"`
 	ModelID         string `json:"modelID,omitempty"`
 	Effort          string `json:"effort,omitempty"`
+	FastMode        bool   `json:"fastMode,omitempty"`
 	CallerSystem    string `json:"callerSystem,omitempty"`
 	PromptText      string `json:"promptText,omitempty"`
 	ClientRequestID string `json:"clientRequestId,omitempty"`

@@ -110,6 +110,18 @@ abstract class AppLocalizations {
   /// **'Cancel'**
   String get commonCancel;
 
+  /// No description provided for @commonCopy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy'**
+  String get commonCopy;
+
+  /// No description provided for @commonRetry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get commonRetry;
+
   /// No description provided for @commonRefresh.
   ///
   /// In en, this message translates to:
@@ -2365,6 +2377,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Choose from Photo Library'**
   String get chatActionPickGallery;
+
+  /// No description provided for @commonCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied'**
+  String get commonCopied;
+
+  /// No description provided for @chatReportAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Report'**
+  String get chatReportAction;
+
+  /// No description provided for @chatReportedBadge.
+  ///
+  /// In en, this message translates to:
+  /// **'Reported'**
+  String get chatReportedBadge;
 
 }
 

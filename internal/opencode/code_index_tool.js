@@ -1,7 +1,7 @@
 import { tool } from "./plugin_tool.js";
 import { isProtectedPath, isSecretPath, isSensitiveExternalPath } from "../../web/src/policy/permission-policy.js";
 
-const indexActions = ["context", "search", "inspect", "callers", "callees", "impact", "refresh"];
+const indexActions = ["map", "context", "search", "inspect", "callers", "callees", "impact", "refresh"];
 
 function isSensitiveIndexPath(rawPath) {
   if (typeof rawPath !== "string") return false;
@@ -14,6 +14,24 @@ function isSensitiveIndexPath(rawPath) {
 
 export function formatCodeIndexOutput(action, payload) {
   if (!payload || typeof payload !== "object") return JSON.stringify(payload);
+  if (action === "map" && Array.isArray(payload.entries)) {
+    const entries = payload.entries;
+    if (entries.length === 0) return "No indexed code files found for map.";
+    const hdr = payload.pathPrefix
+      ? `Repository Backbone Map [${payload.pathPrefix}] (${entries.length} files):`
+      : `Repository Backbone Map (${entries.length} top of ${payload.files || 0} code files):`;
+    const lines = [hdr];
+    for (const e of entries) {
+      lines.push(`${e.path || ""} (rank ${e.score || 0})`);
+      const syms = Array.isArray(e.symbols) ? e.symbols : [];
+      for (const sym of syms) {
+        const refNote = sym.references > 0 ? ` [${sym.references} refs]` : "";
+        const sig = sym.signature || sym.symbol || "";
+        lines.push(`  L${sym.startLine || 0}-${sym.endLine || 0}${refNote}: ${sig}`);
+      }
+    }
+    return lines.join("\n");
+  }
   if (action === "inspect" && typeof payload.content === "string" && typeof payload.path === "string") {
     const sym = payload.symbol ? ` [${payload.symbol}]` : "";
     const trunc = payload.truncated ? " [truncated]" : "";
@@ -83,7 +101,7 @@ export function formatCodeIndexOutput(action, payload) {
       insp.content,
       `Callees (${callees.length}):`,
       ...(callees.length ? callees.map(fmtCallee) : ["  (none)"]),
-      `Callers (${callers.length}):`,
+      `Callers (${callees.length}):`,
       ...(callers.length ? callers.map(fmtHit) : ["  (none)"]),
       ...(trans.length ? [`Transitive Callers (${trans.length}):`, ...trans.map(fmtTrans)] : []),
       `Tests (${tests.length}):`,
@@ -98,13 +116,15 @@ export function formatCodeIndexOutput(action, payload) {
 
 export function createCodeIndexTool() {
   const indexArgs = {
-    action: tool.schema.enum(indexActions).describe("context | search | inspect | callers | callees | impact | refresh"),
-    query: tool.schema.string().optional().describe("Symbol or keyword query for search or context"),
+    action: tool.schema
+      .enum(indexActions)
+      .describe("map | context | search | inspect | callers | callees | impact | refresh"),
+    query: tool.schema.string().optional().describe("Symbol or keyword query for map focus, search, or context"),
     symbol: tool.schema.string().optional().describe("Symbol name for context, inspect, callers, callees, or impact"),
     path: tool.schema
       .string()
       .optional()
-      .describe("Relative file path (context/inspect/callers/callees/impact) or path prefix (search)"),
+      .describe("Relative file path (context/inspect/callers/callees/impact) or directory prefix (map/search)"),
     startLine: tool.schema.number().finite().optional().describe("1-based start line for inspect"),
     endLine: tool.schema.number().finite().optional().describe("1-based end line for inspect"),
     contextLines: tool.schema
@@ -117,14 +137,14 @@ export function createCodeIndexTool() {
       .number()
       .finite()
       .optional()
-      .describe("Max hits for search, callers, callees, or impact (default 12)"),
-    refresh: tool.schema.boolean().optional().describe("Refresh worktree index before search"),
+      .describe("Max files/hits for map, search, callers, callees, or impact (default 12-16)"),
+    refresh: tool.schema.boolean().optional().describe("Refresh worktree index before map or search"),
   };
   const indexSchema = tool.schema.object(indexArgs);
 
   return tool({
     description:
-      "Navigate workspace code efficiently via the worktree-scoped knowledge graph. Prefer 'context' to fetch a symbol's source, callees, callers, blast radius, and tests in 1 call; or use search -> inspect -> callers/callees/impact -> refresh. Avoids full-repo grep and whole-file reads.",
+      "Navigate workspace code efficiently via the worktree-scoped knowledge graph. Use action='map' first for a PageRank-ordered architectural overview of hub files and key symbols, action='context' to fetch a symbol's source, callees, callers, blast radius, and tests in 1 call, or search -> inspect -> callers/callees/impact -> refresh.",
     args: indexArgs,
     async execute(input, context) {
       const req = indexSchema.parse(input);
@@ -159,6 +179,14 @@ export function createCodeIndexTool() {
         url.searchParams.set("directory", context.directory);
         method = "POST";
         body = JSON.stringify({ directory: context.directory });
+      } else if (req.action === "map") {
+        url = new URL(base + "/api/hoxi/code-index/map");
+        url.searchParams.set("directory", context.directory);
+        if (req.path) url.searchParams.set("path", req.path);
+        const q = req.query || req.symbol || "";
+        if (q) url.searchParams.set("q", q);
+        if (req.limit) url.searchParams.set("limit", String(Math.trunc(req.limit)));
+        if (req.refresh) url.searchParams.set("refresh", "1");
       } else if (req.action === "inspect") {
         url = new URL(base + "/api/hoxi/code-index/inspect");
         url.searchParams.set("directory", context.directory);

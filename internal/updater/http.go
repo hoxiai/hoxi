@@ -31,14 +31,26 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case path == "/native" && r.Method == http.MethodGet:
 		draining := h.draining != nil && h.draining()
+		managed := CurrentManagedInstall()
+		available := NativeAvailable() && managed.Manager == ""
 		_ = json.NewEncoder(w).Encode(struct {
-			Available bool             `json:"available"`
-			Draining  bool             `json:"draining"`
-			Progress  *InstallProgress `json:"progress,omitempty"`
-		}{NativeAvailable(), draining, installProgress.Load()})
+			Available      bool             `json:"available"`
+			Draining       bool             `json:"draining"`
+			ManagedBy      string           `json:"managedBy,omitempty"`
+			UpgradeCommand string           `json:"upgradeCommand,omitempty"`
+			Progress       *InstallProgress `json:"progress,omitempty"`
+		}{available, draining, managed.Manager, managed.UpgradeCommand, installProgress.Load()})
 	case path == "/install" && r.Method == http.MethodPost:
 		started := time.Now()
 		traceUpdate("updater install requested", 0, 0)
+		if managed := CurrentManagedInstall(); managed.Manager != "" {
+			traceUpdate("updater install rejected", http.StatusConflict, time.Since(started))
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error": "managed by " + managed.Manager + "; run: " + managed.UpgradeCommand,
+			})
+			return
+		}
 		if !NativeAvailable() {
 			traceUpdate("updater install rejected", http.StatusServiceUnavailable, time.Since(started))
 			http.Error(w, `{"error":"native updater is not configured"}`, http.StatusServiceUnavailable)

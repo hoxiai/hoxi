@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	indexVersion = 4
+	indexVersion = 6
 	cacheTTL     = 60 * 1000
 )
 
@@ -37,6 +37,7 @@ type document struct {
 }
 
 type cachedIndex struct {
+	goCalls     *goCallCache
 	index       *Index
 	docs        []document
 	postings    map[string][]uint32
@@ -45,6 +46,7 @@ type cachedIndex struct {
 	sortedPaths []string
 	bytes       int64
 	access      uint64
+	builtGen    uint64
 }
 
 const (
@@ -66,7 +68,7 @@ func unpackPosting(p uint32) (docIdx, tf int) {
 func (c *cachedIndex) chunkCount() int { return len(c.docs) }
 
 func buildDocs(index *Index) *cachedIndex {
-	c := &cachedIndex{index: index}
+	c := &cachedIndex{index: index, goCalls: &goCallCache{}}
 	total := 0
 	var approxBytes int64 = 1024
 	var docTokens []map[string]int

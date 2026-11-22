@@ -50,6 +50,7 @@ function cloneQueuedPromptItem(item: QueuedPromptItem): QueuedPromptItem {
     agent: item.agent,
     model: item.model ? { ...item.model } : undefined,
     effort: item.effort,
+    ...(item.fastMode ? { fastMode: true } : {}),
     attachments: (item.attachments ?? []).map((a) => ({ ...a })),
     ...(item.skillSelection ? { skillSelection: { ...item.skillSelection } } : {}),
     ...(item.system ? { system: item.system } : {}),
@@ -100,6 +101,7 @@ export function enqueueSessionPrompt(
     agent?: string;
     model?: SelectedModel;
     effort?: QueuedPromptItem["effort"];
+    fastMode?: boolean;
     attachments?: QueuedPromptAttachment[];
     skillSelection?: SkillSelection;
     system?: string;
@@ -107,6 +109,7 @@ export function enqueueSessionPrompt(
 ): QueuedPromptItem {
   const config = sessionAIConfig(sessionID);
   const model = options?.model || config.model;
+  const fastMode = options?.fastMode ?? config.fastMode;
   const item: QueuedPromptItem = {
     id: `q_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
     sessionID,
@@ -115,6 +118,7 @@ export function enqueueSessionPrompt(
     agent: options?.agent || config.agent,
     model: model ? { ...model } : undefined,
     effort: options?.effort ?? config.effort,
+    ...(fastMode ? { fastMode: true } : {}),
     attachments: (options?.attachments ?? []).map((a) => ({ ...a })),
     ...(options?.skillSelection ? { skillSelection: { ...options.skillSelection } } : {}),
     ...(options?.system?.trim() ? { system: options.system.trim() } : {}),
@@ -215,6 +219,7 @@ export function commitEditingQueuedPromptToQueue(
     agent?: string;
     model?: SelectedModel;
     effort?: QueuedPromptItem["effort"];
+    fastMode?: boolean;
     attachments?: QueuedPromptAttachment[];
     skillSelection?: SkillSelection;
     system?: string;
@@ -225,6 +230,7 @@ export function commitEditingQueuedPromptToQueue(
   editingBySession.delete(sessionID);
   const config = sessionAIConfig(sessionID);
   const model = options.model || entry.item.model || config.model;
+  const fastMode = options.fastMode ?? entry.item.fastMode ?? config.fastMode;
   const sys = options.system?.trim() || entry.item.system?.trim();
   const updated: QueuedPromptItem = {
     id: entry.item.id,
@@ -234,6 +240,7 @@ export function commitEditingQueuedPromptToQueue(
     agent: options.agent || entry.item.agent || config.agent,
     model: model ? { ...model } : undefined,
     effort: options.effort ?? entry.item.effort ?? config.effort,
+    ...(fastMode ? { fastMode: true } : {}),
     attachments: (options.attachments ?? []).map((a) => ({ ...a })),
     ...(options.skillSelection ? { skillSelection: { ...options.skillSelection } } : {}),
     ...(sys ? { system: sys } : {}),

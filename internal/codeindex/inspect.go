@@ -32,10 +32,11 @@ type InspectResponse struct {
 }
 
 type CallerHit struct {
-	Path    string `json:"path"`
-	Symbol  string `json:"symbol,omitempty"`
-	Line    int    `json:"line"`
-	Snippet string `json:"snippet"`
+	Possible bool   `json:"possible,omitempty"`
+	Path     string `json:"path"`
+	Symbol   string `json:"symbol,omitempty"`
+	Line     int    `json:"line"`
+	Snippet  string `json:"snippet"`
 }
 
 type CallersResponse struct {
@@ -113,7 +114,7 @@ func (s *Service) Inspect(directory, relPath, symbol string, startLine, endLine,
 
 	resolvedSymbol := symbol
 	if symbol != "" {
-		symStart, symEnd, matchedSym, ok := findSymbolInLines(lines, symbol)
+		symStart, symEnd, matchedSym, ok := findFileSymbolInLines(cleanRel, lines, symbol)
 		if !ok {
 			return InspectResponse{}, fmt.Errorf("symbol %q not found in %s", symbol, cleanRel)
 		}
@@ -240,6 +241,8 @@ func (s *Service) Callers(directory, symbol, excludePath string, limit int) (Cal
 		sort.Strings(paths)
 	}
 
+	goDecls := c.symbols[strings.ToLower(callIdent)]
+	ambiguousMethod := ambiguousGoMethod(goDecls, callIdent)
 	for _, relPath := range paths {
 		if isProtectedOrSecretRelPath(relPath) || isNonCodeCallersFile(relPath) {
 			continue
@@ -273,10 +276,18 @@ func (s *Service) Callers(directory, symbol, excludePath string, limit int) (Cal
 				if !containsIdentifier(cleaned, callIdent) {
 					continue
 				}
-				if isDeclarationOf(line, callIdent) && (normExclude == "" || relPath == normExclude) {
+				if isDeclarationOf(line, callIdent) && (!strings.HasSuffix(relPath, ".go") || !ambiguousMethod) && (normExclude == "" || relPath == normExclude) {
 					continue
 				}
 				lineNo := ch.StartLine + i
+				possible := false
+				if ambiguousMethod && strings.HasSuffix(relPath, ".go") {
+					var match bool
+					match, possible = c.goCallerMatch(relPath, lineNo, callIdent, symbol, normExclude, goDecls)
+					if !match {
+						continue
+					}
+				}
 				key := fmt.Sprintf("%s:%d", relPath, lineNo)
 				if _, ok := seen[key]; ok {
 					continue
@@ -295,10 +306,11 @@ func (s *Service) Callers(directory, symbol, excludePath string, limit int) (Cal
 					score += 1
 				}
 				hit := CallerHit{
-					Path:    relPath,
-					Symbol:  encSym,
-					Line:    lineNo,
-					Snippet: snippet,
+					Possible: possible,
+					Path:     relPath,
+					Symbol:   encSym,
+					Line:     lineNo,
+					Snippet:  snippet,
 				}
 				if isTest {
 					testMatches = append(testMatches, scoredCaller{hit: hit, score: score})
@@ -355,19 +367,29 @@ func (s *Service) locateSymbolInIndex(directory string, c *cachedIndex, symbol s
 		if cands := c.symbols[lowerTarget]; len(cands) > 0 {
 			best := cands[0]
 			for _, cand := range cands {
-				if cand.Symbol == target {
+				if cand.Receiver+"."+cand.Symbol == symbol {
+					best = cand
+					break
+				}
+				if cand.Symbol == target && !strings.Contains(symbol, ".") {
 					best = cand
 					break
 				}
 			}
+			if isTypeScript(best.Path) && best.Receiver != "" && best.Receiver+"."+best.Symbol == symbol {
+				// The caller reopens and verifies this span against the current file.
+				return best.Path, best.StartLine, best.EndLine, symbol, true
+			}
 			raw, err := os.ReadFile(filepath.Join(directory, filepath.FromSlash(best.Path)))
 			if err == nil {
 				lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
-				if st, en, matched, found := findSymbolInLines(lines, symbol); found {
+				if st, en, matched, found := findFileSymbolInLines(best.Path, lines, symbol); found {
 					return best.Path, st, en, matched, true
 				}
 			}
-			return best.Path, best.StartLine, best.EndLine, best.Symbol, true
+			if !isTypeScript(best.Path) {
+				return best.Path, best.StartLine, best.EndLine, best.Symbol, true
+			}
 		}
 	}
 	paths := c.sortedPaths
@@ -391,7 +413,7 @@ func (s *Service) locateSymbolInIndex(directory string, c *cachedIndex, symbol s
 			continue
 		}
 		lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
-		if st, en, matched, found := findSymbolInLines(lines, symbol); found {
+		if st, en, matched, found := findFileSymbolInLines(relPath, lines, symbol); found {
 			return relPath, st, en, matched, true
 		}
 	}
@@ -449,6 +471,14 @@ func findSymbolInLines(lines []string, symbol string) (startLine, endLine int, r
 	}
 	declIdx := -1
 	matchedSym := ""
+	if shortTarget != "" {
+		recv := strings.TrimSuffix(target, "."+shortTarget)
+		for i, line := range lines {
+			if goReceiverName(line) == recv && extractLineSymbolCandidate(line) == shortTarget {
+				return i + 1, estimateSymbolEndLine(lines, i), target, true
+			}
+		}
+	}
 	// Pass 1: exact case match on declared symbol.
 	for i, line := range lines {
 		sym := extractLineSymbolCandidate(line)

@@ -21,6 +21,12 @@ migrate_working_dir/
 # The .vscode folder contains launch configuration and tasks you configure in
 .vscode/
 
+# Local AI runtime & workspace state
+.opencode/
+.hoxi/
+.claude/
+.agents/
+
 # Flutter/Dart/Pub related
 **/doc/api/
 **/ios/Flutter/.last_build_id

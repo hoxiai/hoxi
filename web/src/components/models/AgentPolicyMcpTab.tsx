@@ -25,6 +25,7 @@ import DeferredList from "../approval/DeferredList";
 import { AgyApprovalHookControls } from "../settings/AgyApprovalHookControls";
 import { ApprovalAuditGrantsSection } from "../settings/ApprovalAuditGrantsSection";
 import {
+  HelpTip,
   SegmentedPills,
   SettingGroup,
   SettingRow,
@@ -137,28 +138,24 @@ export default function AgentPolicyMcpTab() {
           <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-surface)] text-[var(--accent-primary)]">
             <ShieldCheck size={16} />
           </div>
-          <div>
-            <h3 class="text-[13px] font-semibold text-[var(--text-primary)]">
+          <div class="flex items-center gap-2 min-w-0">
+            <h3 class="text-[13px] font-semibold text-[var(--text-primary)] truncate">
               {t("approval.pageTitle")}
             </h3>
-            <p class="text-[12px] text-[var(--text-secondary)]">
-              {t("approval.pageSubtitle")}
-            </p>
+            <HelpTip text={t("approval.pageSubtitle")} />
           </div>
         </div>
 
         {/* 1. Approval Mode Preset */}
         <div class="space-y-2.5">
-          <div class="flex items-center justify-between px-1">
-            <div>
-              <h4 class="text-[13px] font-semibold text-[var(--text-primary)]">
+          <div class="flex items-center justify-between gap-2 px-1">
+            <div class="flex items-center gap-2 min-w-0">
+              <h4 class="text-[13px] font-semibold text-[var(--text-primary)] truncate">
                 {t("approval.presetSectionTitle")}
               </h4>
-              <p class="text-[12px] text-[var(--text-muted)]">
-                {t("approval.presetSectionDesc")}
-              </p>
+              <HelpTip text={t("approval.presetSectionDesc")} />
             </div>
-            <span class="rounded-md bg-[var(--warn-surface)] border border-[var(--warn-border)] px-2 py-0.5 text-[11px] font-medium text-[var(--warn-text)]">
+            <span class="shrink-0 rounded-md bg-[var(--warn-surface)] border border-[var(--warn-border)] px-2 py-0.5 text-[11px] font-medium text-[var(--warn-text)]">
               {t("approval.modeMenuBadge")}
             </span>
           </div>
@@ -171,55 +168,50 @@ export default function AgentPolicyMcpTab() {
                   <button
                     type="button"
                     onClick={() => void onSelectPreset(opt.id)}
-                    class={`flex flex-col justify-between rounded-2xl border p-4 text-left transition-colors cursor-pointer ${
+                    class={`flex items-center justify-between gap-2 rounded-2xl border px-4 py-3.5 text-left transition-colors cursor-pointer ${
                       isSelected()
                         ? "border-[var(--accent-border)] bg-[var(--accent-surface)]/45"
                         : "border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 hover:border-[var(--border-strong)]"
                     }`}
                   >
-                    <div class="space-y-2">
-                      <div class="flex items-center justify-between gap-2">
-                        <div class="flex items-center gap-2">
-                          <span
-                            class={`flex h-7 w-7 items-center justify-center rounded-lg ${
-                              isSelected()
-                                ? opt.id === "trusted" || opt.id === "unattended"
-                                  ? "bg-[var(--danger-text)] text-white"
-                                  : opt.id === "manual"
-                                  ? "bg-[var(--warn-text)] text-white"
-                                  : opt.id === "auto"
-                                    ? "bg-[var(--ok-text)] text-white"
-                                    : "bg-[var(--accent-primary)] text-[var(--accent-foreground)]"
-                                : "bg-[var(--bg-inset)] text-[var(--text-muted)]"
-                            }`}
-                          >
-                            {renderPresetIcon(opt.id, 14)}
-                          </span>
-                          <span class="text-[13px] font-semibold text-[var(--text-primary)]">
-                            {t(opt.labelKey)}
-                          </span>
-                        </div>
-                        <Show when={isSelected()}>
-                          <Check size={14} class="text-[var(--accent-primary)] shrink-0" />
-                        </Show>
-                      </div>
-
-                      <p class="text-[12px] leading-relaxed text-[var(--text-muted)]">
-                        {t(opt.descKey)}
-                      </p>
+                    <div class="flex items-center gap-2 min-w-0">
+                      <span
+                        class={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${
+                          isSelected()
+                            ? opt.id === "trusted" || opt.id === "unattended"
+                              ? "bg-[var(--danger-text)] text-white"
+                              : opt.id === "manual"
+                              ? "bg-[var(--warn-text)] text-white"
+                              : opt.id === "auto"
+                                ? "bg-[var(--ok-text)] text-white"
+                                : "bg-[var(--accent-primary)] text-[var(--accent-foreground)]"
+                            : "bg-[var(--bg-inset)] text-[var(--text-muted)]"
+                        }`}
+                      >
+                        {renderPresetIcon(opt.id, 14)}
+                      </span>
+                      <span class="truncate text-[13px] font-semibold text-[var(--text-primary)]">
+                        {t(opt.labelKey)}
+                      </span>
+                      <HelpTip text={t(opt.descKey)} />
                     </div>
 
-                    <Show when={opt.badgeKey}>
-                      <div class="mt-3 pt-2 border-t border-[var(--border-subtle)]/60 flex items-center">
+                    <div class="flex items-center gap-1.5 shrink-0">
+                      <Show when={opt.badgeKey}>
                         <span
                           class={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
-                            opt.id === "trusted" || opt.id === "unattended" ? "bg-[var(--danger-surface)] text-[var(--danger-text)] border border-[var(--danger-border)]" : "bg-[var(--ok-surface)] text-[var(--ok-text)] border border-[var(--ok-border)]"
+                            opt.id === "trusted" || opt.id === "unattended"
+                              ? "bg-[var(--danger-surface)] text-[var(--danger-text)] border border-[var(--danger-border)]"
+                              : "bg-[var(--ok-surface)] text-[var(--ok-text)] border border-[var(--ok-border)]"
                           }`}
                         >
                           {t(opt.badgeKey!)}
                         </span>
-                      </div>
-                    </Show>
+                      </Show>
+                      <Show when={isSelected()}>
+                        <Check size={14} class="text-[var(--accent-primary)] shrink-0" />
+                      </Show>
+                    </div>
                   </button>
                 );
               }}

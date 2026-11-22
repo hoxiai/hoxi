@@ -61,6 +61,15 @@ export interface MessageError {
 }
 
 export interface MessageTokens {
+  /** Subtotal included in the billing buckets below. */
+  summary?: {
+    input: number;
+    output: number;
+    reasoning: number;
+    cacheRead: number;
+    cacheWrite: number;
+    costUSD: number;
+  };
   total?: number;
   /** Single-step parent context window occupancy when turn buckets hold multi-step billing sums. */
   context?: number;
@@ -85,6 +94,7 @@ export interface MessageInfo {
   modelID?: string;
   providerID?: string;
   agent?: string;
+  serviceTier?: string;
   /** This user message resumes or steers the existing task. */
   continueTask?: boolean;
   mode?: string;

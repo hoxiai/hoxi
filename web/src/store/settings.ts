@@ -39,6 +39,7 @@ export type SettingsTab =
   | "relay"
   | "remote"
   | "extensions"
+  | "app-grants"
   | ProviderModalTab;
 export type ThemeMode = "light" | "dark" | "system";
 export type ColorScheme =

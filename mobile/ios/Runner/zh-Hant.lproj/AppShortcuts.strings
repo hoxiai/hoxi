@@ -1,0 +1,4 @@
+"Start a voice call with ${applicationName}" = "用 ${applicationName} 語音通話";
+"Talk to ${applicationName}" = "和 ${applicationName} 說話";
+"Check pending approvals in ${applicationName}" = "看看 ${applicationName} 有什麼待核准";
+"${applicationName} pending approvals" = "${applicationName} 待核准";

@@ -62,6 +62,9 @@ func BuildGeminiArgs(mode, modelID, effort, externalSessionID string) []string {
 func BuildCodexArgs(mode, modelID, effort, externalThreadID string) []string {
 	return turnstream.BuildCodexArgs(mode, modelID, effort, externalThreadID)
 }
+func BuildCodexArgsWithFast(mode, modelID, effort, externalThreadID string, fastMode bool) []string {
+	return turnstream.BuildCodexArgsWithFast(mode, modelID, effort, externalThreadID, fastMode)
+}
 func BuildOpenCodeCLIArgs(mode, providerID, modelID, effort, externalSessionID string) []string {
 	return turnstream.BuildOpenCodeCLIArgs(mode, providerID, modelID, effort, externalSessionID)
 }

@@ -180,6 +180,35 @@ test("standalone browser plugin", async (t) => {
     assert.equal(requests[6].url.searchParams.get("symbol"), "HandleRequest");
     assert.equal(requests[6].url.searchParams.get("contextLines"), "2");
 
+    requests = [];
+    globalThis.fetch = async (url, options) => {
+      requests.push({ url, options });
+      return Response.json({
+        directory: "/work/tree",
+        files: 42,
+        entries: [
+          {
+            path: "internal/agent/engine.go",
+            score: 1000,
+            symbols: [{ symbol: "RunTurn", startLine: 88, endLine: 210, references: 14, signature: "func (e *Engine) RunTurn(ctx context.Context)" }],
+          },
+        ],
+      });
+    };
+    const mapRes = await execIndex({ action: "map", path: "internal/agent", query: "RunTurn", limit: 10, refresh: true }, context);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].url.pathname, "/api/hoxi/code-index/map");
+    assert.equal(requests[0].url.searchParams.get("directory"), context.directory);
+    assert.equal(requests[0].url.searchParams.get("path"), "internal/agent");
+    assert.equal(requests[0].url.searchParams.get("q"), "RunTurn");
+    assert.equal(requests[0].url.searchParams.get("limit"), "10");
+    assert.equal(requests[0].url.searchParams.get("refresh"), "1");
+    assert.equal(mapRes.title, "CodeIndex: map");
+    assert.equal(
+      mapRes.output,
+      "Repository Backbone Map (1 top of 42 code files):\ninternal/agent/engine.go (rank 1000)\n  L88-210 [14 refs]: func (e *Engine) RunTurn(ctx context.Context)",
+    );
+
     // Verify compact plain-text rendering of inspect response (no JSON string escaping or directory metadata bloat)
     globalThis.fetch = async () =>
       Response.json({
@@ -197,17 +226,19 @@ test("standalone browser plugin", async (t) => {
       '# internal/foo.go:10-12 (of 80) [HandleFoo]\n10: func HandleFoo() string {\n11: \treturn "ok"\n12: }',
     );
 
-    // Sensitive / protected paths require read approval first and are rejected before reaching fetch
-    for (const blockedPath of [".hoxi/cloudflared.json", ".claude/.credentials.json", ".env", "../outside.go", "/etc/passwd"]) {
-      requests = [];
-      asks = [];
-      await assert.rejects(
-        execIndex({ action: "inspect", path: blockedPath }, context),
-        /protected or secret path|denied/i,
-      );
-      assert.equal(asks.length, 1, `expected approval ask for ${blockedPath}`);
-      assert.equal(asks[0].permission, "read");
-      assert.equal(requests.length, 0, `expected no HTTP fetch for ${blockedPath}`);
+    // Sensitive / protected paths (including .hoxi/intake.json) require read approval first and are rejected before reaching fetch
+    for (const blockedPath of [".hoxi/cloudflared.json", ".hoxi/intake.json", ".hoxi/media-roles.json", ".claude/.credentials.json", ".env", "../outside.go", "/etc/passwd"]) {
+      for (const act of ["inspect", "map"]) {
+        requests = [];
+        asks = [];
+        await assert.rejects(
+          execIndex({ action: act, path: blockedPath }, context),
+          /protected or secret path|denied/i,
+        );
+        assert.equal(asks.length, 1, `expected approval ask for ${act} ${blockedPath}`);
+        assert.equal(asks[0].permission, "read");
+        assert.equal(requests.length, 0, `expected no HTTP fetch for ${act} ${blockedPath}`);
+      }
     }
   });
 
@@ -447,6 +478,101 @@ test("standalone browser plugin", async (t) => {
       await assert.rejects(
         execImg({ prompt: "bad target", outputPath: badPath }, context),
         /protected|traversal|relative|inside/i,
+      );
+      assert.equal(requests.length, 0);
+    }
+  });
+
+  await t.test("hoxi_video generates videos, attaches mp4 files, gates outputPath edits and blocks protected paths", async () => {
+    const execVid = hooks.tool.hoxi_video.execute;
+    requests = [];
+    asks = [];
+    globalThis.fetch = async (url, options) => {
+      requests.push({ url, options });
+      return Response.json({
+        ok: true,
+        providerID: "google-veo",
+        modelID: "veo-3.0-generate-001",
+        text: "Generated intro clip",
+        videos: [
+          {
+            filename: "intro.mp4",
+            mime: "video/mp4",
+            path: "public/intro.mp4",
+            url: "/api/hoxi/attachments/att_vid_1/content",
+          },
+        ],
+      });
+    };
+
+    const res1 = await execVid({ prompt: "ocean drone shot", aspectRatio: "16:9", durationSeconds: 6 }, context);
+    assert.equal(asks.length, 0);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].url.pathname, "/api/hoxi/media/video");
+    assert.equal(JSON.parse(requests[0].options.body).durationSeconds, 6);
+    assert.equal(res1.attachments.length, 1);
+    assert.equal(res1.attachments[0].mime, "video/mp4");
+
+    asks = [];
+    await execVid({ prompt: "hero video", outputPath: "public/intro.mp4" }, context);
+    assert.equal(asks.length, 1);
+    assert.equal(asks[0].permission, "edit");
+    assert.deepEqual(asks[0].patterns, ["public/intro.mp4"]);
+
+    for (const badPath of [".env", ".git/hooks/pre-commit", "../escape.mp4", "/etc/hosts"]) {
+      requests = [];
+      await assert.rejects(
+        execVid({ prompt: "bad target", outputPath: badPath }, context),
+        /protected|traversal|relative|inside|outside/i,
+      );
+      assert.equal(requests.length, 0);
+      await assert.rejects(
+        execVid({ prompt: "bad ref", inputPaths: [badPath] }, context),
+        /protected|secret|traversal|relative|inside|outside/i,
+      );
+      assert.equal(requests.length, 0);
+    }
+  });
+
+  await t.test("hoxi_speech synthesizes audio, attaches mp3 files, gates outputPath edits and blocks protected paths", async () => {
+    const execSpeech = hooks.tool.hoxi_speech.execute;
+    requests = [];
+    asks = [];
+    globalThis.fetch = async (url, options) => {
+      requests.push({ url, options });
+      return Response.json({
+        ok: true,
+        providerID: "oai-tts",
+        modelID: "gpt-4o-mini-tts",
+        audios: [
+          {
+            filename: "voiceover.mp3",
+            mime: "audio/mpeg",
+            path: "public/voiceover.mp3",
+            url: "/api/hoxi/attachments/att_aud_1/content",
+          },
+        ],
+      });
+    };
+
+    const res1 = await execSpeech({ text: "Welcome to Hoxi", voice: "nova" }, context);
+    assert.equal(asks.length, 0);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].url.pathname, "/api/hoxi/media/speech");
+    assert.equal(res1.attachments.length, 1);
+    assert.equal(res1.attachments[0].mime, "audio/mpeg");
+
+    asks = [];
+    await execSpeech({ text: "Intro line", outputPath: "public/voiceover.mp3" }, context);
+    assert.equal(asks.length, 1);
+    assert.equal(asks[0].permission, "edit");
+    assert.deepEqual(asks[0].patterns, ["public/voiceover.mp3"]);
+
+    for (const badPath of [".env", ".git/hooks/pre-commit", "../escape.mp3", "/etc/hosts"]) {
+      requests = [];
+      await assert.rejects(
+        execSpeech({ text: "bad target", outputPath: badPath }, context),
+        /protected|traversal|relative|inside|outside/i,
       );
       assert.equal(requests.length, 0);
     }

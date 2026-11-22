@@ -34,7 +34,7 @@ func (f *fakeStreamClient) OpenStream(ctx context.Context, req llm.StreamHTTPReq
 
 func TestHostToolsRegistrationAndMediaPropagation(t *testing.T) {
 	reg := newToolRegistry()
-	for _, name := range []string{"hoxi_browser", "hoxi_computer", "hoxi_image", "hoxi_tools", "skill"} {
+	for _, name := range []string{"hoxi_browser", "hoxi_computer", "hoxi_image", "hoxi_video", "hoxi_speech", "hoxi_tools", "skill"} {
 		tool, ok := reg.Get(name)
 		if !ok || tool == nil {
 			t.Fatalf("expected host tool %q to be registered", name)
@@ -47,7 +47,7 @@ func TestHostToolsRegistrationAndMediaPropagation(t *testing.T) {
 		if s.Name == "skill" {
 			foundSkillInPlan = true
 		}
-		if s.Name == "hoxi_browser" || s.Name == "hoxi_computer" || s.Name == "hoxi_image" || s.Name == "hoxi_tools" {
+		if s.Name == "hoxi_browser" || s.Name == "hoxi_computer" || s.Name == "hoxi_image" || s.Name == "hoxi_video" || s.Name == "hoxi_speech" || s.Name == "hoxi_tools" {
 			t.Fatalf("mutating host tool %s should not be exposed in plan mode", s.Name)
 		}
 	}
@@ -186,8 +186,8 @@ func TestComputerAndBrowserSchemaAlignmentAndAnthropicMultiToolMediaOrder(t *tes
 	}
 	ciProps, _ := ciTool.Parameters()["properties"].(map[string]any)
 	ciEnum, _ := ciProps["action"].(map[string]any)["enum"].([]string)
-	if len(ciEnum) != 7 {
-		t.Fatalf("expected 7 hoxi_code_index actions, got %v", ciEnum)
+	if len(ciEnum) != 8 || ciEnum[0] != "map" {
+		t.Fatalf("expected 8 hoxi_code_index actions starting with map, got %v", ciEnum)
 	}
 
 	// Verify Anthropic Messages API receives all tool_result blocks BEFORE image media blocks
@@ -224,5 +224,132 @@ func TestComputerAndBrowserSchemaAlignmentAndAnthropicMultiToolMediaOrder(t *tes
 	lastContent := payload.Messages[len(payload.Messages)-1].Content
 	if len(lastContent) != 3 || lastContent[0]["type"] != "tool_result" || lastContent[1]["type"] != "tool_result" || lastContent[2]["type"] != "image" {
 		t.Fatalf("expected [tool_result, tool_result, image] in Anthropic user turn, got: %+v", lastContent)
+	}
+}
+
+func TestOpenAIResponsesAndChatPreserveAssistantMediaRole(t *testing.T) {
+	history := []Message{
+		{
+			Role: RoleUser,
+			Content: []ContentBlock{
+				{Type: ContentText, Text: "Inspect this wireframe and draw an icon"},
+				{Type: ContentMedia, MimeType: "image/png", Data: "iVBORw0KGgo=", Filename: "wireframe.png"},
+			},
+		},
+		{
+			Role: RoleAssistant,
+			Content: []ContentBlock{
+				{Type: ContentText, Text: "Generated the icon."},
+				{Type: ContentMedia, MimeType: "image/png", Data: "iVBORw0KGgo=", Filename: "icon.png"},
+			},
+		},
+		{
+			Role: RoleAssistant,
+			Content: []ContentBlock{
+				{Type: ContentMedia, MimeType: "image/webp", Data: "UklGRg==", Filename: "badge.webp"},
+			},
+		},
+		{
+			Role: RoleUser,
+			Content: []ContentBlock{
+				{Type: ContentText, Text: "Looks good, now refine colors."},
+			},
+		},
+	}
+
+	respDrv := newOpenAIDriver(true)
+	stdReq, err := respDrv.BuildRequest(ModelRequest{
+		Target: llm.StreamTarget{
+			ProviderID: "openai",
+			ModelID:    "gpt-5",
+			BaseURL:    "https://api.openai.com/v1",
+			Protocol:   llm.ProtocolOpenAIResponses,
+		},
+		Messages:  history,
+		MaxTokens: 1024,
+	})
+	if err != nil {
+		t.Fatalf("standard Responses BuildRequest failed: %v", err)
+	}
+	var stdPayload struct {
+		Input []map[string]any `json:"input"`
+	}
+	if err := json.Unmarshal(stdReq.Body, &stdPayload); err != nil {
+		t.Fatalf("unmarshal standard Responses payload: %v", err)
+	}
+	if len(stdPayload.Input) != 5 {
+		t.Fatalf("expected 5 input items, got %d: %s", len(stdPayload.Input), string(stdReq.Body))
+	}
+	if stdPayload.Input[0]["role"] != "user" {
+		t.Fatalf("expected item 0 role=user, got %v", stdPayload.Input[0])
+	}
+	for _, idx := range []int{1, 2, 3} {
+		if stdPayload.Input[idx]["role"] != "assistant" {
+			t.Fatalf("expected item %d role=assistant (never rewritten to user), got %+v", idx, stdPayload.Input[idx])
+		}
+	}
+	if stdPayload.Input[2]["content"] != "[Generated media: icon.png]" || stdPayload.Input[3]["content"] != "[Generated media: badge.webp]" {
+		t.Fatalf("unexpected assistant media summaries in standard Responses: %+v / %+v", stdPayload.Input[2], stdPayload.Input[3])
+	}
+
+	codexReq, err := respDrv.BuildRequest(ModelRequest{
+		Target: llm.StreamTarget{
+			ProviderID: "openai",
+			ModelID:    "gpt-5-codex",
+			BaseURL:    "https://chatgpt.com/backend-api/codex",
+			Protocol:   llm.ProtocolOpenAIResponses,
+		},
+		Messages: history,
+	})
+	if err != nil {
+		t.Fatalf("Codex Responses BuildRequest failed: %v", err)
+	}
+	var codexPayload struct {
+		Input []map[string]any `json:"input"`
+	}
+	if err := json.Unmarshal(codexReq.Body, &codexPayload); err != nil {
+		t.Fatalf("unmarshal Codex Responses payload: %v", err)
+	}
+	if len(codexPayload.Input) != 5 {
+		t.Fatalf("expected 5 Codex input items, got %d: %s", len(codexPayload.Input), string(codexReq.Body))
+	}
+	for _, idx := range []int{1, 2, 3} {
+		item := codexPayload.Input[idx]
+		if item["role"] != "assistant" || item["type"] != "message" {
+			t.Fatalf("expected Codex item %d to stay assistant message, got %+v", idx, item)
+		}
+		parts, _ := item["content"].([]any)
+		if len(parts) != 1 || parts[0].(map[string]any)["type"] != "output_text" {
+			t.Fatalf("expected Codex assistant content part type=output_text, got %+v", parts)
+		}
+	}
+
+	chatDrv := newOpenAIDriver(false)
+	chatReq, err := chatDrv.BuildRequest(ModelRequest{
+		Target: llm.StreamTarget{
+			ProviderID: "openai",
+			ModelID:    "gpt-5",
+			BaseURL:    "https://api.openai.com/v1",
+			Protocol:   llm.ProtocolOpenAI,
+		},
+		Messages: history,
+	})
+	if err != nil {
+		t.Fatalf("ChatCompletions BuildRequest failed: %v", err)
+	}
+	var chatPayload struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	if err := json.Unmarshal(chatReq.Body, &chatPayload); err != nil {
+		t.Fatalf("unmarshal chat payload: %v", err)
+	}
+	if len(chatPayload.Messages) != 4 {
+		t.Fatalf("expected 4 chat messages, got %d: %s", len(chatPayload.Messages), string(chatReq.Body))
+	}
+	if chatPayload.Messages[1]["role"] != "assistant" || !strings.Contains(chatPayload.Messages[1]["content"].(string), "[Generated media: icon.png]") {
+		t.Fatalf("expected assistant turn 1 to retain assistant role and media note, got %+v", chatPayload.Messages[1])
+	}
+	if chatPayload.Messages[2]["role"] != "assistant" || chatPayload.Messages[2]["content"] != "[Generated media: badge.webp]" {
+		t.Fatalf("expected media-only assistant turn 2 to emit non-empty assistant summary, got %+v", chatPayload.Messages[2])
 	}
 }

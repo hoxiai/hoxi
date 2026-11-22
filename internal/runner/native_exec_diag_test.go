@@ -145,15 +145,16 @@ exit 1`)
 
 	// 3. Streaming command runner emits live output and rejects outside working directory
 	var progress []string
+	var captured strings.Builder
 	streamFn := svc.nativeStreamCommandRunner(rec, nil)
-	out, code, err := streamFn(context.Background(), root, "printf 'hello_live_stream\\n'", func(s string) {
+	out, code, err := streamFn(context.Background(), root, "printf 'hello_live_stream\\n'", &captured, func(s string) {
 		progress = append(progress, s)
 	})
-	if err != nil || code != 0 || !strings.Contains(out, "hello_live_stream") || len(progress) == 0 {
+	if err != nil || code != 0 || !strings.Contains(out, "hello_live_stream") || len(progress) == 0 || captured.String() != "hello_live_stream\n" {
 		t.Fatalf("expected live progress from nativeStreamCommandRunner, got out=%q code=%d err=%v progress=%+v", out, code, err, progress)
 	}
 	outside := t.TempDir()
-	if _, outCode, outErr := streamFn(context.Background(), outside, "echo nope", nil); outErr == nil || outCode == 0 {
+	if _, outCode, outErr := streamFn(context.Background(), outside, "echo nope", nil, nil); outErr == nil || outCode == 0 {
 		t.Fatal("expected nativeStreamCommandRunner to reject working directory outside session worktree")
 	}
 }
@@ -214,8 +215,8 @@ exit 101`)
 	if err := os.WriteFile(modeFile, []byte("offline_miss"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if noisy := diagFn(context.Background(), root, rsFile); noisy != "" {
-		t.Fatalf("expected pure offline cache miss suppressed, got: %q", noisy)
+	if noisy := diagFn(context.Background(), root, rsFile); noisy != "Not completed: cargo dependencies unavailable offline." {
+		t.Fatalf("expected unavailable offline dependencies to be reported, got: %q", noisy)
 	}
 }
 
@@ -275,6 +276,9 @@ func TestCodeIndexAndBashReadOnlyCallsRemainRetryableOnStreamInterrupt(t *testin
 	root := t.TempDir()
 	svc := NewService(root, nil, nil, filepath.Join(root, "sessions.json"))
 
+	if isMutatingRunnerTool("load_host_tool", nil) {
+		t.Fatal("schema discovery must be retryable on interrupt")
+	}
 	for _, act := range []string{"context", "search", "inspect", "callers", "callees", "impact", "refresh"} {
 		if isMutatingRunnerTool("hoxi_code_index", map[string]interface{}{"action": act}) {
 			t.Fatalf("hoxi_code_index action=%q must not be classified as mutating", act)
@@ -324,5 +328,33 @@ func TestCodeIndexAndBashReadOnlyCallsRemainRetryableOnStreamInterrupt(t *testin
 	}
 	if !msgErr.Data.IsRetryable || msgErr.Data.Kind == ToolOutcomeUnknown {
 		t.Fatalf("expected turn that only ran hoxi_code_index to remain retryable after EOF, got %+v", msgErr.Data)
+	}
+}
+
+func TestNativeDiagnosticsReportsUnavailableAndCooldown(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "sample.go")
+	if err := os.WriteFile(file, []byte("package sample"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(root, nil, nil, "")
+	rec := SessionRecord{ID: "ses_diag_" + filepath.Base(root), WorktreePath: root}
+	diag := svc.nativeDiagnostics(rec)
+	if got := diag(context.Background(), root, file); !strings.HasPrefix(got, "Not run:") {
+		t.Fatalf("Go file without a go.mod: %q", got)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got := diag(ctx, root, file); !strings.Contains(got, "cancelled") {
+		t.Fatalf("cancelled check: %q", got)
+	}
+	noteDiagToolBudgetExceeded(rec.ID, ".go")
+	t.Cleanup(func() {
+		diagCooldownMu.Lock()
+		delete(diagToolCooldown, rec.ID+"\x00.go")
+		diagCooldownMu.Unlock()
+	})
+	if got := diag(context.Background(), root, file); !strings.Contains(got, "cooling down") {
+		t.Fatalf("check during cooldown: %q", got)
 	}
 }

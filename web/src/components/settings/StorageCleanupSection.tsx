@@ -5,7 +5,7 @@ import type { SystemStorageStats } from "../../services/api";
 import { cleanSystemStorage, fetchSystemStorage } from "../../store/workspace";
 import { Spinner } from "../icons";
 import { t } from "../../i18n";
-import { SettingGroup } from "./setting-controls";
+import { HelpTip, SettingGroup } from "./setting-controls";
 import { OldSessionsCleanup } from "./OldSessionsCleanup";
 import { formatBytes } from "./storage-format";
 
@@ -193,16 +193,12 @@ export function StorageCleanupSection(props: { onToast: (msg: string) => void })
                   <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-secondary)]">
                     <Icon size={15} />
                   </div>
-                  <div class="min-w-0">
-                    <div class="flex items-center gap-2">
-                      <span class={`h-2 w-2 rounded-full shrink-0 ${cat.dotColor}`} />
-                      <span class="text-[13px] font-medium text-[var(--text-primary)] truncate">
-                        {cat.label}
-                      </span>
-                    </div>
-                    <div class="text-[11.5px] text-[var(--text-muted)] truncate">
-                      {cat.desc}
-                    </div>
+                  <div class="flex items-center gap-2 min-w-0">
+                    <span class={`h-2 w-2 rounded-full shrink-0 ${cat.dotColor}`} />
+                    <span class="text-[13px] font-medium text-[var(--text-primary)] truncate">
+                      {cat.label}
+                    </span>
+                    <HelpTip text={cat.desc} />
                   </div>
                 </div>
                 <span class="font-mono text-[13px] font-medium text-[var(--text-secondary)] shrink-0">

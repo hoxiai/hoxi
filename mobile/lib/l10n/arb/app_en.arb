@@ -5,6 +5,8 @@
     "description": "Product name shown in English UI. Chinese UI uses Hoxi."
   },
   "commonCancel": "Cancel",
+  "commonCopy": "Copy",
+  "commonRetry": "Retry",
   "commonRefresh": "Refresh",
   "chatSend": "Send message",
   "chatHideKeyboard": "Hide keyboard",
@@ -571,5 +573,8 @@
   "codeWsProjectPickerSearchHint": "Search project name or path…",
   "codeWsProjectPickerEmpty": "No matching projects found",
   "chatCameraPermissionDenied": "Camera or photo library permission denied. No photo was sent.",
-  "chatActionPickGallery": "Choose from Photo Library"
+  "chatActionPickGallery": "Choose from Photo Library",
+  "commonCopied": "Copied",
+  "chatReportAction": "Report",
+  "chatReportedBadge": "Reported"
 }

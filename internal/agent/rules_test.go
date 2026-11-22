@@ -193,6 +193,72 @@ func TestBuildEnvironmentPromptWindowsGitBashVsCmdAndWSLRejection(t *testing.T) 
 	if c := strings.Count(p2, "<environment>"); c != 1 {
 		t.Fatalf("expected <environment> not to be duplicated for child prompt, got %d", c)
 	}
+
+	// 4. Environment reports real git repository presence without shelling out.
+	nonGitDir := t.TempDir()
+	envNoGit := buildEnvironmentPrompt(nonGitDir)
+	if !strings.Contains(envNoGit, "Git repository: no") {
+		t.Fatalf("expected non-git temp dir to report Git repository: no, got:\n%s", envNoGit)
+	}
+	gitDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(gitDir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	nestedDir := filepath.Join(gitDir, "sub", "pkg")
+	if err := os.MkdirAll(nestedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	envGit := buildEnvironmentPrompt(nestedDir)
+	if !strings.Contains(envGit, "Git repository: yes") {
+		t.Fatalf("expected nested dir inside git repo to report Git repository: yes, got:\n%s", envGit)
+	}
+}
+
+func TestExtractInheritedSubtaskConstraintsStripsSkillCatalogAndParentSubtaskProtocol(t *testing.T) {
+	parentSystem := strings.Join([]string{
+		"Hoxi command execution:",
+		"Keep build, test and workspace-check progress visible.",
+		`When the user asks to spawn/start a background subtask: output a fenced hoxi-subtasks JSON block {"title":"plan"}.`,
+		"",
+		"<project_memory>",
+		"Always run ./verify.sh.",
+		"</project_memory>",
+		"",
+		"<hoxi_work_store_profile>",
+		"storeId: st_1",
+		"</hoxi_work_store_profile>",
+		"",
+		"Skills provide specialized instructions and workflows for specific tasks.",
+		"<available_skills>",
+		"  <skill><name>giant-skill-1</name><description>Huge catalog entry</description></skill>",
+		"</available_skills>",
+		"",
+		"<session_handoff_memory>",
+		"old transcript",
+		"</session_handoff_memory>",
+	}, "\n")
+
+	inherited := extractInheritedSubtaskConstraints(parentSystem, false)
+	for _, mustKeep := range []string{
+		"Keep build, test and workspace-check progress visible.",
+		"Always run ./verify.sh.",
+		"storeId: st_1",
+	} {
+		if !strings.Contains(inherited, mustKeep) {
+			t.Fatalf("expected general subagent constraints to keep %q, got:\n%s", mustKeep, inherited)
+		}
+	}
+	for _, mustDrop := range []string{
+		"<available_skills>",
+		"giant-skill-1",
+		"Skills provide specialized instructions and workflows for specific tasks.",
+		"hoxi-subtasks",
+		"<session_handoff_memory>",
+	} {
+		if strings.Contains(inherited, mustDrop) {
+			t.Fatalf("expected general subagent constraints to strip %q, got:\n%s", mustDrop, inherited)
+		}
+	}
 }
 
 type stubSmallCtxStreamClient struct {

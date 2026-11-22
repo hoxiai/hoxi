@@ -27,9 +27,9 @@ func (t *writeTool) Parameters() map[string]any {
 
 func (t *writeTool) Execute(ctx context.Context, tc ToolContext, input json.RawMessage) (ToolOutput, error) {
 	var args struct {
-		FilePath string `json:"filePath"`
-		Path     string `json:"path"`
-		Content  string `json:"content"`
+		FilePath string  `json:"filePath"`
+		Path     string  `json:"path"`
+		Content  *string `json:"content"`
 	}
 	if err := json.Unmarshal(input, &args); err != nil {
 		return ToolOutput{Title: "write", IsError: true}, err
@@ -38,6 +38,10 @@ func (t *writeTool) Execute(ctx context.Context, tc ToolContext, input json.RawM
 	if p == "" {
 		p = strings.TrimSpace(args.Path)
 	}
+	if args.Content == nil {
+		return ToolOutput{Title: p, IsError: true}, fmt.Errorf("content is required (pass empty string \"\" explicitly to create an empty file)")
+	}
+	contentStr := *args.Content
 	target, err := resolveWorkspacePath(tc.WorktreeDir, p, !tc.PermissionVetted)
 	if err != nil {
 		return ToolOutput{Title: p, IsError: true}, err
@@ -62,14 +66,14 @@ func (t *writeTool) Execute(ctx context.Context, tc ToolContext, input json.RawM
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return ToolOutput{Title: p, IsError: true}, err
 	}
-	contentBytes := []byte(args.Content)
+	contentBytes := []byte(contentStr)
 	if err := writeAtomicFile(target, contentBytes); err != nil {
 		return ToolOutput{Title: p, IsError: true}, err
 	}
 	tc.FileRevisions.RecordBytes(target, contentBytes)
 	recordCompletedFileEdit(tc, target)
 	release()
-	out := fmt.Sprintf("wrote %d bytes to %s", len(args.Content), p)
+	out := fmt.Sprintf("wrote %d bytes to %s", len(contentStr), p)
 	if tc.Diagnostics != nil {
 		if diag := strings.TrimSpace(tc.Diagnostics(ctx, tc.WorktreeDir, target)); diag != "" {
 			out += "\n\nDiagnostics:\n" + diag
@@ -83,7 +87,7 @@ func (t *writeTool) Execute(ctx context.Context, tc ToolContext, input json.RawM
 	return ToolOutput{
 		Title:    p,
 		Output:   out,
-		Metadata: buildSingleFileDiffMeta(tc.WorktreeDir, target, beforeText, args.Content),
+		Metadata: buildSingleFileDiffMeta(tc.WorktreeDir, target, beforeText, contentStr),
 	}, nil
 }
 

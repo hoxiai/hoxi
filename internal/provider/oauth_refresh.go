@@ -24,6 +24,7 @@ type storedProviderAuthEntry struct {
 	Key           string `json:"key,omitempty"`
 	Access        string `json:"access,omitempty"`
 	Refresh       string `json:"refresh,omitempty"`
+	IssuedAt      int64  `json:"issuedAt,omitempty"`
 	Expires       int64  `json:"expires,omitempty"`
 	AccountID     string `json:"accountId,omitempty"`
 	EnterpriseURL string `json:"enterpriseUrl,omitempty"`
@@ -34,15 +35,89 @@ type storedProviderAuthEntry struct {
 }
 
 var (
-	oauthRefreshMu     sync.Mutex
-	oauthHTTPTransport http.RoundTripper
+	oauthRefreshMu          sync.Mutex
+	oauthHTTPTransport      http.RoundTripper
+	oauthProviderLocks      = map[string]*sync.Mutex{}
+	uncertainOAuthRotations = map[string]string{}
 )
 
 // SetProviderOAuthTransportForTest overrides the HTTP transport used for OAuth token exchange/refresh in tests.
 func SetProviderOAuthTransportForTest(rt http.RoundTripper) {
 	oauthRefreshMu.Lock()
 	oauthHTTPTransport = rt
+	uncertainOAuthRotations = map[string]string{}
 	oauthRefreshMu.Unlock()
+}
+
+// ResetUncertainOAuthRotationsForTest clears the in-memory uncertain rotation guard in tests.
+func ResetUncertainOAuthRotationsForTest() {
+	oauthRefreshMu.Lock()
+	uncertainOAuthRotations = map[string]string{}
+	oauthRefreshMu.Unlock()
+}
+
+func providerOAuthLock(providerID string) *sync.Mutex {
+	key := strings.ToLower(strings.TrimSpace(providerID))
+	oauthRefreshMu.Lock()
+	defer oauthRefreshMu.Unlock()
+	m := oauthProviderLocks[key]
+	if m == nil {
+		m = &sync.Mutex{}
+		oauthProviderLocks[key] = m
+	}
+	return m
+}
+
+func isUncertainOAuthRotation(providerID, refreshToken string) bool {
+	key := strings.ToLower(strings.TrimSpace(providerID))
+	rt := strings.TrimSpace(refreshToken)
+	if key == "" || rt == "" {
+		return false
+	}
+	oauthRefreshMu.Lock()
+	defer oauthRefreshMu.Unlock()
+	return uncertainOAuthRotations[key] == rt
+}
+
+func recordUncertainOAuthRotation(providerID, refreshToken string) {
+	key := strings.ToLower(strings.TrimSpace(providerID))
+	rt := strings.TrimSpace(refreshToken)
+	if key == "" || rt == "" {
+		return
+	}
+	oauthRefreshMu.Lock()
+	uncertainOAuthRotations[key] = rt
+	oauthRefreshMu.Unlock()
+}
+
+func clearUncertainOAuthRotation(providerID string) {
+	key := strings.ToLower(strings.TrimSpace(providerID))
+	if key == "" {
+		return
+	}
+	oauthRefreshMu.Lock()
+	delete(uncertainOAuthRotations, key)
+	oauthRefreshMu.Unlock()
+}
+
+// oauthRefreshDueMs returns the epoch-millisecond timestamp at which a
+// renewable OAuth access token should be proactively refreshed. Grants with a
+// known issuedAt refresh after one quarter of their actual lifetime (clamped
+// to at least oauthRefreshSkewMs before expiry); legacy grants without
+// issuedAt fall back to expires - oauthRefreshSkewMs without inventing a
+// lifetime.
+func oauthRefreshDueMs(issuedAtMs, expiresMs int64) int64 {
+	if expiresMs <= 0 {
+		return 0
+	}
+	skewDue := expiresMs - oauthRefreshSkewMs
+	if issuedAtMs > 0 && expiresMs > issuedAtMs {
+		quarterDue := issuedAtMs + (expiresMs-issuedAtMs)/4
+		if quarterDue < skewDue {
+			return quarterDue
+		}
+	}
+	return skewDue
 }
 
 func (g *Service) oauthClient(targetURL string, timeout time.Duration) *http.Client {
@@ -70,15 +145,19 @@ func normalizeExpiresMs(raw int64) int64 {
 }
 
 // resolveAuthFileCredential reads API keys and OAuth credentials from Hoxi's
-// auth.json (and legacy OpenCode auth.json), automatically refreshing expired
-// OAuth tokens, persisting rotated tokens for post-restart reuse, and marking
-// revoked credentials so they never silently fail without re-auth diagnostics.
+// auth.json (and legacy OpenCode auth.json), automatically refreshing due or
+// expired OAuth tokens, persisting rotated tokens for post-restart reuse, and
+// marking revoked credentials so they never silently fail without re-auth diagnostics.
 func (g *Service) resolveAuthFileCredential(ctx context.Context, providerID string) (string, bool, error) {
 	providerID = strings.TrimSpace(providerID)
 	if providerID == "" {
 		return "", false, nil
 	}
+	engineClean := filepath.Clean(strings.TrimSpace(hoxipaths.EngineAuthPath()))
 	for _, authPath := range candidateProviderAuthPaths() {
+		if (engineClean == "" || filepath.Clean(authPath) != engineClean) && g.IsExternalProviderDismissed(providerID) {
+			continue
+		}
 		entry, ok := readProviderAuthEntry(authPath, providerID)
 		if !ok {
 			continue
@@ -92,14 +171,18 @@ func (g *Service) resolveAuthFileCredential(ctx context.Context, providerID stri
 		access := strings.TrimSpace(entry.Access)
 		refresh := strings.TrimSpace(entry.Refresh)
 		expMs := normalizeExpiresMs(entry.Expires)
+		dueMs := oauthRefreshDueMs(normalizeExpiresMs(entry.IssuedAt), expMs)
 		nowMs := time.Now().UnixMilli()
 
-		if access != "" && (expMs == 0 || nowMs+oauthRefreshSkewMs < expMs) {
+		if access != "" && (dueMs == 0 || nowMs < dueMs) {
 			return access, false, nil
 		}
 		if refresh == "" {
 			if access != "" && expMs > 0 && nowMs >= expMs {
 				return "", true, fmt.Errorf("provider %q OAuth access token expired and has no refresh token; please re-authorize", providerID)
+			}
+			if access != "" {
+				return access, false, nil
 			}
 			continue
 		}
@@ -173,19 +256,37 @@ func defaultOAuthTokenEndpoint(providerID string, entry storedProviderAuthEntry)
 }
 
 func (g *Service) refreshProviderOAuthCredential(ctx context.Context, providerID string, entry storedProviderAuthEntry) (storedProviderAuthEntry, bool, error) {
-	oauthRefreshMu.Lock()
+	// Serialize refreshes per provider so concurrent subagents or parallel
+	// requests never replay the same single-use rotating refresh token.
+	lock := providerOAuthLock(providerID)
+	lock.Lock()
+	defer lock.Unlock()
+
 	if latest, ok := readProviderAuthEntry(hoxipaths.EngineAuthPath(), providerID); ok {
-		expMs := normalizeExpiresMs(latest.Expires)
 		if latest.Revoked {
-			oauthRefreshMu.Unlock()
 			return latest, true, fmt.Errorf("provider %q OAuth token was revoked (%s); please re-authorize", providerID, latest.RevokedReason)
 		}
-		if strings.TrimSpace(latest.Access) != "" && expMs > time.Now().UnixMilli()+oauthRefreshSkewMs {
-			oauthRefreshMu.Unlock()
+		latestAccess := strings.TrimSpace(latest.Access)
+		latestExpMs := normalizeExpiresMs(latest.Expires)
+		latestDueMs := oauthRefreshDueMs(normalizeExpiresMs(latest.IssuedAt), latestExpMs)
+		nowMs := time.Now().UnixMilli()
+		if latestAccess != "" && (latestDueMs == 0 || nowMs < latestDueMs) {
 			return latest, false, nil
 		}
+		if latestAccess != "" && strings.TrimSpace(latest.Refresh) != "" &&
+			strings.TrimSpace(latest.Refresh) != strings.TrimSpace(entry.Refresh) &&
+			(latestExpMs == 0 || nowMs < latestExpMs) {
+			return latest, false, nil
+		}
+		if strings.TrimSpace(latest.Refresh) != "" {
+			entry = latest
+		}
 	}
-	oauthRefreshMu.Unlock()
+
+	refreshTok := strings.TrimSpace(entry.Refresh)
+	if isUncertainOAuthRotation(providerID, refreshTok) {
+		return entry, false, fmt.Errorf("provider %q OAuth refresh outcome was uncertain; blocking replay until re-authorization", providerID)
+	}
 
 	tokenURL, clientID, isCopilot := defaultOAuthTokenEndpoint(providerID, entry)
 	if cfgTokenURL, cfgClientID := g.configuredProviderOAuthEndpoints(providerID); tokenURL == "" && cfgTokenURL != "" {
@@ -201,6 +302,9 @@ func (g *Service) refreshProviderOAuthCredential(ctx context.Context, providerID
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := ctx.Err(); err != nil {
+		return entry, false, err
+	}
 	reqCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
 
@@ -210,13 +314,13 @@ func (g *Service) refreshProviderOAuthCredential(ctx context.Context, providerID
 		httpReq, err = http.NewRequestWithContext(reqCtx, http.MethodGet, tokenURL, nil)
 		if err == nil {
 			httpReq.Header.Set("Accept", "application/json")
-			httpReq.Header.Set("Authorization", "token "+strings.TrimSpace(entry.Refresh))
+			httpReq.Header.Set("Authorization", "token "+refreshTok)
 			httpReq.Header.Set("User-Agent", "Hoxi-Native/1.0")
 		}
 	} else {
 		payload := map[string]string{
 			"grant_type":    "refresh_token",
-			"refresh_token": strings.TrimSpace(entry.Refresh),
+			"refresh_token": refreshTok,
 		}
 		if clientID != "" {
 			payload["client_id"] = clientID
@@ -234,10 +338,23 @@ func (g *Service) refreshProviderOAuthCredential(ctx context.Context, providerID
 
 	resp, err := g.oauthClient(tokenURL, 12*time.Second).Do(httpReq)
 	if err != nil {
+		// Once the refresh request is dispatched, a transport failure or
+		// timeout leaves rotation state uncertain: upstream may have already
+		// consumed a single-use refresh token. Block replays so a still-valid
+		// access token can keep running without triggering invalid_grant.
+		if !isCopilot {
+			recordUncertainOAuthRotation(providerID, refreshTok)
+		}
 		return entry, false, err
 	}
 	defer resp.Body.Close()
-	rawResp, _ := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+	rawResp, readErr := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+	if readErr != nil {
+		if !isCopilot {
+			recordUncertainOAuthRotation(providerID, refreshTok)
+		}
+		return entry, false, readErr
+	}
 
 	var tokResp struct {
 		AccessToken      string `json:"access_token"`
@@ -252,6 +369,7 @@ func (g *Service) refreshProviderOAuthCredential(ctx context.Context, providerID
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden ||
 		tokResp.Error == "invalid_grant" || tokResp.Error == "access_denied" || tokResp.Error == "expired_token" {
+		clearUncertainOAuthRotation(providerID)
 		reason := firstNonEmptyString(tokResp.ErrorDescription, tokResp.Error, fmt.Sprintf("HTTP %d", resp.StatusCode))
 		_ = g.persistEngineProviderAuthMap(providerID, map[string]any{
 			"type":          "oauth",
@@ -269,29 +387,37 @@ func (g *Service) refreshProviderOAuthCredential(ctx context.Context, providerID
 	if newAccess == "" {
 		return entry, false, fmt.Errorf("provider %q OAuth refresh returned empty access token", providerID)
 	}
+	clearUncertainOAuthRotation(providerID)
 	newRefresh := strings.TrimSpace(firstNonEmptyString(tokResp.RefreshToken, entry.Refresh))
+	nowMs := time.Now().UnixMilli()
 	var newExpiresMs int64
 	if tokResp.ExpiresAt > 0 {
 		newExpiresMs = normalizeExpiresMs(tokResp.ExpiresAt)
 	} else if tokResp.ExpiresIn > 0 {
-		newExpiresMs = time.Now().UnixMilli() + tokResp.ExpiresIn*1000
+		newExpiresMs = nowMs + tokResp.ExpiresIn*1000
 	} else {
-		newExpiresMs = time.Now().UnixMilli() + 3600*1000
+		newExpiresMs = nowMs + 3600*1000
+	}
+	// Renewal must never shorten an already recorded expiry timestamp.
+	if existingExp := normalizeExpiresMs(entry.Expires); existingExp > newExpiresMs {
+		newExpiresMs = existingExp
 	}
 
 	updated := entry
 	updated.Type = "oauth"
 	updated.Access = newAccess
 	updated.Refresh = newRefresh
+	updated.IssuedAt = nowMs
 	updated.Expires = newExpiresMs
 	updated.Revoked = false
 	updated.RevokedReason = ""
 
 	saveMap := map[string]any{
-		"type":    "oauth",
-		"access":  updated.Access,
-		"refresh": updated.Refresh,
-		"expires": updated.Expires,
+		"type":     "oauth",
+		"access":   updated.Access,
+		"refresh":  updated.Refresh,
+		"issuedAt": updated.IssuedAt,
+		"expires":  updated.Expires,
 	}
 	if updated.AccountID != "" {
 		saveMap["accountId"] = updated.AccountID

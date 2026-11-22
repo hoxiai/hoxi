@@ -3,3 +3,4 @@
 "NSCameraUsageDescription" = "Hoxi uses the camera to scan pairing QR codes and to take photos you choose to send in chat.";
 "NSLocalNetworkUsageDescription" = "Hoxi needs local network access to reach a Hoxi desktop node on the same Wi-Fi and your self-hosted GoPanel nodes.";
 "NSPhotoLibraryUsageDescription" = "Hoxi needs photo library access so you can choose a profile avatar or select images to send in chat.";
+"NSSiriUsageDescription" = "Hoxi uses Siri and Shortcuts to open voice call and pending approvals; approval actions still require confirmation in the app.";

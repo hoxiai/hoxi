@@ -20,6 +20,8 @@ const [localCLIStatusSignal, setLocalCLIStatusSignal] = createSignal<LocalCLISta
 let lastLocalCLIStatusAt = 0;
 let inFlightLocalCLIStatus: Promise<LocalCLIStatusItem[]> | null = null;
 
+export { isRunnerAuthMode };
+
 export function localCLIStatusItems(): LocalCLIStatusItem[] {
   return localCLIStatusSignal();
 }

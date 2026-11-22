@@ -246,3 +246,194 @@ func TestLargeWindowStrideCompactionProtectsRecentReads(t *testing.T) {
 		}
 	}
 }
+
+func TestLoopGuardResetsAfterMutatingGeneralSubagentTask(t *testing.T) {
+	t.Run("success", func(t *testing.T) { verifyChildChangeResetsGuard(t, false) })
+	t.Run("error after edit", func(t *testing.T) { verifyChildChangeResetsGuard(t, true) })
+}
+
+func verifyChildChangeResetsGuard(t *testing.T, failAfterEdit bool) {
+	t.Setenv("HOXI_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "cfg.go"), []byte("package cfg\n\nconst Port = 8080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	readStep := func(id string) string {
+		return "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"" + id + "\",\"function\":{\"name\":\"read\",\"arguments\":\"{\\\"filePath\\\":\\\"cfg.go\\\"}\"}}]}}]}\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\ndata: [DONE]\n"
+	}
+	exploreArgs, _ := json.Marshal(map[string]any{
+		"subagent_type": "explore",
+		"description":   "check cfg",
+		"prompt":        "Summarize cfg.go without edits",
+	})
+	generalArgs, _ := json.Marshal(map[string]any{
+		"subagent_type": "general",
+		"description":   "update port",
+		"prompt":        "Change Port to 9090 in cfg.go",
+	})
+	editArgs, _ := json.Marshal(map[string]any{
+		"filePath":  "cfg.go",
+		"oldString": "const Port = 8080",
+		"newString": "const Port = 9090",
+	})
+
+	parentStep := 0
+	childEdited := false
+	sc := &inspectableStreamClient{
+		responder: func(_ int, call recordedLLMCall) string {
+			if strings.Contains(call.System, "Subagent role: explore (check cfg).") {
+				return "data: {\"choices\":[{\"delta\":{\"content\":\"read-only explore ok\"}}]}\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\ndata: [DONE]\n"
+			}
+			if strings.Contains(call.System, "Subagent role: general (update port).") {
+				if !childEdited {
+					childEdited = true
+					return "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"sub_ed\",\"function\":{\"name\":\"edit\",\"arguments\":" + mustJSONString(string(editArgs)) + "}}]}}]}\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\ndata: [DONE]\n"
+				}
+				if failAfterEdit {
+					return "data: {\"error\":{\"message\":\"child failed after editing\"}}\n\n"
+				}
+				return "data: {\"choices\":[{\"delta\":{\"content\":\"updated Port to 9090\"}}]}\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\ndata: [DONE]\n"
+			}
+			parentStep++
+			switch parentStep {
+			case 1:
+				return readStep("r1")
+			case 2:
+				return readStep("r2")
+			case 3:
+				return readStep("r3")
+			case 4:
+				// Read-only explore subagent must NOT reset the loop guard.
+				return "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"t_exp\",\"function\":{\"name\":\"task\",\"arguments\":" + mustJSONString(string(exploreArgs)) + "}}]}}]}\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\ndata: [DONE]\n"
+			case 5:
+				// 4th identical read after read-only explore must still be blocked.
+				return readStep("r4_blocked")
+			case 6:
+				// Mutating general subagent MUST reset the parent's loop guard.
+				return "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"t_gen\",\"function\":{\"name\":\"task\",\"arguments\":" + mustJSONString(string(generalArgs)) + "}}]}}]}\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\ndata: [DONE]\n"
+			case 7:
+				// Re-reading cfg.go after general subagent modified it must succeed cleanly.
+				return readStep("r5_after_subtask")
+			default:
+				return "data: {\"choices\":[{\"delta\":{\"content\":\"verified subagent edit\"}}]}\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\ndata: [DONE]\n"
+			}
+		},
+	}
+
+	var toolErrors []string
+	var verifiedOutput string
+	engine := agent.NewDefaultEngine(sc)
+	engine.SetStepRetryDelays(nil)
+	err := engine.RunTurn(context.Background(), agent.TurnRequest{
+		SessionID:   "ses_loop_subtask",
+		WorktreeDir: dir,
+		Mode:        "build",
+		ProviderID:  "openai",
+		ModelID:     "gpt-5",
+		UserPrompt:  "Inspect and update cfg.go via subagent",
+		Sink: agent.EventSinkFunc(func(evt agent.EngineEvent) {
+			if evt.ParentCallID != "" {
+				return
+			}
+			if evt.Kind == agent.EngineToolError {
+				toolErrors = append(toolErrors, evt.CallID+":"+evt.ErrorText)
+			}
+			if evt.Kind == agent.EngineToolCompleted && evt.CallID == "r5_after_subtask" {
+				verifiedOutput = evt.Text
+			}
+		}),
+	})
+	if err != nil {
+		t.Fatalf("RunTurn failed: %v", err)
+	}
+	wantErrors := 1
+	if failAfterEdit {
+		wantErrors = 2
+	}
+	if len(toolErrors) != wantErrors || !strings.HasPrefix(toolErrors[0], "r4_blocked:[loop guard] Blocked repeated read call (#4") {
+		t.Fatalf("expected r4_blocked to stay blocked after read-only explore subtask, got errors: %v", toolErrors)
+	}
+	if failAfterEdit && !strings.HasPrefix(toolErrors[1], "t_gen:") {
+		t.Fatalf("expected error from the child after editing, got %v", toolErrors)
+	}
+	if !strings.Contains(verifiedOutput, "const Port = 9090") {
+		t.Fatalf("parent must see the child's updated file: %q", verifiedOutput)
+	}
+}
+
+func TestStepBudgetNoticeWarnsOnceBeforeHardCutoffWithoutPollutingUI(t *testing.T) {
+	dir := t.TempDir()
+	var capturedBodies [][]byte
+	var uiToolOutputs []string
+
+	sc := &capturingStreamClient{
+		stubStreamClient: stubStreamClient{
+			proto: llm.ProtocolOpenAI,
+			responses: func() []string {
+				// MaxSteps=8 -> lead=max(2, 8/5)=2 -> fires once on step 6 (2 remaining).
+				var resps []string
+				for step := 1; step <= 7; step++ {
+					todoArgs, _ := json.Marshal(map[string]any{
+						"todos": []map[string]any{
+							{"id": fmt.Sprintf("s%d", step), "content": "work", "status": "in_progress"},
+						},
+					})
+					resps = append(resps, strings.Join([]string{
+						`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"td_` + fmt.Sprintf("%d", step) + `","function":{"name":"todowrite","arguments":` + mustJSONString(string(todoArgs)) + `}}]}}]}`,
+						`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+						`data: [DONE]`,
+					}, "\n")+"\n")
+				}
+				resps = append(resps, "data: {\"choices\":[{\"delta\":{\"content\":\"Wrapped up cleanly before cutoff.\"}}]}\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\ndata: [DONE]\n")
+				return resps
+			}(),
+		},
+	}
+
+	err := agent.NewDefaultEngine(sc).RunTurn(context.Background(), agent.TurnRequest{
+		SessionID:   "ses_budget_notice",
+		WorktreeDir: dir,
+		Mode:        "build",
+		ProviderID:  "openai",
+		ModelID:     "gpt-5",
+		MaxSteps:    8,
+		UserPrompt:  "Work with bounded budget",
+		Sink: agent.EventSinkFunc(func(evt agent.EngineEvent) {
+			if evt.Kind == agent.EngineToolCompleted {
+				uiToolOutputs = append(uiToolOutputs, evt.Text)
+			}
+		}),
+	})
+	if err != nil {
+		t.Fatalf("RunTurn failed: %v", err)
+	}
+	capturedBodies = sc.bodies
+	if len(capturedBodies) != 8 {
+		t.Fatalf("expected 8 model calls, got %d", len(capturedBodies))
+	}
+
+	// Steps 1..6 model requests (indices 0..5) must NOT see the notice yet.
+	for i := 0; i < 6; i++ {
+		if strings.Contains(string(capturedBodies[i]), "[step budget notice:") {
+			t.Fatalf("step %d request unexpectedly saw early budget notice", i+1)
+		}
+	}
+	// Step 7 model request (index 6) carries step 6's tool result -> must see the notice exactly once.
+	step7Body := string(capturedBodies[6])
+	wantNotice := "[step budget notice: 6/8 steps used (2 remaining)."
+	if !strings.Contains(step7Body, wantNotice) {
+		t.Fatalf("expected step 7 request to include %q, body=%s", wantNotice, step7Body)
+	}
+	// Step 8 model request (index 7) carries step 7's tool result -> must NOT append a second notice.
+	if cnt := strings.Count(string(capturedBodies[7]), "[step budget notice:"); cnt != 1 {
+		t.Fatalf("expected step budget notice to be appended only once across turn, got %d occurrences", cnt)
+	}
+	// User-facing EngineToolCompleted events must stay clean of internal notices.
+	for i, out := range uiToolOutputs {
+		if strings.Contains(out, "[step budget notice:") {
+			t.Fatalf("UI tool output #%d leaked internal step budget notice: %q", i, out)
+		}
+	}
+}

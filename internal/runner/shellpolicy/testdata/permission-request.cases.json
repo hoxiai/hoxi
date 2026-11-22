@@ -1,4 +1,15 @@
 [
+  { "name": "dynamically selected asset is opaque but not destructive", "destructive": false, "request": { "permission": "bash", "metadata": { "command": "node -e 'const fs = require(\"fs\"); const f = fs.readdirSync(\"dist\").find(x => x.startsWith(\"bundle-\")); console.log(fs.readFileSync(\"dist/\" + f, \"utf8\"));'" } } },
+  { "name": "attached search pattern is literal data", "destructive": false, "request": { "permission": "bash", "metadata": { "command": "rg -n --regexp=shutdown src" } } },
+  { "name": "attached search pattern leaves the file target visible", "destructive": true, "request": { "permission": "bash", "metadata": { "command": "rg --regexp=needle .env" } } },
+  { "name": "git diff pickaxe searches text", "destructive": false, "request": { "permission": "bash", "metadata": { "command": "git diff -G shutdown -- src" } } },
+  { "name": "git diff pickaxe leaves the output target visible", "destructive": true, "request": { "permission": "bash", "metadata": { "command": "git diff -G shutdown --output=.git/config" } } },
+  { "name": "grep searches route text in ordinary source files", "destructive": false, "request": { "permission": "tool", "metadata": { "tool": "Grep", "args": { "path": "src", "pattern": "/api/claude|api/v1", "include": "*.{ts,vue}" } } } },
+  { "name": "grep of a credential file still asks", "destructive": true, "request": { "permission": "tool", "metadata": { "tool": "grep", "args": { "path": ".env", "pattern": "/api/" } } } },
+  { "name": "grep with an escaping filename filter still asks", "destructive": true, "request": { "permission": "tool", "metadata": { "tool": "grep", "args": "{\"pattern\":\"/api/\",\"glob\":\"../other/*.go\"}" } } },
+  { "name": "content search for a relative import", "destructive": false, "request": { "permission": "tool", "metadata": { "tool": "search_file_content", "args": { "pattern": "../components", "include": "*.ts" } } } },
+  { "name": "file glob with a parent path still asks", "destructive": true, "request": { "permission": "tool", "metadata": { "tool": "Glob", "args": { "pattern": "../components" } } } },
+  { "name": "file search with a Windows parent path still asks", "destructive": true, "request": { "permission": "tool", "metadata": { "tool": "find_by_name", "args": { "Pattern": "..\\other\\*.go" } } } },
   { "name": "native project config edit stays protected", "destructive": true, "request": { "permission": "edit", "patterns": ["hoxi.json"] } },
   { "name": "native project config move destination stays protected", "destructive": true, "request": { "permission": "edit", "patterns": ["temp.json"], "metadata": { "files": [{"filePath":"temp.json","movePath":"/repo/hoxi.json"}] } } },
   { "name": "attribution quoted raw filename is not silently unquoted", "hoxiHome": "/hoxi-policy-fixture/.hoxi", "destructive": true, "request": { "permission": "tool", "patterns": ["read_file"], "metadata": { "tool": "read_file", "filepath": "/hoxi-policy-fixture/.hoxi/git-attribution.json", "args": { "Path": "\"/hoxi-policy-fixture/.hoxi/git-attribution.json\"" } } } },
@@ -141,5 +152,13 @@
   {"name": "hoxi_data POST http_request requires approval in all modes", "destructive": true, "request": {"permission": "tool", "patterns": ["hoxi_data"], "metadata": {"tool": "hoxi_data", "args": "{\"action\":\"http_request\",\"profile\":\"shopify\",\"method\":\"POST\",\"endpoint\":\"/orders\"}"}}},
   {"name": "hoxi_image reading dotenv inputPaths requires approval", "destructive": true, "request": {"permission": "tool", "patterns": ["hoxi_image"], "metadata": {"tool": "hoxi_image", "args": "{\"prompt\":\"edit\",\"inputPaths\":[\".env\"]}"}}},
   {"name": "hoxi_image writing protected git path requires approval", "destructive": true, "request": {"permission": "tool", "patterns": ["hoxi_image"], "metadata": {"tool": "hoxi_image", "args": "{\"prompt\":\"icon\",\"outputPath\":\".git/hooks/pre-commit\"}"}}},
-  {"name": "code_search on dotenv pathPrefix requires approval", "destructive": true, "request": {"permission": "tool", "patterns": ["code_search"], "metadata": {"tool": "code_search", "args": "{\"query\":\"SECRET\",\"pathPrefix\":\".env\"}"}}}
+  {"name": "hoxi_video reading dotenv inputPaths requires approval", "destructive": true, "request": {"permission": "tool", "patterns": ["hoxi_video"], "metadata": {"tool": "hoxi_video", "args": "{\"prompt\":\"animate\",\"inputPaths\":[\".env\"]}"}}},
+  {"name": "hoxi_video writing protected git path requires approval", "destructive": true, "request": {"permission": "tool", "patterns": ["hoxi_video"], "metadata": {"tool": "hoxi_video", "args": "{\"prompt\":\"clip\",\"outputPath\":\".git/hooks/pre-commit\"}"}}},
+  {"name": "hoxi_speech writing protected git path requires approval", "destructive": true, "request": {"permission": "tool", "patterns": ["hoxi_speech"], "metadata": {"tool": "hoxi_speech", "args": "{\"text\":\"hello\",\"outputPath\":\".git/hooks/pre-commit\"}"}}},
+  {"name": "code_search on dotenv pathPrefix requires approval", "destructive": true, "request": {"permission": "tool", "patterns": ["code_search"], "metadata": {"tool": "code_search", "args": "{\"query\":\"SECRET\",\"pathPrefix\":\".env\"}"}}},
+  {"name": "hoxi intake.json read via bash is destructive", "destructive": true, "request": {"permission": "bash", "patterns": ["cat ~/.hoxi/intake.json"]}},
+  {"name": "hoxi media-roles.json read via bash is destructive", "destructive": true, "request": {"permission": "bash", "patterns": ["cat ~/.hoxi/media-roles.json"]}},
+  {"name": "hoxi intake.json read via tool is destructive", "destructive": true, "request": {"permission": "read", "patterns": ["/Users/u/.hoxi/intake.json"]}},
+  {"name": "hoxi media-roles.json read via tool is destructive", "destructive": true, "request": {"permission": "read", "patterns": ["/Users/u/.hoxi/media-roles.json"]}},
+  {"name": "hoxi intake API via curl requires approval", "destructive": true, "request": {"permission": "bash", "patterns": ["curl -s https://example/api/hoxi/intake/links"]}}
 ]

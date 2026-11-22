@@ -13,11 +13,12 @@ import (
 )
 
 type stepStreamResult struct {
-	asstBlocks     []ContentBlock
-	toolCalls      []ToolCall
-	visibleTextLen int
-	stepFinish     string
-	emittedVisible bool
+	asstBlocks           []ContentBlock
+	toolCalls            []ToolCall
+	visibleTextLen       int
+	stepFinish           string
+	emittedVisible       bool
+	droppedTruncatedTool bool
 }
 
 type thinkSegment struct {
@@ -228,12 +229,12 @@ func collectStepStream(
 				res.toolCalls = append(res.toolCalls, *se.ToolCall)
 			}
 
+		case EventTruncatedTool:
+			res.droppedTruncatedTool = true
+
 		case EventUsage:
 			if se.Usage != nil {
-				u := *se.Usage
-				if u.CostUSD <= 0 {
-					u.CostUSD = target.Cost.ComputeUSD(u.Input, u.Output, u.Reasoning, u.CacheRead, u.CacheWrite)
-				}
+				u := pricedUsage(target, *se.Usage)
 				emit(EngineEvent{Kind: EngineTurnUsage, Step: step, Usage: &u})
 			}
 
@@ -297,16 +298,125 @@ func isUnsupportedAnthropicMessagesEndpoint(err error) bool {
 		httpErr.StatusCode == http.StatusNotImplemented
 }
 
+// applyCompact runs workspace tool-result pruning and strips any historical
+// thinking signatures prior to the latest plain user prompt whose preceding
+// message prefix was mutated by compaction, preventing avoidable signature 400s
+// on stateful relays while keeping active-turn extended thinking enabled.
+func (e *Engine) applyCompact(msgs []Message, system, worktreeDir string, contextLimit int) []Message {
+	if e == nil {
+		return msgs
+	}
+	var compacted []Message
+	if e.defaultCompact {
+		compacted = pruneOldToolResultsInWorkspace(msgs, system, worktreeDir, contextLimit)
+	} else if e.compact != nil {
+		compacted = e.compact(msgs, system, contextLimit)
+	} else {
+		return msgs
+	}
+	return stripPrefixInvalidatedHistoricalThinking(msgs, compacted)
+}
+
+func lastPlainUserMessageIndex(msgs []Message) int {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != RoleUser {
+			continue
+		}
+		hasToolResult := false
+		for _, b := range msgs[i].Content {
+			if b.Type == ContentToolResult {
+				hasToolResult = true
+				break
+			}
+		}
+		if !hasToolResult {
+			return i
+		}
+	}
+	return -1
+}
+
+func messageBlocksIdentical(a, b Message) bool {
+	if a.Role != b.Role || len(a.Content) != len(b.Content) {
+		return false
+	}
+	for i := range a.Content {
+		ca, cb := a.Content[i], b.Content[i]
+		if ca.Type != cb.Type || ca.Text != cb.Text || ca.Signature != cb.Signature ||
+			ca.Data != cb.Data || ca.ID != cb.ID || ca.Name != cb.Name ||
+			ca.ToolUseID != cb.ToolUseID || ca.IsError != cb.IsError ||
+			string(ca.Input) != string(cb.Input) {
+			return false
+		}
+	}
+	return true
+}
+
+func stripPrefixInvalidatedHistoricalThinking(before, after []Message) []Message {
+	if len(before) != len(after) || len(after) == 0 {
+		return after
+	}
+	lastPlainUser := lastPlainUserMessageIndex(after)
+	if lastPlainUser <= 0 {
+		return after
+	}
+	firstMutated := -1
+	for i := 0; i < lastPlainUser; i++ {
+		if !messageBlocksIdentical(before[i], after[i]) {
+			firstMutated = i
+			break
+		}
+	}
+	if firstMutated < 0 {
+		return after
+	}
+	var copied []Message
+	for idx := firstMutated + 1; idx < lastPlainUser; idx++ {
+		if after[idx].Role != RoleAssistant {
+			continue
+		}
+		hasThinking := false
+		for _, b := range after[idx].Content {
+			if b.Type == ContentThinking {
+				hasThinking = true
+				break
+			}
+		}
+		if !hasThinking {
+			continue
+		}
+		if copied == nil {
+			copied = append([]Message(nil), after...)
+		}
+		kept := make([]ContentBlock, 0, len(after[idx].Content))
+		for _, b := range after[idx].Content {
+			if b.Type == ContentThinking {
+				continue
+			}
+			kept = append(kept, b)
+		}
+		if len(kept) == 0 {
+			kept = append(kept, ContentBlock{Type: ContentText, Text: "[reasoning omitted]"})
+		}
+		copied[idx] = Message{Role: RoleAssistant, Content: kept}
+	}
+	if copied != nil {
+		return copied
+	}
+	return after
+}
+
 // isRecoverableThinkingSignatureError reports whether err is an upstream 400 /
 // invalid_request_error rejecting replayed thinking blocks or signatures (e.g.
-// across heterogeneous local reverse-proxy channels or /v1/chat/completions
-// relays that drop signatures while forcing Claude thinking upstream).
+// across heterogeneous local reverse-proxy channels or chat-completions relays
+// that drop signatures while forcing Claude thinking upstream).
 func isRecoverableThinkingSignatureError(err error) bool {
 	if err == nil || isContextOverflowError(err) {
 		return false
 	}
 	lower := strings.ToLower(err.Error())
-	if strings.Contains(lower, "thoughtsignature") || strings.Contains(lower, "thought_signature") {
+	if strings.Contains(lower, "thoughtsignature") || strings.Contains(lower, "thought_signature") ||
+		strings.Contains(lower, "encrypted_content") {
 		return true
 	}
 	if !strings.Contains(lower, "thinking") && !strings.Contains(lower, "redacted_thinking") {

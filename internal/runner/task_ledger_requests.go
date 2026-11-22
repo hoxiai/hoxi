@@ -91,6 +91,7 @@ type canonicalPromptDigestPayload struct {
 	Runtime        string              `json:"runtime,omitempty"`
 	Agent          string              `json:"agent,omitempty"`
 	Variant        string              `json:"variant,omitempty"`
+	FastMode       bool                `json:"fastMode,omitempty"`
 	System         string              `json:"system,omitempty"`
 	Model          *PromptModel        `json:"model,omitempty"`
 	ImageOptions   *PromptImageOptions `json:"imageOptions,omitempty"`
@@ -107,6 +108,7 @@ func PromptRequestDigest(sessionID string, body PromptRequest) string {
 		Runtime:        strings.TrimSpace(body.Runtime),
 		Agent:          strings.TrimSpace(body.Agent),
 		Variant:        strings.TrimSpace(body.Variant),
+		FastMode:       body.FastMode,
 		System:         strings.TrimSpace(body.System),
 		Model:          body.Model,
 		ImageOptions:   body.ImageOptions,
@@ -235,6 +237,9 @@ func (s *Service) handleInspectRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	if rec.Status == RequestStatusCompleted && len(rec.ResponseBody) > 0 && json.Valid(rec.ResponseBody) {
 		resp.Result = append(json.RawMessage(nil), rec.ResponseBody...)
+		if kind == RequestKindPrompt && q.Get("turnResult") == "1" {
+			resp.Evidence = s.inspectPromptTurn(rec)
+		}
 	}
 	if rec.Status == RequestStatusOutcomeUnknown || rec.Status == RequestStatusAdmitted {
 		resp.Evidence = s.collectRequestEvidence(rec)

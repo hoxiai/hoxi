@@ -284,7 +284,7 @@ func (g *Service) loadEffectiveConfiguredProvidersMap() map[string]interface{} {
 			merged[pid] = cp
 		}
 	}
-	for pid, ok := range unrevokedAuthProviderIDs() {
+	for pid, ok := range g.unrevokedAuthProviderIDs() {
 		if !ok || merged[pid] != nil {
 			continue
 		}

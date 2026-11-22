@@ -7,6 +7,7 @@ import { extractUserTurnSkillSelection, revalidateSkillForTargetDirectory, setCo
 import { recordPromptDispatched } from "./provider-telemetry";
 import { extractLocalFallbackTitle, isPlaceholderSessionTitle, summarizeAndRenameSession } from "./session-title";
 import { detectRequiredAttachmentModalities, evaluatePromptModalityIntent, isAutoModel, isImageGenerationModel, isNonChatUtilityModelID, markAutoCandidateCooldown, modelSupportsImageInput, resolveAutoModelTarget } from "./auto-models";
+import { isVideoGenerationModel } from "./auto-pool-defaults";
 import { resolveEffectiveModelEffort } from "./provider-catalog";
 import { reportAutoCandidateOutcome } from "./auto-breaker";
 import {
@@ -18,9 +19,10 @@ import {
   rememberTurnDispatch,
 } from "./auto-failover";
 import { hasPendingSessionSandbox, newIsolatedSession, waitForSessionSandbox } from "./session-sandbox";
-import { buildCombinedSystemPrompt } from "./settings";
+import { appSettings, buildCombinedSystemPrompt } from "./settings";
 import { setWorkspace, workspace, type MessageTurn, type ReasoningEffort, type SelectedModel } from "./workspace-state";
-import { initializeSessionAI, parseModelString, sessionAIConfig } from "./session-ai";
+import { initializeSessionAI, parseModelString, resolveEffectiveFastMode, sessionAIConfig, setFastMode } from "./session-ai";
+import { sessionGoal } from "./session-goal-state";
 import { compareMessageIDOrder } from "./message-lookup";
 import { cancelPendingSessionMessageLoads, loadSessionMessages, replaceSession } from "./workspace-sessions";
 import { renameSessionTitle } from "./session-lifecycle";
@@ -80,6 +82,10 @@ export function uploadPromptAttachment(input: {
   return hoxiAPI.uploadAttachment(input);
 }
 
+export function stagePromptFile(directory: string, file: File) {
+  return hoxiAPI.stageWorkspaceFile(directory, file);
+}
+
 export async function dispatchSessionPrompt(
   promptText: string,
   targetSessionID?: string | null,
@@ -87,6 +93,7 @@ export async function dispatchSessionPrompt(
     agent?: string;
     model?: { providerID: string; modelID: string };
     effort?: ReasoningEffort;
+    fastMode?: boolean;
     directory?: string;
     attachments?: Array<{ type: "file"; mime: string; filename?: string; url: string }>;
     skillSelection?: import("../services/api").SkillSelection;
@@ -105,6 +112,8 @@ export async function dispatchSessionPrompt(
     replaceFailedTail?: boolean;
     resumeFailedTail?: boolean;
     beforeSend?: (sessionID: string) => Promise<void>;
+    /** A caller tracking this exact submission needs transport admission, not a local queue entry. */
+    clientRequestId?: string;
     onTurnStaged?: (sessionID: string) => void;
   }
 ): Promise<string> {
@@ -123,6 +132,7 @@ export async function dispatchSessionPrompt(
   }
   const config = sessionAIConfig(id);
   const editingQueued = !options?.forceImmediate && id ? getEditingQueuedPrompt(id) : undefined;
+  if (options?.clientRequestId && editingQueued) throw new Error(t("timeline.requestAwaitingConfirmation"));
   const effectiveAgent = options?.agent || editingQueued?.item.agent || config.agent;
   const agentDedicatedModelKey = workspace.globalConfig?.agent?.[effectiveAgent]?.model;
   const agentDedicatedModel =
@@ -157,11 +167,12 @@ export async function dispatchSessionPrompt(
     !isAuto &&
     Boolean(
       effectiveModel &&
-        isImageGenerationModel(effectiveModel.providerID, effectiveModel.modelID)
+        (isImageGenerationModel(effectiveModel.providerID, effectiveModel.modelID) ||
+          isVideoGenerationModel(effectiveModel.providerID, effectiveModel.modelID))
     );
-  // Guardrail: if the user selected a non-image utility endpoint (e.g. embedding/tts/video) or
+  // Guardrail: if the user selected a non-media utility endpoint (e.g. embedding/tts) or
   // auto-pool resolved a text-only model for a visual turn, reroute to a Vision + Tool-Calling
-  // model. Never hijack an explicitly selected image generation model in chat.
+  // model. Never hijack an explicitly selected native image or video generation model in chat.
   if (
     effectiveModel &&
     !explicitlySelectedImageModel &&
@@ -201,6 +212,7 @@ export async function dispatchSessionPrompt(
   const effort = explicitlySelectedImageModel
     ? undefined
     : resolveEffectiveModelEffort(effectiveModel, rawEffort);
+  const requestedFastMode = Boolean(options?.fastMode ?? editingQueued?.item.fastMode ?? config.fastMode);
   const baseExplicitSystem = options?.system ?? editingQueued?.item.system;
   const explicitSystem = explicitlySelectedImageModel
     ? baseExplicitSystem?.trim() || undefined
@@ -221,10 +233,12 @@ export async function dispatchSessionPrompt(
 
   // If the session is currently busy and not forced immediate, enqueue the message!
   if (id && !options?.forceImmediate && (wasBusyBeforeSubmit || deferEditedBehindQueue)) {
+    if (options?.clientRequestId) throw new Error(t("timeline.requestAwaitingConfirmation"));
     const queueOpts = {
       agent: effectiveAgent,
       model: effectiveModel,
       effort,
+      fastMode: requestedFastMode || undefined,
       attachments,
       skillSelection: effectiveSkill,
       system: explicitSystem,
@@ -360,6 +374,12 @@ export async function dispatchSessionPrompt(
   if (isSessionDeleted(id)) throw new Error(t("timeline.sessionUnavailable"));
   stageOptimisticTurn(id);
   initializeSessionAI(id, config);
+  if (isBrandNewSession && workspace.defaultAI.fastMode) setFastMode(false, null);
+  const fastMode =
+    !explicitlySelectedImageModel &&
+    appSettings.approvalMode !== "unattended" &&
+    sessionGoal(id)?.status !== "active" &&
+    resolveEffectiveFastMode(effectiveModel, requestedFastMode);
   const targetDir = sessionDirectory(id) || requestedDir || undefined;
   // Caller-supplied instructions ride along as a system prefix so the visible
   // user message stays exactly what the user (or the triggering action) said.
@@ -406,6 +426,7 @@ export async function dispatchSessionPrompt(
         promptText,
         agent: effectiveAgent,
         effort: effort || undefined,
+        fastMode: fastMode || undefined,
         attachments,
         skillSelection: effectiveSkill,
         system,
@@ -424,10 +445,12 @@ export async function dispatchSessionPrompt(
         options?.imageOptions ??
         (explicitlySelectedImageModel ? currentPromptImageOptions() : undefined);
       const delivery = await sendRecoverablePrompt(id, promptText, {
+        clientRequestId: options?.clientRequestId,
         agent: effectiveAgent,
         model: effectiveModel,
         ...(effectiveImageOptions ? { imageOptions: effectiveImageOptions } : {}),
         variant: effort || undefined,
+        fastMode: fastMode || undefined,
         directory: targetDir,
         system,
         attachments,
@@ -442,6 +465,7 @@ export async function dispatchSessionPrompt(
           if (list && idx >= 0) list.splice(idx, 1);
         }));
         await loadSessionMessages(id);
+        if (options?.clientRequestId) throw new Error(t("timeline.previousRequestRecovered"));
         return id;
       }
     } catch (sendErr) {
@@ -639,6 +663,7 @@ export async function sendQueuedPromptNow(sessionID: string, itemID: string): Pr
       agent: target.agent,
       model: target.model,
       effort: target.effort,
+      fastMode: target.fastMode,
       attachments: target.attachments,
       skillSelection: target.skillSelection,
       system: target.system,
@@ -694,6 +719,7 @@ export async function drainNextQueuedPrompt(sessionID: string): Promise<void> {
         agent: next.agent,
         model: next.model,
         effort: next.effort,
+        fastMode: next.fastMode,
         attachments: next.attachments,
         skillSelection: validatedSkill,
         system: next.system,

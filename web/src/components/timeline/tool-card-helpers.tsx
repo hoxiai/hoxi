@@ -1,7 +1,7 @@
 // web/src/components/timeline/tool-card-helpers.tsx
 import { createMemo, For, type JSX, Show } from "solid-js";
 import type { MessagePart, SnapshotFileDiff, ToolState } from "../../services/sse-types";
-import { getFullToolOutput, openDiffInInspector, openImagePreview, setWorkspace, workspace } from "../../store/workspace";
+import { getFullToolOutput, isLoopbackMediaURL, openDiffInInspector, openImagePreview, resolveMediaPlaybackURL, setWorkspace, workspace } from "../../store/workspace";
 import { findQuestionReply, questionSummaryText } from "../../store/question-answers";
 import { Icon, type IconName } from "../icons";
 import FileDiffBlock from "../inspector/LazyFileDiffBlock";
@@ -354,10 +354,11 @@ export function extractDescription(part: ToolPart): string {
     }
     if (act) return act;
   }
-  if (isImageGenTool(part.tool)) {
+  if (isImageGenTool(part.tool) || /^(hoxi_video|generate_video|hoxi_speech|generate_speech)$/i.test(part.tool || "")) {
     if (typeof input.outputPath === "string" && input.outputPath.trim()) return input.outputPath.trim();
-    if (typeof input.prompt === "string" && input.prompt.trim()) {
-      const p = input.prompt.trim();
+    const rawPrompt = typeof input.prompt === "string" && input.prompt.trim() ? input.prompt : input.text;
+    if (typeof rawPrompt === "string" && rawPrompt.trim()) {
+      const p = rawPrompt.trim();
       return p.length > 48 ? `${p.slice(0, 48)}…` : p;
     }
   }
@@ -392,7 +393,7 @@ export function resolveToolMediaAttachments(state: ToolState): Array<{ url: stri
     const item = raw as Record<string, unknown>;
     const url = typeof item.url === "string" ? item.url.trim() : "";
     const mime = typeof item.mime === "string" ? item.mime.trim() : "";
-    if (!url || !mime.startsWith("image/") || seen.has(url)) return;
+    if (!url || (!mime.startsWith("image/") && !mime.startsWith("video/") && !mime.startsWith("audio/")) || seen.has(url)) return;
     seen.add(url);
     out.push({ url, mime, filename: typeof item.filename === "string" ? item.filename : undefined });
   };
@@ -569,7 +570,10 @@ export function ToolCardExpandedBody(props: {
     <div class="bg-transparent">
       {/* Case 1: Shell / Bash Tool -> Kilo-style Terminal Card */}
       <Show when={props.isShell}>
-        <div class="bg-[#0d1117] text-[#e6edf3] font-mono text-[12px]">
+        <div
+          data-terminal-surface="true"
+          class="bg-[#0d1117] text-[#e6edf3] font-mono text-[12px]"
+        >
           <div class="flex items-center justify-between border-b border-white/10 bg-white/[0.03] px-3.5 py-1.5 text-[11px] text-[#8b949e]">
             <div class="flex items-center gap-2 min-w-0 truncate">
               <span class="text-[#58a6ff] font-semibold">$</span>
@@ -728,22 +732,30 @@ export function ToolCardExpandedBody(props: {
           <Show when={(props.part.state.status === "completed" || props.part.state.status === "error") && resolveToolMediaAttachments(props.part.state).length > 0}>
             <div class="flex flex-wrap gap-2">
               <For each={resolveToolMediaAttachments(props.part.state)}>
-                {(att) => (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openImagePreview({ src: att.url, alt: att.filename || props.part.tool });
-                    }}
-                    class="overflow-hidden rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:border-[var(--accent-border)] transition-colors cursor-zoom-in"
-                  >
-                    <img
-                      src={att.url}
-                      alt={att.filename || props.part.tool}
-                      class="max-h-56 w-auto object-contain block"
-                    />
-                  </button>
-                )}
+                {(att) => {
+                  const mediaSrc = resolveMediaPlaybackURL(att.url);
+                  const cors = isLoopbackMediaURL(mediaSrc) ? "anonymous" : undefined;
+                  return att.mime.startsWith("video/") ? (
+                    <video controls preload="metadata" playsinline crossOrigin={cors} src={mediaSrc} class="max-h-56 w-auto rounded-lg border border-[var(--border-subtle)] bg-black/85 object-contain block" />
+                  ) : att.mime.startsWith("audio/") ? (
+                    <audio controls preload="metadata" crossOrigin={cors} src={mediaSrc} class="h-8 w-64 max-w-full" />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openImagePreview({ src: att.url, alt: att.filename || props.part.tool });
+                      }}
+                      class="overflow-hidden rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:border-[var(--accent-border)] transition-colors cursor-zoom-in"
+                    >
+                      <img
+                        src={att.url}
+                        alt={att.filename || props.part.tool}
+                        class="max-h-56 w-auto object-contain block"
+                      />
+                    </button>
+                  );
+                }}
               </For>
             </div>
           </Show>

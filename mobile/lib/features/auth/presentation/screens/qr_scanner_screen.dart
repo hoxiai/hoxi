@@ -13,6 +13,7 @@ import '../../models/node_link_kind.dart';
 import '../auth_ui_extension_registry.dart';
 import '../controllers/auth_controller.dart';
 import '../qr_payload_connector.dart';
+import '../widgets/short_code_pairing_sheet.dart';
 
 /// 扫码授权页面
 class QRScannerScreen extends ConsumerStatefulWidget {
@@ -120,6 +121,44 @@ class _QRScannerScreenState extends ConsumerState<QRScannerScreen> {
     await _processRawPayload(raw);
   }
 
+  Future<void> _handleShortCodePairing() async {
+    if (_isProcessing) return;
+    _scannerController.stop();
+    final paired = await showShortCodePairingSheet(
+      context: context,
+      ref: ref,
+      expectedKind: widget.kind,
+      replacingConnectionId: widget.replacingConnectionId,
+    );
+    if (!mounted) return;
+    if (paired) {
+      await _finishConnectedNavigation();
+    } else {
+      _scannerController.start();
+    }
+  }
+
+  Future<void> _finishConnectedNavigation() async {
+    final syncHook = FeatureRouteRegistry.onConnectionSavedSyncHook;
+    if (syncHook != null) {
+      await syncHook(
+        ref: ref,
+        context: context,
+        activeServer: ref.read(authControllerProvider).activeServer,
+        syncToAccount: _syncToAccount,
+        syncScope: _syncScope,
+        showFailureSnackBar: false,
+      );
+      if (!mounted) return;
+    }
+    if (StorageService.isActiveHoxi) {
+      ref
+          .read(mainScaffoldIndexProvider.notifier)
+          .openEngineeringSegment(EngineeringSectionController.codeSegment);
+    }
+    context.go('/dashboard');
+  }
+
   Future<void> _processRawPayload(String codeValue) async {
     setState(() {
       _isProcessing = true;
@@ -136,24 +175,7 @@ class _QRScannerScreenState extends ConsumerState<QRScannerScreen> {
 
     if (!mounted) return;
     if (error == null) {
-      final syncHook = FeatureRouteRegistry.onConnectionSavedSyncHook;
-      if (syncHook != null) {
-        await syncHook(
-          ref: ref,
-          context: context,
-          activeServer: ref.read(authControllerProvider).activeServer,
-          syncToAccount: _syncToAccount,
-          syncScope: _syncScope,
-          showFailureSnackBar: false,
-        );
-        if (!mounted) return;
-      }
-      if (StorageService.isActiveHoxi) {
-        ref
-            .read(mainScaffoldIndexProvider.notifier)
-            .openEngineeringSegment(EngineeringSectionController.codeSegment);
-      }
-      context.go('/dashboard');
+      await _finishConnectedNavigation();
     } else {
       _showErrorAndResume(error);
     }
@@ -205,6 +227,12 @@ class _QRScannerScreenState extends ConsumerState<QRScannerScreen> {
           ),
         ),
         actions: [
+          if (widget.kind == null || widget.kind == NodeLinkKind.hoxi)
+            IconButton(
+              tooltip: isZh ? '输入 6 位配对码' : 'Enter 6-digit pairing code',
+              icon: const Icon(Icons.pin_outlined, size: 20),
+              onPressed: _isProcessing ? null : _handleShortCodePairing,
+            ),
           IconButton(
             tooltip: isZh ? '粘贴配对码' : 'Paste pairing code',
             icon: const Icon(Icons.assignment_outlined, size: 20),

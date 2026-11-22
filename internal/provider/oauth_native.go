@@ -423,14 +423,16 @@ func (g *Service) handleNativeProviderOAuthCallback(w http.ResponseWriter, r *ht
 			writeJSONError(w, http.StatusBadRequest, firstNonEmptyString(tok.Error, "OAuth token exchange failed"))
 			return
 		}
+		nowMs := time.Now().UnixMilli()
 		var expMs int64
 		if tok.ExpiresIn > 0 {
-			expMs = time.Now().UnixMilli() + tok.ExpiresIn*1000
+			expMs = nowMs + tok.ExpiresIn*1000
 		}
 		authRecord := map[string]any{
 			"type":     "oauth",
 			"access":   strings.TrimSpace(tok.AccessToken),
 			"refresh":  strings.TrimSpace(tok.RefreshToken),
+			"issuedAt": nowMs,
 			"expires":  expMs,
 			"tokenURL": flow.TokenURL,
 		}

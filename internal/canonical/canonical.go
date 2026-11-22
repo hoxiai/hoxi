@@ -117,7 +117,7 @@ func IsMutatingToolCall(toolName string, input map[string]any) bool {
 	lower := strings.ToLower(strings.TrimSpace(toolName))
 	switch lower {
 	case "", "read", "glob", "grep", "hoxi_code_index", "code_search", "symbol_inspect", "impact_analysis",
-		"todoread", "todowrite", "question", "plan_consent", "webfetch", "mcp_list_tools",
+		"todoread", "todowrite", "question", "plan_consent", "webfetch", "websearch", "mcp_list_tools", "load_host_tool",
 		"skill", "goal_report", "task":
 		return false
 	case "bash":
@@ -167,7 +167,7 @@ func IsMutatingToolCall(toolName string, input map[string]any) bool {
 			return true
 		}
 	case "write", "edit", "multiedit", "apply_patch", "shell", "create_file",
-		"mcp_call_tool", "hoxi_image":
+		"mcp_call_tool", "hoxi_image", "hoxi_video", "hoxi_speech":
 		return true
 	default:
 		if strings.HasSuffix(lower, "_read") || strings.HasPrefix(lower, "list_") || strings.HasPrefix(lower, "get_") {

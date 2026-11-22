@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/hoxiai/hoxi/internal/agent"
+	"github.com/hoxiai/hoxi/internal/appbridge"
 	"github.com/hoxiai/hoxi/internal/auth"
 	"github.com/hoxiai/hoxi/internal/browser"
 	"github.com/hoxiai/hoxi/internal/buildinfo"
@@ -26,6 +27,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/forge"
 	"github.com/hoxiai/hoxi/internal/handoff"
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
+	"github.com/hoxiai/hoxi/internal/intake"
 	"github.com/hoxiai/hoxi/internal/leaderboard"
 	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
 	"github.com/hoxiai/hoxi/internal/orchestration"
@@ -49,12 +51,14 @@ type Gateway struct {
 	openCode      *ocapi.Client
 	rootDir       string
 	wsBaseURL     string
+	distFS        fs.FS
 	proxy         *httputil.ReverseProxy
 	mux           *http.ServeMux
 	status        *statusbar.Tracker
 	worktrees     *worktree.Manager
 	workspaces    *workspace.Store
 	providers     *provider.Service
+	appBridge     *appbridge.Service
 	handoff       *handoff.Service
 	runner        *runner.Service
 	skills        *skills.Service
@@ -69,10 +73,12 @@ type Gateway struct {
 	codeIndex     *codeindex.Service
 	recallSvc     *recall.Service
 	orchestration *orchestration.Service
+	intake        *intake.Service
 	forge         *forge.Service
 	tunnel        *tunnel.Manager
 	pairing       *pairing.Service
 	cloudflared   *cloudflared.Manager
+	ledger        *reclaim.Ledger
 
 	desktopBridgeState
 	securityGateState
@@ -143,6 +149,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	}
 	wireAssistRoutes(providers, wtMgr)
 	handoffSvc := handoff.NewService(openCodePort, password, rootDir, providers)
+	providers.SetOnProviderDisconnected(handoffSvc.NotifyProviderDisconnected)
 	runnerSvc = runner.NewService(rootDir, wtMgr, status, "")
 	wireHandoffNativeMaterializer(handoffSvc, runnerSvc)
 	runnerSvc.SetProjectResolver(workspaces)
@@ -166,12 +173,14 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		openCodePort: openCodePort,
 		openCode:     openCode,
 		rootDir:      rootDir,
+		distFS:       distFS,
 		proxy:        proxy,
 		mux:          http.NewServeMux(),
 		status:       status,
 		worktrees:    wtMgr,
 		workspaces:   workspaces,
 		providers:    providers,
+		appBridge:    appbridge.NewService(),
 		handoff:      handoffSvc,
 		runner:       runnerSvc,
 		browser:      browser.New(),
@@ -195,6 +204,9 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		}
 		if g.sandbox != nil {
 			_ = g.sandbox.Remove(sessionID)
+		}
+		if g.intake != nil {
+			g.intake.ForgetSession(sessionID)
 		}
 	})
 	if g.codeIndex != nil {
@@ -223,12 +235,17 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	g.skills = skills.NewService(openCode.BaseURL(), password, g.resolveSkillContext)
 	g.skills.SetMarketplace(skills.NewMarketplaceService("", nil))
 	runnerSvc.SetImageClient(providers)
+	runnerSvc.SetVideoClient(providers)
 	runnerSvc.SetAudioClient(providers)
 	runnerSvc.SetStreamClient(providers)
 	searchHook, inspectHook, impactHook := buildNativeCodeIndexHooks(g.codeIndex)
 	nativeEngine := newGatewayNativeAgent(providers, searchHook, inspectHook, impactHook, providers.LoadHoxiConfigDoc, g.invokeNativeHostTool, g.buildNativeSkillCatalogPrompt)
+	nativeEngine.repoMap = buildNativeRepoMapHook(g.codeIndex)
+	nativeEngine.codeIndexDirty = g.codeIndex.MarkDirty
 	nativeEngine.directoryConfig = providers.LoadNativeConfigDoc
+	nativeEngine.sessionMCP = g.extensionSessionMCPServers
 	runnerSvc.SetNativeEngine(nativeEngine)
+	runnerSvc.SetSessionMCPResolver(g.extensionSessionMCPServers)
 	runnerSvc.SetSkillResolver(func(ctx context.Context, directory, sessionID string, sel runner.SkillSelection) (runner.ResolvedSkill, error) {
 		detail, err := g.skills.ResolveSelection(ctx, directory, sessionID, skills.SkillSelection{
 			Key:     sel.Key,
@@ -265,6 +282,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		}
 		return ""
 	})
+	g.intake = newGatewayIntakeService(g)
 
 	g.registerRoutes(distFS)
 	return g
@@ -279,7 +297,12 @@ func (g *Gateway) SetBrowserAgentToken(token string) {
 
 // SetBrowserLedger records headless Chrome processes and profiles so the next
 // Hoxi start can reclaim them after this process dies without CloseBrowser.
-func (g *Gateway) SetBrowserLedger(ledger *reclaim.Ledger) { g.browser.SetLedger(ledger) }
+func (g *Gateway) SetBrowserLedger(ledger *reclaim.Ledger) {
+	g.originMu.Lock()
+	g.ledger = ledger
+	g.originMu.Unlock()
+	g.browser.SetLedger(ledger)
+}
 
 func (g *Gateway) SetBrowserFileUI(save func(name, title string) (string, error), open func(path string, reveal bool) error) {
 	g.browser.SetFileUI(save, open)
@@ -320,7 +343,9 @@ func (g *Gateway) CloseBrowser() {
 
 func (g *Gateway) SetWSBaseURL(wsURL string) {
 	g.wsBaseURL = wsURL
-	g.browser.SetBridgeURL(wsURL)
+	if g.browser != nil {
+		g.browser.SetBridgeURL(wsURL)
+	}
 	if g.providers != nil {
 		httpBase := strings.Replace(strings.Replace(wsURL, "wss://", "https://", 1), "ws://", "http://", 1)
 		g.providers.SetRelayBaseURL(httpBase)
@@ -344,6 +369,18 @@ func (g *Gateway) EnableAgyApprovalHook() {
 }
 
 func (g *Gateway) SetOpenDirectoryDialog(fn func() (string, error)) {
+	g.dialogMu.Lock()
+	defer g.dialogMu.Unlock()
+	if fn == nil {
+		g.onOpenDirectoryDialog = nil
+		return
+	}
+	g.onOpenDirectoryDialog = func(OpenDirectoryOptions) (string, error) {
+		return fn()
+	}
+}
+
+func (g *Gateway) SetOpenDirectoryDialogWithOptions(fn func(OpenDirectoryOptions) (string, error)) {
 	g.dialogMu.Lock()
 	defer g.dialogMu.Unlock()
 	g.onOpenDirectoryDialog = fn
@@ -385,9 +422,31 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.providers.ServeRelay(w, r)
 		return
 	}
+	if isAppProtocolPath(r.URL.Path) {
+		g.serveAppProtocol(w, r)
+		return
+	}
+	if isAppGrantPath(r.URL.Path) {
+		if !g.allowAppGrantAdmin(w, r) || !g.admitAppUpdateRequest(w, r) {
+			return
+		}
+		if updateMutation(r) {
+			defer g.finishUpdateRequest()
+		}
+		g.mux.ServeHTTP(w, r)
+		return
+	}
 	// This dedicated route authenticates one-use scope-bound extension handshakes.
 	if r.URL.Path == "/api/hoxi/browser/extension" && !isRemoteRequest(r) {
 		g.browser.ServeExtension(w, r)
+		return
+	}
+	if !isRemoteRequest(r) && intake.IsPortalAPIPath(r.URL.Path) && g.intake != nil {
+		if !trustedHost(r.Host) {
+			http.Error(w, "untrusted Host", http.StatusForbidden)
+			return
+		}
+		g.intake.ServePortalHTTP(w, r)
 		return
 	}
 	if !g.allowRequest(w, r) {
@@ -408,8 +467,9 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if origin := r.Header.Get("Origin"); origin != "" {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Add("Vary", "Origin")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Hoxi-Browser, X-Hoxi-Computer, X-Hoxi-Directory, X-Hoxi-Token, X-Hoxi-Work-UI, MCP-Protocol-Version")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Range, X-Hoxi-Browser, X-Hoxi-Computer, X-Hoxi-Directory, X-Hoxi-Token, X-Hoxi-Work-UI, MCP-Protocol-Version")
+		w.Header().Set("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -427,6 +487,8 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *Gateway) registerRoutes(distFS fs.FS) {
+	g.mux.HandleFunc(workAppRegistryPath, g.handleWorkAppRegistryEntry)
+	g.mux.HandleFunc(workPackageSessionsPrefix, g.handleWorkPackageSessions)
 	diagnosticHandler := diagnostics.Handler()
 	g.mux.Handle("/api/hoxi/diagnostics", diagnosticHandler)
 	g.mux.Handle("/api/hoxi/diagnostics/", diagnosticHandler)
@@ -481,21 +543,7 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 		writeJSON(w, http.StatusOK, resp)
 	})
 
-	g.mux.HandleFunc("/api/hoxi/dialog/open-directory", func(w http.ResponseWriter, _ *http.Request) {
-		g.dialogMu.RLock()
-		openDialog := g.onOpenDirectoryDialog
-		g.dialogMu.RUnlock()
-		if openDialog == nil {
-			writeJSON(w, http.StatusOK, map[string]any{"path": ""})
-			return
-		}
-		dirPath, err := openDialog()
-		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]any{"path": "", "error": err.Error()})
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"path": dirPath})
-	})
+	g.mux.HandleFunc("/api/hoxi/dialog/open-directory", g.handleOpenDirectoryDialog)
 
 	g.mux.HandleFunc("/api/hoxi/desktop/focus", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -530,7 +578,7 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 			writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
 			return
 		}
-		intent, ok := g.ConsumeDesktopIntent()
+		intent, ok := g.consumeDesktopIntentForRequest(r)
 		if !ok {
 			writeJSON(w, http.StatusOK, map[string]any{"intent": nil})
 			return
@@ -541,6 +589,7 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	g.registerDesktopCompanionRoutes(g.mux)
 
 	g.mux.HandleFunc("/api/hoxi/system-info", g.handleSystemRuntimeInfo)
+	g.mux.HandleFunc("/api/hoxi/system/cli-link", g.handleSystemCLILink)
 	g.mux.HandleFunc("/api/hoxi/system/storage", g.handleSystemStorage)
 	g.mux.HandleFunc("/api/hoxi/system/storage/clean", g.handleSystemStorageClean)
 	g.mux.HandleFunc("/api/hoxi/system/storage/old-sessions", g.handleOldSessionsPreview)
@@ -559,6 +608,7 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 
 	g.providers.RegisterRoutes(g.mux)
 	g.registerMediaRoutes()
+	g.registerAppGrantAdminRoutes()
 	g.handoff.RegisterRoutes(g.mux)
 	g.worktrees.RegisterRoutes(g.mux)
 	g.tunnel.RegisterRoutes(g.mux)
@@ -583,6 +633,9 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	}
 	if g.orchestration != nil {
 		g.orchestration.RegisterRoutes(g.mux)
+	}
+	if g.intake != nil {
+		g.intake.RegisterRoutes(g.mux, isRemoteRequest)
 	}
 	if g.forge != nil {
 		g.forge.RegisterRoutes(g.mux)
@@ -630,6 +683,7 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	g.mux.HandleFunc("/api/hoxi/file/list", g.handleFileList)
 	g.mux.HandleFunc("/api/hoxi/file/search", g.handleFileSearch)
 	g.mux.HandleFunc("/api/hoxi/file/open", g.handleFileOpen)
+	g.mux.HandleFunc("/api/hoxi/file/stage", g.handleFileStage)
 	g.mux.HandleFunc("/api/hoxi/file/spreadsheet-edit", g.handleFileSpreadsheetEdit)
 	g.mux.Handle("/api/", http.StripPrefix("/api", g.proxy))
 

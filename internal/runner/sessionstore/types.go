@@ -204,11 +204,12 @@ type MessageTime struct {
 }
 
 type MessageTokens struct {
-	Total     int `json:"total"`
-	Context   int `json:"context,omitempty"`
-	Input     int `json:"input"`
-	Output    int `json:"output"`
-	Reasoning int `json:"reasoning"`
+	Summary   *llm.TokenUsage `json:"summary,omitempty"` // Already included in the cumulative billing buckets.
+	Total     int             `json:"total"`
+	Context   int             `json:"context,omitempty"`
+	Input     int             `json:"input"`
+	Output    int             `json:"output"`
+	Reasoning int             `json:"reasoning"`
 	Cache     struct {
 		Write int `json:"write"`
 		Read  int `json:"read"`
@@ -239,6 +240,7 @@ type MessageInfo struct {
 	ProviderID   string         `json:"providerID,omitempty"`
 	Mode         string         `json:"mode,omitempty"`
 	Agent        string         `json:"agent,omitempty"`
+	ServiceTier  string         `json:"serviceTier,omitempty"`
 	ContinueTask bool           `json:"continueTask,omitempty"`
 	Cost         float64        `json:"cost,omitempty"`
 	Tokens       *MessageTokens `json:"tokens,omitempty"`

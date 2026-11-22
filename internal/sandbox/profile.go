@@ -229,6 +229,10 @@ func protectedStateRules() []PathRule {
 				Path: `^` + escapeRegex(sandboxDir) + `/gemini-settings-.*\.json$`,
 				Kind: PathRegex,
 			},
+			PathRule{
+				Path: `^` + escapeRegex(sandboxDir) + `/session-mcp-[^/]+(/.*)?$`,
+				Kind: PathRegex,
+			},
 		)
 	}
 	for _, file := range hoxipaths.DBFiles() {

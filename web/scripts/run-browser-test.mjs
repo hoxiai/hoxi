@@ -72,7 +72,13 @@ try {
       outDir: output, emptyOutDir: true,
       lib: { entry: path.resolve(webRoot, entry), formats: ["es"], fileName: () => "browser-test.js" },
     } });
-    server = await preview({ ...config, build: { outDir: output }, preview: { host: "127.0.0.1", port: 0, open: false } });
+    server = await preview({
+      ...config,
+      build: { outDir: output },
+      // Browser fixtures stub requests; Vite otherwise inherits the app's
+      // backend proxies, which also match chunks like /session-send.browser-*.js.
+      preview: { host: "127.0.0.1", port: 0, open: false, proxy: {} },
+    });
   } else {
     server = await createServer(config);
     await server.listen();

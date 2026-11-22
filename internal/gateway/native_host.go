@@ -260,6 +260,12 @@ func (g *Gateway) invokeNativeHostTool(
 	case "hoxi_image":
 		return g.invokeNativeImageTool(ctx, tc, input)
 
+	case "hoxi_video":
+		return g.invokeNativeVideoTool(ctx, tc, input)
+
+	case "hoxi_speech":
+		return g.invokeNativeSpeechTool(ctx, tc, input)
+
 	case "hoxi_tools":
 		var payload map[string]any
 		_ = json.Unmarshal(input, &payload)
@@ -460,6 +466,10 @@ func rewriteHoxiHostProxyPath(p string) (string, bool) {
 		return "/command", true
 	case p == "/api/hoxi/lsp":
 		return "/lsp", true
+	case p == "/api/hoxi/projects":
+		return "/project", true
+	case p == "/api/hoxi/projects/current":
+		return "/project/current", true
 	default:
 		return "", false
 	}
@@ -525,6 +535,8 @@ func (g *Gateway) registerNativeHostRoutes() {
 	g.mux.HandleFunc("/api/lsp", lspHandler)
 
 	projHandler := wrap(g.handleNativeProjectRoute)
+	g.mux.HandleFunc("/api/hoxi/projects", projHandler)
+	g.mux.HandleFunc("/api/hoxi/projects/current", projHandler)
 	g.mux.HandleFunc("/project", projHandler)
 	g.mux.HandleFunc("/project/", projHandler)
 	g.mux.HandleFunc("/api/project", projHandler)

@@ -9,13 +9,22 @@ export type DesktopIntentAction =
   | "sync-keep-awake"
   | "companion-tap"
   | "companion-toggle-min"
-  | "companion-dismiss";
+  | "companion-dismiss"
+  | "connect-app"
+  | "open-app"
+  | "run-draft"
+  | "open-browser"
+  | "preview-doc";
 
 export interface DesktopIntent {
   action?: DesktopIntentAction;
   sessionID?: string;
   messageID?: string;
   directory?: string;
+  appID?: string;
+  tab?: string;
+  requestID?: string;
+  params?: Record<string, string>;
 }
 
 export interface DesktopCompanionPayload {
@@ -53,28 +62,14 @@ export interface PromptImageOptions {
   count?: number;
 }
 
-export interface MediaImageModelOption {
-  providerID: string;
-  modelID: string;
-  name?: string;
-  protocol?: string;
-}
-
-export interface MediaCapabilitiesResponse {
-  ok: boolean;
-  hasImageModel: boolean;
-  hasAudioTranscriber: boolean;
-  hasEmbeddingModel: boolean;
-  imageModels?: MediaImageModelOption[];
-}
-
-export interface MediaTranscribeResponse {
-  ok: boolean;
-  text?: string;
-  providerID?: string;
-  modelID?: string;
-  error?: string;
-}
+export type {
+  MediaAudioModelOption,
+  MediaCapabilitiesResponse,
+  MediaImageModelOption,
+  MediaRolePrefs,
+  MediaTranscribeResponse,
+  MediaVideoModelOption,
+} from "./media-api";
 
 export interface WorktreeRepoStatus {
   repo: string;
@@ -442,6 +437,7 @@ export interface AgentInfo {
   model?: string;
   steps?: number;
   builtIn?: boolean;
+  extension?: boolean;
   readOnly?: boolean;
   hidden?: boolean;
   native?: boolean;
@@ -590,21 +586,6 @@ export interface GitDailyPulseResponse {
     cacheWriteTokens?: number;
     cost: number;
   }>;
-  hqMatrix?: {
-    enabled: boolean;
-    rootDir?: string;
-    updatedAt?: string;
-    totalProjects: number;
-    idleProjects: number;
-    readyProjects: number;
-    activeProjects: number;
-    blockedProjects: number;
-    blockedNames?: string[];
-    activeSandboxes: number;
-    opsUpdatedAt?: string;
-    opsHealthyCount: number;
-    opsAnomalyCount: number;
-  };
 }
 
 export interface DevPulseHistoryModelStat {

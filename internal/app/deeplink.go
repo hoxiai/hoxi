@@ -2,9 +2,13 @@ package app
 
 import (
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/hoxiai/hoxi/internal/appbridge"
 	"github.com/hoxiai/hoxi/internal/gateway"
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/statusbar"
 	"github.com/wailsapp/wails/v2/pkg/options"
 )
@@ -14,21 +18,28 @@ import (
 const desktopIntentEvent = "hoxi:desktop-intent"
 
 const (
-	maxDeepLinkIDLength = 96
-	sessionIDPrefix     = "ses_"
-	messageIDPrefix     = "msg_"
+	maxDeepLinkIDLength    = 96
+	maxDeepLinkURLLength   = 8192
+	maxDeepLinkPromptBytes = 4096
+	sessionIDPrefix        = "ses_"
+	messageIDPrefix        = "msg_"
 )
 
-// ParseDeepLink extracts a session navigation intent from links such as
-// hoxi://session/ses_123?message=msg_456. It intentionally rejects unknown
-// shapes so the URL can still fall through to the auth callback handler.
+// ParseDeepLink extracts a desktop navigation or protocol intent from hoxi://
+// links such as hoxi://session/ses_123?message=msg_456, hoxi://app/<id>,
+// hoxi://run?..., hoxi://browser/open?..., hoxi://doc/preview?..., or
+// hoxi://settings/<section>. It intentionally rejects unknown shapes so the URL
+// can still fall through to the auth callback handler.
 func ParseDeepLink(raw string) (gateway.DesktopIntent, bool) {
-	return parseSessionDeepLink(raw)
+	if intent, ok := parseSessionDeepLink(raw); ok {
+		return intent, true
+	}
+	return parseProtocolDeepLink(raw)
 }
 
 func parseSessionDeepLink(raw string) (gateway.DesktopIntent, bool) {
 	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
+	if trimmed == "" || len(trimmed) > maxDeepLinkURLLength {
 		return gateway.DesktopIntent{}, false
 	}
 	parsed, err := url.Parse(trimmed)
@@ -61,6 +72,239 @@ func parseSessionDeepLink(raw string) (gateway.DesktopIntent, bool) {
 		messageID = ""
 	}
 	return gateway.DesktopIntent{SessionID: sessionID, MessageID: messageID}, true
+}
+
+func parseProtocolDeepLink(raw string) (gateway.DesktopIntent, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || len(trimmed) > maxDeepLinkURLLength {
+		return gateway.DesktopIntent{}, false
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || !strings.EqualFold(parsed.Scheme, "hoxi") {
+		return gateway.DesktopIntent{}, false
+	}
+	if parsed.User != nil || parsed.Port() != "" || parsed.Fragment != "" {
+		return gateway.DesktopIntent{}, false
+	}
+	host := strings.ToLower(parsed.Host)
+	segments := nonEmptySegments(parsed.Path)
+	q, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil {
+		return gateway.DesktopIntent{}, false
+	}
+
+	switch host {
+	case "connect":
+		if len(segments) != 0 {
+			return gateway.DesktopIntent{}, false
+		}
+		reqID := strings.TrimSpace(q.Get("requestId"))
+		if reqID != "" && validDeepLinkID(reqID, "con_") {
+			return gateway.DesktopIntent{
+				Action:    gateway.DesktopIntentActionConnectApp,
+				RequestID: reqID,
+			}, true
+		}
+		return gateway.DesktopIntent{}, false
+
+	case "app":
+		if len(segments) == 0 || len(segments) > 2 || !appbridge.ValidAppID(segments[0]) {
+			return gateway.DesktopIntent{}, false
+		}
+		tab := ""
+		if len(segments) > 1 {
+			if !appbridge.ValidAppID(segments[1]) {
+				return gateway.DesktopIntent{}, false
+			}
+			tab = segments[1]
+		}
+		params := map[string]string{}
+		if store := strings.TrimSpace(q.Get("store")); store != "" && len(store) <= 96 {
+			params["store"] = store
+		}
+		if item := strings.TrimSpace(q.Get("item")); item != "" && len(item) <= 128 {
+			params["item"] = item
+		}
+		return gateway.DesktopIntent{
+			Action: gateway.DesktopIntentActionOpenApp,
+			AppID:  segments[0],
+			Tab:    tab,
+			Params: params,
+		}, true
+
+	case "run":
+		if len(segments) != 0 {
+			return gateway.DesktopIntent{}, false
+		}
+		mode := strings.ToLower(strings.TrimSpace(q.Get("mode")))
+		if mode == "" {
+			mode = "draft"
+		}
+		if mode != "draft" && mode != "confirm" {
+			return gateway.DesktopIntent{}, false
+		}
+		prompt := strings.TrimSpace(q.Get("prompt"))
+		skill := strings.TrimSpace(q.Get("skill"))
+		appID := strings.TrimSpace(q.Get("app"))
+		dir := strings.TrimSpace(q.Get("directory"))
+		if len(prompt) > maxDeepLinkPromptBytes || (prompt == "" && skill == "") || len(skill) > 96 || hasControlChars(skill) {
+			return gateway.DesktopIntent{}, false
+		}
+		if appID != "" && !appbridge.ValidAppID(appID) {
+			return gateway.DesktopIntent{}, false
+		}
+		if dir != "" {
+			if !filepath.IsAbs(dir) || hasControlChars(dir) || hoxipaths.IsDeniedDocOrSpreadsheetPath(dir) {
+				return gateway.DesktopIntent{}, false
+			}
+			dir = filepath.Clean(dir)
+		}
+		params := map[string]string{"mode": mode}
+		if prompt != "" {
+			params["prompt"] = prompt
+		}
+		if skill != "" && len(skill) <= 96 {
+			params["skill"] = skill
+		}
+		return gateway.DesktopIntent{
+			Action:    gateway.DesktopIntentActionRunDraft,
+			AppID:     appID,
+			Directory: dir,
+			Params:    params,
+		}, true
+
+	case "browser":
+		if len(segments) != 1 || segments[0] != "open" {
+			return gateway.DesktopIntent{}, false
+		}
+		targetURL := strings.TrimSpace(q.Get("url"))
+		parsedTarget, targetErr := url.Parse(targetURL)
+		if targetErr != nil || len(targetURL) > 4096 || (parsedTarget.Scheme != "http" && parsedTarget.Scheme != "https") || parsedTarget.Host == "" || parsedTarget.User != nil {
+			return gateway.DesktopIntent{}, false
+		}
+		profile := strings.TrimSpace(q.Get("profile"))
+		if profile != "" && !appbridge.ValidAppID(profile) {
+			return gateway.DesktopIntent{}, false
+		}
+		mode := strings.ToLower(strings.TrimSpace(q.Get("mode")))
+		if mode == "" {
+			mode = "readonly"
+		}
+		if mode != "readonly" && mode != "interactive" {
+			return gateway.DesktopIntent{}, false
+		}
+		return gateway.DesktopIntent{
+			Action: gateway.DesktopIntentActionOpenBrowser,
+			AppID:  profile,
+			Params: map[string]string{"url": targetURL, "mode": mode},
+		}, true
+
+	case "doc":
+		if len(segments) != 1 || segments[0] != "preview" {
+			return gateway.DesktopIntent{}, false
+		}
+		docPath := strings.TrimSpace(q.Get("path"))
+		if docPath == "" || len(docPath) > 4096 || !filepath.IsAbs(docPath) || hasControlChars(docPath) || !validDocDeepLinkPath(docPath) {
+			return gateway.DesktopIntent{}, false
+		}
+		return gateway.DesktopIntent{
+			Action: gateway.DesktopIntentActionPreviewDoc,
+			Params: map[string]string{"path": filepath.Clean(docPath)},
+		}, true
+
+	case "settings":
+		if len(segments) != 1 {
+			return gateway.DesktopIntent{}, false
+		}
+		section := strings.ToLower(segments[0])
+		switch section {
+		case "providers", "media-roles", "app-grants", "approval", "general":
+			return gateway.DesktopIntent{
+				Action: gateway.DesktopIntentActionSettings,
+				Params: map[string]string{"section": section},
+			}, true
+		default:
+			return gateway.DesktopIntent{}, false
+		}
+	}
+	return gateway.DesktopIntent{}, false
+}
+
+func validDocDeepLinkPath(path string) bool {
+	denied := func(p string) bool {
+		return hoxipaths.IsDeniedDocOrSpreadsheetPath(p) || hoxipaths.IsProtectedStateFile(filepath.Base(p)) || hoxipaths.IsProtectedWorkStatePath(p)
+	}
+	if denied(path) {
+		return false
+	}
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		return !denied(real)
+	} else if !os.IsNotExist(err) {
+		return false
+	}
+	return true // preview still goes through the existing file access gate
+}
+
+// ParseConnectDeepLink extracts a redirect-mode hoxi://connect?... handshake.
+func ParseConnectDeepLink(raw string) (appbridge.ConnectInput, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || len(trimmed) > maxDeepLinkURLLength {
+		return appbridge.ConnectInput{}, false
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || !strings.EqualFold(parsed.Scheme, "hoxi") || !strings.EqualFold(parsed.Host, "connect") {
+		return appbridge.ConnectInput{}, false
+	}
+	if parsed.User != nil || parsed.Port() != "" || parsed.Fragment != "" {
+		return appbridge.ConnectInput{}, false
+	}
+	if parsed.Path != "" && parsed.Path != "/" {
+		return appbridge.ConnectInput{}, false
+	}
+	q, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil || q.Has("requestId") {
+		return appbridge.ConnectInput{}, false
+	}
+	appID := strings.TrimSpace(q.Get("appId"))
+	if !appbridge.ValidAppID(appID) {
+		return appbridge.ConnectInput{}, false
+	}
+	var scopes []string
+	for _, s := range strings.Split(strings.TrimSpace(q.Get("scopes")), ",") {
+		if trimmedScope := strings.TrimSpace(s); trimmedScope != "" {
+			scopes = append(scopes, trimmedScope)
+		}
+	}
+	return appbridge.ConnectInput{
+		AppID:               appID,
+		Name:                strings.TrimSpace(q.Get("name")),
+		Scopes:              scopes,
+		RedirectURI:         strings.TrimSpace(q.Get("redirectUri")),
+		CodeChallenge:       strings.TrimSpace(q.Get("codeChallenge")),
+		CodeChallengeMethod: strings.TrimSpace(q.Get("codeChallengeMethod")),
+		State:               q.Get("state"),
+		Mode:                appbridge.ConnectModeRedirect,
+	}, true
+}
+
+func nonEmptySegments(p string) []string {
+	parts := strings.Split(strings.Trim(p, "/"), "/")
+	out := make([]string, 0, len(parts))
+	for _, seg := range parts {
+		if seg = strings.TrimSpace(seg); seg != "" {
+			out = append(out, seg)
+		}
+	}
+	return out
+}
+
+func hasControlChars(s string) bool {
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
 }
 
 // launchURLs returns the hoxi:// links among process arguments. Windows opens a

@@ -13,9 +13,10 @@ func (s *Service) handleCodexModels(w http.ResponseWriter, r *http.Request) {
 	}
 	forceRefresh := r.URL.Query().Get("refresh") == "1" || r.URL.Query().Get("refresh") == "true"
 	bin := agentcli.ResolveCodexBinary()
-	models := agentcli.DiscoverCodexModelsWithRefresh(forceRefresh)
-	defaultModel := ""
-	if len(models) > 0 {
+	snap := agentcli.DiscoverCodexCatalog(forceRefresh)
+	models := agentcli.BuildCodexRunnerModels(snap)
+	defaultModel := snap.DefaultModel
+	if defaultModel == "" && len(models) > 0 {
 		defaultModel = models[0].ID
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{

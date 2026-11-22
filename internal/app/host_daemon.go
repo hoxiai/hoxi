@@ -73,7 +73,7 @@ func RunHostDaemon(ctx context.Context, opts cli.HostStartOptions, stdout, stder
 	hostInfo := remotehost.BuildHostInfo(cfg.HostID, cfg.Name, cfg.RootDir)
 	handler := remotehost.WrapBearerGuardWithGatewayToken(cfg.Token, gatewayToken, hostInfo, gw)
 	srv := &http.Server{
-		Handler:           handler,
+		Handler:           gateway.GuardAppProtocolFromRemote(handler),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}

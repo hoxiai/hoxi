@@ -197,4 +197,7 @@ func TestHoxiDataAndNativeImageApprovalAlignment(t *testing.T) {
 	if got := summarizeHookToolAction("hoxi_data", map[string]interface{}{"action": "http_request", "method": "delete", "profile": "shopify", "endpoint": "/orders/1"}); got != "DELETE shopify /orders/1" {
 		t.Fatalf("unexpected hoxi_data approval summary: %q", got)
 	}
+	if got := summarizeHookToolAction("hoxi_video", map[string]interface{}{"prompt": "ocean drone shot", "outputPath": "public/hero.mp4"}); got != "public/hero.mp4" {
+		t.Fatalf("unexpected hoxi_video approval summary: %q", got)
+	}
 }

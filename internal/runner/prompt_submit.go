@@ -26,6 +26,7 @@ type PromptRequest struct {
 	Runtime         string              `json:"runtime,omitempty"`
 	Agent           string              `json:"agent"`
 	Variant         string              `json:"variant"`
+	FastMode        bool                `json:"fastMode,omitempty"`
 	System          string              `json:"system"`
 	Model           *PromptModel        `json:"model"`
 	ImageOptions    *PromptImageOptions `json:"imageOptions,omitempty"`
@@ -54,9 +55,10 @@ Keep build, test and workspace-check progress visible. Unless the user explicitl
 Use the tool's bounded output when available. If a full log is needed, save it to a unique temporary file and inspect bounded excerpts while the command runs. Preserve and check the original command's exit status; a successful tail/grep does not prove the check passed.
 Set a suitable tool timeout and test timeout. If a check stays silent, inspect its current stage and existing log before retrying; do not start duplicate checks or repeatedly wait without reporting progress. Reuse build caches unless a clean build is required.
 When navigating code, follow: locate symbol/file or fetch a full surgical package in one step (prefer hoxi_code_index tool or 'hoxi code-index context|search|inspect|callers|callees|impact|refresh') -> inspect the target function and minimal surrounding lines instead of whole files -> check callers, callees, blast radius (impact) and related tests. Edit and then run targeted verification only when the task asks for changes.
-When the user asks to generate or edit visual/image assets (icons, banners, illustrations, mockups, or photo edits), prefer calling the hoxi_image tool (or 'hoxi image generate "<prompt>" --out <workspace-relative-path>' in CLI sessions) so Hoxi invokes the user's configured image generation model directly.
+When a filename is only known at runtime (for example, a hashed build asset), use the file tools to list matching names, then search or read the exact path returned by the listing. For minified files, request a bounded excerpt around the match.
+When the user asks to generate or edit visual/image assets (icons, banners, illustrations, mockups, or photo edits), prefer calling the hoxi_image tool (or 'hoxi image generate "<prompt>" --out <workspace-relative-path>' in CLI sessions) so Hoxi checks the active model's native capability first, then invokes configured local image models (falling back to hoxi_tools only when no local image model is available). For video or voiceover/TTS generation, prefer calling hoxi_video / hoxi_speech (or 'hoxi video|speech generate' in CLI sessions) with the same native/local-first check before falling back to hoxi_tools. When you create or save a visual asset (chart, diagram, screenshot, SVG, or raster image) via scripts, shell commands, or file writes rather than hoxi_image, embed it directly in your reply using Markdown image syntax ('![short description](workspace-relative-path)') so the user sees it inline.
 Reviews, audits and questions are read-only: report findings and do not edit, commit, push or publish unless the user asks for a fix or that action. Within the work the user asked for, keep going without asking whether to continue; stop to ask only for a real blocker, a choice the user must make, or an action that needs approval.
-When the user asks to spawn/start a background subtask and continue chatting in the main thread (e.g. "开一个子任务…然后继续对话" / "background subtask"), or to split work into parallel coding subtasks: do NOT call the built-in synchronous task/subagent tool (which blocks the current turn until the subagent finishes). Instead, output a fenced hoxi-subtasks JSON block and end your turn immediately so Hoxi runs the subtask(s) asynchronously in isolated background sessions while the main conversation stays responsive: {"title":"plan title","autoStart":true,"concurrency":3,"tasks":[{"id":"task-1","prompt":"self-contained instructions and verification","dependsOn":[]}]} (use "autoStart":true when the user wants the subtask(s) started right away, or "autoStart":false when proposing a multi-task plan for review first).`
+Handle normal requests—including small multi-file edits or a few related items—directly in the main turn without emitting a hoxi-subtasks block or splitting into background sessions. ONLY when the user explicitly asks to spawn/start a background subtask and continue chatting in the main thread (e.g. "开一个子任务…然后继续对话" / "background subtask"), or explicitly asks to split work into isolated parallel coding subtasks: do NOT call the built-in synchronous task/subagent tool (which blocks the current turn until the subagent finishes). Instead, output a fenced hoxi-subtasks JSON block and end your turn immediately so Hoxi runs the subtask(s) asynchronously in isolated background sessions while the main conversation stays responsive: {"title":"plan title","autoStart":false,"concurrency":3,"tasks":[{"id":"task-1","prompt":"self-contained instructions and verification","dependsOn":[]}]} (set "autoStart":true ONLY when the user explicitly asks to start the background subtask(s) right away; otherwise keep "autoStart":false to propose the plan for review first).`
 
 var (
 	promptGuidanceMu    sync.RWMutex
@@ -190,7 +192,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	unmanagedBusySteer := false
 	pendingAdopted := false
 	wantRuntime := resolveRequestedPromptRuntime(body, "opencode")
-	reqImageTurn := body.Model != nil && s.IsImageModel(body.Model.ProviderID, body.Model.ModelID)
+	reqImageTurn := body.Model != nil && s.IsDedicatedMediaModel(body.Model.ProviderID, body.Model.ModelID)
 	hasStoreCtx := s.resolveSessionContextBlock(sessionID, directory) != ""
 	needsOpenCodeAdopt := body.SkillSelection != nil || reqImageTurn || hasStoreCtx || (wantRuntime != "" && wantRuntime != "opencode")
 	if !ok && (needsOpenCodeAdopt || (clientReqID != "" && s.openCode != nil && s.openCode.Available())) {
@@ -310,7 +312,9 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		}
 	}
 	callerSystem := strings.TrimSpace(body.System)
-	if storeCtx := s.resolveSessionContextBlock(rec.ID, rec.WorktreePath); storeCtx != "" && !strings.Contains(callerSystem, "<hoxi_work_store_profile>") {
+	if storeCtx := s.resolveSessionContextBlock(rec.ID, rec.WorktreePath); storeCtx != "" &&
+		!strings.Contains(callerSystem, "<hoxi_work_store_profile>") &&
+		!strings.Contains(callerSystem, "<hoxi_work_app>") {
 		if callerSystem == "" {
 			callerSystem = storeCtx
 		} else {
@@ -333,7 +337,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 			candidateProviderID = strings.TrimSpace(body.Model.ProviderID)
 		}
 	}
-	isImageTurn := s.IsImageModel(candidateProviderID, candidateModelID)
+	isImageTurn := s.IsDedicatedMediaModel(candidateProviderID, candidateModelID)
 	if rec.Runtime == string(RuntimeNative) && !isImageTurn {
 		if handled, st, recpt, sErr := s.trySteerBusyNativePrompt(ctx, rec, body, promptText, callerSystem, clientReqID, reqDigest, fileParts, resolvedSkill); handled {
 			return st, recpt, sErr
@@ -490,7 +494,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	if binPath == "" && (rec.Runtime != "opencode" || !openCodeDaemonUp) && rec.Runtime != string(RuntimeNative) {
 		return http.StatusBadRequest, PromptReceipt{}, errors.New(missingMsg)
 	}
-	isImageTurn = s.IsImageModel(rec.ProviderID, modelID)
+	isImageTurn = s.IsDedicatedMediaModel(rec.ProviderID, modelID)
 	if rec.Runtime == "opencode" && !isImageTurn && openCodeDaemonUp {
 		resolvedModel, checkErr := s.ensureOpenCodeModelAvailable(ctx, rec.WorktreePath, rec.ProviderID, modelID, true)
 		if checkErr != nil {
@@ -573,6 +577,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		Role:         "user",
 		Time:         MessageTime{Created: now},
 		Agent:        mode,
+		ServiceTier:  fastServiceTierValue(body.FastMode && !rec.Subagent && s.ApprovalPolicy().Mode != ApprovalModeUnattended),
 		ModelID:      modelID,
 		ProviderID:   rec.ProviderID,
 		ContinueTask: body.ContinueTask,
@@ -680,6 +685,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		ProviderID:      rec.ProviderID,
 		ModelID:         modelID,
 		Effort:          effort,
+		FastMode:        userInfo.ServiceTier == "fast",
 		CallerSystem:    callerSystem,
 		PromptText:      cliPrompt,
 		ClientRequestID: clientReqID,
@@ -688,19 +694,14 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	})
 
 	var err error
-	if isImageTurn {
+	if s.IsVideoModel(rec.ProviderID, modelID) {
+		err = s.startVideoGenerationTurn(rec, mode, modelID, userInfo, storedParts, deliveryParts, asstMsgID, promptText, body.ImageOptions)
+	} else if isImageTurn {
 		err = s.startImageGenerationTurn(rec, mode, modelID, userInfo, storedParts, deliveryParts, asstMsgID, promptText, body.ImageOptions)
 	} else if rec.Runtime == "opencode" && openCodeDaemonUp {
 		err = s.startOpenCodeTurn(rec, mode, modelID, effort, body.System, userInfo, storedParts, deliveryParts)
 	} else if rec.Runtime == string(RuntimeNative) {
 		nativeSystem := body.System
-		if memCtx := strings.TrimSpace(runtimeMemoryContext(rec)); memCtx != "" && !strings.Contains(nativeSystem, "<project_memory>") {
-			if nativeSystem == "" {
-				nativeSystem = memCtx
-			} else {
-				nativeSystem = memCtx + "\n\n" + nativeSystem
-			}
-		}
 		if clearedFailedAsst != nil {
 			s.broadcast(sessionID, SSEEvent{
 				Type:       "message.updated",
@@ -708,7 +709,9 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 			})
 		}
 		if resumedUserInfo != nil {
-			err = s.launchNativeTurn(rec, mode, modelID, effort, nativeSystem, restartContinuationPrompt, *resumedUserInfo, nil, asstMsgID, true)
+			resumed := *resumedUserInfo
+			resumed.ServiceTier = userInfo.ServiceTier
+			err = s.launchNativeTurn(rec, mode, modelID, effort, nativeSystem, restartContinuationPrompt, resumed, nil, asstMsgID, true)
 		} else {
 			promptInput := cliPrompt
 			if body.SkillSelection != nil {
@@ -770,7 +773,9 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	}
 	if clientReqID != "" && s.ledger != nil {
 		if raw, mErr := json.Marshal(receipt); mErr == nil {
-			s.ledger.CompleteRequest(RequestKindPrompt, sessionID, sessionID, clientReqID, reqDigest, http.StatusOK, raw, map[string]string{"userMsgID": userMsgID})
+			// Only this execution's allocated assistant ID is eligible for result inspection.
+			// Runtimes that substitute other IDs fail closed; never select the latest reply.
+			s.ledger.CompleteRequest(RequestKindPrompt, sessionID, sessionID, clientReqID, reqDigest, http.StatusOK, raw, map[string]string{"userMsgID": userMsgID, "assistantMsgID": asstMsgID})
 		}
 	} else {
 		s.storePromptReceipt(sessionID, clientReqID, receipt)

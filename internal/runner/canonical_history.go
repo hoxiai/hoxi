@@ -284,6 +284,29 @@ func (s *Service) projectCanonicalNativeHistory(turns []MessageTurn, targetProvi
 						blocks = append(blocks, NativeContentBlock{Type: "text", Text: p.Text})
 					}
 				case "file":
+					rawURL := strings.TrimSpace(p.URL)
+					if strings.HasPrefix(rawURL, "/api/hoxi/file/content?") {
+						localPath, _ := resolveStagedWorkspaceFilePath(rawURL, "")
+						hdr := `<attached_file name="` + p.Filename + `" mime="` + p.Mime + `"`
+						if localPath != "" {
+							hdr += ` path="` + localPath + `"`
+						}
+						if by := stringMetaField(p.Metadata, "transcribedBy"); by != "" {
+							hdr += ` transcribed_by="` + by + `"`
+						}
+						if tr := stringMetaField(p.Metadata, "transcript"); tr != "" {
+							blocks = append(blocks, NativeContentBlock{
+								Type: "text",
+								Text: hdr + ">\n[Audio Transcript]\n" + tr + "\n</attached_file>",
+							})
+						} else {
+							blocks = append(blocks, NativeContentBlock{
+								Type: "text",
+								Text: hdr + "></attached_file>",
+							})
+						}
+						continue
+					}
 					lowerMime := strings.ToLower(strings.TrimSpace(p.Mime))
 					if (strings.HasPrefix(lowerMime, "audio/") || strings.HasPrefix(lowerMime, "video/")) &&
 						!s.isNativeGoogleStreamProtocol(targetProviderID, targetModelID) {

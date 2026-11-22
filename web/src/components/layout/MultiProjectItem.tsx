@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSelector, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSelector, createSignal, onCleanup, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { Presence } from "../motion/Presence";
 import { GripVertical, MoreHorizontal, FolderPlus, Pencil, Layers, Trash2, Plus } from "lucide-solid";
@@ -26,7 +26,13 @@ import {
 import { SessionNavItem } from "./SessionNavItem";
 import { useAnchoredPopover } from "./anchored-popover";
 import { t } from "../../i18n";
-import { SessionHistoryList, useSessionHistory } from "./SessionHistory";
+import {
+  ArchivedSessionsDrawer,
+  resetExpandedSessionHistory,
+  SessionHistoryList,
+  useCollapsibleDrawerMount,
+  useSessionHistory,
+} from "./SessionHistory";
 import { matchesProjectSearch, matchesSessionSearch } from "./session-search";
 import { isWorkSurface } from "./surface-extension";
 
@@ -192,18 +198,16 @@ export default function MultiProjectTreeItem(props: {
       props.proj.folders
     );
   });
-  const [everExpanded, setEverExpanded] = createSignal(props.expanded);
-  const [everArchivedOpen, setEverArchivedOpen] = createSignal(props.isArchivedOpen);
+  const drawerMounted = useCollapsibleDrawerMount(() => props.expanded);
 
   createEffect(() => {
-    if (props.expanded) setEverExpanded(true);
-  });
-  createEffect(() => {
-    if (props.isArchivedOpen) setEverArchivedOpen(true);
+    if (!props.expanded) {
+      resetExpandedSessionHistory(props.proj.path);
+    }
   });
 
   const codeProjection = createMemo((prev?: ReturnType<typeof partitionCodeSessions>) => {
-    if (!everExpanded()) return { codeSessions: [], roots: [], subagentsByRoot: new Map<string, SessionInfo[]>() };
+    if (!drawerMounted()) return { codeSessions: [], roots: [], subagentsByRoot: new Map<string, SessionInfo[]>() };
     if (isWorkSurface() && prev) return prev;
     const rawList =
       isActive() && !workspace.bootstrappingSessions && workspace.sessions.length > 0
@@ -215,7 +219,7 @@ export default function MultiProjectTreeItem(props: {
   const subagentsByRoot = () => codeProjection().subagentsByRoot;
 
   const allFilteredSessions = createMemo<SessionInfo[]>((prev) => {
-    if (!everExpanded()) return [];
+    if (!drawerMounted()) return [];
     if (isWorkSurface()) return prev ?? [];
     const q = props.filterQuery.trim().toLowerCase();
     const sorted = sortSessionsByActivity(codeProjection().roots);
@@ -337,7 +341,7 @@ export default function MultiProjectTreeItem(props: {
       </div>
 
       {/* Expanded Workspace Sessions */}
-      <Show when={everExpanded()}>
+      <Show when={drawerMounted()}>
         <div
           class="hoxi-drawer-grid"
           data-open={props.expanded ? "true" : "false"}
@@ -384,64 +388,36 @@ export default function MultiProjectTreeItem(props: {
               </Show>
 
               {/* Collapsible Archived Section for this project */}
-              <Show when={!props.isLoadingSessions && archivedSessions().length > 0}>
-                <div class="pt-0.5">
-                  <button
-                    type="button"
-                    onClick={(ev) => {
-                      ev.stopPropagation();
-                      props.onToggleArchived(props.proj.path);
-                    }}
-                    class="w-full flex items-center justify-between gap-1.5 rounded-lg px-2 py-1 text-[12px] text-[var(--text-faint)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]/40 transition-colors cursor-pointer"
-                  >
-                    <div class="flex items-center gap-1">
-                      <span
-                        class="hoxi-chevron"
-                        data-open={props.isArchivedOpen ? "true" : "false"}
-                      >
-                        <Icon name="chevron-right" size="small" class="w-3 h-3" />
-                      </span>
-                      <Icon name="archive" size="small" class="w-3 h-3" />
-                      <span>{t("leftNav.archivedSessions")}</span>
-                    </div>
-                    <span class="text-[11px] font-mono">
-                      {archivedSessions().length}
-                    </span>
-                  </button>
-
-                  <Show when={everArchivedOpen()}>
-                    <div
-                      class="hoxi-drawer-grid"
-                      data-open={props.isArchivedOpen ? "true" : "false"}
-                      aria-hidden={!props.isArchivedOpen}
-                    >
-                      <div class="min-h-0 overflow-hidden">
-                        <div class="mt-1 space-y-1">
-                          <For each={archivedSessions()}>
-                            {(session) => (
-                              <SessionNavItem
-                                session={session}
-                                active={isSelectedSession(session.id)}
-                                canDelete={true}
-                                isArchived={true}
-                                pendingSessions={props.pendingSessions}
-                                onSelect={() =>
-                                  props.onSelectSession(props.proj.path, session.id)
-                                }
-                                onUnarchive={(ev, id) =>
-                                  props.onUnarchiveSession(props.proj.path, ev, id)
-                                }
-                                onDiscard={(ev, id) =>
-                                  props.onDiscardSession(props.proj.path, ev, id)
-                                }
-                              />
-                            )}
-                          </For>
-                        </div>
-                      </div>
-                    </div>
-                  </Show>
-                </div>
+              <Show when={!props.isLoadingSessions}>
+                <ArchivedSessionsDrawer
+                  projectKey={props.proj.path}
+                  sessions={archivedSessions()}
+                  open={props.isArchivedOpen}
+                  filterQuery={props.filterQuery}
+                  onToggle={(ev) => {
+                    ev.stopPropagation();
+                    props.onToggleArchived(props.proj.path);
+                  }}
+                >
+                  {(session) => (
+                    <SessionNavItem
+                      session={session}
+                      active={isSelectedSession(session.id)}
+                      canDelete={true}
+                      isArchived={true}
+                      pendingSessions={props.pendingSessions}
+                      onSelect={() =>
+                        props.onSelectSession(props.proj.path, session.id)
+                      }
+                      onUnarchive={(ev, id) =>
+                        props.onUnarchiveSession(props.proj.path, ev, id)
+                      }
+                      onDiscard={(ev, id) =>
+                        props.onDiscardSession(props.proj.path, ev, id)
+                      }
+                    />
+                  )}
+                </ArchivedSessionsDrawer>
               </Show>
             </div>
           </div>

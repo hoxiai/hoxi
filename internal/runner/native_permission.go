@@ -92,7 +92,7 @@ func (s *Service) nativePermissionHook(rec SessionRecord, asstMsgID string) func
 			}
 			return nil
 		}
-		if lowerTool == "hoxi_image" {
+		if lowerTool == "hoxi_image" || lowerTool == "hoxi_video" || lowerTool == "hoxi_speech" {
 			if s.nativeImageCallAutoAllowed(rec, args) {
 				return nil
 			}
@@ -112,7 +112,7 @@ func (s *Service) nativePermissionHook(rec SessionRecord, asstMsgID string) func
 			}
 			return nil
 		}
-		if lowerTool == "webfetch" || lowerTool == "mcp_call_tool" {
+		if lowerTool == "webfetch" || lowerTool == "websearch" || lowerTool == "mcp_call_tool" {
 			approved, reason := s.gateToolCall(fakeHTTP, cred, req.ToolName, args, req.CallID)
 			if !approved {
 				return fmt.Errorf("%s", reason)
@@ -188,9 +188,9 @@ func (s *Service) nativePermissionHook(rec SessionRecord, asstMsgID string) func
 				matchedToolRoot = root
 			}
 			protectedCodeIdx := lowerTool == "hoxi_code_index" && target != "" && (!inReadRoot || isProtectedWorktreePath(root, target))
-			if !protectedCodeIdx && !hasEscapingSearchPattern(args) &&
+			if !protectedCodeIdx && !hasRiskySearchSelector(lowerTool, args) &&
 				(target == "" || (inReadRoot && !isSensitiveExternalReadPath(target))) &&
-				!isSecretFilePath(target) {
+				!isSecretFilePath(target) && !isSecretFilePath(rawHookToolPath(args)) {
 				return nil
 			}
 		} else if target := resolveHookToolPath(rec.WorktreePath, args); target != "" {
@@ -484,6 +484,16 @@ func (s *Service) sessionWorkspaceRoots(rec SessionRecord) (readRoots, writeRoot
 
 	if strings.TrimSpace(rec.WorktreePath) != "" {
 		addWrite(rec.WorktreePath)
+	}
+	if s != nil && strings.TrimSpace(rec.ID) != "" {
+		if bundle, bErr := s.ResolveSessionBundle(rec.ID, rec.WorktreePath); bErr == nil {
+			for _, dir := range bundle.ReadOnlyExecRoots {
+				addRead(dir)
+			}
+			for _, dir := range bundle.ExtraSkillDirs {
+				addRead(dir)
+			}
+		}
 	}
 	if s == nil || s.projectResolver == nil || strings.TrimSpace(rec.ProjectID) == "" {
 		return readRoots, writeRoots

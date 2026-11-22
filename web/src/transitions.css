@@ -328,6 +328,9 @@ dialog[open]::backdrop {
 .hoxi-step-grid[data-open="false"] {
   grid-template-rows: 0fr;
   opacity: 0;
+  transition:
+    grid-template-rows 160ms var(--ease-move),
+    opacity 140ms var(--ease-exit);
 }
 
 /*
@@ -379,6 +382,10 @@ dialog[open]::backdrop {
   grid-template-rows: 0fr;
   opacity: 0;
   pointer-events: none;
+  transition:
+    grid-template-rows var(--motion-exit) var(--ease-move),
+    opacity var(--motion-exit) var(--ease-exit),
+    margin-top var(--motion-exit) var(--ease-move);
 }
 
 .hoxi-chevron {
