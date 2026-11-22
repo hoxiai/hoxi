@@ -232,7 +232,7 @@ func TestStepLoopGuardFailedReadsDoNotConsumeReadQuota(t *testing.T) {
 }
 
 func TestCompactBudgetSmallCutoffQuantizesToStride4(t *testing.T) {
-	const contextLimit = 64000                                                                 // keepRecent = 20, trigger = 48k, hardCap = 57.6k
+	const contextLimit = 64000                                                                   // keepRecent = 20, trigger = 48k, hardCap = 57.6k
 	mediumOut := strings.Repeat("tool output payload line for small stride quantization\n", 240) // ~13.2 KB (~4.4k tokens); 12 pairs ~= 53k tokens (between 48k trigger and 57.6k hardCap)
 
 	buildMsgs := func(totalPairs int) []Message {

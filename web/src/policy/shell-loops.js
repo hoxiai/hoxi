@@ -2,6 +2,7 @@
 // substitution, secret or protected path) is unrolled up to 64 items and each
 // copy is judged as its own command. Over the cap the loop is left untouched.
 // Mirrors expandLiteralForLoops in internal/runner/opaque_expand.go.
+import { isWindowsTempPath } from "./policy-paths.js";
 import { normalizeNumericLoops } from "./numeric-loops.js";
 import { isScopedProjectScript, stripScriptRedirects } from "./shell-script.js";
 
@@ -333,7 +334,7 @@ function isSafeCurlWriteOut(fmtStr) {
 export function isSafeCurlOutputTarget(p, isSecret) {
   if (p === "/dev/null") return true;
   if (!p || p.includes("..") || /[$*?[`~]/.test(p) || isSecret(p)) return false;
-  return p.startsWith("/tmp/") || p.startsWith("/private/tmp/") || isMacOSTempPath(p);
+  return p.startsWith("/tmp/") || p.startsWith("/private/tmp/") || isMacOSTempPath(p) || isWindowsTempPath(p);
 }
 
 export function isValueClassCurl(args, isSecret) {

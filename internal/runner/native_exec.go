@@ -203,12 +203,13 @@ func nativeSubprocessEnv(rec SessionRecord) []string {
 		if !ok {
 			continue
 		}
-		if name == "GOWORK" {
+		upper := strings.ToUpper(name)
+		if upper == "GOWORK" {
 			if gw := strings.TrimSpace(val); gw != "" && gw != "off" && rec.WorktreePath != "" && !pathWithin(rec.WorktreePath, gw) {
 				continue
 			}
 		}
-		switch name {
+		switch upper {
 		case "GIT_TERMINAL_PROMPT",
 			"GCM_INTERACTIVE",
 			"GIT_ASKPASS",
@@ -234,38 +235,10 @@ func nativeSubprocessEnv(rec SessionRecord) []string {
 	)
 }
 
-func isWindowsWSLStubBash(p string) bool {
-	norm := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(p), "/", `\`))
-	return strings.HasSuffix(norm, `\system32\bash.exe`) ||
-		strings.HasSuffix(norm, `\sysnative\bash.exe`) ||
-		strings.Contains(norm, `\microsoft\windowsapps\bash.exe`)
-}
-
 func nativeShellCommand(command string) (string, []string) {
 	if runtime.GOOS == "windows" {
-		for _, k := range []string{"ProgramFiles", "ProgramFiles(x86)", "LocalAppData"} {
-			root := strings.TrimSpace(os.Getenv(k))
-			if root == "" {
-				continue
-			}
-			for _, rel := range []string{
-				filepath.Join(root, "Git", "bin", "bash.exe"),
-				filepath.Join(root, "Git", "usr", "bin", "bash.exe"),
-				filepath.Join(root, "Programs", "Git", "bin", "bash.exe"),
-			} {
-				if st, err := os.Stat(rel); err == nil && !st.IsDir() {
-					return rel, []string{"-c", command}
-				}
-			}
-		}
-		if up := strings.TrimSpace(os.Getenv("USERPROFILE")); up != "" {
-			cand := filepath.Join(up, "scoop", "apps", "git", "current", "bin", "bash.exe")
-			if st, err := os.Stat(cand); err == nil && !st.IsDir() {
-				return cand, []string{"-c", command}
-			}
-		}
-		if p, err := exec.LookPath("bash"); err == nil && p != "" && !isWindowsWSLStubBash(p) {
-			return p, []string{"-c", command}
+		if bash := subproc.ResolveWindowsBash(false); bash != "" {
+			return bash, []string{"-c", command}
 		}
 		return "cmd", []string{"/C", "chcp 65001 >nul 2>&1 & " + command}
 	}
@@ -333,9 +306,10 @@ func resolveWorkspaceNodeBin(rec SessionRecord, startDir, worktreeRoot, toolName
 	return resolveNativeToolBinary(rec, toolName)
 }
 
-func resolveNativeToolBinary(rec SessionRecord, toolName string) string {
-	for _, kv := range nativeSubprocessEnv(rec) {
-		if pathVal, ok := strings.CutPrefix(kv, "PATH="); ok {
+func resolveNativeToolBinaryFromEnv(env []string, toolName string) string {
+	for _, kv := range env {
+		if len(kv) >= 5 && strings.EqualFold(kv[:5], "PATH=") {
+			pathVal := kv[5:]
 			for _, dir := range filepath.SplitList(pathVal) {
 				dir = strings.TrimSpace(dir)
 				if dir == "" {
@@ -358,6 +332,10 @@ func resolveNativeToolBinary(rec SessionRecord, toolName string) string {
 		return p
 	}
 	return ""
+}
+
+func resolveNativeToolBinary(rec SessionRecord, toolName string) string {
+	return resolveNativeToolBinaryFromEnv(nativeSubprocessEnv(rec), toolName)
 }
 
 type nativeLimitedWriter struct {

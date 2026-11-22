@@ -116,10 +116,10 @@ func (s *Service) googleVeoGenerateVideo(
 	curBody := body
 	for {
 		var op struct {
-			Name     string          `json:"name"`
-			Done     bool            `json:"done"`
+			Name     string                    `json:"name"`
+			Done     bool                      `json:"done"`
 			Error    *struct{ Message string } `json:"error"`
-			Response json.RawMessage `json:"response"`
+			Response json.RawMessage           `json:"response"`
 		}
 		if err := json.Unmarshal(curBody, &op); err != nil {
 			return llm.VideoResponse{}, fmt.Errorf("decode Veo operation: %w", err)
@@ -405,7 +405,7 @@ func (s *Service) volcArkGenerateVideo(
 			return llm.VideoResponse{}, errors.New(redactSecretInText(extractAPIErrorMessage(pStatus, pBody), conn.APIKey))
 		}
 		var task struct {
-			Status  string `json:"status"`
+			Status  string                    `json:"status"`
 			Error   *struct{ Message string } `json:"error"`
 			Content struct {
 				VideoURL string `json:"video_url"`

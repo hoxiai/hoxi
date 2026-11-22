@@ -68,8 +68,8 @@ func hasProtectedGitOutput(command string) bool {
 
 func joinGitOutputPath(dir, target string) string {
 	target = filepath.ToSlash(target)
-	if strings.HasPrefix(target, "/") {
-		return path.Clean(target)
+	if strings.HasPrefix(target, "/") || isWindowsDriveAbs(target) {
+		return cleanSlashPath(target)
 	}
 	return path.Join(dir, target)
 }

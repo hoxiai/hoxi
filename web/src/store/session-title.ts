@@ -83,11 +83,14 @@ export function isPlaceholderSessionTitle(title?: string | null): boolean {
     "New Thread",
     "New Session",
     "Untitled",
+    "Hoxi Native Session",
     "Claude Code Session",
     "Antigravity Session",
     "Gemini CLI Session",
     "CodeBuddy Session",
     "Qoder Session",
+    "Codex CLI Session",
+    "OpenCode CLI Session",
   ]);
 
   if (knownPlaceholders.has(trimmed)) return true;

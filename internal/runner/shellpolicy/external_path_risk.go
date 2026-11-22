@@ -226,6 +226,9 @@ var sensitiveExternalPrefixes = []string{
 	"/private/var/root/",
 }
 
+var sensitiveWindowsSystemPathRe = regexp.MustCompile(`(?i)^[a-z]:/windows/(?:$|system32/|syswow64/|sysnative/)`)
+var sensitiveWindowsStartupFragment = "/appdata/roaming/microsoft/windows/start menu/programs/startup/"
+
 func isRoutineSkillSubpath(slash string) bool {
 	return strings.Contains(slash, "/.hoxi/skills/") ||
 		strings.Contains(slash, "/.agents/skills/") ||
@@ -309,6 +312,9 @@ func isSensitiveExternalPathWith(rawPath string, checkProtected bool) bool {
 			if strings.HasPrefix(slashDir, prefix) {
 				return true
 			}
+		}
+		if sensitiveWindowsSystemPathRe.MatchString(slashDir) || strings.Contains(slashDir, sensitiveWindowsStartupFragment) {
+			return true
 		}
 		normDir := "/" + strings.TrimLeft(slashDir, "/")
 		for _, fragment := range sensitiveExternalFragments {

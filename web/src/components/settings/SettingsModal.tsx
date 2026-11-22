@@ -28,12 +28,15 @@ import {
   closeSettingsModal,
   desktopAuth,
   formatMemberPoints,
+  hasWindowsWindowControls,
+  isMacDesktopPlatform,
   openSettingsModal,
   toggleTheme,
   workspace,
   type SettingsTab,
 } from "../../store/workspace";
 import { t } from "../../i18n";
+import WindowControls, { handleFramelessHeaderDoubleClick } from "../layout/WindowControls";
 import AgentPolicyMcpTab from "../models/AgentPolicyMcpTab";
 import AutoModelPoolTab from "../models/AutoModelPoolTab";
 import CustomEndpointTab from "../models/CustomEndpointTab";
@@ -56,9 +59,8 @@ import { AccountSettingsTab } from "./AccountSettingsTab";
 export default function SettingsModal() {
   const [searchQuery, setSearchQuery] = createSignal("");
 
-  const isMac =
-    typeof navigator !== "undefined" &&
-    /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);
+  const isMac = isMacDesktopPlatform();
+  const showWinControls = hasWindowsWindowControls();
 
   const isOpen = () => appSettings.modalOpen;
 
@@ -360,12 +362,17 @@ export default function SettingsModal() {
         data-state={state()}
         class="hoxi-screen fixed inset-0 z-40 flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] select-none overflow-hidden"
       >
-        {/* Top Window Header (respects macOS traffic light drag area) */}
+        {/* Top Window Header (respects macOS traffic light drag area and Windows frameless caption controls) */}
         <header
-          class={`shrink-0 bg-transparent flex items-center justify-between gap-3 px-4 ${
-            isMac ? "h-[52px] pl-[96px]" : "h-[44px] pl-4"
+          class={`shrink-0 bg-transparent flex items-center justify-between gap-3 ${
+            isMac
+              ? "h-[52px] pl-[96px] pr-4"
+              : showWinControls
+                ? "h-[44px] pl-4 pr-0"
+                : "h-[44px] px-4"
           }`}
           style={{ "--wails-draggable": "drag" } as any}
+          onDblClick={handleFramelessHeaderDoubleClick}
         >
           <div class="flex items-center gap-3 min-w-0">
             <button
@@ -392,7 +399,7 @@ export default function SettingsModal() {
             </span>
           </div>
 
-          <div class="flex items-center gap-2 shrink-0">
+          <div class={`flex items-center gap-2 shrink-0 ${showWinControls ? "h-full" : ""}`}>
             <span class="hidden sm:inline-block rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)]/70 px-2.5 py-1 font-mono text-[11px] text-[var(--text-faint)]">
               {t("settings.shortcutHint")}
             </span>
@@ -409,6 +416,7 @@ export default function SettingsModal() {
             >
               {workspace.theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
             </button>
+            <WindowControls />
           </div>
         </header>
 

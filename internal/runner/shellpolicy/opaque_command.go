@@ -227,14 +227,14 @@ func opaqueShellCore(command, worktree string, trust scriptTrust, valueClass boo
 
 func isSafeExternalCDTarget(resolved string) bool {
 	cleaned := filepath.Clean(resolved)
-	slash := filepath.ToSlash(cleaned)
-	if slash == "" || slash == "/" || filepath.Dir(cleaned) == cleaned || isSensitiveExternalPath(resolved) || isSecretFilePath(resolved) || isProtectedShellReadPath(resolved) {
+	slash := cleanSlashPath(resolved)
+	if slash == "" || slash == "/" || isWindowsDriveRoot(slash) || filepath.Dir(cleaned) == cleaned || isSensitiveExternalPath(resolved) || isSecretFilePath(resolved) || isProtectedShellReadPath(resolved) {
 		return false
 	}
 	if real, ok := resolvePathWithSymlinks(resolved, 0); ok && real != "" {
 		realClean := filepath.Clean(real)
-		realSlash := filepath.ToSlash(realClean)
-		if realSlash == "/" || filepath.Dir(realClean) == realClean || isSensitiveExternalPath(real) || isSecretFilePath(real) || isProtectedShellReadPath(real) {
+		realSlash := cleanSlashPath(real)
+		if realSlash == "/" || isWindowsDriveRoot(realSlash) || filepath.Dir(realClean) == realClean || isSensitiveExternalPath(real) || isSecretFilePath(real) || isProtectedShellReadPath(real) {
 			return false
 		}
 	}
@@ -255,7 +255,7 @@ func advanceScopedCD(seg, cwd, worktree string) (string, bool) {
 				return "", false
 			}
 		}
-		cleaned := filepath.Clean(target)
+		cleaned := cleanSlashPath(target)
 		if !isSafeExternalCDTarget(cleaned) {
 			return "", false
 		}
@@ -263,14 +263,10 @@ func advanceScopedCD(seg, cwd, worktree string) (string, bool) {
 	}
 	wt := strings.TrimSpace(worktree)
 	if isAbsOrRootedPath(cwd) {
-		resolved := filepath.Clean(filepath.Join(cwd, target))
+		resolved := joinSlashPath(cwd, target)
 		if wt != "" && isAbsOrRootedPath(wt) {
-			base := filepath.Clean(wt)
-			slashCWD := filepath.ToSlash(cwd)
-			slashBase := strings.TrimSuffix(filepath.ToSlash(base), "/")
-			slashResolved := filepath.ToSlash(resolved)
-			inside := slashResolved == slashBase || strings.HasPrefix(slashResolved, slashBase+"/")
-			if inside && (slashCWD == slashBase || strings.HasPrefix(slashCWD, slashBase+"/")) {
+			base := cleanSlashPath(wt)
+			if slashPathWithin(base, resolved) && slashPathWithin(base, cwd) {
 				if !isSafeExternalCDTarget(resolved) || !pathWithin(base, resolved) {
 					return "", false
 				}

@@ -383,4 +383,44 @@ describe("new thread drafts", () => {
       assertEqual(workspace.sessions[0]?.id, "ses_atomic_new");
     });
   });
+
+  it("cleans up a newly created empty session when initial send is rejected before admission", async () => {
+    await withDraftFixture(async () => {
+      setWorkspace({
+        rootDir: "C:/Users/dev/project",
+        activeSessionID: null,
+        sessions: [],
+        providers: [{ id: "openai", name: "OpenAI", models: { "gpt-5": { id: "gpt-5", name: "GPT-5" } } }],
+        defaultAI: { agent: "build", model: { providerID: "openai", modelID: "gpt-5" }, effort: "" },
+      });
+      const deleted: Array<{ id: string; dir?: string }> = [];
+      hoxiAPI.createSession = async (_title, dir) => ({
+        id: "ses_orphan_fail",
+        title: "Hoxi Native Session",
+        directory: "C:\\Users\\dev\\project",
+        runtime: "native",
+        managed: true,
+        sandboxMode: "local",
+        time: { created: 10, updated: 10 },
+      });
+      hoxiAPI.deleteSession = async (id, dir) => {
+        deleted.push({ id, dir });
+      };
+      hoxiAPI.sendPromptAsync = async () => {
+        throw new Error("HTTP 400: invalid model");
+      };
+
+      let rejected = false;
+      try {
+        await submitSessionPrompt("Hello", null, { directory: "C:/Users/dev/project" });
+      } catch {
+        rejected = true;
+      }
+      assertEqual(rejected, true);
+      assertEqual(workspace.activeSessionID, null, "activeSessionID returns to new-thread draft after rollback");
+      assertEqual(workspace.sessions.some((s) => s.id === "ses_orphan_fail"), false, "orphan session removed from store");
+      assertEqual(deleted.length, 1, "backend deleteSession invoked for unused orphan session");
+      assertEqual(deleted[0].id, "ses_orphan_fail");
+    });
+  });
 });

@@ -140,13 +140,21 @@ func isProtectedRelPath(rel string) bool {
 func isProtectedWorktreePath(base, target string) bool {
 	cleanBase := filepath.Clean(strings.TrimSpace(base))
 	cleanTarget := filepath.Clean(strings.TrimSpace(target))
-	if rel, err := filepath.Rel(cleanBase, cleanTarget); err == nil && isProtectedRelPath(rel) {
+	if isWindowsDriveAbs(cleanBase) && isWindowsDriveAbs(cleanTarget) {
+		if rel, ok := windowsRelPath(cleanBase, cleanTarget); ok && isProtectedRelPath(rel) {
+			return true
+		}
+	} else if rel, err := filepath.Rel(cleanBase, cleanTarget); err == nil && isProtectedRelPath(rel) {
 		return true
 	}
 	realBase, okBase := resolvePathWithSymlinks(base, 0)
 	realTarget, okTarget := resolvePathWithSymlinks(target, 0)
 	if !okBase || !okTarget {
 		return true
+	}
+	if isWindowsDriveAbs(realBase) && isWindowsDriveAbs(realTarget) {
+		rel, ok := windowsRelPath(realBase, realTarget)
+		return !ok || isProtectedRelPath(rel)
 	}
 	rel, err := filepath.Rel(realBase, realTarget)
 	return err != nil || isProtectedRelPath(rel)
@@ -196,6 +204,9 @@ func pathWithin(base, target string) bool {
 	if strings.TrimSpace(base) == "" || strings.TrimSpace(target) == "" {
 		return false
 	}
+	if isWindowsDriveAbs(base) != isWindowsDriveAbs(target) {
+		return false
+	}
 	if filepath.IsAbs(base) != filepath.IsAbs(target) && isAbsOrRootedPath(base) && isAbsOrRootedPath(target) {
 		return false
 	}
@@ -206,6 +217,9 @@ func pathWithin(base, target string) bool {
 	realTarget, ok := resolvePathWithSymlinks(target, 0)
 	if !ok {
 		return false
+	}
+	if isWindowsDriveAbs(realBase) && isWindowsDriveAbs(realTarget) {
+		return slashPathWithin(realBase, realTarget)
 	}
 	rel, err := filepath.Rel(realBase, realTarget)
 	if err != nil {

@@ -8,6 +8,7 @@ import { isSafeKillProbeArgs } from "./script-interpreter.js";
 import { setLiteralJudge } from "./shell-constants.js";
 import { destructiveScanForms } from "./shell-substitution.js";
 import { hasProtectedGitOutput } from "./git-output.js";
+import { cleanPolicyPath, isAbsPolicyPath, isWindowsDriveRoot, joinPolicyPath, normalizeWindowsDrivePaths, policyPathWithin } from "./policy-paths.js";
 import { literalCDTarget } from "./shell-paths.js";
 import {
   EDIT_PERMISSIONS,
@@ -199,7 +200,7 @@ export function unwrapSandboxCommand(command) {
     if (next === cur) break;
     cur = next;
   }
-  return cur;
+  return normalizeWindowsDrivePaths(cur);
 }
 
 export function commandCandidates(input) {
@@ -294,40 +295,21 @@ export function shellWords(s) {
   return words;
 }
 
-function cleanPosixPath(p) {
-  const abs = p.startsWith("/");
-  const parts = [];
-  for (const seg of p.split("/")) {
-    if (!seg || seg === ".") continue;
-    if (seg === "..") {
-      if (parts.length > 0 && parts[parts.length - 1] !== "..") {
-        parts.pop();
-      } else if (!abs) {
-        parts.push("..");
-      }
-    } else {
-      parts.push(seg);
-    }
-  }
-  const joined = parts.join("/");
-  return abs ? "/" + joined : joined || ".";
-}
-
 export function isWorktreeCD(segment, worktree) {
   const wt = String(worktree || "").trim();
-  if (!wt.startsWith("/")) return false;
+  if (!isAbsPolicyPath(wt) || isWindowsDriveRoot(wt)) return false;
   const raw = literalCDTarget(stripCDNullRedirects(String(segment || "").trim()));
   if (raw === null) return false;
-  const target = cleanPosixPath(raw.startsWith("/") ? raw : `${wt}/${raw}`);
-  const base = cleanPosixPath(wt);
-  return !isSensitiveExternalPath(target) && !isSecretPath(target) && !isProtectedShellReadPath(target) &&
-    (target === base || target.startsWith(base === "/" ? "/" : `${base}/`));
+  const base = cleanPolicyPath(wt);
+  const target = cleanPolicyPath(joinPolicyPath(base, raw));
+  return !isWindowsDriveRoot(target) && target !== "/" && !isSensitiveExternalPath(target) && !isSecretPath(target) && !isProtectedShellReadPath(target) &&
+    policyPathWithin(base, target);
 }
 
 export function normalizeAbsoluteTool(word) {
   if (!word.startsWith("/")) return word;
   const slash = word.lastIndexOf("/");
-  const dir = cleanPosixPath(word.slice(0, slash) || "/");
+  const dir = cleanPolicyPath(word.slice(0, slash) || "/");
   const base = word.slice(slash + 1);
   if (!TOOLCHAIN_BASES.has(base) || !SYSTEM_TOOL_DIRS.has(dir)) return word;
   return base;

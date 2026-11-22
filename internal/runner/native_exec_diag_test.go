@@ -358,3 +358,28 @@ func TestNativeDiagnosticsReportsUnavailableAndCooldown(t *testing.T) {
 		t.Fatalf("check during cooldown: %q", got)
 	}
 }
+
+func TestNativeToolLookupAndSubprocessEnvCaseInsensitiveKeys(t *testing.T) {
+	binDir := t.TempDir()
+	toolName := "hoxi-case-probe-bin"
+	toolPath := writeFakeExecutable(t, binDir, toolName, "exit 0")
+
+	// Mixed-case `Path=` (Windows convention) must be discovered by resolveNativeToolBinaryFromEnv.
+	got := resolveNativeToolBinaryFromEnv([]string{"Path=" + binDir}, toolName)
+	if got != toolPath {
+		t.Fatalf("resolveNativeToolBinaryFromEnv(Path=...) = %q, want %q", got, toolPath)
+	}
+
+	// Mixed-case interactive prompt env vars must be stripped case-insensitively.
+	t.Setenv("Git_AskPass", "/bin/false")
+	t.Setenv("ssh_askpass", "/bin/false")
+	t.Setenv("GIT_EDITOR", "vim")
+	cleaned := nativeSubprocessEnv(SessionRecord{Runtime: string(RuntimeNative)})
+	for _, kv := range cleaned {
+		k, _, _ := strings.Cut(kv, "=")
+		switch strings.ToUpper(k) {
+		case "GIT_ASKPASS", "SSH_ASKPASS", "GIT_EDITOR":
+			t.Fatalf("expected %q stripped from nativeSubprocessEnv, got %v", kv, cleaned)
+		}
+	}
+}

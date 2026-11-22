@@ -10,6 +10,7 @@ import {
 import { locale } from "../i18n";
 import type { SnapshotFileDiff } from "../services/sse-types";
 import { extractFileSuffix, getResolvedFilePath, normalizeCandidatePath } from "./file-links";
+import { stripRootPrefix } from "./workspace-folders";
 import { setWorkspace, workspace, type ReviewCommentItem } from "./workspace-state";
 
 function firstChangedLine(patch?: string): number | null {
@@ -25,7 +26,7 @@ function firstChangedLine(patch?: string): number | null {
   return line;
 }
 
-function parseFileReference(raw: string): { path: string; line: number | null } {
+export function parseFileReference(raw: string): { path: string; line: number | null } {
   const { line: suffixLine } = extractFileSuffix(raw);
   let str = normalizeCandidatePath(raw);
   const parsedLine = suffixLine && suffixLine > 0 ? suffixLine : null;
@@ -55,9 +56,9 @@ function parseFileReference(raw: string): { path: string; line: number | null } 
       : [activeWorktreeDir, activeSession?.directory, workspace.rootDir]
   ).filter((d): d is string => Boolean(d));
   for (const root of candidateRoots) {
-    const normRoot = root.replace(/\/+$/, "");
-    if (normRoot && str.startsWith(`${normRoot}/`)) {
-      str = str.slice(normRoot.length + 1);
+    const rel = stripRootPrefix(str, root);
+    if (rel && rel !== ".") {
+      str = rel;
       break;
     }
   }

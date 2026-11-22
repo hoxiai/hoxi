@@ -414,6 +414,7 @@ func Run(distFS fs.FS) {
 	gw.SetDesktopFocusHandler(func(_, _ string) {
 		app.showWindow()
 	})
+	gw.SetDesktopWindowCloseHandler(app.closeWindow)
 	gw.SetDesktopIntentNotifier(func() {
 		if ctx := app.desktopContext(); ctx != nil {
 			emitDesktopIntent(ctx)
@@ -437,7 +438,8 @@ func Run(distFS fs.FS) {
 		MinWidth:                 launchWindow.MinWidth,
 		MinHeight:                launchWindow.MinHeight,
 		WindowStartState:         launchWindow.StartState,
-		HideWindowOnClose:        runtime.GOOS == "darwin" || runtime.GOOS == "windows",
+		Frameless:                usesFramelessWindow(runtime.GOOS),
+		HideWindowOnClose:        hideWindowOnClose(runtime.GOOS),
 		EnableDefaultContextMenu: true,
 		BackgroundColour:         options.NewRGBA(244, 247, 251, 255),
 		AssetServer: &assetserver.Options{
@@ -445,6 +447,7 @@ func Run(distFS fs.FS) {
 			Handler:    gw,
 			Middleware: assetServerMiddleware(gw),
 		},
+		Windows: buildWindowsAppOptions(),
 		Mac: &mac.Options{
 			OnUrlOpen:            app.onURLOpen,
 			TitleBar:             mac.TitleBarHiddenInset(),

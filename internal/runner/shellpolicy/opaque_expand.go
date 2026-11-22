@@ -485,7 +485,7 @@ func isSafeCurlOutputTarget(p string) bool {
 	if strings.Contains(p, "..") || strings.ContainsAny(p, "$*?[`~") || isSecretFilePath(p) {
 		return false
 	}
-	return strings.HasPrefix(p, "/tmp/") || strings.HasPrefix(p, "/private/tmp/") || isMacOSTempPath(p)
+	return strings.HasPrefix(p, "/tmp/") || strings.HasPrefix(p, "/private/tmp/") || isMacOSTempPath(p) || isWindowsTempPath(p)
 }
 
 func isSafeXargsSegment(rawArgs []string, piped bool, prevSeg string) bool {

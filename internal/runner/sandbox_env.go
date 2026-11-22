@@ -2,6 +2,7 @@ package runner
 
 import (
 	"regexp"
+	"runtime"
 	"strings"
 
 	"github.com/hoxiai/hoxi/internal/agentcli"
@@ -35,7 +36,7 @@ var proxyEnvNames = setOf("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", 
 
 // isCredentialEnv reports whether one NAME=value entry must be dropped.
 func isCredentialEnv(name, value string) bool {
-	if proxyEnvNames[name] {
+	if proxyEnvNames[name] || proxyEnvNames[strings.ToUpper(name)] {
 		return false
 	}
 	return isCredentialEnvName(name) || credentialValueRe.MatchString(strings.TrimSpace(value))
@@ -83,21 +84,31 @@ func envTruthy(v string) bool {
 
 // sandboxedRuntimeEnv returns env without credentials, keeping only the
 // runtime's own model keys. env is a list of NAME=value entries.
-func sandboxedRuntimeEnv(runtime string, env []string) []string {
+func sandboxedRuntimeEnv(runtimeName string, env []string) []string {
+	return sandboxedRuntimeEnvForOS(runtimeName, env, runtime.GOOS == "windows")
+}
+
+func sandboxedRuntimeEnvForOS(runtimeName string, env []string, caseInsensitive bool) []string {
+	keyFor := func(name string) string {
+		if caseInsensitive {
+			return strings.ToUpper(name)
+		}
+		return name
+	}
 	values := make(map[string]string, len(env))
 	for _, kv := range env {
 		if name, value, ok := strings.Cut(kv, "="); ok {
-			values[name] = value
+			values[keyFor(name)] = value
 		}
 	}
-	keep := runtimeModelEnv(runtime, func(name string) string { return values[name] })
+	keep := runtimeModelEnv(runtimeName, func(name string) string { return values[keyFor(name)] })
 	out := make([]string, 0, len(env))
 	for _, kv := range env {
 		name, value, ok := strings.Cut(kv, "=")
 		if !ok || name == "" {
 			continue
 		}
-		if !keep[name] && isCredentialEnv(name, value) {
+		if !keep[keyFor(name)] && isCredentialEnv(name, value) {
 			continue
 		}
 		out = append(out, kv)
@@ -125,23 +136,38 @@ func runtimeProcessEnv(rec SessionRecord, base, hookEnv []string) []string {
 // comma-separated NO_PROXY / no_proxy lists so loopback hook exclusions never
 // overwrite system/user proxy bypass entries.
 func mergeProcessEnv(base, overlay []string) []string {
+	return mergeProcessEnvForOS(base, overlay, runtime.GOOS == "windows")
+}
+
+func mergeProcessEnvForOS(base, overlay []string, caseInsensitive bool) []string {
 	out := make([]string, 0, len(base)+len(overlay))
 	idxByKey := make(map[string]int, len(base)+len(overlay))
+	keyFor := func(name string) string {
+		if caseInsensitive {
+			return strings.ToUpper(name)
+		}
+		return name
+	}
 	apply := func(kv string) {
 		name, val, ok := strings.Cut(kv, "=")
 		if !ok || name == "" {
 			return
 		}
-		if prevIdx, exists := idxByKey[name]; exists {
-			if name == "NO_PROXY" || name == "no_proxy" {
-				_, prevVal, _ := strings.Cut(out[prevIdx], "=")
-				out[prevIdx] = name + "=" + mergeNoProxyCSV(prevVal, val)
+		k := keyFor(name)
+		if prevIdx, exists := idxByKey[k]; exists {
+			if (caseInsensitive && strings.EqualFold(name, "NO_PROXY")) || name == "NO_PROXY" || name == "no_proxy" {
+				prevName, prevVal, _ := strings.Cut(out[prevIdx], "=")
+				mergedName := name
+				if caseInsensitive && prevName != "" {
+					mergedName = prevName
+				}
+				out[prevIdx] = mergedName + "=" + mergeNoProxyCSV(prevVal, val)
 				return
 			}
 			out[prevIdx] = kv
 			return
 		}
-		idxByKey[name] = len(out)
+		idxByKey[k] = len(out)
 		out = append(out, kv)
 	}
 	for _, kv := range base {

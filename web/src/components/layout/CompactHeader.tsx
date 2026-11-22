@@ -7,6 +7,8 @@ import {
 import {
   activeSession,
   defaultWorkspaceDir,
+  hasWindowsWindowControls,
+  isMacDesktopPlatform,
   normalizeFolderPath,
   openEditWorkspaceModal,
   resolveRootSessionID,
@@ -19,6 +21,7 @@ import BranchManagerPopover from "./BranchManagerPopover";
 import HeaderOverflowMenu from "./HeaderOverflowMenu";
 import UpdateIndicator from "./UpdateIndicator";
 import NetworkStatusBanner from "./NetworkStatusBanner";
+import WindowControls, { handleFramelessHeaderDoubleClick } from "./WindowControls";
 import { isWorkSurface, surfaceExtension } from "./surface-extension";
 
 interface CompactHeaderProps {
@@ -52,16 +55,20 @@ export default function CompactHeader(props: CompactHeaderProps) {
     return isPlaceholderSessionTitle(title) ? t("leftNav.newThread") : title;
   });
 
-  const isMac =
-    typeof navigator !== "undefined" &&
-    /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);
+  const isMac = isMacDesktopPlatform();
+  const showWinControls = hasWindowsWindowControls();
 
   return (
     <header
-      class={`hoxi-header-bar shrink-0 bg-transparent flex items-center gap-3 px-4 ${
-        isMac ? "h-[52px] pl-[96px]" : "h-[42px] pl-4"
+      class={`hoxi-header-bar shrink-0 bg-transparent flex items-center gap-3 ${
+        isMac
+          ? "h-[52px] pl-[96px] pr-4"
+          : showWinControls
+            ? "h-[42px] pl-3 pr-0"
+            : "h-[42px] px-4"
       } select-none`}
       style={{ "--wails-draggable": "drag" } as any}
+      onDblClick={handleFramelessHeaderDoubleClick}
     >
       <div class="flex shrink-0 items-center gap-2 text-[12px] font-medium max-w-[35%] min-w-0">
         <button
@@ -131,7 +138,7 @@ export default function CompactHeader(props: CompactHeaderProps) {
         </div>
       </div>
 
-      <div class="flex shrink-0 items-center gap-1.5 text-[12px]">
+      <div class={`flex shrink-0 items-center gap-1.5 text-[12px] ${showWinControls ? "h-full" : ""}`}>
         <UpdateIndicator />
 
         <Show when={props.network}>
@@ -169,6 +176,8 @@ export default function CompactHeader(props: CompactHeaderProps) {
         >
           <PanelRight size={15} />
         </button>
+
+        <WindowControls />
       </div>
     </header>
   );

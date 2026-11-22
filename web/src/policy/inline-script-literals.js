@@ -480,28 +480,4 @@ function appendFoldedStringLiterals(toks, lits) {
   }
 }
 
-export function cleanInlinePosixPath(raw) {
-  const s = String(raw || "").trim().replaceAll("\\", "/");
-  if (!s) return "";
-  const abs = s.startsWith("/");
-  const parts = [];
-  for (const seg of s.split("/")) {
-    if (!seg || seg === ".") continue;
-    if (seg === "..") {
-      if (parts.length > 0 && parts[parts.length - 1] !== "..") parts.pop();
-      else if (!abs) parts.push("..");
-    } else {
-      parts.push(seg);
-    }
-  }
-  const joined = parts.join("/");
-  return abs ? "/" + joined : joined || ".";
-}
-
-export function joinInlinePosixPath(a, b) {
-  if (!a) return b;
-  if (!b) return a;
-  const bs = b.replaceAll("\\", "/");
-  if (bs.startsWith("/")) return bs;
-  return a.replaceAll("\\", "/").replace(/\/+$/, "") + "/" + bs;
-}
+export { cleanPolicyPath as cleanInlinePosixPath, joinPolicyPath as joinInlinePosixPath } from "./policy-paths.js";

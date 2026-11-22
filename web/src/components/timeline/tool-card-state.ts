@@ -8,6 +8,7 @@ import {
   normalizeFolderPath,
   resolveRootSessionID,
   sessionDirectory,
+  stripRootPrefix,
   workspace,
   workspaceFoldersForDir,
 } from "../../store/workspace";
@@ -25,11 +26,11 @@ import {
 export function normalizeWorkspaceRelPath(raw: string): string {
   let trimmed = (raw || "").trim();
   if (!trimmed) return "";
-  const root = workspace.rootDir.replace(/\/+$/, "");
-  if (root && (trimmed === root || trimmed.startsWith(`${root}/`))) {
-    trimmed = trimmed.slice(root.length).replace(/^\/+/, "");
+  const rel = stripRootPrefix(trimmed, workspace.rootDir);
+  if (rel !== null) {
+    trimmed = rel === "." ? "" : rel;
   } else {
-    trimmed = trimmed.replace(/^\.\/+/, "");
+    trimmed = trimmed.replace(/\\/g, "/").replace(/^\.\/+/, "");
   }
   return trimmed.replace(/^\.hoxi\/worktrees\/[^/]+\/+/, "");
 }

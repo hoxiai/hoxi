@@ -492,3 +492,57 @@ func TestOnDemandNestedGitRepoLoadingWhenRootIsGitRepo(t *testing.T) {
 		t.Fatalf("expected root + touched stripe repo (2 repos, not untouched paypal), got %d: %+v", len(stAfter.Repos), stAfter.Repos)
 	}
 }
+
+func TestResolveWindowsShSkipsWSLStubAndPrefersGitBash(t *testing.T) {
+	gitBash := `C:\Program Files\Git\bin\bash.exe`
+	got := resolveWindowsShWith(
+		func(k string) string {
+			if k == "ProgramFiles" {
+				return `C:\Program Files`
+			}
+			return ""
+		},
+		func(p string) bool { return p == gitBash },
+		func(name string) (string, error) {
+			if name == "bash" {
+				return `C:\Windows\System32\bash.exe`, nil
+			}
+			return "", os.ErrNotExist
+		},
+	)
+	if got != gitBash {
+		t.Fatalf("resolveWindowsShWith = %q, want %q", got, gitBash)
+	}
+
+	// When no Git Bash is installed, LookPath returning System32\bash.exe must be skipped.
+	gotFallback := resolveWindowsShWith(
+		func(string) string { return "" },
+		func(string) bool { return false },
+		func(name string) (string, error) {
+			switch name {
+			case "bash":
+				return `C:\Windows\System32\bash.exe`, nil
+			case "sh":
+				return `C:\msys64\usr\bin\sh.exe`, nil
+			default:
+				return "", os.ErrNotExist
+			}
+		},
+	)
+	if gotFallback != `C:\msys64\usr\bin\sh.exe` {
+		t.Fatalf("expected WSL System32 bash stub to be skipped in favor of sh, got %q", gotFallback)
+	}
+
+	// Mixed-case Git_AskPass / ssh_askpass must be stripped case-insensitively.
+	t.Setenv("Git_AskPass", `C:\evil.exe`)
+	t.Setenv("ssh_askpass", `C:\evil-ssh.exe`)
+	t.Setenv("GIT_EDITOR", "notepad")
+	cleaned := nonInteractiveGitEnv()
+	for _, kv := range cleaned {
+		k, _, _ := strings.Cut(kv, "=")
+		switch strings.ToUpper(k) {
+		case "GIT_ASKPASS", "SSH_ASKPASS", "GIT_EDITOR":
+			t.Fatalf("expected %q to be stripped from nonInteractiveGitEnv, got %v", kv, cleaned)
+		}
+	}
+}

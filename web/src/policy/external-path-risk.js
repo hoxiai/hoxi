@@ -26,6 +26,8 @@ const SENSITIVE_BASENAMES = new Set([
 ]);
 
 const SENSITIVE_PATH_PREFIXES = ["/etc/", "/private/etc/", "/root/", "/var/root/", "/private/var/root/"];
+const SENSITIVE_WINDOWS_SYSTEM_PATH_RE = /^[a-z]:\/windows\/(?:$|system32\/|syswow64\/|sysnative\/)/i;
+const SENSITIVE_WINDOWS_STARTUP_FRAGMENT = "/appdata/roaming/microsoft/windows/start menu/programs/startup/";
 
 const SENSITIVE_PATH_FRAGMENTS = [
   "/.config/opencode/", "/.local/share/opencode/", "/.config/hoxi/", "/.config/claude/", "/.config/gh/", "/.config/gcloud/",
@@ -235,6 +237,7 @@ function isSensitiveExternalPathWith(rawPath, checkProtected) {
     if (isRoutineHoxiSubpath(slash)) continue;
     if (checkProtected && isProtectedPath(cand)) return true;
     if (SENSITIVE_PATH_PREFIXES.some((p) => slashDir.startsWith(p))) return true;
+    if (SENSITIVE_WINDOWS_SYSTEM_PATH_RE.test(slashDir) || slashDir.includes(SENSITIVE_WINDOWS_STARTUP_FRAGMENT)) return true;
     const normalizedDir = `/${slashDir.replace(/^\/+/, "")}`;
     if (SENSITIVE_PATH_FRAGMENTS.some((p) => normalizedDir.includes(p))) return true;
   }

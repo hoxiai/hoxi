@@ -791,3 +791,93 @@ test("export-opensource.sh preserves tracked .hoxi/skills while excluding runtim
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+test("Windows build script and Vite config support Work surface staging and Windows paths", () => {
+  const repoRoot = path.join(scripts, "..");
+  const winBuild = fs.readFileSync(path.join(repoRoot, "scripts/build-windows.ps1"), "utf8");
+  assert.match(winBuild, /function Resolve-WorkRepoDir/);
+  assert.match(winBuild, /function ConvertTo-GoWorkPath/);
+  assert.match(winBuild, /HOXI_DISABLE_WORK_EXT/);
+  assert.match(winBuild, /\$env:HOXI_WORK_DIR = \$WorkRepoDir/);
+  assert.match(winBuild, /work_bridge\.go\.tmpl/);
+  assert.match(winBuild, /stage-host\.sh/);
+  assert.match(winBuild, /WORK_MODULES=\\\(/);
+  assert.match(winBuild, /UTF8Encoding\(\$false\)/);
+  assert.match(winBuild, /Select-String -Path "web\/dist\/assets\/\*\.js" -SimpleMatch "modeExecuteLabel" -Quiet/);
+  assert.match(winBuild, /go version -m "build\/bin\/Hoxi\.exe"/);
+  assert.match(winBuild, /foreach \(\$stagedFile in \$StagedHostFiles\)/);
+
+  const viteCfg = fs.readFileSync(path.join(repoRoot, "web/vite.config.ts"), "utf8");
+  assert.match(viteCfg, /normalizeComparePath/);
+  assert.match(viteCfg, /normalizeEnvPath/);
+  assert.match(viteCfg, /process\.platform === "win32"/);
+});
+
+test("stage-host.sh writes Windows-compatible portable go.work paths and commercial release workflows gate Work", (t) => {
+  const repoRoot = path.join(scripts, "..");
+  const stageHostPath = path.join(repoRoot, "work/go/stage-host.sh");
+  if (!fs.existsSync(stageHostPath)) {
+    t.skip("Work checkout not present in OSS export");
+    return;
+  }
+
+  const stageHostSrc = fs.readFileSync(stageHostPath, "utf8");
+  assert.match(stageHostSrc, /to_go_work_dir\(\)/);
+  assert.match(stageHostSrc, /cygpath -m/);
+  assert.match(stageHostSrc, /pwd -W/);
+
+  const crossWorkflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/release-cross-platform.yml"), "utf8");
+  assert.match(crossWorkflow, /HOXI_WORK_TOKEN:\?[^\n]*Windows releases/);
+  assert.match(crossWorkflow, /cygpath -m "\$WORK_DIR"/);
+  assert.match(crossWorkflow, /grep -q "modeExecuteLabel" web\/dist\/assets\/\*\.js/);
+  assert.match(crossWorkflow, /go version -m build\/bin\/Hoxi\.exe \| grep -Fq "\$BRIDGE_PKG"/);
+
+  const macWorkflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/release.yml"), "utf8");
+  assert.match(macWorkflow, /HOXI_WORK_TOKEN:\?[^\n]*macOS releases/);
+
+  const modMatch = stageHostSrc.match(/WORK_MODULES=\(([^)]+)\)/);
+  assert.ok(modMatch, "Expected WORK_MODULES declaration in stage-host.sh");
+  const workModules = modMatch[1].trim().split(/\s+/).filter(Boolean);
+  assert.ok(workModules.length > 0, "Expected at least one Work module in stage-host.sh");
+
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-stage-host-"));
+  t.after(() => fs.rmSync(sandbox, { recursive: true, force: true }));
+
+  const seedModules = (workGoDir) => {
+    fs.mkdirSync(workGoDir, { recursive: true });
+    fs.copyFileSync(stageHostPath, path.join(workGoDir, "stage-host.sh"));
+    fs.writeFileSync(path.join(workGoDir, "work_bridge.go.tmpl"), "//go:build !oss\npackage app\n");
+    for (const mod of workModules) {
+      fs.mkdirSync(path.join(workGoDir, mod), { recursive: true });
+      fs.writeFileSync(path.join(workGoDir, mod, "go.mod"), `module example.com/${mod}\ngo 1.25.0\n`);
+    }
+  };
+
+  // Case 1: Nested work/go inside host checkout -> ./work/go/<mod>
+  const nestedHost = path.join(sandbox, "nested-host");
+  fs.mkdirSync(path.join(nestedHost, "internal/app"), { recursive: true });
+  fs.writeFileSync(path.join(nestedHost, "go.mod"), "module example.com/host\ngo 1.25.0\n");
+  seedModules(path.join(nestedHost, "work/go"));
+  const nestedRun = spawnSync("bash", [path.join(nestedHost, "work/go/stage-host.sh"), nestedHost], { encoding: "utf8" });
+  assert.equal(nestedRun.status, 0, nestedRun.stderr);
+  const nestedGoWork = fs.readFileSync(path.join(nestedHost, "go.work"), "utf8");
+  for (const mod of workModules) {
+    assert.ok(nestedGoWork.includes(`"./work/go/${mod}"`), `Expected ./work/go/${mod} in nested go.work`);
+  }
+  assert.equal(fs.existsSync(path.join(nestedHost, "internal/app/work_bridge.go")), true);
+
+  // Case 2: Sibling ../hoxi-ext/go beside host checkout (GitHub Actions layout) -> ../hoxi-ext/go/<mod>
+  const siblingParent = path.join(sandbox, "ci-layout");
+  const siblingHost = path.join(siblingParent, "hoxi");
+  const siblingWorkGo = path.join(siblingParent, "hoxi-ext/go");
+  fs.mkdirSync(path.join(siblingHost, "internal/app"), { recursive: true });
+  fs.writeFileSync(path.join(siblingHost, "go.mod"), "module example.com/host\ngo 1.25.0\n");
+  seedModules(siblingWorkGo);
+  const siblingRun = spawnSync("bash", [path.join(siblingWorkGo, "stage-host.sh"), siblingHost], { encoding: "utf8" });
+  assert.equal(siblingRun.status, 0, siblingRun.stderr);
+  const siblingGoWork = fs.readFileSync(path.join(siblingHost, "go.work"), "utf8");
+  for (const mod of workModules) {
+    assert.ok(siblingGoWork.includes(`"../hoxi-ext/go/${mod}"`), `Expected ../hoxi-ext/go/${mod} in sibling go.work`);
+  }
+  assert.doesNotMatch(siblingGoWork, /"\/[a-z]\//i);
+});

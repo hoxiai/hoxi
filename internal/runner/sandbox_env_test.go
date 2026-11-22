@@ -137,3 +137,60 @@ func TestRuntimeProcessEnvInjectsSystemProxyForExternalCLIsOnly(t *testing.T) {
 		t.Fatalf("native bash env should not auto-inject CLI system proxy: %v", nativeEnv)
 	}
 }
+
+func TestWindowsCaseInsensitiveEnvMergeAndScrub(t *testing.T) {
+	merged := mergeProcessEnvForOS(
+		[]string{
+			"Path=C:\\Windows\\System32",
+			"No_Proxy=corp.local,10.0.0.0/8",
+		},
+		[]string{
+			"PATH=C:\\Custom\\Bin",
+			"NO_PROXY=127.0.0.1,localhost",
+			"no_proxy=::1,127.0.0.1",
+		},
+		true,
+	)
+	var pathCount, noProxyCount int
+	var pathVal, noProxyVal string
+	for _, kv := range merged {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		switch strings.ToUpper(k) {
+		case "PATH":
+			pathCount++
+			pathVal = v
+		case "NO_PROXY":
+			noProxyCount++
+			noProxyVal = v
+		}
+	}
+	if pathCount != 1 || pathVal != `C:\Custom\Bin` {
+		t.Fatalf("expected single overridden PATH, got count=%d val=%q env=%v", pathCount, pathVal, merged)
+	}
+	if noProxyCount != 1 || noProxyVal != "corp.local,10.0.0.0/8,127.0.0.1,localhost,::1" {
+		t.Fatalf("expected merged case-insensitive NO_PROXY, got count=%d val=%q env=%v", noProxyCount, noProxyVal, merged)
+	}
+
+	scrubbed := sandboxedRuntimeEnvForOS(string(RuntimeClaudeCode), []string{
+		"anthropic_api_key=sk-ant-keep",
+		"Claude_Code_Use_Bedrock=1",
+		"aws_access_key_id=AKIAIOSFODNN7EXAMPLE",
+		"Http_Proxy=http://user:pass@127.0.0.1:7890",
+		"github_token=ghp_123456789012345678901234567890",
+	}, true)
+	gotUpper := map[string]bool{}
+	for _, kv := range scrubbed {
+		if k, _, ok := strings.Cut(kv, "="); ok {
+			gotUpper[strings.ToUpper(k)] = true
+		}
+	}
+	if !gotUpper["ANTHROPIC_API_KEY"] || !gotUpper["AWS_ACCESS_KEY_ID"] || !gotUpper["HTTP_PROXY"] {
+		t.Fatalf("expected mixed-case Claude/Bedrock/proxy env vars preserved, got %v", scrubbed)
+	}
+	if gotUpper["GITHUB_TOKEN"] {
+		t.Fatalf("expected mixed-case GITHUB_TOKEN to be scrubbed, got %v", scrubbed)
+	}
+}

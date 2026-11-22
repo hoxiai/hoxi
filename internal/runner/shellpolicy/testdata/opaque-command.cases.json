@@ -1649,5 +1649,109 @@
   {
     "command": "BR=$(git branch -D main) && echo \"$BR\"",
     "opaque": true
+  },
+  {
+    "command": "cd sub && go test ./...",
+    "worktree": "C:/Users/dev/repo",
+    "opaque": false
+  },
+  {
+    "command": "cd c:/users/dev/repo/sub && git status",
+    "worktree": "C:/Users/dev/repo",
+    "opaque": false
+  },
+  {
+    "command": "cd ../sibling && git status",
+    "worktree": "C:/Users/dev/repo",
+    "opaque": false
+  },
+  {
+    "command": "cd C:/ && git status",
+    "worktree": "C:/Users/dev/repo",
+    "opaque": true
+  },
+  {
+    "command": "cd ../../.. && git status",
+    "worktree": "C:/Users/dev/repo",
+    "opaque": true
+  },
+  {
+    "command": "cd C:/Windows && ls",
+    "worktree": "C:/Users/dev/repo",
+    "opaque": true
+  },
+  {
+    "command": "cd C:/Windows/System32 && ls",
+    "worktree": "C:/Users/dev/repo",
+    "opaque": true
+  },
+  {
+    "command": "cd C:/Users/dev/.ssh && ls",
+    "worktree": "C:/Users/dev/repo",
+    "opaque": true
+  },
+  {
+    "command": "cd .git && ls",
+    "worktree": "C:/Users/dev/repo",
+    "opaque": true
+  },
+  {
+    "command": "cd C:/ && rm -rf C:/Users/dev/AppData/Local/Temp/probe-1",
+    "worktree": "C:/Users/dev/repo",
+    "opaque": false
+  },
+  {
+    "command": "cd C:/ && rm -rf C:/Users/dev/AppData/Local/Temp",
+    "worktree": "C:/Users/dev/repo",
+    "opaque": true
+  },
+  {
+    "command": "cd C:/ && rm -rf C:/Users/dev/AppData/Local/Temp/*",
+    "worktree": "C:/Users/dev/repo",
+    "opaque": true
+  },
+  {
+    "command": "cd C:/ && rm -rf C:/Users/dev/AppData/Local/Temp/.env",
+    "worktree": "C:/Users/dev/repo",
+    "opaque": true
+  },
+  {
+    "command": "bash scripts/run_local.sh > logs/run.log",
+    "worktree": "C:/Users/dev/repo",
+    "opaque": true,
+    "autoOpaque": false,
+    "trustedOpaque": false
+  },
+  {
+    "command": "bash scripts/run_local.sh > C:/Users/dev/AppData/Local/Temp/run.log",
+    "worktree": "C:/Users/dev/repo",
+    "opaque": true,
+    "autoOpaque": false,
+    "trustedOpaque": false
+  },
+  {
+    "command": "bash scripts/run_local.sh > C:/Windows/System32/evil.log",
+    "worktree": "C:/Users/dev/repo",
+    "opaque": true
+  },
+  {
+    "command": "cd C:\\Users\\dev\\repo\\sub && git status",
+    "worktree": "C:/Users/dev/repo",
+    "opaque": false
+  },
+  {
+    "command": "cd \"C:\\Users\\My User\\my repo\\src locale\" && git diff",
+    "worktree": "C:/Users/My User/my repo",
+    "opaque": false
+  },
+  {
+    "command": "cd C:\\ && git status",
+    "worktree": "C:/Users/dev/repo",
+    "opaque": true
+  },
+  {
+    "command": "cd \"C:\\Users\\dev\\repo\\\" && git status",
+    "worktree": "C:/Users/dev/repo",
+    "opaque": true
   }
 ]

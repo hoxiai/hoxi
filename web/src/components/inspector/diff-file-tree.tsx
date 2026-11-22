@@ -459,7 +459,7 @@ export default function DiffFileTree(props: {
                           onClick={(e) => {
                             e.stopPropagation();
                             const targetPath = diff.repoDir
-                              ? `${diff.repoDir.replace(/\/+$/, "")}/${stripRepoPrefixFromFile(diff.file, diff.repo)}`
+                              ? `${diff.repoDir.replace(/[\\/]+$/, "")}/${stripRepoPrefixFromFile(diff.file, diff.repo)}`
                               : diff.file;
                             openFileInInspector(targetPath);
                           }}

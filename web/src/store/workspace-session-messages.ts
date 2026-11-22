@@ -18,7 +18,7 @@ import {
   noteTurnManualModelSelection,
   rememberTurnDispatch,
 } from "./auto-failover";
-import { hasPendingSessionSandbox, newIsolatedSession, waitForSessionSandbox } from "./session-sandbox";
+import { cleanupUnusedNewSession, hasPendingSessionSandbox, newIsolatedSession, waitForSessionSandbox } from "./session-sandbox";
 import { appSettings, buildCombinedSystemPrompt } from "./settings";
 import { setWorkspace, workspace, type MessageTurn, type ReasoningEffort, type SelectedModel } from "./workspace-state";
 import { initializeSessionAI, parseModelString, resolveEffectiveFastMode, sessionAIConfig, setFastMode } from "./session-ai";
@@ -358,6 +358,7 @@ export async function dispatchSessionPrompt(
     });
   };
 
+  let createdSessionID: string | null = null;
   if (!id) {
     const fallbackTitle = extractLocalFallbackTitle(
       promptText || (effectiveSkill ? `/${effectiveSkill.name}` : t("timeline.imagePromptSessionTitle"))
@@ -370,6 +371,7 @@ export async function dispatchSessionPrompt(
         stageOptimisticTurn(createdID);
       },
     });
+    createdSessionID = id;
   }
   if (isSessionDeleted(id)) throw new Error(t("timeline.sessionUnavailable"));
   stageOptimisticTurn(id);
@@ -542,6 +544,10 @@ export async function dispatchSessionPrompt(
         setWorkspace("statusBySession", id, { type: "idle" });
       }
     });
+    const outcomeUnknown = err instanceof Error && err.name === "RequestOutcomeUnknownError";
+    if (createdSessionID && !outcomeUnknown && !hasPendingPrompt(createdSessionID)) {
+      await cleanupUnusedNewSession(createdSessionID, targetDir, null);
+    }
     throw err;
   }
 

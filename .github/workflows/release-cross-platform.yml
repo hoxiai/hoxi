@@ -71,7 +71,20 @@ jobs:
           npm --prefix web run build
 
       - name: Run Windows Go vet
-        run: go vet ./...
+        shell: bash
+        run: |
+          go vet ./...
+          if [[ -f "internal/app/work_bridge.go" ]]; then
+            BRIDGE_PKG="$(sed -n 's/^[[:space:]]*import[[:space:]]*"\([^"]*\)".*/\1/p' internal/app/work_bridge.go | head -n 1)"
+            test -n "$BRIDGE_PKG"
+            go list -tags desktop -f '{{join .Deps "\n"}}' . | grep -Fxq "$BRIDGE_PKG"
+            if [[ -n "${HOXI_WORK_DIR:-}" && -d "${HOXI_WORK_DIR}/go" ]]; then
+              for mod in "${HOXI_WORK_DIR}"/go/*/go.mod; do
+                [[ -f "$mod" ]] || continue
+                (cd "$(dirname "$mod")" && go vet ./...)
+              done
+            fi
+          fi
 
       - name: Run Windows computer control regressions
         run: go test ./internal/computer
@@ -114,6 +127,11 @@ jobs:
           fi
           test ! -f build/bin/opencode.exe
           test ! -f build/bin/sqlite3.exe
+          if [[ -f "internal/app/work_bridge.go" ]]; then
+            BRIDGE_PKG="$(sed -n 's/^[[:space:]]*import[[:space:]]*"\([^"]*\)".*/\1/p' internal/app/work_bridge.go | head -n 1)"
+            test -n "$BRIDGE_PKG"
+            go version -m build/bin/Hoxi.exe | grep -Fq "$BRIDGE_PKG"
+          fi
           node scripts/pe-arch.mjs verify ${{ matrix.arch }} build/bin/Hoxi.exe
           test -f build/bin/Hoxi-${{ matrix.arch }}-installer.exe
 
@@ -190,6 +208,11 @@ jobs:
           rm -f build/bin/opencode
           wails build -platform linux/amd64 -tags webkit2_41 -s -m -nosyncgomod \
             -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=release -X github.com/hoxiai/hoxi/internal/buildinfo.Version=${RELEASE_VERSION}"
+          if [[ -f "internal/app/work_bridge.go" ]]; then
+            BRIDGE_PKG="$(sed -n 's/^[[:space:]]*import[[:space:]]*"\([^"]*\)".*/\1/p' internal/app/work_bridge.go | head -n 1)"
+            test -n "$BRIDGE_PKG"
+            go version -m build/bin/Hoxi | grep -Fq "$BRIDGE_PKG"
+          fi
 
       - name: Package Linux Release Archive
         run: |

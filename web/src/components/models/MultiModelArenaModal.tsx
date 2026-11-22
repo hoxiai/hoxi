@@ -4,6 +4,7 @@ import { Presence } from "../motion/Presence";
 import { Check, GitBranchPlus, LoaderCircle, Sparkles, Swords, X } from "lucide-solid";
 import {
   AUTO_PROVIDER_ID,
+  cleanupUnusedNewSession,
   getEffectivePoolCandidates,
   isCandidateCoolingDown,
   newIsolatedSession,
@@ -116,10 +117,15 @@ export default function MultiModelArenaModal() {
           const title = `[Arena · ${shortModel}] ${baseTitle}`;
           const sessionID = await newIsolatedSession(title, { isolated: true });
           if (idx === 0) firstSessionID = sessionID;
-          await submitSessionPrompt(taskPrompt, sessionID, {
-            agent: workspace.activeMode,
-            model,
-          });
+          try {
+            await submitSessionPrompt(taskPrompt, sessionID, {
+              agent: workspace.activeMode,
+              model,
+            });
+          } catch (sendErr) {
+            await cleanupUnusedNewSession(sessionID, undefined, null);
+            throw sendErr;
+          }
         })
       );
 

@@ -44,6 +44,9 @@ type desktopBridgeState struct {
 	companionMu             sync.RWMutex
 	onDesktopCompanionSync  func(DesktopCompanionState) DesktopCompanionSyncStatus
 	onDesktopCompanionReset func()
+
+	windowMu             sync.RWMutex
+	onDesktopWindowClose func()
 }
 
 const (

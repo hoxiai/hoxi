@@ -167,8 +167,8 @@ func TestMediaRoutesRejectRemoteTunnelAndProtectedPaths(t *testing.T) {
 	getRoleRec := httptest.NewRecorder()
 	g.mux.ServeHTTP(getRoleRec, httptest.NewRequest(http.MethodGet, "/api/hoxi/media/roles", nil))
 	var roleBody struct {
-		OK    bool               `json:"ok"`
-		Roles map[string]string  `json:"roles"`
+		OK    bool              `json:"ok"`
+		Roles map[string]string `json:"roles"`
 	}
 	_ = json.Unmarshal(getRoleRec.Body.Bytes(), &roleBody)
 	if !roleBody.OK || roleBody.Roles["imageModel"] != "google/gemini-3-pro-image" || roleBody.Roles["videoModel"] != "google/veo-3.0-generate-001" {

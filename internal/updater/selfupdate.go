@@ -22,6 +22,61 @@ import (
 
 const maxUpdateArchiveBytes = 512 << 20 // 512 MiB
 
+// windowsSwapAndRestartPS runs detached after Hoxi.exe exits on Windows.
+// ErrorActionPreference must be Stop so Move-Item file-lock failures trigger
+// the retry catch block instead of silently breaking out and deleting stageDir.
+const windowsSwapAndRestartPS = `
+$ErrorActionPreference = 'Stop'
+$targetPid = [int]$env:HOXI_UPD_PID
+$stageDir  = $env:HOXI_UPD_STAGE_DIR
+$targetDir = $env:HOXI_UPD_TARGET_DIR
+$exeName   = $env:HOXI_UPD_EXE
+
+if ($targetPid -gt 0) {
+  try { Wait-Process -Id $targetPid -Timeout 30 -ErrorAction SilentlyContinue } catch {}
+}
+
+$stagedOpenCode = Join-Path $stageDir 'opencode.exe'
+$stagedSqlite   = Join-Path $stageDir 'sqlite3.exe'
+$stagedHoxi     = Join-Path $stageDir 'Hoxi.exe'
+$hasOpenCode    = Test-Path -LiteralPath $stagedOpenCode
+$hasSqlite      = Test-Path -LiteralPath $stagedSqlite
+$swapped        = $false
+
+for ($i = 0; $i -lt 30; $i++) {
+  try {
+    # Swap Hoxi.exe first: it is the process most likely still releasing its lock,
+    # so retrying here avoids replacing sidecars while Hoxi.exe stays on the old build.
+    if (Test-Path -LiteralPath $stagedHoxi) {
+      Move-Item -Force -ErrorAction Stop -LiteralPath $stagedHoxi -Destination (Join-Path $targetDir $exeName)
+    }
+    if ($hasOpenCode) {
+      if (Test-Path -LiteralPath $stagedOpenCode) {
+        Move-Item -Force -ErrorAction Stop -LiteralPath $stagedOpenCode -Destination (Join-Path $targetDir 'opencode.exe')
+      }
+    } else {
+      Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath (Join-Path $targetDir 'opencode.exe')
+    }
+    if ($hasSqlite) {
+      if (Test-Path -LiteralPath $stagedSqlite) {
+        Move-Item -Force -ErrorAction Stop -LiteralPath $stagedSqlite -Destination (Join-Path $targetDir 'sqlite3.exe')
+      }
+    } else {
+      Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath (Join-Path $targetDir 'sqlite3.exe')
+    }
+    $swapped = $true
+    break
+  } catch {
+    Start-Sleep -Milliseconds 300
+  }
+}
+
+if ($swapped) {
+  Remove-Item -Recurse -Force -ErrorAction SilentlyContinue -LiteralPath $stageDir
+}
+Start-Process -FilePath (Join-Path $targetDir $exeName)
+`
+
 var (
 	downloadStallTimeout = 45 * time.Second
 	beforeRestartMu      sync.Mutex

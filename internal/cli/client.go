@@ -300,7 +300,7 @@ func (c *Client) ResolveModel(ctx context.Context, directory, runtime, providerI
 	return defProv, defMod
 }
 
-func (c *Client) CreateSession(ctx context.Context, opts Options) (*runner.SessionInfo, error) {
+func (c *Client) CreateSession(ctx context.Context, opts Options, title ...string) (*runner.SessionInfo, error) {
 	provID, modID := c.ResolveModel(ctx, opts.Directory, opts.Runtime, opts.ProviderID, opts.ModelID)
 	payload := map[string]interface{}{
 		"directory":   opts.Directory,
@@ -309,6 +309,11 @@ func (c *Client) CreateSession(ctx context.Context, opts Options) (*runner.Sessi
 		"providerID":  provID,
 		"mode":        opts.Mode,
 		"sandboxMode": opts.SandboxMode,
+	}
+	if len(title) > 0 {
+		if cleanTitle := strings.TrimSpace(title[0]); cleanTitle != "" {
+			payload["title"] = cleanTitle
+		}
 	}
 	var info runner.SessionInfo
 	if err := c.doJSON(ctx, http.MethodPost, "/api/hoxi/sessions?directory="+url.QueryEscape(opts.Directory), payload, &info); err != nil {

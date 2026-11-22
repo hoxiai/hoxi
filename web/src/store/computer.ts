@@ -13,7 +13,7 @@ import {
 } from "../services/computer";
 import { workspace } from "./workspace-state";
 import { sessionDirectory } from "./session-query";
-import { newIsolatedSession } from "./session-sandbox";
+import { cleanupUnusedNewSession, newIsolatedSession } from "./session-sandbox";
 import { locale, t } from "../i18n";
 
 export async function stopAllComputerControl(): Promise<void> {
@@ -195,12 +195,13 @@ export function createComputerController() {
     if (!appID || busy()) return;
     let connection = current;
     if (!connection || !valid(connection)) return;
+    let createdSessionID: string | null = null;
     if (!connection.scope) {
       if (!workspace.rootDir) return;
       setBusy(true);
       setError("");
       try {
-        await newIsolatedSession();
+        createdSessionID = await newIsolatedSession();
       } catch (err) {
         setBusy(false);
         report(err);
@@ -209,6 +210,7 @@ export function createComputerController() {
       connection = current;
       if (!connection?.scope || !valid(connection)) {
         setBusy(false);
+        void cleanupUnusedNewSession(createdSessionID, workspace.rootDir, null);
         return;
       }
     }
@@ -227,6 +229,9 @@ export function createComputerController() {
         setWindowID("");
       }
     } catch (err) {
+      if (createdSessionID) {
+        void cleanupUnusedNewSession(createdSessionID, workspace.rootDir, null);
+      }
       if (valid(connection) && connection.revision === revision) report(err);
     } finally {
       if (valid(connection) && connection.revision === revision) setBusy(false);

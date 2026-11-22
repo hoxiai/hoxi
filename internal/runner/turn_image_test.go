@@ -257,4 +257,7 @@ func TestSessionVideoGenerationTurnPersistsAttachmentAndStreamsVideoPart(t *test
 	if !sawVideoPart {
 		t.Fatal("expected video/mp4 file part to be broadcast during native video turn")
 	}
+	if rec, ok := svc.store.Meta(info.ID); !ok || rec.Title != "生成一段海浪拍打悬崖的航拍视频" {
+		t.Fatalf("expected Hoxi Native Session placeholder title to be auto-titled, got %q", rec.Title)
+	}
 }

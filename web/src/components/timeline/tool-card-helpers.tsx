@@ -1,7 +1,7 @@
 // web/src/components/timeline/tool-card-helpers.tsx
 import { createMemo, For, type JSX, Show } from "solid-js";
 import type { MessagePart, SnapshotFileDiff, ToolState } from "../../services/sse-types";
-import { getFullToolOutput, isLoopbackMediaURL, openDiffInInspector, openImagePreview, resolveMediaPlaybackURL, setWorkspace, workspace } from "../../store/workspace";
+import { getFullToolOutput, isLoopbackMediaURL, openDiffInInspector, openImagePreview, resolveMediaPlaybackURL, setWorkspace, stripRootPrefix, workspace } from "../../store/workspace";
 import { findQuestionReply, questionSummaryText } from "../../store/question-answers";
 import { Icon, type IconName } from "../icons";
 import FileDiffBlock from "../inspector/LazyFileDiffBlock";
@@ -122,11 +122,7 @@ export function getDirectory(p: string): string {
   const idx = Math.max(clean.lastIndexOf("/"), clean.lastIndexOf("\\"));
   if (idx <= 0) return "";
   const dir = clean.slice(0, idx);
-  const root = workspace.rootDir.replace(/\/+$/, "");
-  if (root && (dir === root || dir.startsWith(`${root}/`))) {
-    return dir.slice(root.length).replace(/^\/+/, "") || ".";
-  }
-  return dir;
+  return stripRootPrefix(dir, workspace.rootDir) ?? dir;
 }
 
 function extractRawField(raw: string, key: string): string | undefined {
@@ -202,11 +198,7 @@ export function extractTargetFile(part: ToolPart): string | null {
       : undefined);
   if (typeof raw === "string" && raw.trim()) {
     const trimmed = raw.trim();
-    const root = workspace.rootDir.replace(/\/+$/, "");
-    if (root && (trimmed === root || trimmed.startsWith(`${root}/`))) {
-      return trimmed.slice(root.length).replace(/^\/+/, "") || ".";
-    }
-    return trimmed;
+    return stripRootPrefix(trimmed, workspace.rootDir) ?? trimmed;
   }
   return null;
 }

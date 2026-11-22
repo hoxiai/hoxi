@@ -414,7 +414,7 @@ export default function Composer() {
       for (const commentID of payload.reviewIDs) removeReviewComment(id, commentID);
     } catch (err) {
       console.error("send prompt failed:", err);
-      const restoreID = targetSessionID ?? draftSessionID;
+      const restoreID = targetSessionID && !isSessionDeleted(targetSessionID) ? targetSessionID : draftSessionID;
       if (restoreID && isSessionDeleted(restoreID)) return;
       if (
         queuedEditBridge.rollbackStashedOnError(

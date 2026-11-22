@@ -276,4 +276,42 @@ func TestDesktopAppWindowHooksSafeInNonWailsTests(t *testing.T) {
 		t.Fatal("beforeClose must not prevent shutdown")
 	}
 	dapp.persistWindowGeometry()
+	dapp.closeWindow()
+}
+
+func TestWindowChromePlatformOptions(t *testing.T) {
+	if !usesFramelessWindow("windows") {
+		t.Fatal("expected Windows to use frameless integrated window chrome")
+	}
+	if usesFramelessWindow("darwin") || usesFramelessWindow("linux") {
+		t.Fatal("expected non-Windows platforms to keep native window framing")
+	}
+	if !hideWindowOnClose("windows") || !hideWindowOnClose("darwin") || hideWindowOnClose("linux") {
+		t.Fatal("unexpected hideWindowOnClose platform matrix")
+	}
+	winOpts := buildWindowsAppOptions()
+	if winOpts == nil {
+		t.Fatal("expected non-nil Windows options")
+	}
+	if winOpts.DisableFramelessWindowDecorations {
+		t.Fatal("expected frameless window decorations (Win11 rounded corners & Aero shadow) to remain enabled")
+	}
+
+	// closeWindow must flush dirty window geometry before returning even in tests.
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	statePath := filepath.Join(t.TempDir(), "window-state.json")
+	store := newWindowStateStore(statePath, logger)
+	spec := windowLaunchSpec{Width: 1360, Height: 860, MinWidth: 880, MinHeight: 560, StartState: options.Normal}
+	tracker := newWindowGeometryTracker(store, spec, logger)
+	tracker.debounce = time.Hour
+	tracker.RecordNormalSize(1540, 920)
+
+	dapp := &DesktopApp{windowTracker: tracker}
+	dapp.closeWindow()
+	tracker.Close()
+
+	saved, err := store.Load()
+	if err != nil || saved == nil || saved.Width != 1540 || saved.Height != 920 {
+		t.Fatalf("closeWindow persisted geometry = (%+v, %v), want 1540x920", saved, err)
+	}
 }

@@ -205,6 +205,12 @@ describe("SSE client & 120Hz rAF delta batching", () => {
         } }) });
         assertEqual(batches[0].infos[0].sessionID, "foreign");
         assertEqual(events.at(-1), "session.status");
+        // Windows backslash directories from backend SSE events must match normalized forward-slash rootDir.
+        setWorkspace({ rootDir: "C:/Users/dev/project", sessions: [] });
+        emit(session("win-root", "C:\\Users\\dev\\project", { title: "Windows root" }));
+        emit(session("win-wt", "c:\\Users\\dev\\project\\.hoxi\\worktrees\\ses_win_1", { title: "Windows worktree" }));
+        emit(session("win-other", "C:\\Users\\dev\\other"));
+        assertDeepEqual(workspace.sessions.map((s) => s.id).sort(), ["win-root", "win-wt"]);
         // A new workspace must not be repopulated by late old-root events.
         setWorkspace({ rootDir: "/empty", sessions: [] });
         emit(session("late", "/new"));

@@ -453,7 +453,7 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 		var info SessionInfo
 		if json.Unmarshal(data, &info) == nil && info.ID == rec.ExternalID && strings.TrimSpace(info.Title) != "" {
 			if updated, ok, err := s.store.Update(rec.ID, func(r *SessionRecord) {
-				if r.Title == "" || r.Title == "New Session" || strings.HasPrefix(r.Title, "New session - ") {
+				if isPlaceholderSessionTitle(r.Title) {
 					r.Title = strings.TrimSpace(info.Title)
 				}
 			}); err == nil && ok {

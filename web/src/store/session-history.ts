@@ -10,6 +10,7 @@ import { t } from "../i18n";
 import type { MessageInfo, MessagePart } from "../services/sse-types";
 import { mergeServerTurnsInto, normalizeMessagePartInPlace } from "./message-lookup";
 import { isSessionDeleted, sessionDirectory } from "./session-query";
+import { normalizeFolderPath } from "./workspace-folders";
 import { setWorkspace, workspace } from "./workspace-state";
 
 /** Newest turns fetched when a conversation opens or refreshes. */
@@ -26,15 +27,17 @@ const fullReads = new Map<string, HistoryRead<void>>();
 function isCurrentRead<T>(sessionID: string, token: object, reads: Map<string, HistoryRead<T>>): boolean {
   const read = reads.get(sessionID);
   return read?.token === token && !isSessionDeleted(sessionID) &&
-    sessionDirectory(sessionID) === read.directory && workspace.messagesBySession[sessionID] === read.turns;
+    normalizeFolderPath(sessionDirectory(sessionID)) === normalizeFolderPath(read.directory) &&
+    workspace.messagesBySession[sessionID] === read.turns;
 }
 
 /** Exports read a fresh full snapshot, never a paged or cache-seeded transcript. */
 export async function fetchSessionExportTurns(sessionID: string): Promise<RemoteTurn[]> {
   const directory = sessionDirectory(sessionID);
+  const normDirectory = normalizeFolderPath(directory);
   if (isSessionDeleted(sessionID)) throw new Error(t("timeline.sessionUnavailable"));
   const turns = await hoxiAPI.getMessages(sessionID, directory, "all");
-  if (isSessionDeleted(sessionID) || sessionDirectory(sessionID) !== directory) {
+  if (isSessionDeleted(sessionID) || normalizeFolderPath(sessionDirectory(sessionID)) !== normDirectory) {
     throw new Error(t("timeline.sessionUnavailable"));
   }
   return turns;
@@ -100,9 +103,10 @@ export function loadOlderSessionHistory(
 ): Promise<number> {
   if (!hasOlderSessionHistory(sessionID)) return Promise.resolve(0);
   const directory = sessionDirectory(sessionID);
+  const normDirectory = normalizeFolderPath(directory);
   const source = workspace.messagesBySession[sessionID];
   const pending = olderReads.get(sessionID);
-  if (pending && pending.directory === directory && pending.turns === source) return pending.promise;
+  if (pending && normalizeFolderPath(pending.directory) === normDirectory && pending.turns === source) return pending.promise;
   const token = {};
   const promise = (async () => {
     const oldest = source?.[0]?.info.id;
@@ -126,9 +130,10 @@ export function loadOlderSessionHistory(
 export function ensureFullSessionHistory(sessionID: string): Promise<void> {
   if (!hasOlderSessionHistory(sessionID)) return Promise.resolve();
   const directory = sessionDirectory(sessionID);
+  const normDirectory = normalizeFolderPath(directory);
   const source = workspace.messagesBySession[sessionID];
   const pending = fullReads.get(sessionID);
-  if (pending && pending.directory === directory && pending.turns === source) return pending.promise;
+  if (pending && normalizeFolderPath(pending.directory) === normDirectory && pending.turns === source) return pending.promise;
   const token = {};
   const promise = (async () => {
     const turns = await hoxiAPI.getMessages(sessionID, directory, "all");

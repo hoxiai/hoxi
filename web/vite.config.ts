@@ -6,6 +6,18 @@ import solidPlugin from "vite-plugin-solid";
 import tailwindcss from "@tailwindcss/vite";
 
 const toPosixPath = (p: string) => p.replace(/\\/g, "/");
+const normalizeComparePath = (p: string) =>
+  process.platform === "win32" ? toPosixPath(p).toLowerCase() : toPosixPath(p);
+const normalizeEnvPath = (p: string) => {
+  const trimmed = p.trim();
+  if (process.platform === "win32") {
+    const msysDrive = trimmed.match(/^\/([a-zA-Z])\/(.*)$/);
+    if (msysDrive) {
+      return `${msysDrive[1].toUpperCase()}:/${msysDrive[2]}`;
+    }
+  }
+  return trimmed;
+};
 const webRoot = toPosixPath(fileURLToPath(new URL(".", import.meta.url)));
 const repoRoot = toPosixPath(path.resolve(webRoot, ".."));
 const srcRoot = toPosixPath(fileURLToPath(new URL("./src", import.meta.url)));
@@ -36,7 +48,16 @@ const resolveWorktreeMainRoot = (dir: string): string | null => {
 };
 const resolveWorkRepoDir = () => {
   if (process.env.HOXI_WORK_DIR) {
-    return path.resolve(webRoot, process.env.HOXI_WORK_DIR);
+    const rawEnvDir = normalizeEnvPath(process.env.HOXI_WORK_DIR);
+    const fromWeb = path.resolve(webRoot, rawEnvDir);
+    if (isReadableFile(path.join(fromWeb, "web/index.tsx"))) {
+      return fromWeb;
+    }
+    const fromRepo = path.resolve(repoRoot, rawEnvDir);
+    if (isReadableFile(path.join(fromRepo, "web/index.tsx"))) {
+      return fromRepo;
+    }
+    return fromWeb;
   }
   const mainRoot = resolveWorktreeMainRoot(repoRoot);
   const candidates = [
@@ -53,6 +74,7 @@ const resolveWorkRepoDir = () => {
   return candidates[0];
 };
 const workRepoDir = toPosixPath(resolveWorkRepoDir());
+const workRepoDirCompare = normalizeComparePath(workRepoDir);
 const workExtEntry = toPosixPath(path.join(workRepoDir, "web/index.tsx"));
 const hasWorkExt =
   process.env.HOXI_DISABLE_WORK_EXT !== "1" && isReadableFile(workExtEntry);
@@ -64,13 +86,13 @@ const hasWorkExt =
 const workTailwindSource = toPosixPath(
   path.relative(srcRoot, path.join(workRepoDir, "web")),
 );
-const stylesEntry = `${srcRoot}/styles.css`;
+const stylesEntryCompare = normalizeComparePath(`${srcRoot}/styles.css`);
 
 const tailwindWorkSource = (): Plugin => ({
   name: "hoxi:tailwind-work-source",
   enforce: "pre",
   transform(code, id) {
-    if (!hasWorkExt || id.split("?")[0] !== stylesEntry) return null;
+    if (!hasWorkExt || normalizeComparePath(id.split("?")[0]) !== stylesEntryCompare) return null;
     return { code: `${code}\n@source "${workTailwindSource}";\n`, map: null };
   },
 });
@@ -195,9 +217,10 @@ export default defineConfig({
               return "vendor-shiki-core";
             }
           }
+          const normalizedCompare = normalizeComparePath(normalized);
           const inWorkExt =
-            (hasWorkExt && normalized.startsWith(`${workRepoDir}/`)) ||
-            normalized.includes("/hoxi-ext/");
+            (hasWorkExt && normalizedCompare.startsWith(`${workRepoDirCompare}/`)) ||
+            normalizedCompare.includes("/hoxi-ext/");
           if (inWorkExt) {
             return /\.ts(?:\?.*)?$/.test(normalized) && !/\.tsx(?:\?.*)?$/.test(normalized)
               ? "surface-work-core"

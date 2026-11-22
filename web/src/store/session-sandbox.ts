@@ -73,11 +73,39 @@ async function changeSandbox(sessionID: string, change: () => Promise<void>): Pr
 async function prepareWorktree(sessionID: string, directory: string): Promise<void> {
   await changeSandbox(sessionID, async () => {
     const meta = await hoxiAPI.createWorktree(sessionID, directory);
-    if (!meta.isolated || !meta.directory || meta.directory === directory) {
+    if (!meta.isolated || !meta.directory || normalizeFolderPath(meta.directory) === normalizeFolderPath(directory)) {
       throw new Error(t("timeline.worktreeIsolationUnavailable"));
     }
     setWorkspace("worktreeBySession", sessionID, meta);
   });
+}
+
+/**
+ * Deletes a freshly provisioned empty session when its initiating action fails
+ * or cancels before any turn is accepted by the server. Never removes a session
+ * that already holds confirmed turns or is busy.
+ */
+export async function cleanupUnusedNewSession(
+  sessionID: string | null | undefined,
+  directory?: string,
+  restoreActiveSessionID: string | null = null
+): Promise<void> {
+  if (!sessionID || isSessionDeleted(sessionID)) return;
+  const turns = workspace.messagesBySession[sessionID] ?? [];
+  if (turns.some((m) => !m.info.id.startsWith("optimistic_")) || isSessionBusy(sessionID)) {
+    return;
+  }
+  const targetDir = directory || sessionDirectory(sessionID) || workspace.rootDir || undefined;
+  const wasActive = workspace.activeSessionID === sessionID;
+  removeSessionFromStore(sessionID);
+  if (wasActive) {
+    setWorkspace("activeSessionID", restoreActiveSessionID);
+  }
+  try {
+    await hoxiAPI.deleteSession(sessionID, targetDir);
+  } catch (cleanupError) {
+    console.warn("cleanup unused session failed:", cleanupError);
+  }
 }
 
 function localMeta(sessionID: string, directory: string): WorktreeMeta {
@@ -149,7 +177,7 @@ export async function newIsolatedSession(
     const serverProvisioned = Boolean(session.managed || (isRunner && (session.runtime || isRunnerSessionID(session.id))));
     if (serverProvisioned) {
       const wtDir = session.directory || directory;
-      if (!wtDir || (shouldIsolate && wtDir === directory)) {
+      if (!wtDir || (shouldIsolate && normalizeFolderPath(wtDir) === normalizeFolderPath(directory))) {
         throw new Error(t("timeline.worktreeIsolationUnavailable"));
       }
       setWorkspace("worktreeBySession", session.id, {
@@ -433,7 +461,7 @@ export function resolveEffectiveSandboxMode(sessionID?: string | null): "local" 
     }
     const s = workspace.sessions.find((item) => item.id === sessionID);
     if (s?.sandboxMode) return s.sandboxMode;
-    if (s?.directory?.includes("/.hoxi/worktrees/")) return "worktree";
+    if (normalizeFolderPath(s?.directory).includes("/.hoxi/worktrees/")) return "worktree";
     if (s) return "local";
   }
   if (appSettings.approvalMode === "unattended") return "worktree";

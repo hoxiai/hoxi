@@ -228,8 +228,7 @@ export function replaceSessionFromEvent(info: SessionInfo, eventDirectory?: stri
     deferredCreatedEvents.set(info.id, { info, eventDirectory });
     return;
   }
-  const normalize = (path?: string) => (path || "").trim().replace(/[\\/]+$/, "");
-  const root = normalize(workspace.rootDir);
+  const root = normalizeFolderPath(workspace.rootDir);
   if (!root) return;
   const worktrees = `${root}/.hoxi/worktrees/`;
   const ownsDirectory = (directory: string) => directory === root ||
@@ -248,20 +247,20 @@ export function replaceSessionFromEvent(info: SessionInfo, eventDirectory?: stri
       const loaded = workspace.sessions.find((s) => s.id === session.id);
       return Boolean(loaded?.projectID && loaded.projectID === eventProjectID);
     }
-    const directory = normalize(session.directory) || normalize(fallbackDirectory);
+    const directory = normalizeFolderPath(session.directory) || normalizeFolderPath(fallbackDirectory);
     // Only Hoxi worktrees belong to the root, not arbitrary nested project folders.
     if (ownsDirectory(directory)) return true;
     const existing = workspace.sessions.find((s) => s.id === session.id);
-    if (existing && ownsDirectory(normalize(existing.directory)) &&
-      directory === normalize(workspace.worktreeBySession[session.id]?.directory)) return true;
+    if (existing && ownsDirectory(normalizeFolderPath(existing.directory)) &&
+      directory === normalizeFolderPath(workspace.worktreeBySession[session.id]?.directory)) return true;
     const parentID = session.parentID || existing?.parentID;
     const parent = workspace.sessions.find((s) => s.id === parentID);
-    if (parent && (!directory || directory === normalize(sessionDirectory(parent.id)))) {
+    if (parent && (!directory || directory === normalizeFolderPath(sessionDirectory(parent.id)))) {
       if (belongs(parent)) return true;
     }
     // Directory-less updates to an already loaded session must still update its title/time.
     if (!directory && existing) {
-      return !existing.directory || ownsDirectory(normalize(existing.directory));
+      return !existing.directory || ownsDirectory(normalizeFolderPath(existing.directory));
     }
     return false;
   };
@@ -330,10 +329,11 @@ export async function loadSessionMessagesOnly(
   const finishRead = beginSessionTranscriptRead(sessionID);
   try {
     const directory = explicitDirectory || sessionDirectory(sessionID);
+    const normDirectory = normalizeFolderPath(directory);
     const revision = (loadRequestRevisions.get(sessionID) ?? 0) + 1;
     loadRequestRevisions.set(sessionID, revision);
     const isCurrent = () => loadRequestRevisions.get(sessionID) === revision &&
-      sessionDirectory(sessionID) === directory && !isSessionDeleted(sessionID);
+      normalizeFolderPath(sessionDirectory(sessionID)) === normDirectory && !isSessionDeleted(sessionID);
     const preRequestIDs = idleTurnIDs(sessionID);
     const limit = historyLimitFor(sessionID, options?.full);
     const turns = await hoxiAPI.getMessages(sessionID, directory, limit);
@@ -348,10 +348,11 @@ export async function loadSessionMessagesOnly(
 export async function loadSessionMessages(sessionID: string): Promise<void> {
   const finishRead = beginSessionTranscriptRead(sessionID);
   const directory = sessionDirectory(sessionID);
+  const normDirectory = normalizeFolderPath(directory);
   const revision = (loadRequestRevisions.get(sessionID) ?? 0) + 1;
   loadRequestRevisions.set(sessionID, revision);
   const isCurrent = () => loadRequestRevisions.get(sessionID) === revision &&
-    sessionDirectory(sessionID) === directory && !isSessionDeleted(sessionID);
+    normalizeFolderPath(sessionDirectory(sessionID)) === normDirectory && !isSessionDeleted(sessionID);
   const sessionInfo = workspace.sessions.find((s) => s.id === sessionID);
   const parentID = sessionInfo?.parentID;
   const isChildSession = Boolean(parentID);
@@ -408,7 +409,7 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
 
 /** Both terminal SSE events may request the same settled transcript. */
 export function refreshSettledSessionMessages(sessionID: string): Promise<void> {
-  const directory = sessionDirectory(sessionID);
+  const directory = normalizeFolderPath(sessionDirectory(sessionID));
   const tail = workspace.messagesBySession[sessionID]?.at(-1)?.info;
   const pending = settledSessionLoads.get(sessionID);
   if (pending && pending.directory === directory &&

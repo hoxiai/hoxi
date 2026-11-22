@@ -4,12 +4,16 @@ import type { WorkspaceProfile } from "../services/api-types";
 import {
   findWorkspaceProfileByDir,
   isDismissedProjectPath,
+  parseFileReference,
   removeWorkspaceProfile,
   saveWorkspaceProfile,
   setWorkspace,
+  stripRootPrefix,
   workspace,
 } from "../store/workspace";
 import { buildAllProjects } from "../components/layout/left-nav-helpers";
+import { getDirectory } from "../components/timeline/tool-card-helpers";
+import { normalizeWorkspaceRelPath } from "../components/timeline/tool-card-state";
 import { assertEqual, describe, it } from "./test-harness";
 
 function profile(id: string, folders: string[]): WorkspaceProfile {
@@ -100,5 +104,19 @@ describe("workspaces sharing folders", () => {
       setWorkspace("savedWorkspaces", 0, "folders", 0, "path", "/code/renamed");
       assertEqual(findWorkspaceProfileByDir("/code/moved"), undefined);
       assertEqual(findWorkspaceProfileByDir("/code/renamed")?.id, "ws_first");
+    }));
+
+  it("strips Windows drive root prefixes with backslashes and mixed casing", () =>
+    withSharedWorkspaces(() => {
+      assertEqual(stripRootPrefix("C:\\Users\\Dev\\Repo\\src\\App.tsx", "c:/users/dev/repo/"), "src/App.tsx");
+      assertEqual(stripRootPrefix("c:/users/dev/repo", "C:\\Users\\Dev\\Repo\\"), ".");
+      assertEqual(stripRootPrefix("C:\\Users\\Dev\\RepoOther\\a.ts", "C:\\Users\\Dev\\Repo"), null);
+      assertEqual(stripRootPrefix("D:\\Users\\Dev\\Repo\\a.ts", "C:\\Users\\Dev\\Repo"), null);
+
+      setWorkspace({ rootDir: "C:\\Users\\Dev\\Repo", activeInspectorFolder: null });
+      assertEqual(parseFileReference("C:\\Users\\Dev\\Repo\\src\\App.tsx:42").path, "src/App.tsx");
+      assertEqual(parseFileReference("C:\\Users\\Dev\\Repo\\src\\App.tsx:42").line, 42);
+      assertEqual(normalizeWorkspaceRelPath("c:\\users\\dev\\repo\\.hoxi\\worktrees\\wt1\\src\\a.ts"), "src/a.ts");
+      assertEqual(getDirectory("C:\\Users\\Dev\\Repo\\src\\components\\Button.tsx"), "src/components");
     }));
 });

@@ -587,6 +587,7 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	})
 	g.registerDesktopNotifyRoute(g.mux)
 	g.registerDesktopCompanionRoutes(g.mux)
+	g.registerDesktopWindowRoutes(g.mux)
 
 	g.mux.HandleFunc("/api/hoxi/system-info", g.handleSystemRuntimeInfo)
 	g.mux.HandleFunc("/api/hoxi/system/cli-link", g.handleSystemCLILink)

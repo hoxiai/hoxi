@@ -102,6 +102,27 @@ export function stripWorktreePath(p?: string | null): string {
   return result;
 }
 
+export function stripRootPrefix(rawPath: string, rootDir?: string | null): string | null {
+  const normPath = normalizeFolderPath(rawPath);
+  const normRoot = normalizeFolderPath(rootDir);
+  if (!normPath || !normRoot) return null;
+  const winBoth = /^[A-Za-z]:(?:\/|$)/.test(normPath) && /^[A-Za-z]:(?:\/|$)/.test(normRoot);
+  const cmpPath = winBoth ? normPath.toLowerCase() : normPath;
+  const cmpRoot = winBoth ? normRoot.toLowerCase() : normRoot;
+  if (cmpPath === cmpRoot) return ".";
+  if (cmpRoot === "/") {
+    return cmpPath.startsWith("/") ? normPath.replace(/^\/+/, "") || "." : null;
+  }
+  const prefix = `${cmpRoot}/`;
+  if (!cmpPath.startsWith(prefix)) return null;
+  const rawPrefixLen = normRoot.length + 1;
+  const rest =
+    winBoth && normPath.slice(0, rawPrefixLen).toLowerCase() !== prefix
+      ? normPath.split("/").slice(normRoot.split("/").length).join("/")
+      : normPath.slice(rawPrefixLen);
+  return rest.replace(/^\/+/, "") || ".";
+}
+
 export function shortenPath(p: string): string {
   if (!p) return "";
   const winMatch = p.match(/^[A-Za-z]:[\\/]Users[\\/]([^\\/]+)([\\/].*)?$/);

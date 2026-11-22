@@ -63,6 +63,9 @@ describe("i18n translation & parity", () => {
     assertTrue(isPlaceholderSessionTitle(dictionaries["zh-CN"].leftNav.newThread));
     assertTrue(isPlaceholderSessionTitle(dictionaries["en-US"].leftNav.newThread));
     assertTrue(isPlaceholderSessionTitle("New session - 2026-10-17"));
+    assertTrue(isPlaceholderSessionTitle("Hoxi Native Session"));
+    assertTrue(isPlaceholderSessionTitle("Codex CLI Session"));
+    assertTrue(isPlaceholderSessionTitle("OpenCode CLI Session"));
     assertEqual(isPlaceholderSessionTitle("Refactor SSE Stream"), false);
 
     const extracted = extractLocalFallbackTitle(

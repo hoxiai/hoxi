@@ -2,6 +2,13 @@
 
 All notable releases of **Hoxi Desktop** are documented below. Full per-version release notes are archived under [`docs/release-notes/`](docs/release-notes/) and consumed directly by `.github/workflows/release.yml` and `scripts/ai-release.sh`.
 
+## [v0.7.2](docs/release-notes/v0.7.2.md) — 2026-11-22
+
+- **Windows Frameless Top Bar & Native Window Controls**: Integrated a frameless Windows title bar with native-style minimize/maximize/close controls, header double-click maximize hit-testing, active canvas background sync, and z-index layering above onboarding overlays.
+- **Windows Updater, CLI Shims, Shell & Path Hardening**: Ordered `Hoxi.exe` replacement before sidecars with strict `ErrorActionPreference=Stop` retry cleanup; unwrapped standard `npm`/`pnpm`/`yarn` `.cmd`/`.bat` and extensionless Node shebang shims directly to `node.exe` so `cmd.exe` never mangles JSON/TOML quotes; extracted shared `subproc.ResolveWindowsBash` preferring Git Bash over WSL stubs with case-insensitive askpass/mixed-case env handling; fixed Explorer `/select` for paths with spaces and drive roots, normalized Windows paths, and prevented spurious native sessions.
+- **Cross-Platform Path Normalization & Approval Policy Parity**: Added shared `stripRootPrefix` for Windows backslash/drive-casing normalization across Inspector, ToolCard, ShellSummary, Diffs, and CommandPalette; aligned Go and JS shell approval policy (`policy-paths.js`) on Windows drive paths, temp directories, sensitive system paths, and variable-width Unicode case-folding with shared parity fixtures and rebuilt `browser_plugin.mjs`.
+- **Cross-Platform Build & Release Pipeline**: Hardened Windows `amd64`/`arm64` cross-arch binary verification in `build-windows.ps1`, resolved `gofmt` and frontend layering checks, and published `Hoxi-Remote-0.7.2-android.apk` (`ai.hoxi.remote`).
+
 ## [v0.7.1](docs/release-notes/v0.7.1.md) — 2026-11-22
 
 - **Native Agent Engine & Orchestration**: Added built-in `web_search`, proactive context-window compaction, history-aware subdirectory rule deduplication, refined step loop guards and graceful finalization, session-scoped Fast Mode across native and CLI runtimes, PageRank RepoMap indexing, foreground bash promotion on Steer, dynamic per-session MCP injection, read-only turn inspection, long-line read/grep guards, and isolated subagent cache keys.

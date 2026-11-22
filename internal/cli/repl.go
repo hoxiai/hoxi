@@ -22,7 +22,7 @@ func executeSingleTurn(
 	stdin io.Reader,
 	stdout, stderr io.Writer,
 ) int {
-	session, err := resolveOrCreateSession(ctx, client, opts)
+	session, err := resolveOrCreateSession(ctx, client, opts, prompt)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error creating session: %v\n", err)
 		return 1
@@ -74,11 +74,11 @@ func RunREPL(
 
 	printREPLBanner(stdout, client, opts, session)
 
-	ensureSession := func() (*runner.SessionInfo, error) {
+	ensureSession := func(promptText string) (*runner.SessionInfo, error) {
 		if session != nil {
 			return session, nil
 		}
-		s, err := client.CreateSession(ctx, opts)
+		s, err := client.CreateSession(ctx, opts, cliSessionTitleFromPrompt(promptText))
 		if err != nil {
 			return nil, err
 		}
@@ -89,7 +89,7 @@ func RunREPL(
 	reader := bufio.NewReaderSize(stdin, 64*1024)
 
 	runPrompt := func(promptText string) {
-		s, err := ensureSession()
+		s, err := ensureSession(promptText)
 		if err != nil {
 			fmt.Fprintf(stderr, "%sError creating session: %v%s\n", ansiRed, err, ansiReset)
 			return
@@ -139,7 +139,9 @@ func RunREPL(
 		}
 
 		if strings.HasPrefix(line, "/") {
-			done := handleSlashCommand(ctx, line, client, &opts, &session, ensureSession, runPrompt, stdout, stderr)
+			done := handleSlashCommand(ctx, line, client, &opts, &session, func() (*runner.SessionInfo, error) {
+				return ensureSession("")
+			}, runPrompt, stdout, stderr)
 			if done {
 				return 0
 			}
@@ -462,11 +464,23 @@ func handleSlashCommand(
 	return false
 }
 
-func resolveOrCreateSession(ctx context.Context, client *Client, opts Options) (*runner.SessionInfo, error) {
+func cliSessionTitleFromPrompt(prompt string) string {
+	clean := strings.Join(strings.Fields(strings.TrimSpace(prompt)), " ")
+	if clean == "" {
+		return ""
+	}
+	runes := []rune(clean)
+	if len(runes) > 48 {
+		return string(runes[:48]) + "…"
+	}
+	return clean
+}
+
+func resolveOrCreateSession(ctx context.Context, client *Client, opts Options, prompt string) (*runner.SessionInfo, error) {
 	if strings.TrimSpace(opts.SessionID) != "" {
 		return client.GetSession(ctx, opts.SessionID, opts.Directory)
 	}
-	return client.CreateSession(ctx, opts)
+	return client.CreateSession(ctx, opts, cliSessionTitleFromPrompt(prompt))
 }
 
 func printSessionDiff(ctx context.Context, client *Client, session *runner.SessionInfo, directory string, stdout, stderr io.Writer) {

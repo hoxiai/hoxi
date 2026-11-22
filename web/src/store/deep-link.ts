@@ -108,11 +108,11 @@ function projectRootForDirectory(directory?: string): string {
 function focusSessionLink(link: SessionDeepLink) {
   clearFocusTimer();
   const generation = focusGeneration;
-  const rootDir = workspace.rootDir;
-  const directory = sessionDirectory(link.sessionID);
+  const rootDir = normalizeFolderPath(workspace.rootDir);
+  const directory = normalizeFolderPath(sessionDirectory(link.sessionID));
   focusTarget = { sessionID: link.sessionID, rootDir };
   const isCurrent = () => generation === focusGeneration && workspace.activeSessionID === link.sessionID &&
-    workspace.rootDir === rootDir && sessionDirectory(link.sessionID) === directory;
+    normalizeFolderPath(workspace.rootDir) === rootDir && normalizeFolderPath(sessionDirectory(link.sessionID)) === directory;
   void selectSession(link.sessionID).then(() => {
     if (!link.messageID || typeof window === "undefined" || !isCurrent()) return;
     focusTimer = setTimeout(() => {

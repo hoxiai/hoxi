@@ -505,7 +505,7 @@ export function SelectedDiffDetail(props: {
               class="hoxi-press shrink-0 inline-flex items-center gap-1 rounded-md bg-[var(--bg-inset)] px-2 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
               onClick={() => {
                 const target = props.diff.repoDir
-                  ? `${props.diff.repoDir.replace(/\/+$/, "")}/${stripRepoPrefixFromFile(props.diff.file, props.diff.repo)}`
+                  ? `${props.diff.repoDir.replace(/[\\/]+$/, "")}/${stripRepoPrefixFromFile(props.diff.file, props.diff.repo)}`
                   : props.diff.file;
                 openFileInInspector(target, null, effectiveDiff());
               }}
@@ -542,7 +542,7 @@ export function SelectedDiffDetail(props: {
             class="hoxi-press shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)] p-1 cursor-pointer"
             onClick={() => {
               const target = props.diff.repoDir
-                ? `${props.diff.repoDir.replace(/\/+$/, "")}/${stripRepoPrefixFromFile(props.diff.file, props.diff.repo)}`
+                ? `${props.diff.repoDir.replace(/[\\/]+$/, "")}/${stripRepoPrefixFromFile(props.diff.file, props.diff.repo)}`
                 : props.diff.file;
               openFileInInspector(target);
             }}

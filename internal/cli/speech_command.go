@@ -22,7 +22,7 @@ func reorderSpeechFlagsFirst(args []string) []string {
 		"--address": true,
 		"--session": true,
 		"-p":        true, "--prompt": true,
-		"-t":        true, "--text": true,
+		"-t": true, "--text": true,
 	}
 	var flags []string
 	var pos []string

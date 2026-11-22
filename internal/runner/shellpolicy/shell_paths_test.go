@@ -74,3 +74,21 @@ func TestQuotedCDPathsResolveSymlinksBeforeApproval(t *testing.T) {
 		}
 	}
 }
+
+func TestWindowsRelPathHandlesVariableLengthUnicodeCaseFolding(t *testing.T) {
+	// U+212A (KELVIN SIGN, 3 UTF-8 bytes) folds to ASCII 'k' (1 byte).
+	// Previously slicing t[len(b):] panicked with slice bounds out of range.
+	rel, ok := windowsRelPath("C:/\u212a\u212a", "C:/kk/sub/file.go")
+	if !ok || rel != "sub/file.go" {
+		t.Fatalf("windowsRelPath(Kelvin) = (%q, %v), want (%q, true)", rel, ok, "sub/file.go")
+	}
+	relEq, okEq := windowsRelPath("C:/\u212a\u212a", "C:/kk")
+	if !okEq || relEq != "." {
+		t.Fatalf("windowsRelPath(Kelvin equal) = (%q, %v), want (\".\", true)", relEq, okEq)
+	}
+	// U+0130 ('İ', 2 UTF-8 bytes) folds to ASCII 'i' (1 byte) under Go strings.ToLower.
+	relDot, okDot := windowsRelPath("C:/\u0130/repo", "C:/i/repo/pkg/a.go")
+	if !okDot || relDot != "pkg/a.go" {
+		t.Fatalf("windowsRelPath(İ) = (%q, %v), want (%q, true)", relDot, okDot, "pkg/a.go")
+	}
+}

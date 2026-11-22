@@ -3,6 +3,7 @@ import { createMemo, createSignal, Show } from "solid-js";
 import { GitBranchPlus, LoaderCircle, Play, Sparkles, Workflow, X } from "lucide-solid";
 import {
   buildProposeSubtasksPrompt,
+  cleanupUnusedNewSession,
   isSessionBusy,
   newIsolatedSession,
   setWorkspace,
@@ -91,10 +92,12 @@ export default function PlanFollowupBar() {
     const info = planTurnInfo();
     if (!info || runningAction()) return;
     setRunningAction("worktree");
+    let createdId: string | null = null;
     try {
       setWorkspace("dismissedPlanFollowups", info.dismissKey, true);
       const title = t("timeline.implementPlanSessionTitle");
       const newId = await newIsolatedSession(title, { isolated: true });
+      createdId = newId;
       setActiveAgent("build", newId);
       const excerpt =
         info.planText.length > 3500
@@ -103,6 +106,9 @@ export default function PlanFollowupBar() {
       const prompt = t("timeline.worktreePromptTemplate", { excerpt });
       await submitSessionPrompt(prompt, newId, { agent: "build" });
     } catch (error) {
+      if (createdId) {
+        void cleanupUnusedNewSession(createdId, undefined, info.sessionID);
+      }
       console.error("implement plan in worktree failed:", error);
     } finally {
       setRunningAction(null);

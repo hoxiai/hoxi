@@ -46,3 +46,12 @@ func TestDockBadgeTracksPendingApprovals(t *testing.T) {
 		t.Fatalf("expected cleared dock badge, got %q", label)
 	}
 }
+
+func TestFormatMenuTargetLabelTreatsRuntimeDefaultsAsPlaceholder(t *testing.T) {
+	for _, title := range []string{"Hoxi Native Session", "Codex CLI Session", "OpenCode CLI Session", "New Session"} {
+		got := FormatMenuTargetLabel(SessionTarget{SessionID: "ses_demo", Title: title, Directory: "/repo/app"})
+		if got != "  ↳ ses_demo · app" {
+			t.Fatalf("FormatMenuTargetLabel(%q) = %q, want placeholder fallback", title, got)
+		}
+	}
+}

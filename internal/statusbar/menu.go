@@ -68,11 +68,31 @@ func dispatchMenuAction(kind, sessionID string) {
 	invokeActionHandler(activeActionHandler(), kind, sessionID)
 }
 
+func isPlaceholderMenuTitle(title string) bool {
+	switch strings.TrimSpace(title) {
+	case "",
+		"New Session",
+		"New Thread",
+		"Untitled",
+		"Hoxi Native Session",
+		"Claude Code Session",
+		"Antigravity Session",
+		"Gemini CLI Session",
+		"CodeBuddy Session",
+		"Qoder Session",
+		"Codex CLI Session",
+		"OpenCode CLI Session":
+		return true
+	}
+	lower := strings.ToLower(strings.TrimSpace(title))
+	return strings.HasPrefix(lower, "new session -") || strings.HasPrefix(lower, "child session -")
+}
+
 // FormatMenuTargetLabel formats a single-line menu label for a pending or
 // running session, stripping worktree suffixes so the project name stays readable.
 func FormatMenuTargetLabel(target SessionTarget) string {
 	title := collapseSingleLine(target.Title)
-	if title == "" || title == "New Session" || strings.HasPrefix(title, "New session - ") {
+	if isPlaceholderMenuTitle(title) {
 		title = collapseSingleLine(target.SessionID)
 	}
 	if title == "" {

@@ -30,6 +30,7 @@ import {
 import { hoxiAPI } from "../../services/api";
 import {
   defaultWorkspaceDir,
+  isMacDesktopPlatform,
   isSessionArchived,
   isSessionBusy,
   openFileInInspector,
@@ -83,7 +84,7 @@ function scoreMatch(query: string, text: string): number {
 }
 
 function pathDetail(path: string): string {
-  const index = path.lastIndexOf("/");
+  const index = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return index > 0 ? path.slice(0, index) : "";
 }
 
@@ -96,7 +97,7 @@ export default function CommandPalette(props: CommandPaletteProps) {
   let requestGeneration = 0;
 
   const activeSessionID = () => workspace.activeSessionID;
-  const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/i.test(navigator.platform || "");
+  const isMac = isMacDesktopPlatform();
 
   const actionItems = createMemo<PaletteItem[]>(() => {
     const items: PaletteItem[] = [

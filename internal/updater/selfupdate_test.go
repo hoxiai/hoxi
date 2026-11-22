@@ -346,3 +346,41 @@ func TestAdmitSelfUpdateHandlesIdleBusyConfirmAndCancel(t *testing.T) {
 		t.Fatalf("unexpected cancelled busy calls=%v confirmCalls=%d", calls, confirmCalls)
 	}
 }
+
+func TestWindowsSwapAndRestartPSRetriesOnLockedFiles(t *testing.T) {
+	if !strings.Contains(windowsSwapAndRestartPS, "$ErrorActionPreference = 'Stop'") {
+		t.Fatalf("windowsSwapAndRestartPS must set $ErrorActionPreference = 'Stop' so Move-Item enters catch and retries")
+	}
+	if strings.Contains(windowsSwapAndRestartPS, "$ErrorActionPreference = 'SilentlyContinue'") {
+		t.Fatalf("windowsSwapAndRestartPS must not set global SilentlyContinue")
+	}
+	for _, want := range []string{
+		"$hasOpenCode    = Test-Path -LiteralPath $stagedOpenCode",
+		"$hasSqlite      = Test-Path -LiteralPath $stagedSqlite",
+		"$swapped        = $false",
+		"$swapped = $true",
+		"if ($swapped) {",
+		"Move-Item -Force -ErrorAction Stop -LiteralPath $stagedHoxi -Destination (Join-Path $targetDir $exeName)",
+		"Move-Item -Force -ErrorAction Stop -LiteralPath $stagedOpenCode -Destination (Join-Path $targetDir 'opencode.exe')",
+		"Move-Item -Force -ErrorAction Stop -LiteralPath $stagedSqlite -Destination (Join-Path $targetDir 'sqlite3.exe')",
+	} {
+		if !strings.Contains(windowsSwapAndRestartPS, want) {
+			t.Fatalf("windowsSwapAndRestartPS missing expected invariant %q", want)
+		}
+	}
+	hoxiMoveIdx := strings.Index(windowsSwapAndRestartPS, "Move-Item -Force -ErrorAction Stop -LiteralPath $stagedHoxi")
+	ocMoveIdx := strings.Index(windowsSwapAndRestartPS, "Move-Item -Force -ErrorAction Stop -LiteralPath $stagedOpenCode")
+	if hoxiMoveIdx < 0 || ocMoveIdx < 0 || hoxiMoveIdx > ocMoveIdx {
+		t.Fatalf("expected Hoxi.exe swap before sidecars to prevent version skew on lock retry")
+	}
+	for _, line := range strings.Split(windowsSwapAndRestartPS, "\n") {
+		if strings.Contains(line, "Move-Item") && !strings.Contains(line, "-ErrorAction Stop") {
+			t.Fatalf("every Move-Item in windowsSwapAndRestartPS must use -ErrorAction Stop, got: %s", line)
+		}
+	}
+	loopIdx := strings.Index(windowsSwapAndRestartPS, "for ($i = 0; $i -lt 30; $i++)")
+	flagIdx := strings.Index(windowsSwapAndRestartPS, "$hasOpenCode")
+	if loopIdx < 0 || flagIdx < 0 || flagIdx > loopIdx {
+		t.Fatalf("expected $hasOpenCode check before retry loop (flagIdx=%d, loopIdx=%d)", flagIdx, loopIdx)
+	}
+}

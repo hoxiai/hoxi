@@ -506,4 +506,3 @@ func TestOpenAIResponsesSeparatesAdjacentReasoningEncryptedContent(t *testing.T)
 		t.Fatalf("expected both distinct encrypted_content items on replay, got: %s", replay)
 	}
 }
-

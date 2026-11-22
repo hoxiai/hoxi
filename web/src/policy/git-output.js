@@ -1,9 +1,9 @@
 // Protected destinations of Git's read-command --output flag. Mirrors git_output.go.
 import { isProtectedPath, isSecretPath, isSensitiveExternalPath } from "./external-path-risk.js";
-import { cleanInlinePosixPath } from "./inline-script-literals.js";
+import { cleanPolicyPath, joinPolicyPath } from "./policy-paths.js";
 import { unwrapCommandPrefixes } from "./command-wrappers.js";
 
-const join = (dir, target) => cleanInlinePosixPath(target.startsWith("/") ? target : dir + "/" + target);
+const join = (dir, target) => cleanPolicyPath(joinPolicyPath(dir, target));
 const baseName = (s) => s.slice(s.lastIndexOf("/") + 1);
 const valueFlags = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"]);
 const keywords = new Set(["while", "until", "do", "done", "if", "then", "else", "elif", "fi", "!"]);

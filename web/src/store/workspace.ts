@@ -124,3 +124,4 @@ export type {
 export type { CliLinkStatus } from "../services/platform-api";
 
 export * from "./app-grants";
+export * from "./desktop-window";

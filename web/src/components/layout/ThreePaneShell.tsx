@@ -31,6 +31,7 @@ import {
   openSessionDeepLink,
   openSettingsModal,
   parseSessionHashLink,
+  resolveEffectiveTheme,
   rightWidth,
   saveLayoutPrefs,
   selectSession,
@@ -39,6 +40,8 @@ import {
   setRightWidth,
   setWorkspace,
   startDeepLinkNavigation,
+  startDesktopWindowSync,
+  syncDesktopWindowThemeFromDOM,
   workspace,
 } from "../../store/workspace";
 import { isWorkSurface, surfaceExtension } from "./surface-extension";
@@ -175,6 +178,10 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
     // intents) lives in the store; the shell only feeds it hash changes.
     const focusFromLocationHash = () => openSessionDeepLink(parseSessionHashLink(window.location.hash));
     const stopDeepLinks = startDeepLinkNavigation(surfaceExtension.openAppIntent);
+    const stopWindowSync = startDesktopWindowSync(() => ({
+      effective: resolveEffectiveTheme(appSettings.themeMode),
+      mode: appSettings.themeMode,
+    }));
     focusFromLocationHash();
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("hashchange", focusFromLocationHash);
@@ -185,8 +192,25 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
       window.removeEventListener("hashchange", focusFromLocationHash);
       window.removeEventListener("hoxi:notification-click", onNotificationClick);
       window.removeEventListener("resize", onWindowResize);
+      stopWindowSync();
       stopDeepLinks();
     });
+  });
+
+  // Re-sync Windows frameless window background whenever surface mode (Code vs Work)
+  // switches so `[data-surface="work"]` canvas overrides take effect immediately.
+  createEffect(() => {
+    void isWorkSurface();
+    const mode = appSettings.themeMode;
+    const effective = resolveEffectiveTheme(mode);
+    if (typeof requestAnimationFrame !== "function") {
+      syncDesktopWindowThemeFromDOM(effective, mode);
+      return;
+    }
+    const id = requestAnimationFrame(() => {
+      syncDesktopWindowThemeFromDOM(effective, mode);
+    });
+    onCleanup(() => cancelAnimationFrame(id));
   });
 
   const startResize = (side: "left" | "right", ev: PointerEvent) => {

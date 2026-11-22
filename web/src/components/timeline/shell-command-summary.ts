@@ -1,6 +1,6 @@
 // web/src/components/timeline/shell-command-summary.ts
 import type { MessagePart, ToolPart } from "../../services/sse-types";
-import { workspace } from "../../store/workspace";
+import { stripRootPrefix, workspace } from "../../store/workspace";
 import { isAttentionToolPart } from "./context-activity-parts";
 import { isReadTool, isSearchOrListTool, isShellTool } from "./tool-taxonomy";
 
@@ -125,11 +125,7 @@ function hasUnquotedShellControl(line: string, allowSinglePipe = false): boolean
 function normalizeDisplayPath(rawPath: string): string {
   const cleaned = unquoteShellWord(rawPath).trim();
   if (!cleaned) return "";
-  const root = workspace.rootDir?.replace(/\/+$/, "") || "";
-  if (root && (cleaned === root || cleaned.startsWith(`${root}/`))) {
-    return cleaned.slice(root.length).replace(/^\/+/, "") || ".";
-  }
-  return cleaned;
+  return stripRootPrefix(cleaned, workspace.rootDir) ?? cleaned;
 }
 
 function shortBasename(p: string): string {

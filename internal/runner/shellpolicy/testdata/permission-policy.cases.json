@@ -897,5 +897,20 @@
   { "command": "curl -s https://example/api/hoxi/intake/links", "decision": "ask", "destructive": true, "sessionGrant": false },
   { "command": "hoxi code-index map --path internal/agent --limit 10", "decision": "allow", "destructive": false },
   { "command": "hoxi code-index map --path .env", "decision": "ask", "destructive": true },
-  { "command": "hoxi code-index map --dir /etc", "decision": "ask", "destructive": false }
+  { "command": "hoxi code-index map --dir /etc", "decision": "ask", "destructive": false },
+  { "command": "cd sub && git status", "worktree": "C:/Users/dev/repo", "decision": "allow", "destructive": false },
+  { "command": "cd c:/users/dev/repo/sub && git status", "worktree": "C:/Users/dev/repo", "decision": "allow", "destructive": false },
+  { "command": "cd \"src locale\" && git diff", "worktree": "C:/Users/dev/my repo", "decision": "allow", "destructive": false },
+  { "command": "cd C:/ && git status", "worktree": "C:/Users/dev/repo", "decision": "ask", "destructive": false },
+  { "command": "cd ../sibling && git status", "worktree": "C:/Users/dev/repo", "decision": "ask", "destructive": false },
+  { "command": "cd C:/Users/dev/.ssh && ls", "worktree": "C:/Users/dev/repo", "decision": "ask", "destructive": false },
+  { "command": "cat C:/Users/dev/.ssh/id_rsa", "worktree": "C:/Users/dev/repo", "decision": "ask", "destructive": true },
+  { "command": "cd C:/Windows/System32 && ls", "worktree": "C:/Users/dev/repo", "decision": "ask", "destructive": false },
+  { "command": "cd .git && ls", "worktree": "C:/Users/dev/repo", "decision": "ask", "destructive": false },
+  { "command": "cd sub && git log --output=C:/Users/dev/repo/.git/config", "worktree": "C:/Users/dev/repo", "decision": "ask", "destructive": true },
+  { "command": "cd C:\\Users\\dev\\repo\\sub && git status", "worktree": "C:/Users/dev/repo", "decision": "allow", "destructive": false },
+  { "command": "cd \"C:\\Users\\My User\\my repo\\src locale\" && git diff", "worktree": "C:/Users/My User/my repo", "decision": "allow", "destructive": false },
+  { "command": "cd C:\\ && git status", "worktree": "C:/Users/dev/repo", "decision": "ask", "destructive": false },
+  { "command": "cd \"C:\\Users\\dev\\repo\\\" && rm -rf /", "worktree": "C:/Users/dev/repo", "decision": "ask", "destructive": true },
+  { "command": "cat C:\\Users\\dev\\repo\\.env", "worktree": "C:/Users/dev/repo", "decision": "ask", "destructive": true }
 ]

@@ -63,12 +63,12 @@ export function cancelScheduledSessionDiff(sessionID: string): void {
 
 /** Coalesces bursts (e.g. many settled subagents) into one parent diff refresh. */
 export function scheduleRefreshSessionDiff(sessionID: string, delayMs = 150): void {
-  const directory = sessionDirectory(sessionID);
+  const directory = normalizeFolderPath(sessionDirectory(sessionID));
   const wasMounted = isSessionMountedForDiff(sessionID);
   cancelScheduledSessionDiff(sessionID);
   diffRefreshTimers.set(sessionID, setTimeout(() => {
     diffRefreshTimers.delete(sessionID);
-    if (isSessionDeleted(sessionID) || sessionDirectory(sessionID) !== directory) return;
+    if (isSessionDeleted(sessionID) || normalizeFolderPath(sessionDirectory(sessionID)) !== directory) return;
     if (wasMounted && !isSessionMountedForDiff(sessionID)) return;
     void refreshSessionDiff(sessionID);
   }, Math.max(0, delayMs)));
@@ -79,16 +79,17 @@ export async function refreshSessionDiff(
   preloadedWorktreeDiffs?: SnapshotFileDiff[]
 ): Promise<void> {
   const directory = sessionDirectory(sessionID);
+  const normDirectory = normalizeFolderPath(directory);
   const revision = (diffRevisions.get(sessionID) ?? 0) + 1;
   diffRevisions.set(sessionID, revision);
   const isCurrent = () => diffRevisions.get(sessionID) === revision &&
-    sessionDirectory(sessionID) === directory && !isSessionDeleted(sessionID);
+    normalizeFolderPath(sessionDirectory(sessionID)) === normDirectory && !isSessionDeleted(sessionID);
   try {
     let diffs = await hoxiAPI.getSessionDiff(sessionID, directory);
     if (!isCurrent()) return;
     const meta = workspace.worktreeBySession[sessionID];
     // Only an isolated worktree can safely attribute directory-wide changes to this session.
-    if (!diffs.length && meta?.isolated && meta.dirty && meta.directory === directory) {
+    if (!diffs.length && meta?.isolated && meta.dirty && normalizeFolderPath(meta.directory) === normDirectory) {
       diffs = preloadedWorktreeDiffs ?? (await hoxiAPI.getWorktreeDiff(sessionID, directory));
     } else if (!meta?.isolated) {
       diffs = scopeLocalSessionDiffs(sessionID, diffs);
@@ -187,7 +188,7 @@ export function scheduleRefreshWorktreeStatus(
           : wasMounted
             ? isSessionMountedForDiff(key)
             : isSessionMountedForDiff(key) || workspace.worktreeBySession[key] !== undefined;
-      if (!isSessionDeleted(key) && stillLive && worktreeStatusDirectory(key) === directory) {
+      if (!isSessionDeleted(key) && stillLive && normalizeFolderPath(worktreeStatusDirectory(key)) === normalizedDirectory) {
         void refreshWorktreeStatus(key);
       }
       return;

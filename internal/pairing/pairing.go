@@ -64,12 +64,12 @@ type Service struct {
 	lanPeers  func() []string
 	relayURL  func() string
 
-	mu               sync.Mutex
-	cached           string
-	cachedRelay      string
-	cachedE2EE       string
-	cachedCipher     *E2EECipher
-	activeShortCode  *PublishedShortCode
+	mu                 sync.Mutex
+	cached             string
+	cachedRelay        string
+	cachedE2EE         string
+	cachedCipher       *E2EECipher
+	activeShortCode    *PublishedShortCode
 	shortCodeTransport http.RoundTripper
 }
 

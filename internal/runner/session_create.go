@@ -172,3 +172,26 @@ func (s *Service) CreateSession(body CreateSessionRequest, directory string) (Se
 	})
 	return info, http.StatusOK, nil
 }
+
+// isPlaceholderSessionTitle reports whether title is an auto-generated default
+// that may safely be replaced by an automatic prompt/engine summary.
+func isPlaceholderSessionTitle(title string) bool {
+	trimmed := strings.TrimSpace(title)
+	switch trimmed {
+	case "",
+		"New Session",
+		"New Thread",
+		"Untitled",
+		"Hoxi Native Session",
+		"Claude Code Session",
+		"Antigravity Session",
+		"Gemini CLI Session",
+		"CodeBuddy Session",
+		"Qoder Session",
+		"Codex CLI Session",
+		"OpenCode CLI Session":
+		return true
+	}
+	lower := strings.ToLower(trimmed)
+	return strings.HasPrefix(lower, "new session -") || strings.HasPrefix(lower, "child session -")
+}

@@ -89,40 +89,6 @@ func confirmWindowsBusyUpdate() bool {
 	return ret == idYes
 }
 
-const windowsSwapAndRestartPS = `
-$ErrorActionPreference = 'SilentlyContinue'
-$targetPid = [int]$env:HOXI_UPD_PID
-$stageDir  = $env:HOXI_UPD_STAGE_DIR
-$targetDir = $env:HOXI_UPD_TARGET_DIR
-$exeName   = $env:HOXI_UPD_EXE
-
-if ($targetPid -gt 0) {
-  try { Wait-Process -Id $targetPid -Timeout 30 } catch {}
-}
-
-for ($i = 0; $i -lt 20; $i++) {
-  try {
-    if (Test-Path (Join-Path $stageDir 'opencode.exe')) {
-      Move-Item -Force (Join-Path $stageDir 'opencode.exe') (Join-Path $targetDir 'opencode.exe')
-    } else {
-      Remove-Item -Force (Join-Path $targetDir 'opencode.exe') -ErrorAction SilentlyContinue
-    }
-    if (Test-Path (Join-Path $stageDir 'sqlite3.exe')) {
-      Move-Item -Force (Join-Path $stageDir 'sqlite3.exe') (Join-Path $targetDir 'sqlite3.exe')
-    } else {
-      Remove-Item -Force (Join-Path $targetDir 'sqlite3.exe') -ErrorAction SilentlyContinue
-    }
-    Move-Item -Force (Join-Path $stageDir 'Hoxi.exe') (Join-Path $targetDir $exeName)
-    break
-  } catch {
-    Start-Sleep -Milliseconds 300
-  }
-}
-
-Remove-Item -Recurse -Force $stageDir
-Start-Process -FilePath (Join-Path $targetDir $exeName)
-`
-
 func StartNative(canInstall func(force bool) bool, release func()) error {
 	if canInstall == nil || release == nil {
 		return errors.New("native updater requires admission and release callbacks")

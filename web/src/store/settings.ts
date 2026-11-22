@@ -9,6 +9,7 @@ import {
   type DesktopNotificationPermission,
 } from "../services/desktop-notify";
 import { openExternalBrowserURL } from "../services/desktop-events";
+import { syncDesktopWindowThemeFromDOM } from "./desktop-window";
 import {
   readStorageItem,
   readStorageJSON,
@@ -430,6 +431,7 @@ export function syncSettingsSideEffects() {
   if (typeof document !== "undefined") {
     document.documentElement.dataset.colorScheme = appSettings.colorScheme;
   }
+  syncDesktopWindowThemeFromDOM(effective, appSettings.themeMode);
   writeStorageItem(THEME_KEY, effective);
   applyFontScaleToDOM(appSettings.fontScale);
   syncWallpaperDOM();

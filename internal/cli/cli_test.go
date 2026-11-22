@@ -67,9 +67,33 @@ func TestShouldHandleAndIsServeCommand(t *testing.T) {
 		{`C:\Users\me\AppData\Local\Programs\Hoxi\hoxi.exe`, "HOXI://session/ses_abc123"},
 		{"hoxi", " hoxi://open?session=ses_abc123"},
 		{`C:\Users\me\AppData\Local\Programs\Hoxi\Hoxi.exe`, "--allow-remote", "hoxi://auth-callback/?handoff=abc&state=def"},
+		// Windows desktop launch artifacts (blank arg, OS slash switch, Squirrel flag,
+		// dropped folder path, or lowercased installed desktop exe) must open the GUI
+		// instead of silently spawning a one-shot "Hoxi Native Session".
+		{`C:\Users\me\AppData\Local\Programs\Hoxi\Hoxi.exe`},
+		{`C:\Users\me\AppData\Local\Programs\Hoxi\hoxi.exe`},
+		{`C:\Users\me\AppData\Local\Programs\Hoxi\Hoxi.exe`, ""},
+		{`C:\Users\me\AppData\Local\Programs\Hoxi\Hoxi.exe`, "   "},
+		{`C:\Users\me\AppData\Local\Programs\Hoxi\Hoxi.exe`, "/S"},
+		{`C:\Users\me\AppData\Local\Programs\Hoxi\Hoxi.exe`, "/minimized"},
+		{`C:\Users\me\AppData\Local\Programs\Hoxi\Hoxi.exe`, "/prefetch:1"},
+		{`C:\Users\me\AppData\Local\Programs\Hoxi\Hoxi.exe`, "--squirrel-firstrun"},
+		{`C:\Users\me\AppData\Local\Programs\Hoxi\Hoxi.exe`, `C:\Users\me\repo`},
+		{`C:\Users\me\AppData\Local\Programs\Hoxi\Hoxi.exe`, `\\fileserver\share\repo`},
 	} {
 		if ShouldHandle(args, noEnv) {
-			t.Fatalf("expected hoxi:// link %v to open the desktop app, not the CLI", args)
+			t.Fatalf("expected desktop launch %v to open the desktop app, not the CLI", args)
+		}
+	}
+
+	// Explicit subcommands and CLI flags on Hoxi.exe still enter CLI mode.
+	for _, args := range [][]string{
+		{`C:\Users\me\AppData\Local\Programs\Hoxi\Hoxi.exe`, "run", "fix bug"},
+		{`C:\Users\me\AppData\Local\Programs\Hoxi\Hoxi.exe`, "sessions"},
+		{`C:\Users\me\AppData\Local\Programs\Hoxi\Hoxi.exe`, "-p", "fix bug"},
+	} {
+		if !ShouldHandle(args, noEnv) {
+			t.Fatalf("expected explicit CLI invocation %v to enter CLI mode", args)
 		}
 	}
 

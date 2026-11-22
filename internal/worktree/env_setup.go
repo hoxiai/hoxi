@@ -38,7 +38,7 @@ func nonInteractiveGitEnv(extra ...string) []string {
 		if idx := strings.IndexByte(kv, '='); idx >= 0 {
 			key = kv[:idx]
 		}
-		switch key {
+		switch strings.ToUpper(key) {
 		case "GIT_TERMINAL_PROMPT",
 			"SSH_ASKPASS",
 			"GIT_ASKPASS",
@@ -51,7 +51,7 @@ func nonInteractiveGitEnv(extra ...string) []string {
 			"GIT_EXTERNAL_DIFF":
 			continue
 		case "GIT_SSH_COMMAND":
-			if strings.TrimSpace(kv[len("GIT_SSH_COMMAND="):]) != "" {
+			if idx := strings.IndexByte(kv, '='); idx >= 0 && strings.TrimSpace(kv[idx+1:]) != "" {
 				hasSSHCommand = true
 			}
 		}
@@ -187,31 +187,12 @@ func resolveWorktreeSetupScript(repoRoot string) string {
 	return ""
 }
 
+func resolveWindowsShWith(getenv func(string) string, fileExists func(string) bool, lookPath func(string) (string, error)) string {
+	return subproc.ResolveWindowsBashWith(true, getenv, fileExists, lookPath)
+}
+
 func resolveWindowsSh() string {
-	for _, bin := range []string{"bash", "sh"} {
-		if p, err := exec.LookPath(bin); err == nil && p != "" {
-			return p
-		}
-	}
-	for _, k := range []string{"ProgramFiles", "ProgramFiles(x86)", "LocalAppData"} {
-		root := strings.TrimSpace(os.Getenv(k))
-		if root == "" {
-			continue
-		}
-		for _, sub := range []string{
-			filepath.Join(root, "Git", "bin", "bash.exe"),
-			filepath.Join(root, "Git", "usr", "bin", "bash.exe"),
-			filepath.Join(root, "Programs", "Git", "bin", "bash.exe"),
-			filepath.Join(root, "Git", "bin", "sh.exe"),
-			filepath.Join(root, "Git", "usr", "bin", "sh.exe"),
-			filepath.Join(root, "Programs", "Git", "bin", "sh.exe"),
-		} {
-			if st, err := os.Stat(sub); err == nil && !st.IsDir() {
-				return sub
-			}
-		}
-	}
-	return ""
+	return subproc.ResolveWindowsBash(true)
 }
 
 func newSetupScriptCommand(ctx context.Context, scriptPath string) *exec.Cmd {

@@ -152,12 +152,12 @@ func recoverableWorktree(worktree string) string {
 
 func safeChmodDir(dir string) string {
 	dir = strings.TrimSpace(dir)
-	if dir == "" || !filepath.IsAbs(dir) {
+	if dir == "" || (!filepath.IsAbs(dir) && !isWindowsDriveAbs(dir)) {
 		return ""
 	}
 	cleaned := filepath.Clean(dir)
-	slash := filepath.ToSlash(cleaned)
-	if slash == "/" || filepath.Dir(cleaned) == cleaned || isSensitiveExternalPath(cleaned) || isSecretFilePath(cleaned) {
+	slash := cleanSlashPath(cleaned)
+	if slash == "/" || isWindowsDriveRoot(slash) || filepath.Dir(cleaned) == cleaned || isSensitiveExternalPath(cleaned) || isSecretFilePath(cleaned) {
 		return ""
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" && samePath(cleaned, home) {
@@ -487,7 +487,7 @@ func isTempPathArg(arg string) bool {
 			return false
 		}
 	}
-	target := filepath.Clean(arg)
+	target := cleanSlashPath(arg)
 	if strings.ContainsAny(target, "*?") {
 		// The glob must sit inside a named entry (`/tmp/probe*`), so the
 		// directory it lists is the temp root's child level at most.
@@ -498,15 +498,20 @@ func isTempPathArg(arg string) bool {
 			return true
 		}
 	}
-	// macOS also uses /var/folders/<id>/T/<entry>. The per-user T directory
-	// itself stays manual; only a concrete entry under it is throwaway.
-	return isMacOSTempPath(filepath.ToSlash(target)) && !isSecretFilePath(target)
+	// macOS uses /var/folders/<id>/T/<entry>; Windows uses AppData/Local/Temp/<entry> or Windows/Temp/<entry>.
+	return (isMacOSTempPath(target) || isWindowsTempPath(target)) && !isSecretFilePath(target)
 }
 
 func samePath(a, b string) bool {
 	ra, okA := resolvePathWithSymlinks(a, 0)
 	rb, okB := resolvePathWithSymlinks(b, 0)
-	return okA && okB && filepath.Clean(ra) == filepath.Clean(rb)
+	if !okA || !okB {
+		return false
+	}
+	if isWindowsDriveAbs(ra) && isWindowsDriveAbs(rb) {
+		return strings.EqualFold(cleanSlashPath(ra), cleanSlashPath(rb))
+	}
+	return filepath.Clean(ra) == filepath.Clean(rb)
 }
 
 // isWorktreePathArg accepts a path that stays inside the worktree after
@@ -536,9 +541,19 @@ func isWorktreePathArg(arg, worktree string) bool {
 	if !pathWithin(worktree, target) {
 		return false
 	}
-	rel, err := filepath.Rel(filepath.Clean(worktree), target)
-	if err != nil {
-		return false
+	var rel string
+	if isWindowsDriveAbs(worktree) && isWindowsDriveAbs(target) {
+		var ok bool
+		rel, ok = windowsRelPath(worktree, target)
+		if !ok {
+			return false
+		}
+	} else {
+		var err error
+		rel, err = filepath.Rel(filepath.Clean(worktree), target)
+		if err != nil {
+			return false
+		}
 	}
 	if rel == "." {
 		return globbed

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -32,27 +33,27 @@ type Options struct {
 }
 
 var knownSubcommands = map[string]bool{
-	"run":         true,
-	"chat":        true,
-	"tui":         true,
-	"open":        true,
-	"models":      true,
-	"host":        true,
-	"handoff":     true,
-	"worktree":    true,
-	"code-index":  true,
-	"codeindex":   true,
-	"doc":         true,
-	"image":       true,
-	"video":       true,
-	"speech":      true,
-	"sessions":    true,
+	"run":           true,
+	"chat":          true,
+	"tui":           true,
+	"open":          true,
+	"models":        true,
+	"host":          true,
+	"handoff":       true,
+	"worktree":      true,
+	"code-index":    true,
+	"codeindex":     true,
+	"doc":           true,
+	"image":         true,
+	"video":         true,
+	"speech":        true,
+	"sessions":      true,
 	"status":        true,
 	"install-cli":   true,
 	"uninstall-cli": true,
 	"help":          true,
-	"--help":      true,
-	"-h":          true,
+	"--help":        true,
+	"-h":            true,
 }
 
 // IsServeCommand reports whether args invokes `hoxi serve [...]` and rewrites
@@ -81,49 +82,97 @@ func ShouldHandle(args []string, getenv func(string) string) bool {
 			return false
 		}
 	}
-	for _, a := range args[1:] {
+	var nonEmpty []string
+	for _, raw := range args[1:] {
+		a := strings.TrimSpace(raw)
+		if a == "" {
+			continue
+		}
+		lower := strings.ToLower(a)
 		// Windows opens a hoxi:// link as `Hoxi.exe "hoxi://…"`. The link belongs
 		// to the desktop app (login callback, session link) and must never be sent
 		// to a model as a prompt.
-		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(a)), "hoxi://") {
+		if strings.HasPrefix(lower, "hoxi://") {
 			return false
 		}
 		if a == "--no-desktop" || a == "-no-desktop" || a == "--version" || a == "-version" {
 			return false
 		}
-		// macOS LaunchServices passes -psn_0_... when launching .app bundles.
-		if strings.HasPrefix(a, "-psn_") {
+		// macOS LaunchServices passes -psn_0_...; Windows installers/shells may pass --squirrel-*.
+		if strings.HasPrefix(a, "-psn_") || strings.HasPrefix(lower, "--squirrel-") {
 			return false
 		}
+		nonEmpty = append(nonEmpty, a)
 	}
 
-	if len(args) > 1 {
-		first := strings.TrimSpace(args[1])
+	exeArg := strings.ReplaceAll(strings.TrimSpace(args[0]), "\\", "/")
+	base := path.Base(exeArg)
+	isDesktopExe := isDesktopExecutableArg(exeArg, base)
+
+	if len(nonEmpty) > 0 {
+		first := nonEmpty[0]
 		if knownSubcommands[first] || isRegisteredSubcommand(first) {
 			return true
 		}
-		// Any positional prompt or CLI-specific flag enters CLI mode.
-		if !strings.HasPrefix(first, "-") {
-			return true
-		}
-		for _, a := range args[1:] {
+		for _, a := range nonEmpty {
 			switch a {
 			case "-r", "--runtime", "-m", "--model", "-w", "--worktree", "-s", "--session", "-p", "--prompt", "--tui":
 				return true
 			}
 		}
+		// Windows Explorer/shortcuts/installers may launch Hoxi.exe with OS-level
+		// switches (/S, /minimized, /prefetch:1) or a dropped Windows path
+		// (C:\..., \\server\...). Never send those as a one-shot AI prompt.
+		if isDesktopExe && len(nonEmpty) == 1 && (isWindowsShellSwitch(first) || isWindowsFilesystemPath(first)) {
+			return false
+		}
+		// Any positional prompt enters CLI mode.
+		if !strings.HasPrefix(first, "-") {
+			return true
+		}
 	}
 
 	// Bare invocation (`hoxi` with no arguments):
-	// When launched by macOS Finder/Dock from inside Hoxi.app/Contents/MacOS/Hoxi,
+	// When launched by macOS Finder/Dock or Windows desktop install path,
 	// start the Wails desktop GUI. When invoked as `hoxi` in a terminal (e.g., via
 	// /usr/local/bin/hoxi symlink or `cmd/hoxi`), enter the interactive terminal CLI.
-	exeArg := filepath.ToSlash(args[0])
-	if strings.Contains(exeArg, ".app/Contents/MacOS/") {
+	if isDesktopExe {
 		return false
 	}
-	base := filepath.Base(exeArg)
 	return base == "hoxi" || base == "hoxi.exe"
+}
+
+func isDesktopExecutableArg(exeArg, base string) bool {
+	if strings.Contains(exeArg, ".app/Contents/MacOS/") {
+		return true
+	}
+	if base == "Hoxi.exe" {
+		return true
+	}
+	lower := strings.ToLower(exeArg)
+	return strings.Contains(lower, "/programs/hoxi/") ||
+		strings.Contains(lower, "/program files/hoxi/") ||
+		strings.Contains(lower, "/program files (x86)/hoxi/")
+}
+
+func isWindowsShellSwitch(arg string) bool {
+	if len(arg) < 2 || arg[0] != '/' {
+		return false
+	}
+	for i := 1; i < len(arg); i++ {
+		c := arg[i]
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == ':' || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+func isWindowsFilesystemPath(arg string) bool {
+	if len(arg) >= 3 && ((arg[0] >= 'A' && arg[0] <= 'Z') || (arg[0] >= 'a' && arg[0] <= 'z')) && arg[1] == ':' && (arg[2] == '\\' || arg[2] == '/') {
+		return true
+	}
+	return strings.HasPrefix(arg, `\\`)
 }
 
 func isCatalogRuntime(rt string) bool {

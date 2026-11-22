@@ -78,10 +78,10 @@ type ListResponse struct {
 }
 
 type RequestContext struct {
-	SessionID      string
-	Runtime        string
-	Directory      string
-	ProjectRoot    string
+	SessionID       string
+	Runtime         string
+	Directory       string
+	ProjectRoot     string
 	AllowedRoots    []string
 	ExtraSkillDirs  []string
 	ExtraMCPServers []string

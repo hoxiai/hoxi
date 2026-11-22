@@ -7,6 +7,7 @@
 // internal/runner/shellpolicy/testdata/opaque-command.cases.json keeps both ports aligned.
 import { DATA_ARG_INTERPRETERS } from "./command-data-args.js";
 import { attachedInlineCode } from "./inline-script-arguments.js";
+import { cleanPolicyPath, isAbsPolicyPath, isWindowsDriveRoot, isWindowsTempPath, joinPolicyPath, policyPathWithin } from "./policy-paths.js";
 import { literalCDTarget } from "./shell-paths.js";
 import {
   DOLLAR_EXPAND_RE,
@@ -188,28 +189,25 @@ function cleanRelPosixPath(p) {
 }
 
 function isSafeExternalCDTarget(resolved) {
-  return Boolean(resolved) && resolved !== "/" && !isSensitiveExternalPath(resolved) && !isSecretPath(resolved) && !isProtectedShellReadPath(resolved);
+  return Boolean(resolved) && resolved !== "/" && !isWindowsDriveRoot(resolved) && !isSensitiveExternalPath(resolved) && !isSecretPath(resolved) && !isProtectedShellReadPath(resolved);
 }
 
 function advanceScopedCD(seg, cwd, worktree) {
   if (!cwd) return ["", false];
   const target = literalCDTarget(stripCDNullRedirects(String(seg || "").trim()));
   if (target === null) return ["", false];
-  if (target.startsWith("/")) {
-    if (target.split("/").includes("..")) return ["", false];
-    const rel = cleanRelPosixPath(target);
-    const cleaned = rel === "." ? "/" : "/" + rel;
+  if (isAbsPolicyPath(target)) {
+    if (target.replaceAll("\\", "/").split("/").includes("..")) return ["", false];
+    const cleaned = cleanPolicyPath(target);
     if (!isSafeExternalCDTarget(cleaned)) return ["", false];
     return [cleaned, true];
   }
   const wt = String(worktree || "").trim();
-  if (cwd.startsWith("/")) {
-    const rel = cleanRelPosixPath(`${cwd}/${target}`);
-    const resolved = rel === "." || rel === ".." || rel.startsWith("../") ? "/" : "/" + rel;
-    if (wt && wt.startsWith("/")) {
-      const base = "/" + cleanRelPosixPath(wt);
-      const inside = resolved === base || resolved.startsWith(base + "/");
-      if (inside && (cwd === base || cwd.startsWith(base + "/"))) {
+  if (isAbsPolicyPath(cwd)) {
+    const resolved = cleanPolicyPath(joinPolicyPath(cwd, target));
+    if (wt && isAbsPolicyPath(wt)) {
+      const base = cleanPolicyPath(wt);
+      if (policyPathWithin(base, resolved) && policyPathWithin(base, cwd)) {
         if (!isSafeExternalCDTarget(resolved)) return ["", false];
         return [resolved, true];
       }
@@ -227,14 +225,13 @@ function advanceScopedCD(seg, cwd, worktree) {
 }
 
 function isTempPathArg(arg) {
-  if (!arg || !arg.startsWith("/") || arg.startsWith("~") || /[$[]/.test(arg)) return false;
-  for (const part of arg.split("/")) {
+  if (!arg || !isAbsPolicyPath(arg) || arg.startsWith("~") || /[$[]/.test(arg)) return false;
+  for (const part of arg.replaceAll("\\", "/").split("/")) {
     if (part === ".." || (part !== "" && "*?.".includes(part[0]) && /[*?]/.test(part))) {
       return false;
     }
   }
-  const rel = cleanRelPosixPath(arg);
-  let target = rel === "." ? "/" : "/" + rel;
+  let target = cleanPolicyPath(arg);
   if (/[*?]/.test(target)) {
     target = target.slice(0, target.search(/[*?]/)) + "x";
   }
@@ -242,7 +239,7 @@ function isTempPathArg(arg) {
   if (target.startsWith("/tmp/") || target.startsWith("/private/tmp/")) {
     return true;
   }
-  return isMacOSTempPath(target);
+  return isMacOSTempPath(target) || isWindowsTempPath(target);
 }
 
 function isTempOnlyCleanupSegment(words) {

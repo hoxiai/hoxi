@@ -1,5 +1,6 @@
 import { Show, Suspense, createEffect, createSignal, lazy, onCleanup, onMount } from "solid-js";
 import ThreePaneShell from "./components/layout/ThreePaneShell";
+import WindowControls from "./components/layout/WindowControls";
 import { hoxiAPI } from "./services/api";
 import { connectEventStream } from "./services/sse";
 import { watchNetworkStatus } from "./services/network";
@@ -16,6 +17,7 @@ import {
   getActiveWorkWorkspaceDir,
   handleIncomingPermissionRequest,
   hasStoredSurfaceMode,
+  hasWindowsWindowControls,
   markPermissionResolved,
   clearActiveTurnTelemetry,
   clearAutoFailoverPending,
@@ -484,7 +486,14 @@ function DesktopApp() {
           onRetry: () => retryEventStream?.(),
         }}
       />
-      <Show when={surfaceOnboardingOpen()}>{surfaceExtension.renderOnboarding?.()}</Show>
+      <Show when={surfaceOnboardingOpen()}>
+        {surfaceExtension.renderOnboarding?.()}
+        <Show when={hasWindowsWindowControls()}>
+          <div class="fixed top-0 right-0 z-[160] h-[42px] flex items-stretch">
+            <WindowControls showDivider={false} />
+          </div>
+        </Show>
+      </Show>
     </>
   );
 }

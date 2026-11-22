@@ -368,7 +368,7 @@ func (s *Service) maybeAutoTitleImageSession(sessionID, promptText string) {
 		clean = string(runes[:36]) + "…"
 	}
 	updated, ok, err := s.store.Update(sessionID, func(r *SessionRecord) {
-		if r.Title == "" || r.Title == "New Session" || strings.HasPrefix(r.Title, "New session - ") {
+		if isPlaceholderSessionTitle(r.Title) {
 			r.Title = clean
 		}
 	})

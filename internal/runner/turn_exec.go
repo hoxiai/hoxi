@@ -5,12 +5,28 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/agentcli"
 	"github.com/hoxiai/hoxi/internal/subproc"
 )
+
+func unwrapTurnCommand(binPath string, args, procEnv []string) (string, []string) {
+	if runtime.GOOS != "windows" {
+		return binPath, args
+	}
+	nodeExe, prefixArgs, ok := agentcli.ResolveWindowsNodeShim(binPath, procEnv)
+	if !ok {
+		return binPath, args
+	}
+	merged := make([]string, 0, len(prefixArgs)+len(args))
+	merged = append(merged, prefixArgs...)
+	merged = append(merged, args...)
+	return nodeExe, merged
+}
 
 // Subagents run silently for minutes; their transcripts are checked at this
 // pace so the running task card keeps showing progress.
@@ -81,15 +97,16 @@ func (s *Service) startTurnProcessWithMode(
 		buildTurnCLIArgsWithFast(rec.Runtime, mode, rec.ProviderID, modelID, effort, rec.ExternalID, geminiUsesAgy, fastMode, claudeHookArgs),
 		mcpArgs,
 	)
-	binPath, args, err := s.confineRuntimeCommand(rec, rawBinPath, args)
-	if err != nil {
-		revokeHook()
-		return err
-	}
 	if base := strings.TrimSpace(s.hookBaseURL()); base != "" {
 		hookEnv = append(hookEnv, "HOXI_GATEWAY_URL="+base, "HOXI_BRIDGE_URL="+base)
 	}
 	procEnv := s.applySessionBundleEnv(rec, runtimeProcessEnv(rec, os.Environ(), hookEnv))
+	launchBin, launchArgs := unwrapTurnCommand(rawBinPath, args, procEnv)
+	binPath, args, err := s.confineRuntimeCommand(rec, launchBin, launchArgs)
+	if err != nil {
+		revokeHook()
+		return err
+	}
 	cmd := subproc.Command(binPath, args...)
 	cmd.Dir = rec.WorktreePath
 	cmd.Env = procEnv
@@ -566,7 +583,8 @@ func (s *Service) runRetrySubprocess(
 	emitBusy bool,
 	feedStdout func(*os.File) <-chan struct{},
 ) (bool, error) {
-	retryBin, wrappedArgs, wrapErr := s.confineRuntimeCommand(rec, rawBinPath, retryArgs)
+	launchBin, launchArgs := unwrapTurnCommand(rawBinPath, retryArgs, procEnv)
+	retryBin, wrappedArgs, wrapErr := s.confineRuntimeCommand(rec, launchBin, launchArgs)
 	if wrapErr != nil {
 		return false, nil
 	}

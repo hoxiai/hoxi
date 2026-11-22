@@ -333,19 +333,54 @@ func shellWords(s string) []string {
 	return words
 }
 
-var windowsDrivePathRe = regexp.MustCompile(`(?i)\b[a-z]:\\[^\s;&|'"` + "`" + `()<>]*`)
+var (
+	windowsQuotedDrivePathRe   = regexp.MustCompile(`(?i)("([a-z]:\\[^"\r\n$` + "`" + `]*[^"\r\n$` + "`" + `\\])"|'([a-z]:\\[^'\r\n]*[^'\r\n\\])')`)
+	windowsUnquotedDrivePathRe = regexp.MustCompile(`(?i)(^|[\s=;&|()])([a-z]:\\[^\s;&|'"` + "`" + `()<>]*)`)
+)
 
+// normalizeWindowsDrivePaths rewrites literal Windows drive paths (`C:\...` and
+// quoted `"C:\My Repo\sub"`) into forward-slash form so the single-pass POSIX
+// shell policy judges them identically across Go and JS. Short single-char
+// escapes like `a:\n` and trailing-backslash quote escapes (`"C:\a\"`) are left
+// untouched so they remain fail-closed. Mirrors normalizeWindowsDrivePaths in
+// web/src/policy/policy-paths.js.
 func normalizeWindowsDrivePaths(command string) string {
-	if filepath.Separator != '\\' || !strings.Contains(command, `:\`) {
+	if !strings.Contains(command, `:\`) {
 		return command
 	}
-	return windowsDrivePathRe.ReplaceAllStringFunc(command, func(m string) string {
-		return strings.ReplaceAll(m, `\`, `/`)
+	out := windowsQuotedDrivePathRe.ReplaceAllStringFunc(command, func(m string) string {
+		inner := m[1 : len(m)-1]
+		if !looksLikeWindowsDrivePath(inner) {
+			return m
+		}
+		return m[:1] + strings.ReplaceAll(inner, `\`, `/`) + m[len(m)-1:]
+	})
+	return windowsUnquotedDrivePathRe.ReplaceAllStringFunc(out, func(m string) string {
+		prefix := ""
+		token := m
+		if len(m) > 0 && (m[0] == ' ' || m[0] == '\t' || m[0] == '\r' || m[0] == '\n' || m[0] == '=' || m[0] == ';' || m[0] == '&' || m[0] == '|' || m[0] == '(' || m[0] == ')') {
+			prefix = m[:1]
+			token = m[1:]
+		}
+		if !looksLikeWindowsDrivePath(token) {
+			return m
+		}
+		return prefix + strings.ReplaceAll(token, `\`, `/`)
 	})
 }
 
+func looksLikeWindowsDrivePath(p string) bool {
+	if len(p) < 4 || p[1] != ':' || p[2] != '\\' {
+		return false
+	}
+	rest := p[3:]
+	// Require either a nested separator (`C:\a\b`) or a multi-char first segment
+	// (`C:\repo`) so regex/escape literals like `a:\n` or `x:\s` are not rewritten.
+	return strings.Contains(rest, `\`) || len(rest) >= 2
+}
+
 func isAbsOrRootedPath(p string) bool {
-	return filepath.IsAbs(p) || strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`)
+	return filepath.IsAbs(p) || strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) || isWindowsDriveAbs(p)
 }
 
 func stripCDNullRedirects(s string) string {
@@ -359,25 +394,20 @@ func stripCDNullRedirects(s string) string {
 // The resolved target must also stay outside sensitive/protected directories.
 func isWorktreeCD(segment, worktree string) bool {
 	worktree = strings.TrimSpace(worktree)
-	if worktree == "" || !isAbsOrRootedPath(worktree) {
+	if worktree == "" || !isAbsOrRootedPath(worktree) || isWindowsDriveRoot(worktree) {
 		return false
 	}
 	target, ok := literalCDTarget(segment)
 	if !ok {
 		return false
 	}
-	if !isAbsOrRootedPath(target) {
-		target = filepath.Join(worktree, target)
-	}
-	target = filepath.Clean(target)
-	base := filepath.Clean(worktree)
-	slashTarget := filepath.ToSlash(target)
-	slashBase := strings.TrimSuffix(filepath.ToSlash(base), "/")
-	if slashTarget != slashBase && !strings.HasPrefix(slashTarget, slashBase+"/") {
+	base := cleanSlashPath(worktree)
+	resolved := joinSlashPath(base, target)
+	if !slashPathWithin(base, resolved) {
 		return false
 	}
 	// The Go gate additionally resolves symlinks; the JS port is lexical only.
-	return isSafeExternalCDTarget(target) && pathWithin(base, target)
+	return isSafeExternalCDTarget(resolved) && pathWithin(base, resolved)
 }
 
 // toolchainBases are absolute binaries whose basename the shared policy
