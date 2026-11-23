@@ -7,8 +7,8 @@ export interface ComputerApp { id: string; pid: number; name: string; bundleID: 
 export interface ComputerGrant { app: ComputerApp; scope: ComputerScope; paused: boolean; active: boolean; autoApprove?: boolean; lastAction?: string; lastActionAt?: number }
 export interface ComputerRect { x: number; y: number; width: number; height: number }
 export interface ComputerWindow { id: string; title: string; bounds: ComputerRect }
-export interface ComputerElement { id: number; role: string; name: string; value?: string; secure?: boolean; bounds: ComputerRect; windowBounds?: ComputerRect }
-export interface ComputerSnapshot { app: ComputerApp; windows: ComputerWindow[]; elements: ComputerElement[]; windowID: string; observationID: string; image?: string; width: number; height: number }
+export interface ComputerElement { id: number; role: string; name: string; value?: string; secure?: boolean; focused?: boolean; disabled?: boolean; bounds: ComputerRect; windowBounds?: ComputerRect }
+export interface ComputerSnapshot { app: ComputerApp; windows: ComputerWindow[]; elements: ComputerElement[]; windowID: string; observationID: string; image?: string; width: number; height: number; waitedMs?: number }
 
 export function computerURL(endpoint: string, scope?: ComputerScope): string {
   const query = scope ? `?${new URLSearchParams({ sessionID: scope.sessionID, directory: scope.directory })}` : "";

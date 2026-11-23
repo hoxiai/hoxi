@@ -106,8 +106,18 @@ export async function requestJSON<T>(url: string, init?: RequestInit): Promise<T
   return res.json();
 }
 
-const HTTP_ERROR_RE = /^HTTP (\d{3}):\s*([\s\S]*)$/;
+const HTTP_ERROR_RE = /^(?:Error:\s*)?HTTP (\d{3}):\s*([\s\S]*)$/;
 const ERROR_TEXT_KEYS = ["error", "message", "msg", "statusMessage", "detail"] as const;
+
+function rawErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  if (err && typeof err === "object") {
+    const msg = (err as { message?: unknown }).message;
+    if (typeof msg === "string") return msg;
+  }
+  return "";
+}
 
 /**
  * Turns an error thrown by requestJSON ("HTTP 403: {\"error\":\"...\"}") into
@@ -115,7 +125,7 @@ const ERROR_TEXT_KEYS = ["error", "message", "msg", "statusMessage", "detail"] a
  * one, the plain body otherwise, and `fallback` when there is nothing.
  */
 export function errorMessageOf(err: unknown, fallback: string): string {
-  const raw = (err instanceof Error ? err.message : typeof err === "string" ? err : "").trim();
+  const raw = rawErrorMessage(err).trim();
   if (!raw) return fallback;
   const match = HTTP_ERROR_RE.exec(raw);
   if (!match) return raw;

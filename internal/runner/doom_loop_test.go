@@ -252,3 +252,55 @@ func TestAgyHookAllowsReadOnlyTaskPollingAndGatesMutatingTaskControl(t *testing.
 		t.Fatalf("expected tool permission request for kill action, got %+v", asked.Properties)
 	}
 }
+
+func TestDoomLoopGuardExemptsComputerAndBrowserReadOnlyPollingAndTripsMutations(t *testing.T) {
+	t.Parallel()
+	g := newDoomLoopGuard()
+	pollingCalls := []struct {
+		tool  string
+		input json.RawMessage
+	}{
+		{"hoxi_computer", json.RawMessage(`{"action":"status"}`)},
+		{"hoxi_computer", json.RawMessage(`{"action":"apps"}`)},
+		{"hoxi_computer", json.RawMessage(`{"action":"state"}`)},
+		{"hoxi_computer", json.RawMessage(`{"action":"screenshot","windowID":"win-1"}`)},
+		{"hoxi_computer", json.RawMessage(`{"action":"wait","seconds":15,"screenshot":true}`)},
+		{"hoxi_browser", json.RawMessage(`{"action":"snapshot"}`)},
+		{"hoxi_browser", json.RawMessage(`{"action":"screenshot"}`)},
+		{"hoxi_browser", json.RawMessage(`{"action":"diagnostics"}`)},
+		{"hoxi_browser", json.RawMessage(`{"action":"wait","timeoutMs":5000}`)},
+	}
+	for _, tc := range pollingCalls {
+		for i := 0; i < 6; i++ {
+			if g.observe("s_gui_poll", "m1", tc.tool, tc.input) {
+				t.Fatalf("read-only polling %s %s tripped doom_loop on iteration %d", tc.tool, tc.input, i+1)
+			}
+		}
+	}
+
+	// Mutating inputs and app-switching confirmation requests MUST still trip doom_loop.
+	guardedCalls := []struct {
+		session string
+		tool    string
+		input   json.RawMessage
+	}{
+		{"s_comp_click", "hoxi_computer", json.RawMessage(`{"action":"click","windowID":"w1","observationID":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","elementID":2}`)},
+		{"s_comp_type", "hoxi_computer", json.RawMessage(`{"action":"type","windowID":"w1","observationID":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","text":"hi"}`)},
+		{"s_comp_key", "hoxi_computer", json.RawMessage(`{"action":"key","windowID":"w1","observationID":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","key":"Enter"}`)},
+		{"s_comp_switch", "hoxi_computer", json.RawMessage(`{"action":"screenshot","app":"Gemini"}`)},
+		{"s_comp_switch_state", "hoxi_computer", json.RawMessage(`{"action":"state","app":"Gemini"}`)},
+		{"s_comp_switch_bad", "hoxi_computer", json.RawMessage(`{"action":"state","app":123}`)},
+		{"s_br_click", "hoxi_browser", json.RawMessage(`{"action":"click","selector":"#submit"}`)},
+	}
+	for _, tc := range guardedCalls {
+		if g.observe(tc.session, "m1", tc.tool, tc.input) {
+			t.Fatalf("1st guarded call %s %s must not trip", tc.tool, tc.input)
+		}
+		if g.observe(tc.session, "m1", tc.tool, tc.input) {
+			t.Fatalf("2nd guarded call %s %s must not trip", tc.tool, tc.input)
+		}
+		if !g.observe(tc.session, "m1", tc.tool, tc.input) {
+			t.Fatalf("3rd identical guarded call %s %s must trip doom_loop", tc.tool, tc.input)
+		}
+	}
+}

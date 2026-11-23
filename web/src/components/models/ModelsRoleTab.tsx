@@ -19,6 +19,7 @@ import { resolveSurfacePrimaryModes, surfaceExtension } from "../layout/surface-
 import { HelpTip } from "../settings/setting-controls";
 import { getInternalLLMProviderModelGroups } from "./model-selector-utils";
 import ModelRolePicker, { type ModelRoleExtraOption } from "./ModelRolePicker";
+import OrchestratorSettingsCard from "./OrchestratorSettingsCard";
 
 export default function ModelsRoleTab() {
   const [savingKey, setSavingKey] = createSignal<string | null>(null);
@@ -153,6 +154,9 @@ export default function ModelsRoleTab() {
         </div>
       </div>
 
+      {/* Orchestrator + Executor Dual-Model Settings */}
+      <OrchestratorSettingsCard />
+
       {/* Global Model Roles */}
       <div class="divide-y divide-[var(--border-subtle)] rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40">
         {/* Default Model */}
@@ -242,11 +246,30 @@ export default function ModelsRoleTab() {
 
       {/* Media & Voice Default Models */}
       <div class="space-y-2.5">
-        <div class="flex items-center gap-2 px-1">
-          <h4 class="text-[12px] font-semibold text-[var(--text-primary)]">
-            {t("models.mediaRolesSectionTitle")}
-          </h4>
-          <HelpTip text={t("models.mediaRolesSectionDesc")} />
+        <div class="flex items-center justify-between px-1 gap-3">
+          <div class="flex items-center gap-2 min-w-0">
+            <h4 class="text-[12px] font-semibold text-[var(--text-primary)] truncate">
+              {t("models.mediaRolesSectionTitle")}
+            </h4>
+            <HelpTip text={t("models.mediaRolesSectionDesc")} />
+          </div>
+          <Show
+            when={
+              (imageRoleGroups().length === 0 && !mediaRolePrefs().imageModel) ||
+              (videoRoleGroups().length === 0 && !mediaRolePrefs().videoModel) ||
+              (speechRoleGroups().length === 0 && !mediaRolePrefs().speechModel) ||
+              (transcribeRoleGroups().length === 0 && !mediaRolePrefs().transcribeModel)
+            }
+          >
+            <button
+              type="button"
+              onClick={() => openProviderModal("providers")}
+              class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-1.5 text-[12px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] transition-colors cursor-pointer shrink-0"
+            >
+              <Plus size={12} />
+              <span>{t("models.mediaRoleConfigureBtn")}</span>
+            </button>
+          </Show>
         </div>
 
         <div class="divide-y divide-[var(--border-subtle)] rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40">
@@ -284,23 +307,13 @@ export default function ModelsRoleTab() {
                   {row.title()}
                 </span>
                 <HelpTip text={row.desc()} />
-                <Show when={row.groups().length === 0}>
-                  <span class="shrink-0 rounded bg-[var(--bg-inset)] px-1.5 py-0.5 text-[11px] text-[var(--text-muted)]">
-                    {t("models.mediaRoleUnconfiguredBadge")}
-                  </span>
-                </Show>
               </div>
               <Show
                 when={row.groups().length > 0 || Boolean(mediaRolePrefs()[row.field])}
                 fallback={
-                  <button
-                    type="button"
-                    onClick={() => openProviderModal("providers")}
-                    class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-1.5 text-[12px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] transition-colors cursor-pointer shrink-0"
-                  >
-                    <Plus size={12} />
-                    <span>{t("models.mediaRoleConfigureBtn")}</span>
-                  </button>
+                  <span class="shrink-0 text-[12px] text-[var(--text-muted)]">
+                    {t("models.mediaRoleUnconfiguredBadge")}
+                  </span>
                 }
               >
                 {renderModelSelect({
@@ -357,9 +370,6 @@ export default function ModelsRoleTab() {
                   <div class="flex items-center gap-2 min-w-0">
                     <span class="text-[13px] font-semibold capitalize text-[var(--text-primary)] truncate">
                       {displayLabel()}
-                    </span>
-                    <span class="shrink-0 rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)]">
-                      {t("models.modeBadge")}
                     </span>
                     <Show when={displayDesc()}>
                       {(desc) => <HelpTip text={desc()} />}

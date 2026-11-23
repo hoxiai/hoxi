@@ -23,7 +23,7 @@ import { unattendedInlineCodeCategory } from "./inline-script-capability.js";
 const publishRe = /(?:^|[;&|(\n]|&&|\|\|)\s*(?:nohup\s+|time\s+|exec\s+|command\s+|env(?:\s+[A-Za-z_][A-Za-z0-9_]*=\S*)*\s+)*(?:git(?:\s+-C\s+\S+|\s+-c\s+\S+|\s+--git-dir=\S+|\s+--work-tree=\S+)*\s+push|gh\s+(?:release\s+create|pr\s+merge)|(?:npm|pnpm|yarn|bun)\s+(?:-r\s+|--recursive\s+)?publish|cargo\s+publish|twine\s+upload|gem\s+push|docker\s+push|terraform\s+(?:apply|destroy)|kubectl\s+(?:apply|delete)|helm\s+(?:install|upgrade)|(?:\.\/)?scripts\/ai-release\.sh)\b/i;
 const sudoRe = /(?:^|[;&|(\n]|&&|\|\|)\s*(?:nohup\s+|time\s+|exec\s+|command\s+|env(?:\s+[A-Za-z_][A-Za-z0-9_]*=\S*)*\s+)*(?:sudo|su|doas)\b/i;
 const egressRe = /\b(?:curl|wget|http)\b[^\n]*?(?:authorization|bearer|x-api-key|\$\{?[A-Za-z_][A-Za-z0-9_]*(?:_KEY|_TOKEN|_SECRET)\b)/i;
-const secretRe = new RegExp(/(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})\/(?:\.ssh|\.aws|\.gnupg|\.kube|\.azure|\.codex)(?:\/|$)|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})\/\.docker\/config\.json|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})\/\.config\/(?:gh|gcloud|opencode)(?:\/|$)|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})\/\.local\/share\/opencode(?:\/|$)|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})\/\.(?:netrc|npmrc|pypirc|git-credentials)\b|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})\/\.cargo\/credentials|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})\/Library\/Keychains(?:\/|$)|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})\/\.hoxi\/(?:relay-keys|work-apps|dataprofiles|tunnel(?:-dev)?|auth|cloudflared|pairing|approval-policy|models|media-roles|intake|hoxi)\.(?:json|db)\b/.source + "|" + ENV_FILE_PATTERN + "|" + ENVRC_FILE_PATTERN + "|" + KEY_FILE_PATTERN, "i");
+const secretRe = new RegExp(/(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})\/(?:\.ssh|\.aws|\.gnupg|\.kube|\.azure|\.codex)(?:\/|$)|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})\/\.docker\/config\.json|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})\/\.config\/(?:gh|gcloud|opencode)(?:\/|$)|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})\/\.local\/share\/opencode(?:\/|$)|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})\/\.(?:netrc|npmrc|pypirc|git-credentials|claude\.json)\b|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})\/\.cargo\/credentials|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})\/Library\/Keychains(?:\/|$)|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})\/\.hoxi\/(?:relay-keys|work-apps|dataprofiles|tunnel(?:-dev)?|auth|cloudflared|pairing|approval-policy|models|media-roles|intake|schedules|hoxi)\.(?:json|db)\b/.source + "|" + ENV_FILE_PATTERN + "|" + ENVRC_FILE_PATTERN + "|" + KEY_FILE_PATTERN, "i");
 const wrappedRe = /(?:bash|sh|zsh|eval|xargs)\b[^|&;\n]*\b(?:git\s+push|sudo|publish)\b/i;
 
 // Kept byte-identical with unattendedScriptCapabilityRe in Go.
@@ -214,6 +214,12 @@ function argvCategory(words) {
     case "kubectl": if (argvHas(rest, "apply") || argvHas(rest, "delete")) return "publish"; break;
     case "helm": if (argvHas(rest, "install") || argvHas(rest, "upgrade")) return "publish"; break;
     case "curl": case "wget": case "http": if (egressRe.test(words.join(" "))) return "egress"; break;
+    case "hoxi": case "hoxi.exe":
+      if (rest.length >= 1 && rest[0].toLowerCase() === "schedule") {
+        const sub = (rest[1] || "").toLowerCase();
+        if (!["list", "ls", "history", "runs", "help", "-h", "--help"].includes(sub)) return "tool";
+      }
+      break;
   }
   if (base === "ai-release.sh" || words[0].toLowerCase().endsWith("scripts/ai-release.sh")) return "publish";
   return "";

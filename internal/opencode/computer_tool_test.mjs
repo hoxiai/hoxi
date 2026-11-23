@@ -38,18 +38,24 @@ test("computer tool keeps authority in Go and sends only scoped actions", async 
   await execute({ action: "move", observationID: "fresh", windowID: "one", elementID: 4 }, context);
   assert.equal(calls.length, 3);
   assert.deepEqual(JSON.parse(calls[2].options.body), { action: "move", observationID: "fresh", windowID: "one", elementID: 4 });
-  const typedWithScreenshot = await execute({ action: "type", observationID: "fresh", windowID: "one", elementID: 1, text: "hello", key: "Enter", screenshot: true, autoApprove: true }, context);
+  const typedWithScreenshot = await execute({ action: "type", observationID: "fresh", windowID: "one", elementID: 1, text: "hello", key: "Enter", clear: true, screenshot: true, autoApprove: true }, context);
   assert.equal(calls.length, 4);
-  assert.deepEqual(JSON.parse(calls[3].options.body), { action: "type", observationID: "fresh", windowID: "one", elementID: 1, text: "hello", key: "Enter", screenshot: true });
+  assert.deepEqual(JSON.parse(calls[3].options.body), { action: "type", observationID: "fresh", windowID: "one", elementID: 1, text: "hello", key: "Enter", clear: true, screenshot: true });
   assert.equal(typedWithScreenshot.attachments[0].url, "data:image/jpeg;base64,image-bytes");
+  const waited = await execute({ action: "wait", windowID: "one", seconds: 15, screenshot: true }, context);
+  assert.equal(calls.length, 5);
+  assert.deepEqual(JSON.parse(calls[4].options.body), { action: "wait", windowID: "one", seconds: 15, screenshot: true });
+  assert.equal(waited.attachments[0].url, "data:image/jpeg;base64,image-bytes");
+  await assert.rejects(execute({ action: "wait", seconds: 0 }, context));
+  await assert.rejects(execute({ action: "wait", seconds: 61 }, context));
   for (const action of ["grant", "evaluate", "permissions", "resume"]) {
     await assert.rejects(execute({ action }, context));
   }
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 5);
   await assert.rejects(execute({ action: "status" }, { ...context, sessionID: "" }), /scope/);
   abort.abort();
   await assert.rejects(execute({ action: "click" }, context), { name: "AbortError" });
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 5);
 });
 
 test("computer tool propagates denied and paused control", async t => {
@@ -67,4 +73,24 @@ test("computer tool propagates denied and paused control", async t => {
   await assert.rejects(hooks.tool.hoxi_computer.execute({ action: "click" }, {
     sessionID: "ses_one", directory: "/repo", abort: new AbortController().signal,
   }), /403: computer_input_denied/);
+});
+
+test("opencode message transform caps older hoxi_computer screenshot attachments", async () => {
+  const hooks = await HoxiPlugin({ directory: "/repo" });
+  const messages = Array.from({ length: 5 }, (_, idx) => ({
+    parts: [{
+      type: "tool",
+      tool: "hoxi_computer",
+      state: {
+        status: "completed",
+        output: `{"observationID":"obs_${idx + 1}"}`,
+        attachments: [{ type: "file", mime: "image/jpeg", filename: "computer.jpg", url: `data:image/jpeg;base64,FRAME_${idx + 1}` }],
+      },
+    }],
+  }));
+  await hooks["experimental.chat.messages.transform"]({}, { messages });
+  const remaining = messages.map((m) => m.parts[0].state.attachments.length);
+  assert.deepEqual(remaining, [0, 0, 0, 1, 1]);
+  assert.equal(messages[3].parts[0].state.attachments[0].url, "data:image/jpeg;base64,FRAME_4");
+  assert.equal(messages[4].parts[0].state.attachments[0].url, "data:image/jpeg;base64,FRAME_5");
 });

@@ -12,7 +12,7 @@ const nativeSubagentHeartbeatIntervalMs int64 = 5000
 // onto Hoxi child sessions (`TurnTranslator.openChild` / `childSink`) so the
 // web & mobile timeline UI renders live subagent step counts, current tool
 // labels, resolved child model metadata, inline expandable step drawers, and
-// AgentStackPill controls.
+// SubagentSessionBanner controls.
 type nativeSubagentBridge struct {
 	svc             *Service
 	parentSessionID string

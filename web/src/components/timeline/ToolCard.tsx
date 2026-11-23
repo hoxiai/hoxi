@@ -553,7 +553,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
               </ActionIconButton>
             </Show>
 
-            <Show when={isShell() && isRunning()}>
+            <Show when={isShell() && isRunning() && !expanded()}>
               <button
                 type="button"
                 disabled={stoppingCmd()}
@@ -602,12 +602,6 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
           </div>
         </div>
 
-        <Show when={awaitingFirstOutput()}>
-          <div class="ml-3 mt-1 border-l-2 border-[var(--border-subtle)] py-1 pl-3 text-[12px] leading-relaxed text-[var(--text-muted)]" role="status">
-            {t("toolCard.outputPendingHint")}
-          </div>
-        </Show>
-
         <ToolMissingMediaCard part={props.part} />
 
         {/* Inline nested step list for Subagent `task` tool calls */}
@@ -647,6 +641,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                   part={props.part}
                   isShell={isShell()}
                   isRunning={isRunning()}
+                  awaitingFirstOutput={awaitingFirstOutput()}
                   stoppingCmd={stoppingCmd()}
                   onStopCommand={(e) => void stopCommand(e)}
                   isEdit={isEdit()}

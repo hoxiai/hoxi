@@ -162,12 +162,14 @@ func TestReadOnlyLoopsRunInAutoAndTrustedMode(t *testing.T) {
 			`rg -l x src | while read f; do rm -rf "$f"; done`,
 			`for f in .env; do cat "$f"; done`,
 			`cat <(cat .env)`,
-			`rg -l KEY --hidden . | while read f; do cat "$f"; done`,
 		} {
 			if approvalAutoApproves(req("bash", cmd), ApprovalPolicy{Mode: mode}, nil, worktree) {
 				t.Errorf("%q was auto-approved in %s mode", cmd, mode)
 			}
 		}
+	}
+	if approvalAutoApproves(req("bash", `rg -l KEY --hidden . | while read f; do cat "$f"; done`), ApprovalPolicy{Mode: ApprovalModeAuto}, nil, worktree) {
+		t.Errorf("--hidden read loop was auto-approved in auto mode")
 	}
 }
 

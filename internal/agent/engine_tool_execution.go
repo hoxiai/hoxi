@@ -31,6 +31,7 @@ func (e *Engine) executeToolCalls(
 		WorktreeDir:        req.WorktreeDir,
 		Mode:               req.Mode,
 		SubtaskDepth:       req.SubtaskDepth,
+		OrchestratorOnly:   isOrchestratorActive(req) && !strings.EqualFold(strings.TrimSpace(req.Mode), "plan"),
 		VisibleMessages:    visibleMsgs,
 		RulesTracker:       rulesTracker,
 		FileRevisions:      req.FileRevisions,

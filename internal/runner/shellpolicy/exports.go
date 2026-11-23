@@ -10,8 +10,11 @@ const (
 	PermissionCategoryBash     = permissionCategoryBash
 	PermissionCategoryOther    = permissionCategoryOther
 
-	FileGrantPrefix = fileGrantPrefix
-	GrantKindFile   = grantKindFile
+	FileGrantPrefix       = fileGrantPrefix
+	GrantKindFile         = grantKindFile
+	SSHHostGrantPrefix    = sshHostGrantPrefix
+	SSHProfileGrantPrefix = sshProfileGrantPrefix
+	GrantKindSSH          = grantKindSSH
 
 	RecoverClassTempDelete   = recoverClassTempDelete
 	RecoverClassDirDelete    = recoverClassDirDelete
@@ -61,6 +64,13 @@ func GrantableEditFiles(item map[string]interface{}, worktree string) []string {
 }
 func GrantableInlineScriptRequest(item map[string]interface{}, worktree string) bool {
 	return grantableInlineScriptRequest(item, worktree)
+}
+func GrantableSSHRequestClasses(item map[string]interface{}, worktree string) []string {
+	return grantableSSHRequestClasses(item, worktree)
+}
+func IsSSHGrantClass(class string) bool { return isSSHGrantClass(class) }
+func SSHGrantTarget(class string) (kind, target string, ok bool) {
+	return sshGrantTarget(class)
 }
 func IsAbsOrRootedPath(p string) bool { return isAbsOrRootedPath(p) }
 func IsAttributionPreferenceReadRequest(item map[string]interface{}, worktree string) bool {

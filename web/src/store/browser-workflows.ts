@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
 import { browserWorkflowAPI, type BrowserWorkflows } from "../services/browser-workflows";
 import type { BrowserAction, BrowserActionResult, BrowserScope } from "../services/browser";
+import { formatBrowserError } from "./browser";
 import { t } from "../i18n";
 
 interface Options {
@@ -32,7 +33,7 @@ export function createBrowserWorkflows(options: Options) {
       try {
         const next = await browserWorkflowAPI.state(connection.scope, connection.tab, connection.abort.signal);
         if (valid(connection)) { setState(next); setError(""); }
-      } catch (err) { if (valid(connection)) setError(String(err)); }
+      } catch (err) { if (valid(connection)) setError(formatBrowserError(err)); }
       finally { if (valid(connection)) timer = setTimeout(poll, 750); }
     }
     untrack(() => { void poll(); });
@@ -52,7 +53,7 @@ export function createBrowserWorkflows(options: Options) {
       if (!valid(connection) || !controlled?.manual || state().upload?.id !== request.id) return;
       const next = await browserWorkflowAPI.upload(connection.scope, request.id, files, connection.abort.signal);
       if (valid(connection)) setState(next);
-    } catch (err) { if (valid(connection)) options.error(String(err)); }
+    } catch (err) { if (valid(connection)) options.error(formatBrowserError(err)); }
     finally { if (valid(connection)) setBusy(""); }
   }
 
@@ -66,7 +67,7 @@ export function createBrowserWorkflows(options: Options) {
     try {
       const next = await browserWorkflowAPI.answer(connection.scope, connection.tab, dialog.id, accept, text, connection.abort.signal);
       if (valid(connection)) setState(next);
-    } catch (err) { if (valid(connection)) options.error(String(err)); }
+    } catch (err) { if (valid(connection)) options.error(formatBrowserError(err)); }
     finally { if (valid(connection)) setBusy(""); }
   }
 
@@ -77,7 +78,7 @@ export function createBrowserWorkflows(options: Options) {
     try {
       const result = await browserWorkflowAPI.download(connection.scope, action, id, t("inspector.browser.saveDownload"), connection.abort.signal);
       if (valid(connection) && "downloads" in result) setState(result);
-    } catch (err) { if (valid(connection)) options.error(String(err)); }
+    } catch (err) { if (valid(connection)) options.error(formatBrowserError(err)); }
     finally { if (valid(connection)) setBusy(""); }
   }
 

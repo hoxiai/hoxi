@@ -181,6 +181,7 @@ func Run(distFS fs.FS) {
 	gw.StartStorageMaintenance(ctx)
 	gw.StartLegacySessionImport()
 	gw.StartIdleMemoryRelease(ctx)
+	gw.StartScheduler(ctx)
 	defer gw.CloseBrowser()
 	ledger := openReclaimLedger(logger)
 	gw.SetBrowserLedger(ledger)
@@ -270,7 +271,7 @@ func Run(distFS fs.FS) {
 	gw.SetBrowserAgentToken(browserToken)
 	gw.SetComputerAgentToken(browserToken)
 	defer app.killChild()
-	wsServer := &http.Server{Handler: gw, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
+	wsServer := &http.Server{Handler: gw, ErrorLog: diagnostics.NewQuietHTTPServerLogger(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
 	app.wsServer = wsServer
 	defer wsServer.Close()
 	go func() {
@@ -295,6 +296,7 @@ func Run(distFS fs.FS) {
 		defer lanListener.Close()
 		app.lanServer = &http.Server{
 			Handler:           http.HandlerFunc(gw.ServeLANRequest),
+			ErrorLog:          diagnostics.NewQuietHTTPServerLogger(),
 			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       90 * time.Second,
 		}
@@ -316,6 +318,7 @@ func Run(distFS fs.FS) {
 		defer ingressListener.Close()
 		app.ingressServer = &http.Server{
 			Handler:           http.HandlerFunc(gw.ServeIngressRequest),
+			ErrorLog:          diagnostics.NewQuietHTTPServerLogger(),
 			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       90 * time.Second,
 		}

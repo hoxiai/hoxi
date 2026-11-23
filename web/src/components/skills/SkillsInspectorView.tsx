@@ -22,6 +22,7 @@ import {
   isSkillHidden,
   isSkillUnavailable,
   loadSkillDetail,
+  loadSkillMarketplace,
   loadSkillsCatalog,
   openFileInInspector,
   selectComposerSkill,
@@ -65,7 +66,7 @@ function sourceBadgeClass(source: SkillSource): string {
   }
 }
 
-export default function SkillsInspectorView() {
+export default function SkillsInspectorView(props: { alwaysActive?: boolean }) {
   const [query, setQuery] = createSignal("");
   const [showHidden, setShowHidden] = createSignal(false);
   const [showRefreshHint, setShowRefreshHint] = createSignal(false);
@@ -78,7 +79,9 @@ export default function SkillsInspectorView() {
   const selectedInComposer = createMemo(() => getComposerSkill(sessionID()));
 
   createEffect(() => {
-    if (!workspace.inspectorOpen || workspace.inspectorTab !== "skills") return;
+    if (!props.alwaysActive && (!workspace.inspectorOpen || workspace.inspectorTab !== "skills")) {
+      return;
+    }
     const sid = sessionID();
     const dir = directory();
     const rt = runtime();
@@ -113,6 +116,10 @@ export default function SkillsInspectorView() {
   });
 
   const handleRefresh = async () => {
+    if (tab() === "marketplace") {
+      await loadSkillMarketplace({ forceRefresh: true });
+      return;
+    }
     invalidateComposerSkillsAutocompleteCache();
     setShowRefreshHint(true);
     await loadSkillsCatalog({
@@ -131,6 +138,9 @@ export default function SkillsInspectorView() {
       });
     }
   };
+
+  const refreshing = () =>
+    tab() === "marketplace" ? skillsStore.marketplaceLoading : skillsStore.loading;
 
   const handleToggleComposerSkill = (item: SkillDescriptor) => {
     const sid = sessionID();
@@ -186,7 +196,7 @@ export default function SkillsInspectorView() {
             </button>
           </div>
           <div class="flex items-center gap-1">
-            <Show when={hiddenCount() > 0}>
+            <Show when={tab() === "local" && hiddenCount() > 0}>
               <button
                 type="button"
                 onClick={() => setShowHidden((v) => !v)}
@@ -214,12 +224,12 @@ export default function SkillsInspectorView() {
             <button
               type="button"
               onClick={() => void handleRefresh()}
-              disabled={skillsStore.loading}
-              class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-50 transition-colors cursor-pointer"
-              title={t("skills.refresh")}
+              disabled={refreshing()}
+              class="inline-flex h-6 w-6 items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-50 transition-colors cursor-pointer"
+              title={refreshing() ? t("skills.refreshing") : t("skills.refresh")}
+              aria-label={t("skills.refresh")}
             >
-              <RefreshCw size={12} class={skillsStore.loading ? "animate-spin" : ""} />
-              <span>{skillsStore.loading ? t("skills.refreshing") : t("skills.refresh")}</span>
+              <RefreshCw size={12} class={refreshing() ? "animate-spin" : ""} />
             </button>
           </div>
         </div>
@@ -238,9 +248,19 @@ export default function SkillsInspectorView() {
         </Show>
 
         <Show when={tab() === "local" && showRefreshHint()}>
-          <div class="flex items-start gap-1.5 rounded-lg bg-[var(--bg-inset)] px-2.5 py-1.5 text-[11px] text-[var(--text-muted)]">
-            <Info size={12} class="mt-0.5 shrink-0 text-[var(--accent-primary)]" />
-            <span>{t("skills.cacheNotice")}</span>
+          <div class="flex items-start justify-between gap-2 rounded-lg bg-[var(--bg-inset)] px-2.5 py-1.5 text-[11px] text-[var(--text-muted)]">
+            <div class="flex items-start gap-1.5 min-w-0">
+              <Info size={12} class="mt-0.5 shrink-0 text-[var(--accent-primary)]" />
+              <span>{t("skills.cacheNotice")}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowRefreshHint(false)}
+              class="shrink-0 text-[var(--text-faint)] hover:text-[var(--text-primary)] cursor-pointer"
+              aria-label={t("common.close")}
+            >
+              ×
+            </button>
           </div>
         </Show>
       </div>
@@ -330,30 +350,19 @@ export default function SkillsInspectorView() {
                                           <button
                                             type="button"
                                             onClick={() => handleOpenSkillDetail(item)}
+                                            title={item.sourceLabel || undefined}
                                             class="min-w-0 flex-1 text-left cursor-pointer"
                                           >
                                             <div class="flex items-center gap-1.5 flex-wrap">
                                               <span class="font-mono text-xs font-semibold text-[var(--text-primary)] group-hover:text-[var(--accent-primary)] truncate">
                                                 /{item.name}
                                               </span>
-                                              <span
-                                                class={`rounded-md px-1.5 py-0.5 text-[11px] font-medium ${sourceBadgeClass(
-                                                  item.source
-                                                )}`}
-                                              >
-                                                {sourceLabel(item.source)}
-                                              </span>
                                               <SkillExposureBadge item={item} />
                                             </div>
                                             <Show when={item.description}>
-                                              <p class="mt-1 line-clamp-2 text-[12px] leading-relaxed text-[var(--text-secondary)]">
+                                              <p class="mt-1 line-clamp-2 text-[11.5px] leading-relaxed text-[var(--text-secondary)]">
                                                 {item.description}
                                               </p>
-                                            </Show>
-                                            <Show when={item.sourceLabel}>
-                                              <div class="mt-1 truncate font-mono text-[11px] text-[var(--text-faint)]">
-                                                {item.sourceLabel}
-                                              </div>
                                             </Show>
                                           </button>
 
@@ -378,6 +387,11 @@ export default function SkillsInspectorView() {
                                             <button
                                               type="button"
                                               onClick={() => handleToggleComposerSkill(item)}
+                                              title={
+                                                isSelected()
+                                                  ? t("skills.removeFromComposer")
+                                                  : t("skills.selectInComposer")
+                                              }
                                               class={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
                                                 isSelected()
                                                   ? "bg-[var(--accent-primary)] text-[var(--accent-foreground)]"
@@ -389,8 +403,8 @@ export default function SkillsInspectorView() {
                                               </Show>
                                               <span>
                                                 {isSelected()
-                                                  ? t("skills.removeFromComposer")
-                                                  : t("skills.selectInComposer")}
+                                                  ? t("skills.selectedShort")
+                                                  : t("skills.useShort")}
                                               </span>
                                             </button>
                                           </div>
@@ -469,6 +483,11 @@ export default function SkillsInspectorView() {
                                 <button
                                   type="button"
                                   onClick={() => handleToggleComposerSkill(detail())}
+                                  title={
+                                    isSelected()
+                                      ? t("skills.removeFromComposer")
+                                      : t("skills.selectInComposer")
+                                  }
                                   class={`shrink-0 inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer ${
                                     isSelected()
                                       ? "bg-[var(--accent-primary)] text-[var(--accent-foreground)]"
@@ -480,41 +499,35 @@ export default function SkillsInspectorView() {
                                   </Show>
                                   <span>
                                     {isSelected()
-                                      ? t("skills.removeFromComposer")
-                                      : t("skills.selectInComposer")}
+                                      ? t("skills.selectedShort")
+                                      : t("skills.useShort")}
                                   </span>
                                 </button>
                               </div>
 
-                              <div class="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-[var(--text-muted)]">
-                                <span class="font-mono truncate max-w-full">
-                                  {detail().sourceLabel}
-                                </span>
-                                <Show when={detail().contentDigest}>
-                                  <span class="rounded bg-[var(--bg-panel)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-faint)]">
-                                    {t("skills.digestLabel")}: {detail().contentDigest!.slice(0, 8)}
-                                  </span>
-                                </Show>
-                              </div>
-
-                              <Show
-                                when={detail().canOpenLocation && detail().location}
-                                fallback={
-                                  <div class="text-[11px] text-[var(--text-faint)]">
-                                    {t("skills.builtinInMemory")}
-                                  </div>
-                                }
-                              >
-                                <div class="flex flex-wrap items-center gap-1.5">
-                                  <Show when={detail().source === "project"}>
+                              <Show when={detail().sourceLabel || (detail().canOpenLocation && detail().location && detail().source === "project")}>
+                                <div class="flex flex-wrap items-center justify-between gap-2 pt-0.5 text-[11px] text-[var(--text-muted)]">
+                                  <Show when={detail().sourceLabel}>
+                                    <span
+                                      class="font-mono truncate max-w-full"
+                                      title={
+                                        detail().contentDigest
+                                          ? `${detail().sourceLabel}\n${t("skills.digestLabel")}: ${detail().contentDigest!.slice(0, 8)}`
+                                          : detail().sourceLabel
+                                      }
+                                    >
+                                      {detail().sourceLabel}
+                                    </span>
+                                  </Show>
+                                  <Show when={detail().canOpenLocation && detail().location && detail().source === "project"}>
                                     <button
                                       type="button"
                                       onClick={() =>
                                         openFileInInspector(detail().sourceLabel || detail().location!)
                                       }
-                                      class="inline-flex items-center gap-1 rounded-md bg-[var(--bg-panel)] px-2 py-1 text-[11px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+                                      class="shrink-0 inline-flex items-center gap-1 rounded-md bg-[var(--bg-panel)] px-2 py-0.5 text-[11px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
                                     >
-                                      <FileCode2 size={12} />
+                                      <FileCode2 size={11} />
                                       <span>{t("skills.openFile")}</span>
                                     </button>
                                   </Show>
@@ -522,14 +535,14 @@ export default function SkillsInspectorView() {
                               </Show>
                             </div>
 
-                            <div class="rounded-xl bg-[var(--bg-inset)]/60 px-3 py-2 text-[11px] leading-relaxed text-[var(--text-muted)]">
-                              {t("skills.permissionNotice")}
-                            </div>
-
                             <div class="space-y-1.5">
                               <div class="flex items-center justify-between gap-2 px-1">
-                                <span class="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
-                                  {t("skills.sourcePathLabel")}
+                                <span
+                                  class="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]"
+                                  title={t("skills.permissionNotice")}
+                                >
+                                  <span>{t("skills.contentLabel")}</span>
+                                  <Info size={11} class="shrink-0 opacity-75" />
                                 </span>
                                 <div class="inline-flex items-center rounded-md bg-[var(--bg-inset)] p-0.5">
                                   <button

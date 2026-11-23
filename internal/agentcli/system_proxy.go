@@ -3,6 +3,7 @@ package agentcli
 import (
 	"context"
 	"net"
+	"net/http"
 	"net/url"
 	"runtime"
 	"strconv"
@@ -53,6 +54,112 @@ var (
 // always include loopback addresses so Hoxi's local approval hooks stay direct.
 func WithSystemProxy(env []string) []string {
 	return withResolvedSystemProxy(env, cachedSystemProxy, isProxyEndpointReachable)
+}
+
+// SystemProxyURL is an http.Transport.Proxy callback that honors environment
+// proxy variables first and falls back to the OS system proxy (macOS scutil /
+// Windows Internet Settings) so GUI-launched processes respect local proxy
+// clients. Loopback targets always bypass any proxy.
+func SystemProxyURL(req *http.Request) (*url.URL, error) {
+	return resolveSystemProxyURL(req, http.ProxyFromEnvironment, cachedSystemProxy, isProxyEndpointReachable)
+}
+
+func resolveSystemProxyURL(
+	req *http.Request,
+	envProxy func(*http.Request) (*url.URL, error),
+	lookup func() systemProxyConfig,
+	reachable func(string) bool,
+) (*url.URL, error) {
+	if req == nil || req.URL == nil {
+		return nil, nil
+	}
+	host := strings.TrimSpace(req.URL.Hostname())
+	if isLoopbackHost(host) {
+		return nil, nil
+	}
+	if envProxy != nil {
+		if u, err := envProxy(req); u != nil || err != nil {
+			return u, err
+		}
+	}
+	if lookup == nil {
+		return nil, nil
+	}
+	cfg := lookup()
+	if hostMatchesNoProxy(host, cfg.NoProxy) {
+		return nil, nil
+	}
+	var candidate string
+	switch strings.ToLower(req.URL.Scheme) {
+	case "https":
+		candidate = cfg.HTTPSProxy
+		if candidate == "" {
+			candidate = cfg.SOCKSProxy
+		}
+	case "http":
+		candidate = cfg.HTTPProxy
+		if candidate == "" {
+			candidate = cfg.SOCKSProxy
+		}
+	default:
+		candidate = cfg.SOCKSProxy
+	}
+	if candidate == "" {
+		return nil, nil
+	}
+	if reachable != nil && !reachable(candidate) {
+		return nil, nil
+	}
+	u, err := url.Parse(candidate)
+	if err != nil || u.Host == "" {
+		return nil, nil
+	}
+	return u, nil
+}
+
+func isLoopbackHost(host string) bool {
+	if host == "" {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func hostMatchesNoProxy(host string, rules []string) bool {
+	if host == "" || len(rules) == 0 {
+		return false
+	}
+	lowerHost := strings.ToLower(strings.TrimSuffix(host, "."))
+	hostIP := net.ParseIP(lowerHost)
+	for _, raw := range rules {
+		rule := strings.ToLower(strings.TrimSpace(raw))
+		if rule == "" {
+			continue
+		}
+		if rule == "*" {
+			return true
+		}
+		if strings.Contains(rule, "/") {
+			if hostIP != nil {
+				if _, ipNet, err := net.ParseCIDR(rule); err == nil && ipNet.Contains(hostIP) {
+					return true
+				}
+			}
+			continue
+		}
+		trimmed := strings.TrimPrefix(rule, "*")
+		trimmed = strings.TrimPrefix(trimmed, ".")
+		if trimmed == "" {
+			continue
+		}
+		if lowerHost == trimmed || strings.HasSuffix(lowerHost, "."+trimmed) {
+			return true
+		}
+	}
+	return false
 }
 
 func withResolvedSystemProxy(

@@ -10,8 +10,6 @@ export const privacy = {
   telemetryTitle: "匿名使用统计",
   telemetryDesc: "向 hoxi.ai 发送匿名安装或启动事件及应用版本（源码自编译与开发模式默认关闭）。不包含提示词、代码、文件路径或会话内容；已登录时请求还会携带设备令牌",
   telemetrySuppressedByOffline: "当前已开启纯离线静默模式，匿名启动上报已暂停",
-  telemetryOn: "已开启",
-  telemetryOff: "已关闭",
   telemetryEnvLocked: "已由 HOXI_DISABLE_TELEMETRY 或 DO_NOT_TRACK 环境变量禁用",
   telemetryLoadError: "无法加载遥测偏好",
   telemetrySaveError: "无法保存遥测偏好，本次未发送任何数据",

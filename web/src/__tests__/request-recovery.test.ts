@@ -1,6 +1,14 @@
 import { hoxiAPI } from "../services/api";
 import { RequestOutcomeUnknownError } from "../services/request-ledger";
-import { recoverPendingPrompt, sendRecoverablePrompt } from "../store/request-recovery";
+import {
+  dismissPendingPrompt,
+  getPendingPrompt,
+  isPendingPromptStorageCorrupt,
+  recheckPendingPrompt,
+  recoverPendingPrompt,
+  resetCorruptPendingPrompts,
+  sendRecoverablePrompt,
+} from "../store/request-recovery";
 import { assertEqual, assertTrue, describe, it } from "./test-harness";
 
 const KEY = "hoxi.pending-prompts:v1";
@@ -235,6 +243,95 @@ describe("durable prompt request identity", () => {
     } finally {
       finish();
       hoxiAPI.sendPromptAsync = send;
+      if (saved === null) localStorage.removeItem(KEY); else localStorage.setItem(KEY, saved);
+    }
+  });
+
+  it("hides pending prompt while in flight, surfaces it on outcome_unknown, and supports recheck + manual unlock", async () => {
+    const send = hoxiAPI.sendPromptAsync;
+    const fetch = globalThis.fetch;
+    const saved = localStorage.getItem(KEY);
+    let releaseSend: () => void = () => {};
+    let started: () => void = () => {};
+    const sendStarted = new Promise<void>((resolve) => { started = resolve; });
+    let capturedID = "";
+    let posts = 0;
+    try {
+      localStorage.removeItem(KEY);
+      hoxiAPI.sendPromptAsync = async (_sid, _text, opts) => {
+        posts++;
+        capturedID = opts?.clientRequestId || "";
+        started();
+        await new Promise<void>((resolve) => { releaseSend = resolve; });
+        throw new RequestOutcomeUnknownError("connection reset before confirmation", capturedID);
+      };
+
+      const pendingCall = sendRecoverablePrompt("ses_unlock", "first task", { directory: "/repo" });
+      await sendStarted;
+      // While the POST is actively in flight, the stuck-request banner must not fire.
+      assertEqual(getPendingPrompt("ses_unlock"), null);
+      assertEqual(dismissPendingPrompt("ses_unlock", capturedID), false);
+
+      releaseSend();
+      let caught: unknown;
+      try { await pendingCall; } catch (err) { caught = err; }
+      assertTrue(caught instanceof RequestOutcomeUnknownError);
+
+      // Once settled in outcome_unknown, UI inspection exposes the record + error.
+      const stuck = getPendingPrompt("ses_unlock");
+      assertTrue(stuck !== null);
+      assertEqual(stuck?.clientRequestId, capturedID);
+      assertEqual(stuck?.lastError, "connection reset before confirmation");
+
+      // Recheck when still outcome_unknown keeps the lock and updates lastError.
+      globalThis.fetch = async () =>
+        new Response(JSON.stringify({
+          ok: true,
+          kind: "prompt",
+          scope: "ses_unlock",
+          clientRequestId: capturedID,
+          status: "outcome_unknown",
+          errorMessage: "still indeterminate after restart",
+        }));
+      assertEqual(await recheckPendingPrompt("ses_unlock"), "still_unknown");
+      assertEqual(getPendingPrompt("ses_unlock")?.lastError, "still indeterminate after restart");
+
+      // Mismatched request ID cannot dismiss the lock.
+      assertEqual(dismissPendingPrompt("ses_unlock", "wrong_id"), false);
+      assertTrue(getPendingPrompt("ses_unlock") !== null);
+
+      // Exact request ID unlocks the session without replaying the old POST.
+      assertEqual(dismissPendingPrompt("ses_unlock", capturedID), true);
+      assertEqual(getPendingPrompt("ses_unlock"), null);
+      assertEqual(posts, 1);
+
+      // Subsequent fresh prompt succeeds with a new ID.
+      let secondID = "";
+      hoxiAPI.sendPromptAsync = async (_sid, _text, opts) => {
+        posts++;
+        secondID = opts?.clientRequestId || "";
+      };
+      assertEqual(await sendRecoverablePrompt("ses_unlock", "new task", { directory: "/repo" }), "sent");
+      assertEqual(posts, 2);
+      assertTrue(Boolean(secondID) && secondID !== capturedID);
+    } finally {
+      releaseSend();
+      hoxiAPI.sendPromptAsync = send;
+      globalThis.fetch = fetch;
+      if (saved === null) localStorage.removeItem(KEY); else localStorage.setItem(KEY, saved);
+    }
+  });
+
+  it("exposes corrupt storage state and supports explicit manual reset", () => {
+    const saved = localStorage.getItem(KEY);
+    try {
+      localStorage.setItem(KEY, "{not valid json");
+      // Trigger a reactive refresh through reset check after reading directly.
+      assertEqual(isPendingPromptStorageCorrupt(), true);
+      resetCorruptPendingPrompts();
+      assertEqual(isPendingPromptStorageCorrupt(), false);
+      assertEqual(localStorage.getItem(KEY), "[]");
+    } finally {
       if (saved === null) localStorage.removeItem(KEY); else localStorage.setItem(KEY, saved);
     }
   });

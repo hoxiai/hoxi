@@ -21,7 +21,7 @@ const SENSITIVE_BASENAMES = new Set([
   ".bashrc", ".bash_profile", ".bash_login", ".profile",
   ".gitconfig", ".git-credentials", ".netrc", ".npmrc",
   ".pypirc", ".curlrc", ".wgetrc", ".envrc", "authorized_keys",
-  "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa", ".credentials.json",
+  "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa", ".credentials.json", ".claude.json",
   "oauth_creds.json", "jetski-standalone-oauth-token",
 ]);
 

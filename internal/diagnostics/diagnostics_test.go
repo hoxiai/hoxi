@@ -305,3 +305,144 @@ func TestInitializeKeepsTestBinariesOutOfRealLogs(t *testing.T) {
 		t.Fatalf("diagnostics dir with a temp HOME = %q, want %q", dir, want)
 	}
 }
+
+func TestSlogSkipsUnreviewedInfoWritesToDisk(t *testing.T) {
+	s := testStore(t)
+	global.Lock()
+	previous := global.s
+	global.s = s
+	global.Unlock()
+	t.Cleanup(func() { global.Lock(); global.s = previous; global.Unlock() })
+
+	var stderr bytes.Buffer
+	logger := slog.New(NewHandler(&stderr))
+	logger.Info("routine startup chatter", "detail", "visible-on-stderr")
+	logger.Info("hoxi headless server is ready")
+	logger.Warn("unreviewed warning")
+
+	if !strings.Contains(stderr.String(), "routine startup chatter") {
+		t.Fatalf("unreviewed Info should still write to stderr: %s", stderr.String())
+	}
+	entries, err := s.entries(filter{limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 persisted entries (static Info + Warn), got %d: %+v", len(entries), entries)
+	}
+	if entries[0].Message != "system log event" || entries[0].Level != "WARN" {
+		t.Fatalf("unexpected newest entry: %+v", entries[0])
+	}
+	if entries[1].Message != "hoxi headless server is ready" || entries[1].Level != "INFO" {
+		t.Fatalf("unexpected static Info entry: %+v", entries[1])
+	}
+}
+
+func TestQuietHTTPServerLoggerFiltering(t *testing.T) {
+	s := testStore(t)
+	global.Lock()
+	previous := global.s
+	global.s = s
+	global.Unlock()
+	prevLogger := slog.Default()
+	var stderr bytes.Buffer
+	slog.SetDefault(slog.New(NewHandler(&stderr)))
+	t.Cleanup(func() {
+		slog.SetDefault(prevLogger)
+		global.Lock()
+		global.s = previous
+		global.Unlock()
+	})
+
+	httpLog := NewQuietHTTPServerLogger()
+	for _, benign := range []string{
+		"http: proxy error: context canceled",
+		"write tcp 127.0.0.1:5400->127.0.0.1:51234: write: broken pipe",
+		"read tcp: connection reset by peer",
+		"accept tcp 127.0.0.1:5400: use of closed network connection",
+		"http: proxy error: EOF",
+		"http: proxy error: unexpected EOF",
+		"http: superfluous response.WriteHeader call",
+	} {
+		httpLog.Print(benign)
+	}
+	entries, err := s.entries(filter{limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected benign HTTP disconnect logs to be suppressed, got: %+v", entries)
+	}
+
+	// Substring "eof" inside ordinary words (e.g. geofence/typeof) must NOT be suppressed.
+	httpLog.Print("http: proxy error: geofence check failed with Bearer sk-secret-token")
+	entries, err = s.entries(filter{limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected non-benign HTTP error to be recorded, got %d: %+v", len(entries), entries)
+	}
+	if entries[0].Message != "http server error" || entries[0].Source != "http" || entries[0].Level != "WARN" {
+		t.Fatalf("unexpected HTTP error entry: %+v", entries[0])
+	}
+	if strings.Contains(stderr.String(), "sk-secret-token") {
+		t.Fatalf("secret leaked in quiet HTTP logger stderr: %s", stderr.String())
+	}
+}
+
+func TestActiveSegmentCacheInvalidatesOnPruneAndSymlink(t *testing.T) {
+	s := testStore(t)
+	now := time.Now().UTC()
+	s.now = func() time.Time { return now }
+
+	s.record(Entry{Message: "first"})
+	if s.err != nil || s.activePath == "" {
+		t.Fatalf("expected activePath cached after first record, err=%v path=%q", s.err, s.activePath)
+	}
+	firstPath := s.activePath
+
+	// Fast path reuses same segment within 1 minute.
+	now = now.Add(time.Second)
+	s.record(Entry{Message: "second"})
+	if s.err != nil || s.activePath != firstPath {
+		t.Fatalf("expected fast path to reuse %q, got %q err=%v", firstPath, s.activePath, s.err)
+	}
+
+	// Replacing active segment with a symlink must be caught on the fast path.
+	if runtime.GOOS != "windows" {
+		target := filepath.Join(t.TempDir(), "outside.jsonl")
+		if err := os.WriteFile(target, nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(firstPath); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, firstPath); err != nil {
+			t.Fatal(err)
+		}
+		now = now.Add(time.Second)
+		s.record(Entry{Message: "third"})
+		if s.err == nil {
+			t.Fatal("expected symlinked active segment to be rejected")
+		}
+		_ = os.Remove(firstPath)
+	}
+
+	// Fresh record after cleanup succeeds, and prune invalidates cached activePath when removed.
+	now = now.Add(time.Second)
+	s.record(Entry{Message: "fourth"})
+	if s.err != nil || s.activePath == "" {
+		t.Fatalf("expected fresh record to succeed, err=%v path=%q", s.err, s.activePath)
+	}
+	old := now.Add(-8 * 24 * time.Hour)
+	if err := os.Chtimes(s.activePath, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.prune(0); err != nil {
+		t.Fatal(err)
+	}
+	if s.activePath != "" || s.totalBytes != 0 {
+		t.Fatalf("expected prune to invalidate removed activePath and totalBytes, got path=%q total=%d", s.activePath, s.totalBytes)
+	}
+}

@@ -76,3 +76,36 @@ func TestDefaultCheckerReportsEmbeddedVersion(t *testing.T) {
 		t.Fatalf("reported current version = %q, want %q", result.CurrentVersion, buildinfo.Version)
 	}
 }
+
+func TestCheckerNormalizesCDNAndGitHubMirrors(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":        0,
+			"version":     "0.7.3",
+			"needUpdate":  true,
+			"downloadUrl": "https://cdn.hoxi.dev/hoxi-desktop/v0.7.3/Hoxi-0.7.3-darwin-arm64.dmg",
+			"mirrors": map[string]string{
+				"global": "https://cdn.hoxi.dev/hoxi-desktop/v0.7.3/Hoxi-0.7.3-darwin-arm64.dmg",
+			},
+			"sha256": "abcdef1234567890",
+		})
+	}))
+	defer ts.Close()
+
+	checker := NewChecker("0.7.2", nil)
+	checker.serverBaseURL = ts.URL
+
+	res, err := checker.Check(context.Background())
+	if err != nil {
+		t.Fatalf("Check failed: %v", err)
+	}
+	wantCDN := "https://cdn.hoxi.dev/hoxi-desktop/v0.7.3/Hoxi-0.7.3-darwin-arm64.dmg"
+	wantGH := "https://github.com/hoxiai/hoxi/releases/download/v0.7.3/Hoxi-0.7.3-darwin-arm64.dmg"
+	if res.Mirrors.CDN != wantCDN {
+		t.Fatalf("Mirrors.CDN = %q, want %q", res.Mirrors.CDN, wantCDN)
+	}
+	if res.Mirrors.Global != wantGH {
+		t.Fatalf("Mirrors.Global = %q, want %q", res.Mirrors.Global, wantGH)
+	}
+}

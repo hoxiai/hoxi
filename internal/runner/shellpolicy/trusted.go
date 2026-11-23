@@ -7,15 +7,16 @@ import (
 	"strings"
 )
 
-// ApprovalModeTrusted behaves like auto mode and additionally lets through
-// destructive commands whose effect stays inside the session's own Hoxi git
-// worktree, where the per-prompt checkpoints (message rollback) and git can
-// undo them, or that only delete throwaway files under the system temp
-// directories. Everything else that is destructive still reaches the user:
-// secret reads, credential/sensitive paths, execution-controlling files
-// (.git, .opencode, .claude, .hoxi, ...), sudo, force pushes, publishing,
-// shared git state (branches, stash, worktrees), process control and the
-// doom-loop guard. See AGENTS.md rule 6.
+// ApprovalModeTrusted is a low-friction denylist-only mode: non-destructive
+// shell commands run without static opacity checks or on-demand Seatbelt
+// wrapping, while explicit high-risk commands (trusted_denylist.go) and
+// non-recoverable destructive commands still ask the user. Inside an isolated
+// Hoxi git worktree, recoverable deletions, chmod and git discards also run
+// without prompting (plus throwaway temp-directory deletions anywhere).
+// Explicit high-risk floors remain gated: secret/credential reads and env vars,
+// credential egress, execution-controlling paths (.git, .opencode, .claude,
+// .hoxi, ...), sudo/su/doas, force pushes, publishing, shared git state,
+// non-owned process control and the doom-loop guard. See AGENTS.md rule 6.
 const ApprovalModeTrusted = "trusted"
 
 var (
@@ -195,14 +196,26 @@ const (
 
 var sessionGrantableClasses = setOf(recoverClassTempDelete, recoverClassDirDelete, recoverClassGitDiscard, recoverClassInlineScript)
 
-// isGrantableInlineScriptCommand reports a non-destructive shell command
-// blocked in auto mode solely because its inline Python/Node code is not
-// statically read-only, while full script trust clears it and no secret,
-// publish, privilege, egress, or unsandboxed-opt-out risk is present.
+// isGrantableInlineScriptCommand reports a shell command blocked in auto mode
+// solely because its inline Python/Node code is not statically read-only, while
+// full script trust clears it, any destructive segments in the chain are only
+// auto-controllable throwaway temp cleanup or safe non-recursive chmod, and no
+// secret, publish, privilege, egress, or unsandboxed-opt-out risk is present.
 func isGrantableInlineScriptCommand(command, worktree string) bool {
 	cmd := strings.TrimSpace(unwrapSandboxCommand(command))
-	if cmd == "" || optsOutOfOnDemandSandbox(cmd) || isDestructiveCommand(cmd) {
+	if cmd == "" || optsOutOfOnDemandSandbox(cmd) {
 		return false
+	}
+	if isDestructiveCommand(cmd) {
+		classes := map[string]bool{}
+		if !recoverableCommandClassesWithTrust(cmd, safeChmodDir(worktree), classes, scriptTrustFull) || len(classes) == 0 {
+			return false
+		}
+		for class := range classes {
+			if class != recoverClassTempDelete && class != recoverClassSafeChmod {
+				return false
+			}
+		}
 	}
 	if !isOpaqueShellCommandWith(cmd, worktree, scriptTrustReadOnly) || isOpaqueShellCommandWith(cmd, worktree, scriptTrustFull) {
 		return false
@@ -227,12 +240,12 @@ func isGrantableInlineScriptCommand(command, worktree string) bool {
 	return true
 }
 
-// grantableInlineScriptRequest reports whether a non-destructive shell request
-// qualifies for the session-scoped `inline-script` class grant. When OpenCode
-// also sends split patterns outside metadata.command, any extra opaque piece
-// must also be a grantable inline script.
+// grantableInlineScriptRequest reports whether a shell request qualifies for
+// the session-scoped `inline-script` class grant. When OpenCode also sends
+// split patterns outside metadata.command, any extra destructive or opaque
+// piece must stay within auto-controllable cleanup or grantable inline scripts.
 func grantableInlineScriptRequest(item map[string]interface{}, worktree string) bool {
-	if !isControllableShellItem(item) || isDestructivePermissionRequest(item) {
+	if !isControllableShellItem(item) {
 		return false
 	}
 	candidates := opacityCandidates(item)
@@ -251,6 +264,9 @@ func grantableInlineScriptRequest(item map[string]interface{}, worktree string) 
 			if piece == "" || strings.Contains(whole, piece) {
 				continue
 			}
+			if isDestructiveCommand(piece) && !isAutoControllableCommand(piece, worktree) {
+				return false
+			}
 			if isOpaqueShellCommandWith(piece, worktree, scriptTrustReadOnly) && !isGrantableInlineScriptCommand(piece, worktree) {
 				return false
 			}
@@ -266,7 +282,7 @@ func grantableInlineScriptRequest(item map[string]interface{}, worktree string) 
 // words (no expansion, escapes or glued quotes); after an out-of-worktree `cd`
 // the working directory is unknown, so only absolute temp paths still qualify.
 func isRecoverableWorktreeCommand(command, worktree string) bool {
-	return recoverableCommandClassesWithTrust(command, worktree, map[string]bool{}, scriptTrustReadOnly)
+	return recoverableCommandClassesWithTrust(command, worktree, map[string]bool{}, scriptTrustFull)
 }
 
 // recoverableCommandClasses is isRecoverableWorktreeCommand for session class
@@ -294,6 +310,21 @@ func recoverableCommandClassesAt(command, worktree string, classes map[string]bo
 			return false
 		}
 		command = stripped
+	}
+	if depth == 0 {
+		command = unwrapTopLevelSingleQuotedShellC(command, func(inner string) bool {
+			innerClasses := map[string]bool{}
+			if !recoverableCommandClassesAt(inner, worktree, innerClasses, scriptTrustNone, depth+1) {
+				return false
+			}
+			for class := range innerClasses {
+				if class != recoverClassTempDelete && class != recoverClassSafeChmod {
+					return false
+				}
+				classes[class] = true
+			}
+			return true
+		})
 	}
 	spans, ok := findSubshellSpans(command)
 	if !ok {

@@ -128,6 +128,7 @@ func pruneOldToolResults(msgs []Message, system string, contextLimit int) []Mess
 
 func pruneOldToolResultsInWorkspace(msgs []Message, system, worktreeDir string, contextLimit int) []Message {
 	msgs = sanitizeMessagesUTF8(msgs)
+	msgs = pruneStaleToolScreenshots(msgs)
 	if contextLimit <= 0 {
 		contextLimit = 128000
 	}
@@ -633,6 +634,11 @@ func summarizePrunedToolOutput(s string, richPreview bool) string {
 }
 
 func summarizePrunedToolOutputForCall(s, toolName string, isError, richPreview bool) string {
+	if toolName == "hoxi_computer" && !isError {
+		if summary, ok := summarizeComputerToolOutput(s); ok {
+			return summary
+		}
+	}
 	norm := ensureValidUTF8(strings.ReplaceAll(s, "\r\n", "\n"))
 	lines := strings.Split(norm, "\n")
 

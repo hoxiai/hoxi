@@ -94,6 +94,7 @@ type canonicalPromptDigestPayload struct {
 	FastMode       bool                `json:"fastMode,omitempty"`
 	System         string              `json:"system,omitempty"`
 	Model          *PromptModel        `json:"model,omitempty"`
+	Orchestrator   *PromptOrchestrator `json:"orchestrator,omitempty"`
 	ImageOptions   *PromptImageOptions `json:"imageOptions,omitempty"`
 	Parts          []MessagePart       `json:"parts,omitempty"`
 	SkillSelection *SkillSelection     `json:"skillSelection,omitempty"`
@@ -111,6 +112,7 @@ func PromptRequestDigest(sessionID string, body PromptRequest) string {
 		FastMode:       body.FastMode,
 		System:         strings.TrimSpace(body.System),
 		Model:          body.Model,
+		Orchestrator:   body.Orchestrator,
 		ImageOptions:   body.ImageOptions,
 		Parts:          body.Parts,
 		SkillSelection: body.SkillSelection,

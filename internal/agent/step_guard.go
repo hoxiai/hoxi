@@ -104,6 +104,27 @@ func isWorkspaceMutatingTool(call ToolCall) bool {
 		_ = json.Unmarshal(call.Input, &args)
 		act := strings.ToLower(strings.TrimSpace(args.Action))
 		return act != "output" && act != "list"
+	case "hoxi_computer":
+		var args struct {
+			Action string `json:"action"`
+			App    string `json:"app"`
+		}
+		_ = json.Unmarshal(call.Input, &args)
+		act := strings.ToLower(strings.TrimSpace(args.Action))
+		if act == "status" || act == "apps" || act == "wait" {
+			return false
+		}
+		if (act == "state" || act == "screenshot") && strings.TrimSpace(args.App) == "" {
+			return false
+		}
+		return true
+	case "hoxi_browser":
+		var args struct {
+			Action string `json:"action"`
+		}
+		_ = json.Unmarshal(call.Input, &args)
+		act := strings.ToLower(strings.TrimSpace(args.Action))
+		return act != "snapshot" && act != "screenshot" && act != "diagnostics" && act != "wait"
 	default:
 		return true
 	}

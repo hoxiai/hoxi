@@ -6,6 +6,7 @@ import {
   closeSettingsModal,
   disconnectLocalCLIModel,
   ensureLocalCLIStatusLoaded,
+  errorMessageOf,
   isRunnerAuthMode,
   localCLIStatusItems,
   openHandoffModal,
@@ -35,7 +36,7 @@ export default function LocalCliBridgeBanner() {
     try {
       await syncLocalCLIModel(tool, overwrite ? { overwrite: true } : undefined);
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : String(err));
+      setErrorMsg(errorMessageOf(err, t("common.error")));
     } finally {
       setBusyID(null);
     }
@@ -48,7 +49,7 @@ export default function LocalCliBridgeBanner() {
     try {
       await disconnectLocalCLIModel(tool);
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : String(err));
+      setErrorMsg(errorMessageOf(err, t("common.error")));
     } finally {
       setDisconnectingID(null);
     }

@@ -347,15 +347,34 @@ func (nativeBackend) Input(ctx context.Context, app App, window Window, action A
 		}
 	}
 	if action.Action == "type" {
-		for _, char := range utf16.Encode([]rune(action.Text)) {
-			if err := check(); err != nil {
-				return err
+		normalized := strings.ReplaceAll(strings.ReplaceAll(action.Text, "\r\n", "\n"), "\r", "\n")
+		lines := strings.Split(normalized, "\n")
+		for lineIdx, line := range lines {
+			if lineIdx > 0 {
+				if err := check(); err != nil {
+					return err
+				}
+				if err := sendWindowsKey(16, 0); err != nil {
+					return err
+				}
+				enterErr := sendWindowsKey(13, 0)
+				_ = sendWindowsKey(13, 2)
+				_ = sendWindowsKey(16, 2)
+				if enterErr != nil {
+					return enterErr
+				}
+				time.Sleep(5 * time.Millisecond)
 			}
-			if err := sendWindowsUnicode(char, false); err != nil {
-				return err
-			}
-			if err := sendWindowsUnicode(char, true); err != nil {
-				return err
+			for _, char := range utf16.Encode([]rune(line)) {
+				if err := check(); err != nil {
+					return err
+				}
+				if err := sendWindowsUnicode(char, false); err != nil {
+					return err
+				}
+				if err := sendWindowsUnicode(char, true); err != nil {
+					return err
+				}
 			}
 		}
 		return nil

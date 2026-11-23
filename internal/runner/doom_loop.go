@@ -49,6 +49,18 @@ func isDoomLoopPollingCall(tool string, input json.RawMessage) bool {
 		return act == "status" || act == "list"
 	case "manage_subagents":
 		return extractDoomLoopToolAction(input) == "list"
+	case "hoxi_computer":
+		act := extractDoomLoopToolAction(input)
+		if act == "status" || act == "apps" || act == "wait" {
+			return true
+		}
+		if act == "state" || act == "screenshot" {
+			return !hasDoomLoopNonEmptyField(input, "app", "App")
+		}
+		return false
+	case "hoxi_browser":
+		act := extractDoomLoopToolAction(input)
+		return act == "snapshot" || act == "screenshot" || act == "diagnostics" || act == "wait"
 	}
 	return false
 }
@@ -109,18 +121,54 @@ func isDoomLoopMutatingCall(tool string, input json.RawMessage) bool {
 	return false
 }
 
-func extractDoomLoopToolAction(input json.RawMessage) string {
+func hasDoomLoopNonEmptyField(input json.RawMessage, keys ...string) bool {
+	var parsed map[string]interface{}
+	if json.Unmarshal(input, &parsed) != nil || parsed == nil {
+		return false
+	}
+	for _, k := range keys {
+		v, ok := parsed[k]
+		if !ok || v == nil {
+			continue
+		}
+		if s, isStr := v.(string); isStr {
+			trimmed := strings.TrimSpace(s)
+			if len(trimmed) >= 2 && trimmed[0] == '"' && trimmed[len(trimmed)-1] == '"' {
+				if unquoted, err := strconv.Unquote(trimmed); err == nil {
+					trimmed = strings.TrimSpace(unquoted)
+				}
+			}
+			if trimmed != "" {
+				return true
+			}
+			continue
+		}
+		// Non-string value (fail closed so malformed app fields do not bypass doom_loop).
+		return true
+	}
+	return false
+}
+
+func extractDoomLoopToolField(input json.RawMessage, keys ...string) string {
 	var parsed map[string]interface{}
 	if json.Unmarshal(input, &parsed) != nil || parsed == nil {
 		return ""
 	}
-	raw := strings.TrimSpace(firstString(parsed["Action"], parsed["action"]))
+	vals := make([]interface{}, 0, len(keys))
+	for _, k := range keys {
+		vals = append(vals, parsed[k])
+	}
+	raw := strings.TrimSpace(firstString(vals...))
 	if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
 		if unquoted, err := strconv.Unquote(raw); err == nil {
 			raw = strings.TrimSpace(unquoted)
 		}
 	}
-	return strings.ToLower(raw)
+	return raw
+}
+
+func extractDoomLoopToolAction(input json.RawMessage) string {
+	return strings.ToLower(extractDoomLoopToolField(input, "Action", "action"))
 }
 
 type doomLoopGuard struct {
@@ -140,6 +188,20 @@ func newDoomLoopGuard() *doomLoopGuard {
 	}
 }
 
+// doomLoopOwnerSession maps a synthetic scoped guardKey (e.g.
+// "<parentSessionID>:agy_sub:<convID>") back to its owning real session ID so
+// "always" exemptions are attributed to and revocable under the real session.
+func doomLoopOwnerSession(guardKey string) string {
+	if idx := strings.IndexByte(guardKey, ':'); idx > 0 {
+		return guardKey[:idx]
+	}
+	return guardKey
+}
+
+func matchesDoomLoopScope(key, sessionID string) bool {
+	return key == sessionID || (sessionID != "" && strings.HasPrefix(key, sessionID+":"))
+}
+
 // observe records a call and reports whether it completes a run of
 // doomLoopThreshold identical calls within one turn (or repeats the same
 // non-mutating call doomLoopNoEditThreshold times in one turn without any file
@@ -150,9 +212,10 @@ func (g *doomLoopGuard) observe(sessionID, turnID, tool string, input json.RawMe
 		return false
 	}
 	fp := toolCallFingerprint(tool, input)
+	ownerID := doomLoopOwnerSession(sessionID)
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.exempt[sessionID][tool] > 0 {
+	if g.exempt[sessionID][tool] > 0 || (ownerID != sessionID && g.exempt[ownerID][tool] > 0) {
 		return false
 	}
 	if g.turn[sessionID] != turnID {
@@ -199,6 +262,7 @@ func (g *doomLoopGuard) observe(sessionID, turnID, tool string, input json.RawMe
 // settle clears the run after the user answered, so allowing a call once
 // does not re-ask on every following identical call.
 func (g *doomLoopGuard) settle(sessionID, tool string, always bool) {
+	ownerID := doomLoopOwnerSession(sessionID)
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	delete(g.recent, sessionID)
@@ -206,29 +270,59 @@ func (g *doomLoopGuard) settle(sessionID, tool string, always bool) {
 	if !always {
 		return
 	}
-	if g.exempt[sessionID] == nil {
-		g.exempt[sessionID] = make(map[string]int64)
+	if g.exempt[ownerID] == nil {
+		g.exempt[ownerID] = make(map[string]int64)
 	}
-	g.exempt[sessionID][tool] = time.Now().UnixMilli()
+	g.exempt[ownerID][tool] = time.Now().UnixMilli()
 }
 
-// resetTurn clears per-turn repeat counters when a turn finishes.
+// resetTurn clears per-turn repeat counters when a turn finishes, including
+// any synthetic subagent guard keys scoped under sessionID.
 func (g *doomLoopGuard) resetTurn(sessionID string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	delete(g.recent, sessionID)
-	delete(g.sinceEdit, sessionID)
-	delete(g.turn, sessionID)
+	for k := range g.recent {
+		if matchesDoomLoopScope(k, sessionID) {
+			delete(g.recent, k)
+		}
+	}
+	for k := range g.sinceEdit {
+		if matchesDoomLoopScope(k, sessionID) {
+			delete(g.sinceEdit, k)
+		}
+	}
+	for k := range g.turn {
+		if matchesDoomLoopScope(k, sessionID) {
+			delete(g.turn, k)
+		}
+	}
 }
 
-// forget drops a session's guard state once it is deleted.
+// forget drops a session's guard state (and any synthetic subagent keys scoped
+// under it) once it is deleted.
 func (g *doomLoopGuard) forget(sessionID string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	delete(g.recent, sessionID)
-	delete(g.sinceEdit, sessionID)
-	delete(g.turn, sessionID)
-	delete(g.exempt, sessionID)
+	for k := range g.recent {
+		if matchesDoomLoopScope(k, sessionID) {
+			delete(g.recent, k)
+		}
+	}
+	for k := range g.sinceEdit {
+		if matchesDoomLoopScope(k, sessionID) {
+			delete(g.sinceEdit, k)
+		}
+	}
+	for k := range g.turn {
+		if matchesDoomLoopScope(k, sessionID) {
+			delete(g.turn, k)
+		}
+	}
+	for k := range g.exempt {
+		if matchesDoomLoopScope(k, sessionID) {
+			delete(g.exempt, k)
+		}
+	}
 }
 
 func (g *doomLoopGuard) listExemptGrants() []ApprovalGrant {
@@ -259,7 +353,7 @@ func (g *doomLoopGuard) revokeExemptGrants(id, sessionID string, all bool) int {
 	defer g.mu.Unlock()
 	revoked := 0
 	for sid, tools := range g.exempt {
-		if sessionID != "" && sid != sessionID {
+		if sessionID != "" && !matchesDoomLoopScope(sid, sessionID) {
 			continue
 		}
 		for tool := range tools {

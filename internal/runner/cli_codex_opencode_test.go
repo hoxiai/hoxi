@@ -63,12 +63,18 @@ func TestTranslateCodexAndOpenCodeCLIStreams(t *testing.T) {
 		t.Fatalf("expected externalID ses_oc_99, got %q", trOC.ExternalID())
 	}
 	// Intermediate step_finish with tool-calls must NOT close the turn.
-	if evts := trOC.FeedLine(`{"type":"step_finish","sessionID":"ses_oc_99","part":{"reason":"tool-calls","tokens":{"input":100,"output":20}}}`); len(evts) != 0 || trOC.IsTurnFinished() {
+	if evts := trOC.FeedLine(`{"type":"step_finish","sessionID":"ses_oc_99","part":{"reason":"tool-calls","tokens":{"input":100,"output":20,"cache":{"read":500,"write":50}}}}`); len(evts) != 0 || trOC.IsTurnFinished() {
 		t.Fatalf("tool-calls step_finish should not finish turn: %+v", evts)
 	}
-	evtsOCDone := trOC.FeedLine(`{"type":"step_finish","sessionID":"ses_oc_99","part":{"reason":"stop","cost":0.01,"tokens":{"input":200,"output":40}}}`)
+	evtsOCDone := trOC.FeedLine(`{"type":"step_finish","sessionID":"ses_oc_99","part":{"reason":"stop","cost":0.01,"tokens":{"input":200,"output":40,"reasoning":10,"cache":{"read":800,"write":0}}}}`)
 	if !trOC.IsTurnFinished() || len(evtsOCDone) != 3 {
 		t.Fatalf("expected opencode CLI turn finished, got finished=%v len=%d", trOC.IsTurnFinished(), len(evtsOCDone))
+	}
+	// Context/Total must reflect only the latest step's occupancy (200+40+10+800=1050),
+	// while Input/Output/Reasoning/Cache retain cumulative turn billing buckets.
+	tok := trOC.MsgInfo.Tokens
+	if tok == nil || tok.Context != 1050 || tok.Total != 1050 || tok.Input != 300 || tok.Output != 60 || tok.Reasoning != 10 || tok.Cache.Read != 1300 || tok.Cache.Write != 50 {
+		t.Fatalf("unexpected opencode CLI tokens: %+v", tok)
 	}
 }
 

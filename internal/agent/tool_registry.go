@@ -50,6 +50,7 @@ func newToolRegistry() *BuiltinToolRegistry {
 	r.Register(&hoxiSpeechTool{})
 	r.Register(&hoxiToolsGatewayTool{})
 	r.Register(&hoxiDataProfileTool{})
+	r.Register(&hoxiScheduleTool{})
 	r.Register(&skillLoaderTool{})
 	r.Register(&goalReportTool{})
 	return r
@@ -113,7 +114,7 @@ func (r *BuiltinToolRegistry) SpecsForTurn(mode string, subtaskDepth int) []Tool
 		if !planMode && name == "plan_consent" {
 			continue
 		}
-		if subtaskDepth > 0 && (name == "task" || name == "question" || name == "plan_consent" || name == "todowrite" || name == "todoread" || name == "skill" || name == "goal_report") {
+		if subtaskDepth > 0 && (name == "task" || name == "question" || name == "plan_consent" || name == "todowrite" || name == "todoread" || name == "skill" || name == "goal_report" || name == "hoxi_schedule") {
 			continue
 		}
 		names = append(names, name)
@@ -146,7 +147,11 @@ func (r *BuiltinToolRegistry) Execute(
 	if strings.EqualFold(strings.TrimSpace(tc.Mode), "plan") && !isAllowedInPlanMode(t) {
 		return ToolOutput{Title: call.Name, Output: fmt.Sprintf("tool %s is disabled in plan (read-only) mode", call.Name), IsError: true}, fmt.Errorf("tool %s is disabled in plan mode", call.Name)
 	}
-	if tc.SubtaskDepth > 0 && (call.Name == "task" || call.Name == "question" || call.Name == "plan_consent" || call.Name == "todowrite" || call.Name == "goal_report") {
+	if tc.OrchestratorOnly && isOrchestratorDirectExecutionTool(call.Name) {
+		msg := fmt.Sprintf("tool %s is routed to the Executor in Orchestrator mode; delegate edits and shell commands via task(subagent_type=\"executor\", ...)", call.Name)
+		return ToolOutput{Title: call.Name, Output: msg, IsError: true}, fmt.Errorf("%s", msg)
+	}
+	if tc.SubtaskDepth > 0 && (call.Name == "task" || call.Name == "question" || call.Name == "plan_consent" || call.Name == "todowrite" || call.Name == "goal_report" || call.Name == "hoxi_schedule") {
 		return ToolOutput{Title: call.Name, Output: fmt.Sprintf("tool %s is disabled inside subagents", call.Name), IsError: true}, fmt.Errorf("tool %s is disabled inside subagents", call.Name)
 	}
 	if permHook != nil {
@@ -246,6 +251,19 @@ func resolveWorkspacePath(worktreeDir, relOrAbs string, mustStayInside bool) (st
 	p := strings.TrimSpace(relOrAbs)
 	if p == "" {
 		return "", fmt.Errorf("path is required")
+	}
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil || strings.TrimSpace(home) == "" {
+			return "", fmt.Errorf("cannot resolve home directory for %q", p)
+		}
+		if p == "~" {
+			p = home
+		} else {
+			p = filepath.Join(home, p[2:])
+		}
+	} else if strings.HasPrefix(p, "~") {
+		return "", fmt.Errorf("unsupported tilde expansion in %q", p)
 	}
 	base, err := filepath.Abs(worktreeDir)
 	if err != nil {

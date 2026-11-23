@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"path"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,7 +37,8 @@ func NewChecker(currentVersion string, logger *slog.Logger) *Checker {
 		serverBaseURL:  hoxipaths.ServerBaseURL(),
 		currentVersion: currentVersion,
 		httpClient: &http.Client{
-			Timeout: 15 * time.Second,
+			Timeout:   15 * time.Second,
+			Transport: newUpdateTransport(),
 		},
 	}
 }
@@ -102,6 +105,7 @@ func (c *Checker) Check(ctx context.Context) (*UpdateCheckResult, error) {
 		return nil, fmt.Errorf("failed to parse update response: %w", err)
 	}
 
+	mirrors := normalizeUpdateMirrors(raw.Version, raw.DownloadURL, raw.Mirrors)
 	res := &UpdateCheckResult{
 		CurrentVersion: currVer,
 		LatestVersion:  raw.Version,
@@ -110,7 +114,7 @@ func (c *Checker) Check(ctx context.Context) (*UpdateCheckResult, error) {
 		Title:          raw.Title,
 		ReleaseNotes:   raw.ReleaseNotes,
 		DownloadURL:    raw.DownloadURL,
-		Mirrors:        raw.Mirrors,
+		Mirrors:        mirrors,
 		Mandatory:      raw.Mandatory,
 		SHA256:         raw.SHA256,
 		CheckedAt:      time.Now().Format(time.RFC3339),
@@ -121,6 +125,39 @@ func (c *Checker) Check(ctx context.Context) (*UpdateCheckResult, error) {
 	c.mu.Unlock()
 
 	return res, nil
+}
+
+// normalizeUpdateMirrors ensures CDN and GitHub download links are cleanly
+// separated even when an older release API puts a CDN URL inside mirrors.global
+// or omits the complementary GitHub fallback link.
+func normalizeUpdateMirrors(version, downloadURL string, mirrors UpdateMirrors) UpdateMirrors {
+	dl := strings.TrimSpace(downloadURL)
+	mirrors.CN = strings.TrimSpace(mirrors.CN)
+	mirrors.CDN = strings.TrimSpace(mirrors.CDN)
+	mirrors.Global = strings.TrimSpace(mirrors.Global)
+
+	if mirrors.CDN == "" && classifyUpdateSource(dl) == string(DownloadSourceCDN) {
+		mirrors.CDN = dl
+	}
+	if classifyUpdateSource(mirrors.Global) == string(DownloadSourceCDN) {
+		if mirrors.CDN == "" {
+			mirrors.CDN = mirrors.Global
+		}
+		mirrors.Global = ""
+	}
+	if mirrors.Global == "" && classifyUpdateSource(dl) == string(DownloadSourceGlobal) {
+		mirrors.Global = dl
+	}
+	if mirrors.Global == "" && mirrors.CDN != "" && isOfficialHoxiReleaseOrigin(mirrors.CDN) {
+		if u, err := url.Parse(mirrors.CDN); err == nil {
+			asset := path.Base(u.Path)
+			ver := strings.TrimPrefix(strings.TrimSpace(version), "v")
+			if ver != "" && strings.HasPrefix(asset, "Hoxi-") {
+				mirrors.Global = fmt.Sprintf("%s/v%s/%s", githubReleaseDownloadBase, ver, asset)
+			}
+		}
+	}
+	return mirrors
 }
 
 func (c *Checker) LastResult() *UpdateCheckResult {

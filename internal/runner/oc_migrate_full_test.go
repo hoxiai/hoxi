@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -244,19 +245,56 @@ CREATE TABLE part (id TEXT PRIMARY KEY, session_id TEXT, message_id TEXT, time_c
 		t.Fatalf("seed pure-go sqlite db: %v", err)
 	}
 
-	// Provide a clean bin directory containing ONLY git (neither `sqlite3` nor `opencode` exists)!
-	cleanBin := t.TempDir()
-	if gitBin, lookErr := exec.LookPath("git"); lookErr == nil && gitBin != "" {
-		_ = os.Symlink(gitBin, filepath.Join(cleanBin, "git"))
-	} else {
+	// Provide a restricted PATH with git available while guaranteeing neither `sqlite3` nor `opencode` is resolvable.
+	gitBin, lookErr := exec.LookPath("git")
+	if lookErr != nil || gitBin == "" {
 		for _, cand := range []string{"/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"} {
 			if _, stErr := os.Stat(cand); stErr == nil {
-				_ = os.Symlink(cand, filepath.Join(cleanBin, "git"))
+				gitBin = cand
 				break
 			}
 		}
 	}
-	t.Setenv("PATH", cleanBin)
+	if gitBin == "" {
+		t.Fatal("git executable required for migration snapshot test")
+	}
+	if runtime.GOOS == "windows" {
+		// Git for Windows's cmd\git.exe launcher locates sibling ..\mingw64\bin\git.exe
+		// relative to its own directory, so reuse its native directory when free of sqlite3/opencode.
+		gitDir := filepath.Dir(gitBin)
+		hasForbidden := false
+		for _, tool := range []string{"sqlite3.exe", "sqlite3.cmd", "sqlite3.bat", "opencode.exe", "opencode.cmd", "opencode.bat"} {
+			if _, err := os.Stat(filepath.Join(gitDir, tool)); err == nil {
+				hasForbidden = true
+				break
+			}
+		}
+		if !hasForbidden {
+			t.Setenv("PATH", gitDir)
+		} else {
+			cleanBin := t.TempDir()
+			wrapper := filepath.Join(cleanBin, "git.cmd")
+			if err := os.WriteFile(wrapper, []byte("@\""+gitBin+"\" %*\r\n"), 0o644); err != nil {
+				t.Fatalf("write git.cmd wrapper: %v", err)
+			}
+			t.Setenv("PATH", cleanBin)
+		}
+	} else {
+		cleanBin := t.TempDir()
+		if err := os.Symlink(gitBin, filepath.Join(cleanBin, "git")); err != nil {
+			t.Fatalf("symlink git: %v", err)
+		}
+		t.Setenv("PATH", cleanBin)
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Fatalf("expected git in restricted PATH, got: %v", err)
+	}
+	if p, err := exec.LookPath("sqlite3"); err == nil {
+		t.Fatalf("expected sqlite3 absent from restricted PATH, found %s", p)
+	}
+	if p, err := exec.LookPath("opencode"); err == nil {
+		t.Fatalf("expected opencode absent from restricted PATH, found %s", p)
+	}
 
 	rep := svc.MigrateOpenCodeDBWithReport(dbPath)
 	if rep.Scanned != 310 {

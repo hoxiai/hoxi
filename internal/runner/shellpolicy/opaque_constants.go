@@ -45,7 +45,7 @@ func acceptsValueClassArg(base string) bool {
 	if paramSensitiveTools[base] || dataArgInterpreters[base] {
 		return false
 	}
-	return readOnlyDataTools[base] || base == "mkdir"
+	return readOnlyDataTools[base] || base == "mkdir" || base == "swiftc"
 }
 
 type constSeg struct {
@@ -191,15 +191,17 @@ func concretizeLiterals(command string) (string, int) {
 
 var pathPrependExportRe = regexp.MustCompile(`^export[ \t]+PATH=("?)([A-Za-z0-9_./:$~{}-]+)("?)$`)
 
-// isPathPrependExport is isBenignPathExport that also accepts the value in
-// double quotes (`export PATH="/usr/local/go/bin:$PATH"`).
+// isPathPrependExport accepts `export PATH=...` (with or without double quotes)
+// that preserves $PATH / ${PATH} and only expands harmless env vars (e.g. $HOME).
 func isPathPrependExport(text string) bool {
 	m := pathPrependExportRe.FindStringSubmatch(text)
 	if m == nil || m[1] != m[3] {
 		return false
 	}
-	rest := strings.ReplaceAll(strings.ReplaceAll(m[2], "${PATH}", ""), "$PATH", "")
-	return !strings.Contains(rest, "$")
+	if !strings.Contains(m[2], "$PATH") && !strings.Contains(m[2], "${PATH}") {
+		return false
+	}
+	return isBenignPathAssignment("PATH=" + m[2])
 }
 
 func containsFor(s string) bool {

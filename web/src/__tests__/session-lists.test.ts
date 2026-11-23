@@ -203,7 +203,11 @@ describe("sidebar project session lists", () => {
     const originalFetch = globalThis.fetch;
     const requestedURLs: string[] = [];
     const repoPath = `/Users/test/repo-perf-${Date.now()}`;
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://127.0.0.1");
+      if (url.pathname !== "/api/hoxi/forge/prs" || url.searchParams.get("directory") !== repoPath) {
+        return originalFetch(input, init);
+      }
       requestedURLs.push(String(input));
       return new Response(
         JSON.stringify({
@@ -237,6 +241,67 @@ describe("sidebar project session lists", () => {
       assertTrue(!requestedURLs[0].includes(".hoxi"));
       assertEqual(pr1.pullRequests["hoxi/ses_1"]?.number, 21);
       assertEqual(pr2.pullRequests["hoxi/ses_1"]?.number, 21);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("caps cross-repo pull-request list concurrency and drops queued aborted requests", async () => {
+    const originalFetch = globalThis.fetch;
+    const gates = new Map<string, ReturnType<typeof deferred<Response>>>();
+    const startedDirs: string[] = [];
+    let inflight = 0;
+    let maxInflight = 0;
+    const prefix = `/Users/test/pr-cap-${Date.now()}`;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://127.0.0.1");
+      const dir = url.searchParams.get("directory") || "";
+      if (url.pathname !== "/api/hoxi/forge/prs" || !dir.startsWith(prefix)) {
+        return originalFetch(input, init);
+      }
+      startedDirs.push(dir);
+      const gate = deferred<Response>();
+      gates.set(dir, gate);
+      inflight += 1;
+      if (inflight > maxInflight) maxInflight = inflight;
+      try {
+        return await gate.promise;
+      } finally {
+        inflight -= 1;
+      }
+    }) as typeof fetch;
+    try {
+      const abortCtrl = new AbortController();
+      const p1 = fetchPullRequests(`${prefix}-1`);
+      const p2 = fetchPullRequests(`${prefix}-2`);
+      const p3Aborted = fetchPullRequests(`${prefix}-3`, false, abortCtrl.signal);
+      const p4 = fetchPullRequests(`${prefix}-4`);
+
+      await new Promise((r) => setTimeout(r, 10));
+      assertEqual(maxInflight, 2, "cross-repo PR list requests must cap concurrency at 2");
+      assertEqual(startedDirs.length, 2);
+
+      // Unmounting row 3 before its slot opens must skip spawning a request for repo 3.
+      abortCtrl.abort();
+      let abortedRejected = false;
+      await p3Aborted.catch(() => { abortedRejected = true; });
+      assertEqual(abortedRejected, true);
+
+      const emptyResp = () =>
+        new Response(JSON.stringify({ available: true, pullRequests: {} }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      gates.get(`${prefix}-1`)?.resolve(emptyResp());
+      await p1;
+      await new Promise((r) => setTimeout(r, 10));
+      assertEqual(startedDirs.includes(`${prefix}-3`), false, "aborted queued repo must never hit fetch");
+      assertEqual(startedDirs.includes(`${prefix}-4`), true);
+
+      gates.get(`${prefix}-2`)?.resolve(emptyResp());
+      gates.get(`${prefix}-4`)?.resolve(emptyResp());
+      await Promise.all([p2, p4]);
+      assertEqual(maxInflight, 2);
     } finally {
       globalThis.fetch = originalFetch;
     }

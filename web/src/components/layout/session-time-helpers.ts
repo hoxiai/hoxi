@@ -65,12 +65,19 @@ export function formatCompactRelativeTime(ts: number, now = Date.now()): string 
   return `${yr}y`;
 }
 
+let cachedExactTimeFormatter: Intl.DateTimeFormat | null = null;
+
 export function formatExactTime(ts: number): string {
   const actualTs = normalizeTimestampMs(ts);
   if (actualTs <= 0) return "";
   try {
-    return new Date(actualTs).toLocaleString();
+    cachedExactTimeFormatter ??= new Intl.DateTimeFormat();
+    return cachedExactTimeFormatter.format(actualTs);
   } catch {
-    return "";
+    try {
+      return new Date(actualTs).toLocaleString();
+    } catch {
+      return "";
+    }
   }
 }

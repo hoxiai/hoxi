@@ -18,6 +18,10 @@ test("install.sh passes POSIX sh syntax validation and install.ps1 isolates -Por
   const psContent = fs.readFileSync(installPs1, "utf8");
   assert.match(psContent, /\.portable/);
   assert.match(psContent, /if \(-not \$Portable\) \{\s*Add-UserPathEntry/m);
+  assert.match(psContent, /\[string\]\$Mirror = \$env:HOXI_INSTALL_MIRROR/);
+  assert.match(psContent, /\[string\]\$Proxy = \$env:HOXI_INSTALL_PROXY/);
+  assert.match(psContent, /Build-MirrorUrl/);
+  assert.match(psContent, /Mirror URL must use HTTPS/);
 });
 
 test("install.sh installs Linux bundle, enforces official SHA-256 over tampered mirrors, and uninstalls cleanly", { skip: process.platform === "win32" }, (t) => {

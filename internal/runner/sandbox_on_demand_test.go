@@ -115,10 +115,25 @@ func TestOnDemandSandboxRefusesWhatItCannotContain(t *testing.T) {
 			t.Errorf("a command auto mode already runs was wrapped: %q", command)
 		}
 	}
-	// Smart mode never wraps; it asks for every opaque command.
+	// Smart and trusted modes never wrap in on-demand Seatbelt: smart asks for
+	// opaque commands, while trusted runs non-high-risk commands directly and
+	// still asks for explicit high-risk commands.
 	setTestApprovalPolicy(t, svc, ApprovalPolicy{Mode: ApprovalModeSmart})
 	if got := svc.onDemandSandboxProfile("ses_oc", workspace, `for f in $(ls); do wc -l "$f"; done`); got != "" {
 		t.Error("smart mode must not use the on-demand sandbox")
+	}
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{Mode: ApprovalModeTrusted})
+	for _, command := range []string{
+		`for f in $(ls); do wc -l "$f"; done`,
+		`cat "$KUBECONFIG"`,
+		`docker push registry.example.com/app:latest`,
+	} {
+		if got := svc.onDemandSandboxProfile("ses_oc", workspace, command); got != "" {
+			t.Errorf("trusted mode must not wrap %q in on-demand sandbox, got %q", command, got)
+		}
+		if got := svc.nativeOnDemandSandboxProfile("ses_native", workspace, command); got != "" {
+			t.Errorf("trusted mode must not wrap native %q in on-demand sandbox, got %q", command, got)
+		}
 	}
 }
 

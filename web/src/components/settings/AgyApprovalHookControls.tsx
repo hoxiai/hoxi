@@ -2,6 +2,7 @@
 import { createSignal, onMount, Show } from "solid-js";
 import { RefreshCw, Trash2, Wrench } from "lucide-solid";
 import {
+  errorMessageOf,
   fetchAgyHookStatus,
   installAgyHook,
   uninstallAgyHook,
@@ -16,15 +17,7 @@ type HookState = "installed" | "outdated" | "missing" | "error";
 
 // requestJSON throws `HTTP <status>: {"error":"..."}`; show only the reason.
 function errorText(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err);
-  const body = raw.replace(/^HTTP \d+:\s*/, "");
-  try {
-    const parsed = JSON.parse(body);
-    if (parsed && typeof parsed.error === "string") return parsed.error;
-  } catch {
-    /* not JSON */
-  }
-  return body || raw;
+  return errorMessageOf(err, t("common.error"));
 }
 
 const buttonClass =
@@ -128,14 +121,16 @@ export function AgyApprovalHookControls() {
         </span>
       </SettingRow>
 
-      <SettingRow label={t("settings.agyHookPathLabel")}>
-        <span
-          class="max-w-[320px] truncate font-mono text-[13px] text-[var(--text-secondary)] selectable-text"
-          title={status()?.path}
-        >
-          {status()?.path || "—"}
-        </span>
-      </SettingRow>
+      <Show when={status()?.installed || state() === "outdated" || state() === "error"}>
+        <SettingRow label={t("settings.agyHookPathLabel")}>
+          <span
+            class="max-w-[320px] truncate font-mono text-[13px] text-[var(--text-secondary)] selectable-text"
+            title={status()?.path}
+          >
+            {status()?.path || "—"}
+          </span>
+        </SettingRow>
+      </Show>
 
       <Show when={state() === "outdated" || state() === "error" || actionError()}>
         <div class="px-5 py-3 space-y-1 text-[12px] leading-relaxed">
@@ -167,17 +162,19 @@ export function AgyApprovalHookControls() {
           </Show>
           {status()?.installed ? t("settings.agyHookReinstallBtn") : t("settings.agyHookInstallBtn")}
         </button>
-        <button
-          type="button"
-          disabled={busy() !== null || !status()?.installed}
-          onClick={onUninstall}
-          class={buttonClass}
-        >
-          <Show when={busy() === "uninstall"} fallback={<Trash2 size={13} />}>
-            <Spinner class="h-3.5 w-3.5" />
-          </Show>
-          {t("settings.agyHookUninstallBtn")}
-        </button>
+        <Show when={status()?.installed}>
+          <button
+            type="button"
+            disabled={busy() !== null}
+            onClick={onUninstall}
+            class={buttonClass}
+          >
+            <Show when={busy() === "uninstall"} fallback={<Trash2 size={13} />}>
+              <Spinner class="h-3.5 w-3.5" />
+            </Show>
+            {t("settings.agyHookUninstallBtn")}
+          </button>
+        </Show>
       </div>
     </SettingGroup>
   );

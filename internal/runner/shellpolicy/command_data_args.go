@@ -202,7 +202,20 @@ func maskCommandDataArguments(command string) string {
 			echoInPipe = false
 		}
 		name := filepath.Base(seg[0].value)
-		if !seg[0].literal || dataArgInterpreters[name] {
+		if !seg[0].literal {
+			return command
+		}
+		if name == "xargs" {
+			args := make([]string, len(seg)-1)
+			for k := 1; k < len(seg); k++ {
+				args[k-1] = seg[k].value
+			}
+			if echoWritesFile || echoInPipe || (hasEcho && hasParen) || !isSafeXargsSegment(args, i > 0 && pipedIn[i], "") {
+				return command
+			}
+			continue
+		}
+		if dataArgInterpreters[name] {
 			return command
 		}
 		if dataScriptInterpreters[name] && (echoWritesFile || echoInPipe || (hasEcho && hasParen)) {
@@ -383,12 +396,18 @@ func dataArgumentReplacements(seg []dataToken) []dataReplacement {
 		}
 	case "pytest":
 		return flagValueReplacements(seg, 1, setOf("-k"), false)
-	case "vitest":
+	case "vitest", "jest":
 		return flagValueReplacements(seg, 1, setOf("-t", "--testNamePattern"), false)
 	case "npx":
-		if len(seg) >= 2 && seg[1].value == "vitest" {
+		if len(seg) >= 2 && (seg[1].value == "vitest" || seg[1].value == "jest") {
 			return flagValueReplacements(seg, 2, setOf("-t", "--testNamePattern"), false)
 		}
+	case "bun":
+		if len(seg) >= 2 && seg[1].value == "test" {
+			return flagValueReplacements(seg, 2, setOf("-t", "--test-name-pattern"), false)
+		}
+	case "npm", "pnpm", "yarn":
+		return packageManagerTestDataArguments(filepath.Base(seg[0].value), seg)
 	case "rg", "grep", "egrep", "fgrep":
 		return searchDataArguments(seg)
 	}
@@ -397,6 +416,35 @@ func dataArgumentReplacements(seg []dataToken) []dataReplacement {
 		out = appendWholeWordMask(out, seg, i)
 	}
 	return out
+}
+
+func packageManagerTestDataArguments(tool string, seg []dataToken) []dataReplacement {
+	i := 1
+	for i < len(seg) && strings.HasPrefix(seg[i].value, "-") {
+		v := seg[i].value
+		if v == "--prefix" || v == "-C" || v == "--dir" || v == "--filter" || v == "-F" {
+			i += 2
+			continue
+		}
+		if strings.HasPrefix(v, "--prefix=") || strings.HasPrefix(v, "--dir=") || strings.HasPrefix(v, "--filter=") || v == "-s" || v == "--silent" {
+			i++
+			continue
+		}
+		return nil
+	}
+	if i >= len(seg) {
+		return nil
+	}
+	sub := seg[i].value
+	if sub == "run" {
+		if i+1 >= len(seg) || seg[i+1].value != "test" {
+			return nil
+		}
+		i++
+	} else if sub != "test" && !((tool == "pnpm" || tool == "yarn") && (sub == "vitest" || sub == "jest")) {
+		return nil
+	}
+	return flagValueReplacements(seg, i+1, setOf("-t", "--testNamePattern", "--test-name-pattern"), false)
 }
 
 func flagValueReplacements(seg []dataToken, startIdx int, valueFlags map[string]bool, allowCommitShortM bool) []dataReplacement {
@@ -528,7 +576,8 @@ func unwrapLiteralShellSegment(seg string) (string, bool) {
 		return "", false
 	}
 	idx := 0
-	for idx < len(spans) && envVarAssignmentWordRe.MatchString(spans[idx].word) && !strings.ContainsAny(spans[idx].word, "$`") {
+	for idx < len(spans) && envVarAssignmentWordRe.MatchString(spans[idx].word) &&
+		(!strings.ContainsAny(spans[idx].word, "$`") || isSafeShellCPrefixEnv(spans[idx].word)) {
 		idx++
 	}
 	if idx >= len(spans) {

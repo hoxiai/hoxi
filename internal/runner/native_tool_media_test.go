@@ -284,3 +284,84 @@ func TestLocalSessionDiffAndRevertWithNativeApplyPatchAndMultiEdit(t *testing.T)
 		t.Fatalf("expected failed/running tool target user_ide_edit.txt preserved, got err=%v body=%q", err, string(b))
 	}
 }
+
+func TestNativeHistoryCapsEphemeralScreenshotsWhilePreservingOtherMedia(t *testing.T) {
+	root := t.TempDir()
+	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions"))
+	defer svc.CloseAll()
+
+	turns := []MessageTurn{
+		{
+			Info: MessageInfo{ID: "msg_u1", SessionID: "ses_shots", Role: "user"},
+			Parts: []MessagePart{
+				{ID: "prt_u1", Type: "text", Text: "Watch Gemini"},
+				{ID: "prt_uimg", Type: "file", URL: "data:image/png;base64,VVNFUl9JTUc=", Mime: "image/png", Filename: "user.png"},
+			},
+		},
+		{
+			Info: MessageInfo{ID: "msg_a1", SessionID: "ses_shots", Role: "assistant", ParentID: "msg_u1"},
+			Parts: []MessagePart{
+				{
+					ID: "prt_mcp", Type: "tool", Tool: "mcp_call_tool", CallID: "c_mcp",
+					State: &ToolState{
+						Status: "completed", Output: "ok",
+						Metadata: map[string]interface{}{
+							"step": 1,
+							"mediaAttachments": []map[string]interface{}{
+								{"url": "data:image/png;base64,TUNQX0lNRw==", "mime": "image/png", "filename": "mcp.png"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	for i := 1; i <= 5; i++ {
+		validData := []string{"U0hPVF8x", "U0hPVF8y", "U0hPVF8z", "U0hPVF80", "U0hPVF81"}[i-1]
+		turns[1].Parts = append(turns[1].Parts, MessagePart{
+			ID:     "prt_shot_" + string(rune('0'+i)),
+			Type:   "tool",
+			Tool:   "hoxi_computer",
+			CallID: "c_shot_" + string(rune('0'+i)),
+			State: &ToolState{
+				Status: "completed",
+				Input:  map[string]interface{}{"action": "screenshot"},
+				Output: `{"windowID":"w1"}`,
+				Metadata: map[string]interface{}{
+					"step": i + 1,
+					"mediaAttachments": []map[string]interface{}{
+						{"url": "data:image/jpeg;base64," + validData, "mime": "image/jpeg", "filename": "hoxi_computer.jpg"},
+					},
+				},
+			},
+		})
+	}
+
+	projected := svc.projectCanonicalNativeHistory(turns, "openai", "gpt-5")
+	var liveShots []string
+	var omittedShots int
+	var hasUserImg, hasMCPImg bool
+	for _, m := range projected {
+		for _, b := range m.Content {
+			if b.Type == "media" {
+				switch b.Filename {
+				case "user.png":
+					hasUserImg = true
+				case "mcp.png":
+					hasMCPImg = true
+				case "hoxi_computer.jpg":
+					liveShots = append(liveShots, b.Data)
+				}
+			}
+			if b.Type == "text" && strings.Contains(b.Text, "[omitted earlier screenshot: hoxi_computer.jpg (image/jpeg)]") {
+				omittedShots++
+			}
+		}
+	}
+	if !hasUserImg || !hasMCPImg {
+		t.Fatalf("expected user and MCP media preserved, got user=%v mcp=%v", hasUserImg, hasMCPImg)
+	}
+	if omittedShots != 3 || len(liveShots) != 2 {
+		t.Fatalf("expected 3 omitted and 2 live hoxi_computer screenshots, got omitted=%d live=%v", omittedShots, liveShots)
+	}
+}

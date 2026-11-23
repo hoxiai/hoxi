@@ -1,4 +1,6 @@
 // web/scripts/run-tests.ts
+import fs from "node:fs";
+import path from "node:path";
 import "../src/__tests__/i18n.test";
 import "../src/__tests__/sse.test";
 import "../src/__tests__/sse-reconnect.test";
@@ -95,6 +97,33 @@ import "../src/__tests__/intake.test";
 import "../src/__tests__/fast-mode.test";
 import "../src/__tests__/media-loopback.test";
 import "../src/__tests__/desktop-window.test";
+import "../src/__tests__/gateway-directory.test";
+import "../src/__tests__/orchestrator-mode.test";
+import "../src/__tests__/schedules.test";
+
+// Guard against orphaned unit tests: every src/__tests__/*.test.{ts,tsx} file
+// must be imported above so newly added suites cannot silently go unexecuted.
+{
+  const scriptPath = path.resolve(process.cwd(), process.argv[2] || "scripts/run-tests.ts");
+  const testDir = path.resolve(path.dirname(scriptPath), "../src/__tests__");
+  if (fs.existsSync(scriptPath) && fs.existsSync(testDir)) {
+    const runnerSrc = fs.readFileSync(scriptPath, "utf8");
+    const orphans = fs
+      .readdirSync(testDir)
+      .filter((name) => /\.test\.tsx?$/.test(name))
+      .sort()
+      .filter((name) => {
+        const stem = name.replace(/\.tsx?$/, "");
+        return !runnerSrc.includes(`/${stem}"`) && !runnerSrc.includes(`/${stem}'`);
+      });
+    if (orphans.length > 0) {
+      console.error(
+        `[test] ✗ Orphaned frontend test file(s) not registered in web/scripts/run-tests.ts: ${orphans.join(", ")}`
+      );
+      process.exit(1);
+    }
+  }
+}
 
 console.log("[test] Running Hoxi frontend unit tests...");
 runAllTests().then((failed) => {

@@ -3,6 +3,7 @@ import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "so
 import { LoaderCircle, Mic, Square } from "lucide-solid";
 import { locale, t } from "../../i18n";
 import {
+  errorMessageOf,
   hasConfiguredAudioTranscriber,
   IMAGE_ASPECT_RATIOS,
   IMAGE_SIZE_TIERS,
@@ -180,7 +181,7 @@ export function ComposerVoiceInputButton(props: {
             props.onInsertText?.(transcript);
           })
           .catch((err) => {
-            const msg = err instanceof Error ? err.message : String(err || "error");
+            const msg = errorMessageOf(err, t("common.error"));
             props.onNotice?.(t("timeline.voiceInputFailed", { error: msg }));
           })
           .finally(() => {
@@ -192,7 +193,7 @@ export function ComposerVoiceInputButton(props: {
     } catch (err) {
       stopTracks();
       setRecording(false);
-      const msg = err instanceof Error ? err.message : String(err || "error");
+      const msg = errorMessageOf(err, t("common.error"));
       props.onNotice?.(t("timeline.voiceInputFailed", { error: msg }));
     }
   };

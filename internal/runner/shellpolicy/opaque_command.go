@@ -71,6 +71,10 @@ func runsScriptNamedElsewhere(command string) bool {
 // are substituted and the expanded text is judged again. A secret substitution
 // stays opaque; the destructive scanner still sees that expanded text.
 func isOpaqueShellCommandDepth(command, worktree string, trust scriptTrust, depth int) bool {
+	return isOpaqueShellCommandDepthWith(command, worktree, trust, depth, nil)
+}
+
+func isOpaqueShellCommandDepthWith(command, worktree string, trust scriptTrust, depth int, scopedDirs map[string]bool) bool {
 	if depth > maxSubshellDepth {
 		return true
 	}
@@ -89,13 +93,18 @@ func isOpaqueShellCommandDepth(command, worktree string, trust scriptTrust, dept
 		command = stripped
 	}
 	command = maskRemoteSSHSegments(command)
+	if depth == 0 {
+		command = unwrapTopLevelSingleQuotedShellC(command, func(inner string) bool {
+			return !isOpaqueShellCommandDepth(inner, worktree, scriptTrustNone, depth+1)
+		})
+	}
 	command = normalizeNumericForHeaders(command)
 	if _, ok := findSubshellSpans(command); !ok {
 		return true
 	}
 	if subshellsClear(command, worktree, trust, depth) {
 		erased := eraseSubshells(command)
-		if !opaqueShellCore(erased, worktree, trust, commandSubsAreValueClass(erased)) {
+		if !opaqueShellCoreWith(erased, worktree, trust, commandSubsAreValueClass(erased), scopedDirs) {
 			return false
 		}
 	}
@@ -108,7 +117,7 @@ func isOpaqueShellCommandDepth(command, worktree string, trust scriptTrust, dept
 			return true
 		}
 		erased := eraseSubshells(expanded)
-		return opaqueShellCore(erased, worktree, trust, commandSubsAreValueClass(erased))
+		return opaqueShellCoreWith(erased, worktree, trust, commandSubsAreValueClass(erased), scopedDirs)
 	default:
 		return true
 	}
@@ -122,9 +131,17 @@ func subshellsClear(command, worktree string, trust scriptTrust, depth int) bool
 		return false
 	}
 	for _, sp := range spans {
-		if isOpaqueShellCommandDepth(command[sp[0]+1:sp[1]], worktree, trust, depth+1) {
-			return false
+		body := command[sp[0]+1 : sp[1]]
+		if !isOpaqueShellCommandDepth(body, worktree, trust, depth+1) {
+			continue
 		}
+		if depth == 0 && !isDestructiveCommand(body) {
+			if dirs := scopedDirVarsForSubshell(command, sp[0], sp[1]); len(dirs) > 0 &&
+				!isOpaqueShellCommandDepthWith(body, worktree, trust, depth+1, dirs) {
+				continue
+			}
+		}
+		return false
 	}
 	return true
 }
@@ -133,6 +150,10 @@ func subshellsClear(command, worktree string, trust scriptTrust, depth int) bool
 // result sit in a read-only tool argument (and in mkdir). It does not expand
 // assignments or subshells; the caller does that once.
 func opaqueShellCore(command, worktree string, trust scriptTrust, valueClass bool) bool {
+	return opaqueShellCoreWith(command, worktree, trust, valueClass, nil)
+}
+
+func opaqueShellCoreWith(command, worktree string, trust scriptTrust, valueClass bool, scopedDirs map[string]bool) bool {
 	command = strings.TrimSpace(command)
 	if command == "" {
 		return true
@@ -150,8 +171,19 @@ func opaqueShellCore(command, worktree string, trust scriptTrust, valueClass boo
 		return true
 	}
 	outsideCWD := false
+	usedDynamicCD := false
 	hasExec := false
 	vars := loopBindings(segments, pipedIn, valueClass)
+	var activeScopedDirs map[string]bool
+	if len(scopedDirs) > 0 {
+		activeScopedDirs = make(map[string]bool, len(scopedDirs))
+		for name := range scopedDirs {
+			if _, bound := vars[name]; !bound {
+				vars[name] = true
+				activeScopedDirs[name] = true
+			}
+		}
+	}
 	for i, rawSeg := range segments {
 		seg := strings.TrimSpace(rawSeg)
 		if seg == "" || strings.HasPrefix(seg, "#") {
@@ -161,7 +193,7 @@ func opaqueShellCore(command, worktree string, trust scriptTrust, valueClass boo
 		if len(words) == 0 {
 			continue
 		}
-		if hasDollarExpansion(seg) && !isBenignPathExport(seg) && !expansionsAreBounded(seg, words, vars, valueClass) {
+		if hasDollarExpansion(seg) && !isBenignPathExport(seg) && !expansionsAreBoundedWith(seg, words, vars, valueClass, activeScopedDirs) {
 			return true
 		}
 		if words[0] == "for" {
@@ -182,6 +214,9 @@ func opaqueShellCore(command, worktree string, trust scriptTrust, valueClass boo
 		if lookupOnly {
 			continue
 		}
+		if len(cmdWords) == 0 || isGlobCommandWord(cmdWords[0]) {
+			return true
+		}
 		base := filepath.Base(normalizeAbsoluteTool(cmdWords[0]))
 		args := cmdWords[1:]
 		if base == "set" {
@@ -191,9 +226,11 @@ func opaqueShellCore(command, worktree string, trust scriptTrust, valueClass boo
 			continue
 		}
 		if base == "cd" || base == "pushd" || base == "popd" {
-			if base != "cd" || outsideCWD {
+			if base != "cd" || outsideCWD || usedDynamicCD {
 				outsideCWD = true
 				cwd = ""
+			} else if isScopedDirCDArg(seg, activeScopedDirs) {
+				usedDynamicCD = true
 			} else if nextCWD, ok := advanceScopedCD(seg, cwd, worktree); ok {
 				cwd = nextCWD
 			} else {
@@ -209,10 +246,14 @@ func opaqueShellCore(command, worktree string, trust scriptTrust, valueClass boo
 		if i > 0 {
 			prevSeg = segments[i-1]
 		}
+		scriptCWD := cwd
+		if usedDynamicCD {
+			scriptCWD = ""
+		}
 		if dataArgInterpreters[base] &&
 			!(base == "xargs" && isSafeXargsSegment(args, i > 0 && pipedIn[i], prevSeg)) &&
 			!(base == "ssh" && len(args) == 1 && args[0] == maskedDataArgument) &&
-			!isSafeShellScriptSegmentIn(base, args, i > 0 && pipedIn[i], trust == scriptTrustFull, trust == scriptTrustReadOnly, worktree, cwd) {
+			!isSafeShellScriptSegmentIn(base, args, i > 0 && pipedIn[i], trust == scriptTrustFull, trust == scriptTrustReadOnly, worktree, scriptCWD) {
 			return true
 		}
 		if awkProgramExecutes(base, args) {

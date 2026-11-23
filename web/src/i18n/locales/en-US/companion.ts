@@ -38,7 +38,6 @@ export const companion = {
   poke4: "Completely useless desktop companion. Absolutely essential emotional support for refactoring",
 
   // Welcome Stage quick actions & labels
-  welcomeSubtitle: "Native Multi-Agent Workspace · Companion Stage",
   actionHandoff: "Import CLI Session",
   actionSwitchWorktree: "Use Worktree Sandbox",
   actionWorktreeActive: "Worktree Sandbox On",
@@ -54,7 +53,6 @@ export const companion = {
   enableLabel: "Enable Workspace Companion",
   enableDesc: "Show state-driven mascot reactions for streaming, parallel convoys, failover, and command approvals",
   personaLabel: "Companion Persona",
-  personaDesc: "Built-in vector mascots adapt to your theme accent, or upload your own transparent PNG/GIF standee",
   personaHoxiChan: "Hoxi-chan (Anime)",
   personaNekoBot: "Neko-01 (Cyber Cat)",
   personaCustom: "Custom Standee",

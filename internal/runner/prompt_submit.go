@@ -29,6 +29,7 @@ type PromptRequest struct {
 	FastMode        bool                `json:"fastMode,omitempty"`
 	System          string              `json:"system"`
 	Model           *PromptModel        `json:"model"`
+	Orchestrator    *PromptOrchestrator `json:"orchestrator,omitempty"`
 	ImageOptions    *PromptImageOptions `json:"imageOptions,omitempty"`
 	Parts           []MessagePart       `json:"parts"`
 	SkillSelection  *SkillSelection     `json:"skillSelection,omitempty"`
@@ -311,14 +312,22 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 			rec.ProviderID = ""
 		}
 	}
+	orchSpec, orchErr := validatePromptOrchestratorForRuntime(body.Orchestrator, rec.Runtime)
+	if orchErr != nil {
+		return http.StatusBadRequest, PromptReceipt{}, orchErr
+	}
 	callerSystem := strings.TrimSpace(body.System)
-	if storeCtx := s.resolveSessionContextBlock(rec.ID, rec.WorktreePath); storeCtx != "" &&
-		!strings.Contains(callerSystem, "<hoxi_work_store_profile>") &&
-		!strings.Contains(callerSystem, "<hoxi_work_app>") {
-		if callerSystem == "" {
-			callerSystem = storeCtx
-		} else {
-			callerSystem = storeCtx + "\n\n" + callerSystem
+	requestedMode := firstNonEmptyStr(body.Agent, rec.Mode, "build")
+	if storeCtx := s.resolveSessionContextBlock(rec.ID, rec.WorktreePath); storeCtx != "" {
+		if isAppDevPromptMode(requestedMode, "") {
+			storeCtx = stripTaggedPromptSection(storeCtx, "<hoxi_work_app>", "</hoxi_work_app>")
+		}
+		if storeCtx != "" && !strings.Contains(callerSystem, "<hoxi_work_store_profile>") && !strings.Contains(callerSystem, "<hoxi_work_app>") {
+			if callerSystem == "" {
+				callerSystem = storeCtx
+			} else {
+				callerSystem = storeCtx + "\n\n" + callerSystem
+			}
 		}
 	}
 	body.System = strings.TrimSpace(effectiveCommandExecutionGuidance() + "\n\n" + callerSystem)
@@ -431,7 +440,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 			rec.ProviderID = ""
 		}
 	}
-	llmPromptText, resolvedMode, resolvedProvID, resolvedModelID, nextCallerSys := resolveSlashCommandAndAgentOverrides(
+	llmPromptText, resolvedMode, resolvedProvID, resolvedModelID, nextCallerSys := resolveSlashCommandAndAgentOverridesForRuntime(
 		promptText,
 		rec.WorktreePath,
 		mode,
@@ -439,6 +448,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		modelID,
 		callerSystem,
 		rec.Runtime,
+		openCodeDaemonUp,
 	)
 	mode = resolvedMode
 	rec.ProviderID = resolvedProvID
@@ -686,6 +696,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		ModelID:         modelID,
 		Effort:          effort,
 		FastMode:        userInfo.ServiceTier == "fast",
+		Orchestrator:    toLedgerOrchestrator(orchSpec),
 		CallerSystem:    callerSystem,
 		PromptText:      cliPrompt,
 		ClientRequestID: clientReqID,
@@ -711,13 +722,13 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		if resumedUserInfo != nil {
 			resumed := *resumedUserInfo
 			resumed.ServiceTier = userInfo.ServiceTier
-			err = s.launchNativeTurn(rec, mode, modelID, effort, nativeSystem, restartContinuationPrompt, resumed, nil, asstMsgID, true)
+			err = s.launchNativeTurn(rec, mode, modelID, effort, nativeSystem, restartContinuationPrompt, resumed, nil, asstMsgID, true, toNativeOrchestrator(orchSpec))
 		} else {
 			promptInput := cliPrompt
 			if body.SkillSelection != nil {
 				promptInput = formatInlineSkillPrompt(body.SkillSelection.Name, resolvedSkill.Content, "") + "\n\n" + promptInput
 			}
-			err = s.startNativeTurn(rec, mode, modelID, effort, nativeSystem, promptInput, userInfo, storedParts, asstMsgID, deliveryParts...)
+			err = s.launchNativeTurn(rec, mode, modelID, effort, nativeSystem, promptInput, userInfo, storedParts, asstMsgID, false, toNativeOrchestrator(orchSpec), deliveryParts...)
 		}
 	} else {
 		input := runtimeMemoryContext(rec) + runtimeContext(rec)
@@ -729,7 +740,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		}
 		err = s.startTurnProcess(rec, binPath, mode, modelID, effort, input+cliPrompt, userInfo, storedParts, deliveryParts, asstMsgID)
 		if err == nil {
-			s.recordCLISystemDelivered(rec.ID, rec.Runtime, callerSystem)
+			s.recordCLISystemDeliveredForTurn(rec, callerSystem)
 		}
 	}
 	if err != nil {

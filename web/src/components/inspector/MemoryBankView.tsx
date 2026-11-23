@@ -3,6 +3,7 @@ import { ArrowUpRight, Brain, Check, Code2, Edit3, Eye, LoaderCircle, Plus, Refr
 import {
   activeDirectory,
   clearMemoryBankDraft,
+  errorMessageOf,
   getMemoryBankDraft,
   loadMemoryBankContent,
   promoteSessionMemoryToProject,
@@ -194,7 +195,7 @@ export default function MemoryBankView() {
       showNotice(t("inspector.memory.savedNotice"), 3000);
     } catch (err: any) {
       if (saveGen === requestGen && currentTarget().key === edit.key) {
-        setError(err?.message || String(err));
+        setError(errorMessageOf(err, t("common.error")));
       }
     } finally {
       setSaving(false);
@@ -226,7 +227,7 @@ export default function MemoryBankView() {
       showNotice(t("inspector.memory.promotedNotice", { count: res.addedCount }), 3500);
     } catch (err: any) {
       if (promoteGen === requestGen && currentTarget().key === target.key) {
-        setError(err?.message || String(err));
+        setError(errorMessageOf(err, t("common.error")));
       }
     } finally {
       setPromoting(false);

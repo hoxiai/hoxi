@@ -2,7 +2,6 @@
 
 export const relay = {
   title: "本地模型中转",
-  subtitle: "让本机其他 AI 工具直接调用你已配置好的模型",
   intro:
     "Hoxi 仅在回环地址上暴露一个 OpenAI 兼容端点。Cline、Continue、Cherry Studio、Open WebUI、aider 或任意脚本都可以指向它，复用你已配置的服务商。请求仍从这台 Mac 直连你配置的服务商，不经过 Hoxi 服务器",
   endpointTitle: "端点地址",
@@ -12,7 +11,6 @@ export const relay = {
   modelsURL: "模型列表",
   copy: "复制",
   copied: "已复制",
-  copyFailed: "复制到剪贴板失败",
   keysTitle: "中转 Key",
   keysDesc: "客户端用 hk-* 开头的 Key 认证；上游服务商的 Key 永远留在本机，不会下发给客户端",
   noKeys: "还没有中转 Key，先创建一个，再粘贴到客户端的 API Key 输入框",
@@ -27,7 +25,6 @@ export const relay = {
   lastUsed: "最近使用",
   neverUsed: "从未使用",
   created: "创建于",
-  keyCount: "{count} 个 Key",
   loadError: "无法读取本地中转状态",
   createError: "创建中转 Key 失败",
   revokeError: "吊销中转 Key 失败",

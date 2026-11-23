@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -283,25 +284,35 @@ func (g *Gateway) handleComputer(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"grant": g.computer.Current(scope)})
 	case "action":
 		var req struct {
-			Action        string  `json:"action"`
-			App           string  `json:"app,omitempty"`
-			WindowID      string  `json:"windowID,omitempty"`
-			ObservationID string  `json:"observationID,omitempty"`
-			ElementID     int     `json:"elementID,omitempty"`
-			X             float64 `json:"x,omitempty"`
-			Y             float64 `json:"y,omitempty"`
-			EndX          float64 `json:"endX,omitempty"`
-			EndY          float64 `json:"endY,omitempty"`
-			DeltaX        int     `json:"deltaX,omitempty"`
-			DeltaY        int     `json:"deltaY,omitempty"`
-			Button        string  `json:"button,omitempty"`
-			ClickCount    int     `json:"clickCount,omitempty"`
-			Text          string  `json:"text,omitempty"`
-			Key           string  `json:"key,omitempty"`
-			Screenshot    bool    `json:"screenshot,omitempty"`
+			Action        string   `json:"action"`
+			App           string   `json:"app,omitempty"`
+			WindowID      string   `json:"windowID,omitempty"`
+			ObservationID string   `json:"observationID,omitempty"`
+			ElementID     int      `json:"elementID,omitempty"`
+			X             float64  `json:"x,omitempty"`
+			Y             float64  `json:"y,omitempty"`
+			EndX          float64  `json:"endX,omitempty"`
+			EndY          float64  `json:"endY,omitempty"`
+			DeltaX        int      `json:"deltaX,omitempty"`
+			DeltaY        int      `json:"deltaY,omitempty"`
+			Button        string   `json:"button,omitempty"`
+			ClickCount    int      `json:"clickCount,omitempty"`
+			Text          string   `json:"text,omitempty"`
+			Key           string   `json:"key,omitempty"`
+			Clear         bool     `json:"clear,omitempty"`
+			Seconds       *float64 `json:"seconds,omitempty"`
+			Screenshot    bool     `json:"screenshot,omitempty"`
 		}
 		if decodeComputerJSON(w, r, &req) != nil {
 			writeJSONError(w, 400, "invalid_computer_action")
+			return
+		}
+		if req.Seconds != nil && req.Action != "wait" {
+			writeJSONError(w, 400, "seconds_only_supported_on_wait")
+			return
+		}
+		if req.Clear && req.Action != "type" {
+			writeJSONError(w, 400, "clear_only_supported_on_type")
 			return
 		}
 		if req.Action == "status" {
@@ -345,7 +356,28 @@ func (g *Gateway) handleComputer(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 200, snapshot)
 			return
 		}
-		action := computer.Action{Action: req.Action, WindowID: req.WindowID, ObservationID: req.ObservationID, ElementID: req.ElementID, X: req.X, Y: req.Y, EndX: req.EndX, EndY: req.EndY, DeltaX: req.DeltaX, DeltaY: req.DeltaY, Button: req.Button, ClickCount: req.ClickCount, Text: req.Text, Key: req.Key}
+		if req.Action == "wait" {
+			dur := computer.DefaultWaitDuration
+			if req.Seconds != nil {
+				sec := *req.Seconds
+				if math.IsNaN(sec) || math.IsInf(sec, 0) || sec <= 0 || sec > computer.MaxWaitDuration.Seconds() {
+					writeJSONError(w, 400, "invalid_wait_seconds")
+					return
+				}
+				dur = time.Duration(sec * float64(time.Second))
+				if dur <= 0 {
+					dur = time.Millisecond
+				}
+			}
+			snapshot, err := g.computer.Wait(ctx, scope, req.WindowID, dur, req.Screenshot)
+			if err != nil {
+				writeJSONError(w, 409, err.Error())
+				return
+			}
+			writeJSON(w, 200, snapshot)
+			return
+		}
+		action := computer.Action{Action: req.Action, WindowID: req.WindowID, ObservationID: req.ObservationID, ElementID: req.ElementID, X: req.X, Y: req.Y, EndX: req.EndX, EndY: req.EndY, DeltaX: req.DeltaX, DeltaY: req.DeltaY, Button: req.Button, ClickCount: req.ClickCount, Text: req.Text, Key: req.Key, Clear: req.Clear}
 		if !agent {
 			writeJSONError(w, 403, "native_input_requires_agent_approval")
 			return

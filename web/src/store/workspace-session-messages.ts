@@ -7,6 +7,7 @@ import { extractUserTurnSkillSelection, revalidateSkillForTargetDirectory, setCo
 import { recordPromptDispatched } from "./provider-telemetry";
 import { extractLocalFallbackTitle, isPlaceholderSessionTitle, summarizeAndRenameSession } from "./session-title";
 import { detectRequiredAttachmentModalities, evaluatePromptModalityIntent, isAutoModel, isImageGenerationModel, isNonChatUtilityModelID, markAutoCandidateCooldown, modelSupportsImageInput, resolveAutoModelTarget } from "./auto-models";
+import { clearSessionOrchestratorOverride, isOrchestratorModel, resolveOrchestratorDispatchTarget } from "./orchestrator-mode";
 import { isVideoGenerationModel } from "./auto-pool-defaults";
 import { resolveEffectiveModelEffort } from "./provider-catalog";
 import { reportAutoCandidateOutcome } from "./auto-breaker";
@@ -148,7 +149,10 @@ export async function dispatchSessionPrompt(
   });
   const requireVisionBrain = hasImageAttachment || turnIntent.requiresVisionBrain;
   const chosenModel = options?.model || config.model || agentDedicatedModel || editingQueued?.item.model;
-  const isAuto = isAutoModel(chosenModel);
+  const resolvedOrch = isOrchestratorModel(chosenModel)
+    ? resolveOrchestratorDispatchTarget(id ?? null, options?.effort ?? config.effort ?? editingQueued?.item.effort)
+    : null;
+  const isAuto = !resolvedOrch && isAutoModel(chosenModel);
   const resolvedConcrete =
     isAuto && chosenModel
       ? resolveAutoModelTarget(chosenModel, {
@@ -158,11 +162,7 @@ export async function dispatchSessionPrompt(
           sessionID: id ?? undefined,
         })
       : null;
-  let effectiveModel = resolvedConcrete
-    ? { ...resolvedConcrete }
-    : chosenModel
-    ? { ...chosenModel }
-    : undefined;
+  let effectiveModel = resolvedOrch ? { ...resolvedOrch.model } : resolvedConcrete ? { ...resolvedConcrete } : chosenModel ? { ...chosenModel } : undefined;
   const explicitlySelectedImageModel =
     !isAuto &&
     Boolean(
@@ -209,9 +209,7 @@ export async function dispatchSessionPrompt(
     throw new Error(t("timeline.modelDoesNotSupportImages", { model: effectiveModel.modelID }));
   }
   const rawEffort = options?.effort ?? config.effort ?? editingQueued?.item.effort;
-  const effort = explicitlySelectedImageModel
-    ? undefined
-    : resolveEffectiveModelEffort(effectiveModel, rawEffort);
+  const effort = resolvedOrch ? resolvedOrch.effort : explicitlySelectedImageModel ? undefined : resolveEffectiveModelEffort(effectiveModel, rawEffort);
   const requestedFastMode = Boolean(options?.fastMode ?? editingQueued?.item.fastMode ?? config.fastMode);
   const baseExplicitSystem = options?.system ?? editingQueued?.item.system;
   const explicitSystem = explicitlySelectedImageModel
@@ -236,7 +234,7 @@ export async function dispatchSessionPrompt(
     if (options?.clientRequestId) throw new Error(t("timeline.requestAwaitingConfirmation"));
     const queueOpts = {
       agent: effectiveAgent,
-      model: effectiveModel,
+      model: resolvedOrch ? chosenModel : effectiveModel,
       effort,
       fastMode: requestedFastMode || undefined,
       attachments,
@@ -377,6 +375,7 @@ export async function dispatchSessionPrompt(
   stageOptimisticTurn(id);
   initializeSessionAI(id, config);
   if (isBrandNewSession && workspace.defaultAI.fastMode) setFastMode(false, null);
+  if (isBrandNewSession && workspace.defaultAI.orchestratorOverride) clearSessionOrchestratorOverride(null);
   const fastMode =
     !explicitlySelectedImageModel &&
     appSettings.approvalMode !== "unattended" &&
@@ -450,6 +449,7 @@ export async function dispatchSessionPrompt(
         clientRequestId: options?.clientRequestId,
         agent: effectiveAgent,
         model: effectiveModel,
+        ...(resolvedOrch ? { orchestrator: resolvedOrch.orchestrator } : {}),
         ...(effectiveImageOptions ? { imageOptions: effectiveImageOptions } : {}),
         variant: effort || undefined,
         fastMode: fastMode || undefined,
@@ -457,7 +457,7 @@ export async function dispatchSessionPrompt(
         system,
         attachments,
         skillSelection: effectiveSkill,
-        runtime: resolveSessionTargetRuntime(id, effectiveModel?.providerID),
+        runtime: resolvedOrch ? "native" : resolveSessionTargetRuntime(id, effectiveModel?.providerID),
         continueTask: options?.continueTask || wasBusyBeforeSubmit,
       }, () => !isSessionDeleted(id!) && !hasRecentSessionInterrupt(id!));
       if (delivery === "recovered") {

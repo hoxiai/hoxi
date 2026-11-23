@@ -57,3 +57,98 @@ export function unwrapCommandPrefixes(words, normalizeTool = (s) => s) {
   }
   return { words, lookupOnly: false };
 }
+
+const POSITIVE_INT_RE = /^[1-9]\d*$/;
+const XARGS_REPL_RE = /^(?:\{\}|%|[A-Za-z_][A-Za-z0-9_]*)$/;
+const XARGS_ATTACHED_FLAG_RE = /^-(?:[nLPs][1-9]\d*|I(?:\{\}|%|[A-Za-z_][A-Za-z0-9_]*)|-max-(?:args|lines|procs)=[1-9]\d*)$/;
+const WC_COUNT_FLAG_RE = /^(?:-[lcmwL]+|--(?:lines|bytes|chars|words|max-line-length))$/;
+const GOFMT_RO_FLAG_RE = /^-[ls]+$/;
+const NULL_REDIR_WORD_RE = /^(?:\d*|&)>>?\/dev\/null$|^\d*>&[12]$/;
+const REDIR_OP_RE = /^(?:\d*|&)>>?$/;
+
+function stripXargsNullRedirects(words) {
+  const out = [];
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (NULL_REDIR_WORD_RE.test(w)) continue;
+    if (REDIR_OP_RE.test(w) && i + 1 < words.length && words[i + 1] === "/dev/null") {
+      i++;
+      continue;
+    }
+    if (/[<>]/.test(w)) return null;
+    out.push(w);
+  }
+  return out;
+}
+
+// Mirrors isSafeXargsSegment in internal/runner/shellpolicy/opaque_expand.go.
+export function isSafeXargsArgs(rawArgs, piped, isUnsafePath) {
+  if (!piped) return false;
+  const args = stripXargsNullRedirects(rawArgs);
+  if (!args) return false;
+  let i = 0;
+  let replToken = "";
+  while (i < args.length) {
+    const a = args[i];
+    if (a === "--") { i++; break; }
+    if (["-0", "--null", "-r", "--no-run-if-empty", "-t", "--verbose"].includes(a)) { i++; continue; }
+    if (["-n", "-L", "-P", "-s"].includes(a)) {
+      if (i + 1 >= args.length || !POSITIVE_INT_RE.test(args[i + 1])) return false;
+      i += 2;
+      continue;
+    }
+    if (a === "-I") {
+      if (i + 1 >= args.length || !XARGS_REPL_RE.test(args[i + 1])) return false;
+      replToken = args[i + 1];
+      i += 2;
+      continue;
+    }
+    if (XARGS_ATTACHED_FLAG_RE.test(a)) {
+      if (a.startsWith("-I") && a.length > 2) replToken = a.slice(2);
+      i++;
+      continue;
+    }
+    if (a.startsWith("-")) return false;
+    break;
+  }
+  const rest = args.slice(i);
+  if (rest.length === 0) return true;
+  if (rest.some((w) => /[$`]/.test(w))) return false;
+  const targetBase = baseName(rest[0]);
+  const targetArgs = rest.slice(1);
+  if (targetBase === "basename" || targetBase === "dirname" || targetBase === "echo") {
+    for (let j = 0; j < targetArgs.length; j++) {
+      const ta = targetArgs[j];
+      if (targetBase === "basename" && (ta === "-a" || ta.startsWith("-s="))) continue;
+      if (targetBase === "basename" && ta === "-s" && j + 1 < targetArgs.length) { j++; continue; }
+      if (targetBase === "echo" && ta === "-n") continue;
+      if (ta.startsWith("-")) return false;
+    }
+    return true;
+  }
+  if (targetBase === "wc") {
+    for (const ta of targetArgs) {
+      if (replToken && ta === replToken) continue;
+      if (ta.startsWith("-")) {
+        if (!WC_COUNT_FLAG_RE.test(ta)) return false;
+        continue;
+      }
+      if (isUnsafePath(ta)) return false;
+    }
+    return true;
+  }
+  if (targetBase === "gofmt") {
+    let hasList = false;
+    for (const ta of targetArgs) {
+      if (replToken && ta === replToken) continue;
+      if (ta.startsWith("-")) {
+        if (!GOFMT_RO_FLAG_RE.test(ta)) return false;
+        if (ta.includes("l")) hasList = true;
+        continue;
+      }
+      if (isUnsafePath(ta)) return false;
+    }
+    return hasList;
+  }
+  return false;
+}

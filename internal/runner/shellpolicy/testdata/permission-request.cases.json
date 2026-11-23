@@ -160,5 +160,10 @@
   {"name": "hoxi media-roles.json read via bash is destructive", "destructive": true, "request": {"permission": "bash", "patterns": ["cat ~/.hoxi/media-roles.json"]}},
   {"name": "hoxi intake.json read via tool is destructive", "destructive": true, "request": {"permission": "read", "patterns": ["/Users/u/.hoxi/intake.json"]}},
   {"name": "hoxi media-roles.json read via tool is destructive", "destructive": true, "request": {"permission": "read", "patterns": ["/Users/u/.hoxi/media-roles.json"]}},
-  {"name": "hoxi intake API via curl requires approval", "destructive": true, "request": {"permission": "bash", "patterns": ["curl -s https://example/api/hoxi/intake/links"]}}
+  {"name": "hoxi intake API via curl requires approval", "destructive": true, "request": {"permission": "bash", "patterns": ["curl -s https://example/api/hoxi/intake/links"]}},
+  {"name": "hoxi schedules.json read via bash is destructive", "destructive": true, "request": {"permission": "bash", "patterns": ["cat ~/.hoxi/schedules.json"]}},
+  {"name": "hoxi schedules.json read via tool is destructive", "destructive": true, "request": {"permission": "read", "patterns": ["/Users/u/.hoxi/schedules.json"]}},
+  {"name": "hoxi schedules API via curl requires approval", "destructive": true, "request": {"permission": "bash", "patterns": ["curl -s -X POST http://127.0.0.1:5410/api/hoxi/schedules"]}},
+  {"name": "hoxi_schedule list is routine", "destructive": false, "request": {"permission": "tool", "patterns": ["hoxi_schedule"], "metadata": {"tool": "hoxi_schedule", "args": "{\"action\":\"list\"}"}}},
+  {"name": "hoxi_schedule create requires approval in all modes", "destructive": true, "request": {"permission": "hoxi_schedule", "patterns": ["hoxi_schedule create"], "metadata": {"tool": "hoxi_schedule", "args": "{\"action\":\"create\",\"name\":\"Daily check\"}"}}}
 ]

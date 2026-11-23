@@ -387,8 +387,14 @@ func (s *Service) inspectHookToolRiskIn(sessionID, tool, cwd string, args map[st
 		if !ownRead && (isRiskyPath(filepathOut) || isRiskyPath(rawPath)) {
 			destructive = true
 		}
-		if worktree != "" && resolved != "" {
-			if !pathWithin(worktree, resolved) {
+		if worktree != "" {
+			if resolved == "" {
+				// A non-empty raw path that resolveHookToolPath refused to expand
+				// (e.g. ~otheruser/... or ~\...) cannot be proven inside the worktree:
+				// fail closed as external + destructive so no approval mode auto-allows it.
+				externalDir = true
+				destructive = true
+			} else if !pathWithin(worktree, resolved) {
 				// Crossing into a sibling workspace folder or an SDK cache is
 				// routine; only credential and execution-controlling paths
 				// must keep asking (same rule as the shared policy port).
@@ -417,10 +423,18 @@ func (s *Service) inspectHookToolRiskIn(sessionID, tool, cwd string, args map[st
 				filepathOut = subOut
 			}
 		}
-		if worktree != "" && subResolved != "" && !pathWithin(worktree, subResolved) {
-			externalDir = true
-			if filepathOut == resolved {
-				filepathOut = subResolved
+		if worktree != "" {
+			if subResolved == "" {
+				externalDir = true
+				destructive = true
+				if filepathOut == resolved {
+					filepathOut = subOut
+				}
+			} else if !pathWithin(worktree, subResolved) {
+				externalDir = true
+				if filepathOut == resolved {
+					filepathOut = subResolved
+				}
 			}
 		}
 	}
@@ -493,10 +507,15 @@ func (s *Service) gateToolCallIn(r *http.Request, cred hookCredential, tool stri
 		s.recordPolicyApproval(cred, req)
 		return true, ""
 	}
+	if s.classGrantApproves(req, cred.sessionID, worktree) {
+		s.recordRunnerApprovalAudit(cred, req, "once", approvalReply{Reply: "once", Source: grantSourceSession})
+		return true, ""
+	}
+	annotateGrantClasses(req, worktree)
 	answer := s.awaitReply(r, cred, id, req)
 	switch answer.Reply {
 	case "always":
-		if !destructive {
+		if !destructive && !isDestructivePermissionRequest(req) {
 			s.gate.addToolAlways(cred.sessionID, key, tool, summarizeToolGrantPattern(tool, args), answer.Source)
 		}
 		return true, ""

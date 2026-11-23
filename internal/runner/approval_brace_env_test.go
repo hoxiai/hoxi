@@ -76,14 +76,22 @@ func TestFilterFlagBraceListRunsInAutoMode(t *testing.T) {
 		`cat {.e,}nv`,
 		`grep -r KEY --include={.env,a.go} .`,
 		`grep -r KEY --include={.envrc,a.go} .`,
-		`grep -r x --exclude-dir={a,b}c .`,
-		`grep -r x --exclude-dir={../..,b} .`,
-		`grep -r x --file={a,b} .`,
 		`grep -r x --exclude-dir={a,b} . ; {rm,-rf,.}`,
 		`grep -r x --exclude-dir={a,b} . && rm -rf build`,
 	} {
-		if approvalAutoApproves(bashRequest(cmd), ApprovalPolicy{Mode: ApprovalModeTrusted}, nil, worktree) {
-			t.Errorf("trusted mode let %q through", cmd)
+		for _, mode := range []string{ApprovalModeAuto, ApprovalModeTrusted} {
+			if approvalAutoApproves(bashRequest(cmd), ApprovalPolicy{Mode: mode}, nil, worktree) {
+				t.Errorf("%s mode let %q through", mode, cmd)
+			}
+		}
+	}
+	for _, cmd := range []string{
+		`grep -r x --exclude-dir={a,b}c .`,
+		`grep -r x --exclude-dir={../..,b} .`,
+		`grep -r x --file={a,b} .`,
+	} {
+		if approvalAutoApproves(bashRequest(cmd), ApprovalPolicy{Mode: ApprovalModeAuto}, nil, worktree) {
+			t.Errorf("auto mode let opaque brace flag %q through", cmd)
 		}
 	}
 }

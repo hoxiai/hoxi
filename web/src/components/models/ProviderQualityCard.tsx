@@ -38,23 +38,25 @@ export default function ProviderQualityCard(props: { providerID: string }) {
   const [detailsOpen, setDetailsOpen] = createSignal(false);
 
   return (
-    <Show when={pid().length > 0}>
-      <div class="flex items-center justify-between gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/45 px-3 py-2">
-        <div class="flex min-w-0 items-center gap-2">
-          <Activity size={14} class="shrink-0 text-[var(--accent-primary)]" />
-          <span class="truncate text-[12px] font-medium text-[var(--text-secondary)]">
-            {t("models.qualityTitle")}
-          </span>
-          <ProviderHealthBadge providerID={pid()} compact />
+    <Show when={pid().length > 0 && (health().status !== "untested" || detailsOpen())}>
+      <Show when={health().status !== "untested"}>
+        <div class="flex items-center justify-between gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/45 px-3 py-2">
+          <div class="flex min-w-0 items-center gap-2">
+            <Activity size={14} class="shrink-0 text-[var(--accent-primary)]" />
+            <span class="truncate text-[12px] font-medium text-[var(--text-secondary)]">
+              {t("models.qualityTitle")}
+            </span>
+            <ProviderHealthBadge providerID={pid()} compact />
+          </div>
+          <button
+            type="button"
+            onClick={() => setDetailsOpen(true)}
+            class="inline-flex shrink-0 items-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1.5 text-[11px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+          >
+            {t("diagnostics.details")}
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={() => setDetailsOpen(true)}
-          class="inline-flex shrink-0 items-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1.5 text-[11px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
-        >
-          {t("diagnostics.view")}
-        </button>
-      </div>
+      </Show>
       <Presence when={detailsOpen()}>
         {(state) => (
         <div
@@ -80,6 +82,16 @@ export default function ProviderQualityCard(props: { providerID: string }) {
                 <ProviderHealthBadge providerID={pid()} compact />
               </div>
               <div class="flex shrink-0 items-center gap-2">
+                <Show when={health().status !== "untested"}>
+                  <button
+                    type="button"
+                    onClick={() => void resetProviderTelemetry(pid())}
+                    class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+                  >
+                    <RotateCcw size={10} />
+                    {t("models.qualityResetStats")}
+                  </button>
+                </Show>
                 <button
                   type="button"
                   onClick={() => openDiagnostics({ providerID: pid() })}
@@ -99,53 +111,6 @@ export default function ProviderQualityCard(props: { providerID: string }) {
             </div>
             <div class="space-y-3 overflow-y-auto p-4">
               <div class="space-y-3">
-                <div class="flex items-center justify-between gap-2 flex-wrap">
-                  <div class="flex min-w-0 items-center gap-2">
-                    <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-surface)] text-[var(--accent-primary)]">
-                      <Activity size={14} />
-                    </div>
-                    <div class="min-w-0">
-                      <div class="flex flex-wrap items-center gap-2">
-                        <span class="text-[12px] font-semibold text-[var(--text-primary)]">
-                          {t("models.qualityTitle")}
-                        </span>
-                        <ProviderHealthBadge providerID={pid()} compact />
-                      </div>
-                    </div>
-                  </div>
-
-                  <Show when={health().status !== "untested"}>
-                    <div class="flex items-center gap-2 shrink-0">
-                      <span class="font-mono text-[11px] text-[var(--text-faint)]">
-                        {t("models.qualityTurnsCount", { count: health().totalTurns })}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => void resetProviderTelemetry(pid())}
-                        class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1 text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
-                      >
-                        <RotateCcw size={10} />
-                        {t("models.qualityResetStats")}
-                      </button>
-                    </div>
-                  </Show>
-                </div>
-
-        <div class="py-2 space-y-1">
-          <div class="text-[11px] font-medium text-[var(--text-secondary)]">
-            {t("models.qualityStabilityScore")}
-          </div>
-          <div class="font-mono text-[15px] text-[var(--text-secondary)]">
-            {formatHealthScore(health().stabilityScore)}
-          </div>
-          <div class="text-[11px] text-[var(--text-muted)]">
-            {t("models.qualityTurnsCount", { count: health().totalTurns })}
-          </div>
-          <p class="text-[11px] text-[var(--text-muted)]">
-            {t("models.qualityStabilityExplanation")}
-          </p>
-        </div>
-
         <Show
           when={health().status !== "untested"}
           fallback={
@@ -154,6 +119,22 @@ export default function ProviderQualityCard(props: { providerID: string }) {
             </div>
           }
         >
+          <div class="py-1 space-y-1">
+            <div class="flex items-baseline justify-between gap-2">
+              <div class="text-[11px] font-medium text-[var(--text-secondary)]">
+                {t("models.qualityStabilityScore")}
+              </div>
+              <span class="font-mono text-[11px] text-[var(--text-faint)]">
+                {t("models.qualityTurnsCount", { count: health().totalTurns })}
+              </span>
+            </div>
+            <div class="font-mono text-[15px] text-[var(--text-secondary)]">
+              {formatHealthScore(health().stabilityScore)}
+            </div>
+            <p class="text-[11px] text-[var(--text-muted)]">
+              {t("models.qualityStabilityExplanation")}
+            </p>
+          </div>
           {/* Risk Tags Row */}
           <Show when={health().riskTags.length > 0}>
             <div class="flex items-center gap-1.5 flex-wrap">

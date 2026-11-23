@@ -3,7 +3,9 @@ package diagnostics
 import (
 	"context"
 	"io"
+	"log"
 	"log/slog"
+	"strings"
 )
 
 type logHandler struct {
@@ -36,6 +38,7 @@ var staticEvents = map[string]bool{
 	"native updates unavailable":                                                  true,
 	"desktop authorization callback was not completed; polling remains available": true,
 	"session title summarizer fell back to prompt":                                true,
+	"http server error":                                                           true,
 }
 
 // NewHandler preserves normal stderr logging. Disk records accept only reviewed
@@ -52,8 +55,15 @@ func (h *logHandler) Enabled(ctx context.Context, level slog.Level) bool {
 }
 
 func (h *logHandler) Handle(ctx context.Context, r slog.Record) error {
+	recognized := staticEvents[r.Message]
+	// Skip persisting routine unreviewed Info/Debug records as generic
+	// "system log event" placeholders; warnings, errors, and reviewed static
+	// events are always persisted.
+	if !recognized && r.Level < slog.LevelWarn {
+		return h.stderr.Handle(ctx, r)
+	}
 	e := Entry{Kind: "system", Level: r.Level.String(), Source: "slog", Message: "system log event"}
-	if staticEvents[r.Message] {
+	if recognized {
 		e.Message = r.Message
 	}
 	// Only metadata in the root group is accepted; no arbitrary attr values.
@@ -104,4 +114,38 @@ func (h *logHandler) WithGroup(name string) slog.Handler {
 	copy.stderr = h.stderr.WithGroup(name)
 	copy.grouped = true
 	return &copy
+}
+
+type quietHTTPErrorWriter struct{}
+
+func (quietHTTPErrorWriter) Write(p []byte) (int, error) {
+	msg := strings.TrimSpace(string(p))
+	if msg == "" {
+		return len(p), nil
+	}
+	lower := strings.ToLower(msg)
+	if lower == "eof" || strings.HasSuffix(lower, ": eof") || strings.HasSuffix(lower, " eof") {
+		return len(p), nil
+	}
+	for _, benign := range []string{
+		"context canceled",
+		"broken pipe",
+		"connection reset by peer",
+		"use of closed network connection",
+		"unexpected eof",
+		"superfluous response.writeheader",
+	} {
+		if strings.Contains(lower, benign) {
+			return len(p), nil
+		}
+	}
+	slog.Warn("http server error", "source", "http", "error", RedactSecrets(msg))
+	return len(p), nil
+}
+
+// NewQuietHTTPServerLogger returns a *log.Logger suitable for http.Server and
+// httputil.ReverseProxy ErrorLog fields. Routine client-disconnect noise is
+// suppressed while unexpected transport/server errors route through slog.
+func NewQuietHTTPServerLogger() *log.Logger {
+	return log.New(quietHTTPErrorWriter{}, "", 0)
 }

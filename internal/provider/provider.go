@@ -29,6 +29,7 @@ type Service struct {
 	reloadLoopRunning    bool
 	configPersistMu      sync.Mutex
 	mediaRolesMu         sync.Mutex
+	orchestratorMu       sync.Mutex
 	relayMu              sync.Mutex
 	relayPersistMu       sync.Mutex
 	relayBaseURL         string
@@ -95,6 +96,7 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("/api/hoxi/provider/"+action, s.serveAssist(action))
 	}
 	mux.HandleFunc("/api/hoxi/provider/auto-pools", s.handleAutoPoolsConfig)
+	mux.HandleFunc("/api/hoxi/provider/orchestrator", s.handleOrchestratorConfig)
 	mux.HandleFunc("/api/hoxi/provider/relay/keys", s.handleRelayAdmin)
 	mux.HandleFunc("/api/hoxi/provider/models", s.handleModelCatalog)
 	mux.HandleFunc("/api/hoxi/provider/catalog", s.handleProviderProxy)

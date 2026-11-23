@@ -2,7 +2,7 @@
   "name": "hoxi-web",
   "license": "Apache-2.0",
   "private": true,
-  "version": "0.7.3",
+  "version": "0.7.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -25,7 +25,10 @@
     "check:cycles": "node scripts/run-script.js scripts/check-cycles.ts",
     "lint": "tsc --noEmit && npm run check:i18n && npm run check:lines && npm run check:cycles",
     "test:inspector-selectable": "node scripts/run-browser-test.mjs src/__tests__/inspector-selectable.browser.tsx",
-    "test:memory-bank": "node scripts/run-browser-test.mjs src/__tests__/memory-bank.browser.tsx"
+    "test:memory-bank": "node scripts/run-browser-test.mjs src/__tests__/memory-bank.browser.tsx",
+    "test:composer-changes": "node scripts/run-browser-test.mjs src/__tests__/composer-changes.browser.tsx",
+    "test:model-selector": "node scripts/run-browser-test.mjs src/__tests__/model-selector.browser.tsx",
+    "test:task-overview": "node scripts/run-browser-test.mjs src/__tests__/task-overview.browser.tsx"
   },
   "dependencies": {
     "@pierre/diffs": "^1.5.2",

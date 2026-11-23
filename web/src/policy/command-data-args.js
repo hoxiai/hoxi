@@ -7,7 +7,8 @@
 // ports aligned.
 
 import { attachedInlineCode, inlineScriptTrailingArgsSafe } from "./inline-script-arguments.js";
-import { timeoutPrefixLength, unwrapCommandPrefixes } from "./command-wrappers.js";
+import { isSafeXargsArgs, timeoutPrefixLength, unwrapCommandPrefixes } from "./command-wrappers.js";
+import { isProtectedShellReadPath, isSecretPath, isSensitiveExternalPath } from "./external-path-risk.js";
 
 const MASKED_DATA_ARGUMENT = "Q";
 
@@ -295,10 +296,12 @@ function ghDataArguments(seg) {
 }
 
 // Only mask an operand when every preceding option has known arity.
-const SEARCH_SWITCHES = setOf("--line-number", "--ignore-case", "--case-sensitive", "--smart-case",
+const SEARCH_SWITCHES = setOf("--line-number", "--no-line-number", "--ignore-case", "--case-sensitive", "--smart-case",
   "--fixed-strings", "--word-regexp", "--line-regexp", "--invert-match", "--only-matching",
   "--with-filename", "--no-filename", "--hidden", "--no-ignore", "--no-heading",
-  "--heading", "--count", "--files-with-matches", "--files-without-match", "--multiline", "--no-messages");
+  "--heading", "--count", "--count-matches", "--files-with-matches", "--files-without-match", "--multiline",
+  "--multiline-dotall", "--no-messages", "--json", "--column", "--no-column", "--vimgrep",
+  "--stats", "--pcre2", "--trim", "--byte-offset", "--passthru", "--text", "--search-zip");
 const DIFF_SEARCH_SWITCHES = setOf("--cached", "--staged", "--stat", "--name-only", "--name-status", "--patch", "--pickaxe-all", "--pickaxe-regex");
 
 function gitDiffSearchArguments(seg, start) {
@@ -331,7 +334,7 @@ function searchDataArguments(seg) {
       if (positional < 0) positional = i;
       continue;
     }
-    if (!literal || positional >= 0) return out;
+    if (!literal || (grep && positional >= 0)) return out;
     let flag = value;
     let attached = false;
     if (value.startsWith("--")) {
@@ -352,6 +355,7 @@ function searchDataArguments(seg) {
     if (grep && !attached && ["-C", "--context", "--color", "--colour"].includes(flag)) return out;
     const pattern = flag === "-e" || flag === "--regexp";
     const file = flag === "-f" || flag === "--file";
+    if (positional >= 0 && (pattern || file)) return out;
     if (!pattern && !file && !valueFlags.has(flag)) return out;
     if (!attached) {
       i++;
@@ -364,9 +368,35 @@ function searchDataArguments(seg) {
   return out;
 }
 
+function packageManagerTestDataArguments(tool, seg) {
+  let i = 1;
+  while (i < seg.length && seg[i].value.startsWith("-")) {
+    const v = seg[i].value;
+    if (v === "--prefix" || v === "-C" || v === "--dir" || v === "--filter" || v === "-F") {
+      i += 2;
+      continue;
+    }
+    if (v.startsWith("--prefix=") || v.startsWith("--dir=") || v.startsWith("--filter=") || v === "-s" || v === "--silent") {
+      i++;
+      continue;
+    }
+    return [];
+  }
+  if (i >= seg.length) return [];
+  const sub = seg[i].value;
+  if (sub === "run") {
+    if (i + 1 >= seg.length || seg[i + 1].value !== "test") return [];
+    i++;
+  } else if (sub !== "test" && !((tool === "pnpm" || tool === "yarn") && (sub === "vitest" || sub === "jest"))) {
+    return [];
+  }
+  return flagValueReplacements(seg, i + 1, setOf("-t", "--testNamePattern", "--test-name-pattern"), false);
+}
+
 function dataArgumentReplacements(seg) {
   let idxs = [];
-  switch (baseName(seg[0].value)) {
+  const tool = baseName(seg[0].value);
+  switch (tool) {
     case "echo":
     case "printf":
       for (let i = 1; i < seg.length && !/[<>]/.test(seg[i].value); i++) {
@@ -384,11 +414,20 @@ function dataArgumentReplacements(seg) {
     case "pytest":
       return flagValueReplacements(seg, 1, setOf("-k"), false);
     case "vitest":
+    case "jest":
       return flagValueReplacements(seg, 1, setOf("-t", "--testNamePattern"), false);
     case "npx":
-      return seg.length >= 2 && seg[1].value === "vitest"
+      return seg.length >= 2 && (seg[1].value === "vitest" || seg[1].value === "jest")
         ? flagValueReplacements(seg, 2, setOf("-t", "--testNamePattern"), false)
         : [];
+    case "bun":
+      return seg.length >= 2 && seg[1].value === "test"
+        ? flagValueReplacements(seg, 2, setOf("-t", "--test-name-pattern"), false)
+        : [];
+    case "npm":
+    case "pnpm":
+    case "yarn":
+      return packageManagerTestDataArguments(tool, seg);
     case "rg":
     case "grep":
     case "egrep":
@@ -435,11 +474,20 @@ export function maskCommandDataArguments(command) {
   const isEcho = (seg) => ["echo", "printf"].includes(baseName(seg[0].value));
   const hasEcho = segments.some(isEcho);
   const echoWritesFile = segments.some((seg) => isEcho(seg) && seg.slice(1).some((w) => /[<>]/.test(w.value)));
+  const isUnsafeXargsPath = (p) => isSecretPath(p) || isSensitiveExternalPath(p) || isProtectedShellReadPath(p);
   let echoInPipe = false;
   for (let i = 0; i < segments.length; i++) {
     if (!pipedIn[i]) echoInPipe = false;
     const name = baseName(segments[i][0].value);
-    if (!segments[i][0].literal || DATA_ARG_INTERPRETERS.has(name)) return s;
+    if (!segments[i][0].literal) return s;
+    if (name === "xargs") {
+      const xargsArgs = segments[i].slice(1).map((tok) => tok.value);
+      if (echoWritesFile || echoInPipe || (hasEcho && hasParen) || !isSafeXargsArgs(xargsArgs, i > 0 && pipedIn[i], isUnsafeXargsPath)) {
+        return s;
+      }
+      continue;
+    }
+    if (DATA_ARG_INTERPRETERS.has(name)) return s;
     if (DATA_SCRIPT_INTERPRETERS.has(name) && (echoWritesFile || echoInPipe || (hasEcho && hasParen))) {
       return s;
     }
@@ -469,13 +517,23 @@ const REDIRECT_WORD_RE = /^(?:\d*|&)>>?$/;
 const DEV_NULL_WORD_RE = /^(?:\d*|&)>>?\/dev\/null$/;
 const DUP_STREAM_WORD_RE = /^\d*>&[12]$/;
 
+const UNWRAP_SAFE_PATH_ENV_RE = /^(?:PATH|NODE_PATH|GOCACHE|GOMODCACHE|GOPATH)=([A-Za-z0-9_./:$~{}-]+)$/;
+const UNWRAP_HARMLESS_DOLLAR_RE = /\$(?:HOME|PATH|PWD|TMPDIR|GOPATH|GOCACHE|GOMODCACHE|NODE_PATH|\{(?:HOME|PATH|PWD|TMPDIR|GOPATH|GOCACHE|GOMODCACHE|NODE_PATH)\})/g;
+
+function isSafeUnwrapEnvWord(word) {
+  if (!/[$`]/.test(word)) return true;
+  const m = UNWRAP_SAFE_PATH_ENV_RE.exec(word);
+  if (!m) return false;
+  return !m[1].replace(UNWRAP_HARMLESS_DOLLAR_RE, "").includes("$");
+}
+
 export function unwrapLiteralShellSegment(seg, normalizeAbsoluteTool) {
   const s = String(seg || "").trim();
   if (!s || s.startsWith("#")) return "";
   const spans = scanShellWordSpans(s);
   if (!spans || spans.length < 3) return "";
   let idx = 0;
-  while (idx < spans.length && DATA_ENV_ASSIGN_RE.test(spans[idx].word) && !/[$`]/.test(spans[idx].word)) {
+  while (idx < spans.length && DATA_ENV_ASSIGN_RE.test(spans[idx].word) && isSafeUnwrapEnvWord(spans[idx].word)) {
     idx++;
   }
   if (idx >= spans.length) return "";

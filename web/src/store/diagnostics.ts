@@ -1,5 +1,7 @@
 import { createStore } from "solid-js/store";
 import { diagnosticsAPI, type DiagnosticEntry, type DiagnosticsFilters } from "../services/diagnostics";
+import { errorMessageOf } from "../services/http";
+import { t } from "../i18n";
 import { openSettingsModal } from "./settings";
 
 const emptyFilters = (): DiagnosticsFilters => ({ kind: "", level: "", sessionID: "", providerID: "", q: "" });
@@ -51,7 +53,7 @@ export async function refreshDiagnostics() {
     if (request !== generation) return;
     setDiagnostics({ entries: result.entries, directory: result.directory, error: result.error || "", loaded: true });
   } catch (error) {
-    if (request === generation) setDiagnostics("error", String(error));
+    if (request === generation) setDiagnostics("error", errorMessageOf(error, t("common.error")));
   } finally {
     if (request === generation) setDiagnostics("loading", false);
   }
@@ -63,7 +65,7 @@ export async function exportDiagnostics(): Promise<Blob | undefined> {
   try {
     return await diagnosticsAPI.export();
   } catch (error) {
-    setDiagnostics("actionError", String(error));
+    setDiagnostics("actionError", errorMessageOf(error, t("common.error")));
   } finally {
     setDiagnostics("exporting", false);
   }
@@ -76,7 +78,7 @@ export async function openDiagnosticsDirectory() {
     const result = await diagnosticsAPI.openDirectory();
     if (result?.error) throw new Error(result.error);
   } catch (error) {
-    setDiagnostics("actionError", String(error));
+    setDiagnostics("actionError", errorMessageOf(error, t("common.error")));
   } finally {
     setDiagnostics("opening", false);
   }

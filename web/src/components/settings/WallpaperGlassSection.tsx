@@ -1,5 +1,5 @@
 // web/src/components/settings/WallpaperGlassSection.tsx
-import { Check, Eye, ImagePlus, Link2, RotateCcw, Sparkles, Trash2 } from "lucide-solid";
+import { Check, ChevronRight, Eye, ImagePlus, Link2, RotateCcw, Sparkles, Trash2 } from "lucide-solid";
 import { createSignal, For, Show } from "solid-js";
 import { t, type TxKey } from "../../i18n";
 import {
@@ -112,30 +112,31 @@ export function WallpaperGlassSection() {
         />
       </SettingRow>
 
-      <SettingRow
-        icon={Eye}
-        label={t("settings.wallpaperMaterialModeLabel")}
-        tip={t("settings.wallpaperMaterialModeDesc")}
-      >
-        <SegmentedPills<WallpaperMaterialMode>
-          value={activeWallpaperMaterialMode()}
-          options={[
-            {
-              id: "crystal",
-              label: () => t("settings.wallpaperModeCrystal"),
-              tip: () => t("settings.wallpaperModeCrystalDesc"),
-            },
-            {
-              id: "frosted",
-              label: () => t("settings.wallpaperModeFrosted"),
-              tip: () => t("settings.wallpaperModeFrostedDesc"),
-            },
-          ]}
-          onChange={(mode) => applyWallpaperMaterialMode(mode)}
-        />
-      </SettingRow>
+      <Show when={wallpaperState.enabled}>
+        <SettingRow
+          icon={Eye}
+          label={t("settings.wallpaperMaterialModeLabel")}
+          tip={t("settings.wallpaperMaterialModeDesc")}
+        >
+          <SegmentedPills<WallpaperMaterialMode>
+            value={activeWallpaperMaterialMode()}
+            options={[
+              {
+                id: "crystal",
+                label: () => t("settings.wallpaperModeCrystal"),
+                tip: () => t("settings.wallpaperModeCrystalDesc"),
+              },
+              {
+                id: "frosted",
+                label: () => t("settings.wallpaperModeFrosted"),
+                tip: () => t("settings.wallpaperModeFrostedDesc"),
+              },
+            ]}
+            onChange={(mode) => applyWallpaperMaterialMode(mode)}
+          />
+        </SettingRow>
 
-      <div class="px-5 py-4 space-y-4">
+        <div class="px-5 py-4 space-y-4">
         <div class="space-y-2">
           <div class="text-[12px] font-medium text-[var(--text-secondary)]">
             {t("settings.wallpaperPresetsLabel")}
@@ -259,72 +260,81 @@ export function WallpaperGlassSection() {
         </div>
       </div>
 
-      {/* Three Precision Glass Tuning Sliders */}
-      <SettingRow
-        label={t("settings.wallpaperOpacityLabel")}
-        tip={t("settings.wallpaperOpacityDesc")}
-      >
-        <div class="flex items-center gap-3 w-52 sm:w-64">
-          <input
-            type="range"
-            min={WALLPAPER_OPACITY_MIN}
-            max={WALLPAPER_OPACITY_MAX}
-            step={1}
-            aria-label={t("settings.wallpaperOpacityLabel")}
-            value={wallpaperState.panelOpacity}
-            disabled={!wallpaperState.enabled}
-            onInput={(e) => updateWallpaperPanelOpacity(e.currentTarget.valueAsNumber)}
-            class="flex-1 accent-[var(--accent-primary)] cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
-          />
-          <span class="w-11 text-right font-mono text-[12.5px] text-[var(--text-secondary)]">
-            {wallpaperState.panelOpacity}%
-          </span>
-        </div>
-      </SettingRow>
+        {/* Three Precision Glass Tuning Sliders (collapsible) */}
+        <details class="group/glass-tuning">
+          <summary class="flex cursor-pointer list-none items-center gap-1.5 px-5 py-2.5 text-[12px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] [&::-webkit-details-marker]:hidden">
+            <ChevronRight size={13} class="transition-transform group-open/glass-tuning:rotate-90" />
+            <span>{t("settings.wallpaperFineTuning")}</span>
+            <span class="ml-auto font-mono text-[11px] text-[var(--text-faint)]">
+              {wallpaperState.panelOpacity}% · {wallpaperState.backdropBlur}px · {wallpaperState.wallpaperDim}%
+            </span>
+          </summary>
+          <div class="divide-y divide-[var(--border-subtle)]/55 border-t border-[var(--border-subtle)]/55">
+            <SettingRow
+              label={t("settings.wallpaperOpacityLabel")}
+              tip={t("settings.wallpaperOpacityDesc")}
+            >
+              <div class="flex items-center gap-3 w-52 sm:w-64">
+                <input
+                  type="range"
+                  min={WALLPAPER_OPACITY_MIN}
+                  max={WALLPAPER_OPACITY_MAX}
+                  step={1}
+                  aria-label={t("settings.wallpaperOpacityLabel")}
+                  value={wallpaperState.panelOpacity}
+                  onInput={(e) => updateWallpaperPanelOpacity(e.currentTarget.valueAsNumber)}
+                  class="flex-1 accent-[var(--accent-primary)] cursor-pointer"
+                />
+                <span class="w-11 text-right font-mono text-[12.5px] text-[var(--text-secondary)]">
+                  {wallpaperState.panelOpacity}%
+                </span>
+              </div>
+            </SettingRow>
 
-      <SettingRow
-        label={t("settings.wallpaperBlurLabel")}
-        tip={t("settings.wallpaperBlurDesc")}
-      >
-        <div class="flex items-center gap-3 w-52 sm:w-64">
-          <input
-            type="range"
-            min={WALLPAPER_BLUR_MIN}
-            max={WALLPAPER_BLUR_MAX}
-            step={1}
-            aria-label={t("settings.wallpaperBlurLabel")}
-            value={wallpaperState.backdropBlur}
-            disabled={!wallpaperState.enabled}
-            onInput={(e) => updateWallpaperBackdropBlur(e.currentTarget.valueAsNumber)}
-            class="flex-1 accent-[var(--accent-primary)] cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
-          />
-          <span class="w-11 text-right font-mono text-[12.5px] text-[var(--text-secondary)]">
-            {wallpaperState.backdropBlur}px
-          </span>
-        </div>
-      </SettingRow>
+            <SettingRow
+              label={t("settings.wallpaperBlurLabel")}
+              tip={t("settings.wallpaperBlurDesc")}
+            >
+              <div class="flex items-center gap-3 w-52 sm:w-64">
+                <input
+                  type="range"
+                  min={WALLPAPER_BLUR_MIN}
+                  max={WALLPAPER_BLUR_MAX}
+                  step={1}
+                  aria-label={t("settings.wallpaperBlurLabel")}
+                  value={wallpaperState.backdropBlur}
+                  onInput={(e) => updateWallpaperBackdropBlur(e.currentTarget.valueAsNumber)}
+                  class="flex-1 accent-[var(--accent-primary)] cursor-pointer"
+                />
+                <span class="w-11 text-right font-mono text-[12.5px] text-[var(--text-secondary)]">
+                  {wallpaperState.backdropBlur}px
+                </span>
+              </div>
+            </SettingRow>
 
-      <SettingRow
-        label={t("settings.wallpaperDimLabel")}
-        tip={t("settings.wallpaperDimDesc")}
-      >
-        <div class="flex items-center gap-3 w-52 sm:w-64">
-          <input
-            type="range"
-            min={WALLPAPER_DIM_MIN}
-            max={WALLPAPER_DIM_MAX}
-            step={1}
-            aria-label={t("settings.wallpaperDimLabel")}
-            value={wallpaperState.wallpaperDim}
-            disabled={!wallpaperState.enabled}
-            onInput={(e) => updateWallpaperDim(e.currentTarget.valueAsNumber)}
-            class="flex-1 accent-[var(--accent-primary)] cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
-          />
-          <span class="w-11 text-right font-mono text-[12.5px] text-[var(--text-secondary)]">
-            {wallpaperState.wallpaperDim}%
-          </span>
-        </div>
-      </SettingRow>
+            <SettingRow
+              label={t("settings.wallpaperDimLabel")}
+              tip={t("settings.wallpaperDimDesc")}
+            >
+              <div class="flex items-center gap-3 w-52 sm:w-64">
+                <input
+                  type="range"
+                  min={WALLPAPER_DIM_MIN}
+                  max={WALLPAPER_DIM_MAX}
+                  step={1}
+                  aria-label={t("settings.wallpaperDimLabel")}
+                  value={wallpaperState.wallpaperDim}
+                  onInput={(e) => updateWallpaperDim(e.currentTarget.valueAsNumber)}
+                  class="flex-1 accent-[var(--accent-primary)] cursor-pointer"
+                />
+                <span class="w-11 text-right font-mono text-[12.5px] text-[var(--text-secondary)]">
+                  {wallpaperState.wallpaperDim}%
+                </span>
+              </div>
+            </SettingRow>
+          </div>
+        </details>
+      </Show>
     </SettingGroup>
   );
 }

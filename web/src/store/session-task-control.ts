@@ -5,6 +5,7 @@ import { hasPendingPrompt, recoverPendingPrompt, sendRecoverablePrompt } from ".
 import { RequestOutcomeUnknownError } from "../services/request-ledger";
 import type { MessagePart } from "../services/sse-types";
 import { isAutoModel, resolveAutoModelTarget } from "./auto-models";
+import { isOrchestratorModel, resolveOrchestratorDispatchTarget } from "./orchestrator-mode";
 import { recordPromptDispatched, recordSessionRetry, recordUserAbortAction } from "./provider-telemetry";
 import {
   canSwitchPoolCandidate,
@@ -115,7 +116,16 @@ export async function rerouteRetryingTurnToModel(
   const hasImage = (prev.attachments ?? []).some(
     (a) => (a.mime || "").toLowerCase().startsWith("image/") || /^data:image\//i.test(a.url || "")
   );
-  const usedAutoPool = isAutoModel(chosen);
+  const isOrch = isOrchestratorModel(chosen);
+  let resolvedOrch: ReturnType<typeof resolveOrchestratorDispatchTarget> | null = null;
+  if (isOrch) {
+    try {
+      resolvedOrch = resolveOrchestratorDispatchTarget(sessionID, nextEffort);
+    } catch {
+      return false;
+    }
+  }
+  const usedAutoPool = !resolvedOrch && isAutoModel(chosen);
   const resolved = usedAutoPool
     ? resolveAutoModelTarget(chosen, {
         advance: true,
@@ -123,7 +133,8 @@ export async function rerouteRetryingTurnToModel(
         sessionID,
       })
     : null;
-  const effectiveModel = resolved ? { ...resolved } : { ...chosen };
+  const effectiveModel = resolvedOrch ? { ...resolvedOrch.model } : resolved ? { ...resolved } : { ...chosen };
+  const effectiveEffort = resolvedOrch ? resolvedOrch.effort : nextEffort;
   const gen = (rerouteGenBySession.get(sessionID) ?? 0) + 1;
   rerouteGenBySession.set(sessionID, gen);
 
@@ -132,7 +143,7 @@ export async function rerouteRetryingTurnToModel(
     target: effectiveModel,
     promptText: prev.promptText,
     agent: prev.agent,
-    effort: nextEffort || undefined,
+    effort: effectiveEffort || undefined,
     fastMode: resolveEffectiveFastMode(effectiveModel, cfg.fastMode ?? prev.fastMode) || undefined,
     attachments: prev.attachments,
     skillSelection: prev.skillSelection,
@@ -181,16 +192,19 @@ export async function rerouteRetryingTurnToModel(
       continueTask: true,
       agent: nextState.agent,
       model: effectiveModel,
+      ...(resolvedOrch ? { orchestrator: resolvedOrch.orchestrator } : {}),
       variant: nextState.effort || undefined,
       fastMode: nextState.fastMode || undefined,
       directory: dir,
       attachments: nextState.attachments,
       skillSelection: nextState.skillSelection,
       system: nextState.system,
-      runtime: resolveRunnerRuntimeForProvider(
-        effectiveModel.providerID,
-        Boolean(workspace.hoxiProviders?.[effectiveModel.providerID || ""])
-      ),
+      runtime: resolvedOrch
+        ? "native"
+        : resolveRunnerRuntimeForProvider(
+            effectiveModel.providerID,
+            Boolean(workspace.hoxiProviders?.[effectiveModel.providerID || ""])
+          ),
     }, () => rerouteGenBySession.get(sessionID) === gen && getTurnDispatchState(sessionID) === nextState &&
       !isSessionDeleted(sessionID) && !workspace.archivedSessionIDs.includes(sessionID) && !workspace.interruptedBySession[sessionID]);
     if (

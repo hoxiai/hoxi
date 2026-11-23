@@ -1,13 +1,17 @@
 // web/src/components/models/SelectedModelHoverCard.tsx
 import { onMount, Show } from "solid-js";
-import { ChevronRight, Image, Sparkles, Wrench, Zap } from "lucide-solid";
+import { ChevronRight, Image, Layers, Sparkles, Wrench, Zap } from "lucide-solid";
 import {
   AUTO_PROVIDER_ID,
   ensureLocalCLIStatusLoaded,
+  formatOrchestratorModelLabel,
+  getEffectiveOrchestratorPair,
   getEffectivePoolCandidates,
   getLocalCLIStatusForProvider,
   isCandidateCoolingDown,
+  ORCHESTRATOR_PROVIDER_ID,
   peekAutoModelTarget,
+  peekOrchestratorConcreteModel,
   resolveEffectiveFastMode,
   workspace,
 } from "../../store/workspace";
@@ -39,19 +43,22 @@ export function SelectedModelHoverCard(props: {
   const inPrice = () => formatPricePerMillion(props.model.inputCost, props.model.priceCurrency);
   const outPrice = () => formatPricePerMillion(props.model.outputCost, props.model.priceCurrency);
   const isAuto = () => props.model.providerID === AUTO_PROVIDER_ID;
+  const isOrch = () => props.model.providerID === ORCHESTRATOR_PROVIDER_ID;
+  const orchPair = () => (isOrch() ? getEffectiveOrchestratorPair(workspace.activeSessionID) : null);
   const autoTarget = () => (isAuto() ? peekAutoModelTarget(props.model.modelID) : null);
   const autoCands = () => (isAuto() ? getEffectivePoolCandidates(props.model.modelID) : []);
   const autoReadyCount = () =>
     autoCands().filter((c) => !isCandidateCoolingDown(c.providerID, c.modelID)).length;
   const hasEffortControl = () =>
     props.model.reasoning || (props.model.efforts?.length ?? 0) > 0;
-  const isFastActive = () =>
-    resolveEffectiveFastMode(
-      { providerID: props.model.providerID, modelID: props.model.modelID },
-      workspace.fastMode
-    );
+  const isFastActive = () => {
+    const target = isOrch()
+      ? peekOrchestratorConcreteModel(workspace.activeSessionID, "orchestrator")
+      : { providerID: props.model.providerID, modelID: props.model.modelID };
+    return resolveEffectiveFastMode(target, workspace.fastMode);
+  };
   const effortText = () => {
-    const current = workspace.reasoningEffort;
+    const current = workspace.reasoningEffort || (isOrch() ? orchPair()?.orchestratorEffort || "" : "");
     if (current) return current.toUpperCase();
     const def = props.model.defaultEffort;
     return def
@@ -77,7 +84,12 @@ export function SelectedModelHoverCard(props: {
     >
       <div class="flex items-center justify-between gap-2 border-b border-[var(--border-subtle)] pb-2">
         <div class="flex items-center gap-1.5 min-w-0">
-          <ProviderIcon id={props.model.providerID} class="w-4 h-4 shrink-0" />
+          <Show
+            when={isOrch()}
+            fallback={<ProviderIcon id={props.model.providerID} class="w-4 h-4 shrink-0" />}
+          >
+            <Layers size={15} class="shrink-0 text-[var(--accent-primary)]" />
+          </Show>
           <span class="font-semibold text-[var(--text-primary)] truncate text-[13px]">
             {props.model.modelName}
           </span>
@@ -105,6 +117,38 @@ export function SelectedModelHoverCard(props: {
       </div>
 
       <div class="space-y-1.5 text-[11px]">
+        <Show when={isOrch() && orchPair()}>
+          {(pair) => (
+            <>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-[var(--text-muted)] shrink-0">
+                  {t("models.orchestratorHoverBrainLabel")}
+                </span>
+                <span class="font-medium text-[var(--text-primary)] truncate">
+                  {formatOrchestratorModelLabel(pair().orchestratorModel) || t("models.orchestratorNotConfiguredHint")}
+                  <Show when={pair().orchestratorEffort}>
+                    <span class="ml-1 font-mono uppercase text-[10px] text-[var(--accent-primary)]">
+                      {pair().orchestratorEffort}
+                    </span>
+                  </Show>
+                </span>
+              </div>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-[var(--text-muted)] shrink-0">
+                  {t("models.orchestratorHoverExecutorLabel")}
+                </span>
+                <span class="font-medium text-[var(--text-primary)] truncate">
+                  {formatOrchestratorModelLabel(pair().executorModel) || t("models.orchestratorNotConfiguredHint")}
+                  <Show when={pair().executorEffort}>
+                    <span class="ml-1 font-mono uppercase text-[10px] text-[var(--accent-primary)]">
+                      {pair().executorEffort}
+                    </span>
+                  </Show>
+                </span>
+              </div>
+            </>
+          )}
+        </Show>
         <div class="flex items-center justify-between gap-2">
           <span class="text-[var(--text-muted)] shrink-0">
             {t("models.hoverSourceLabel")}
@@ -132,26 +176,28 @@ export function SelectedModelHoverCard(props: {
           </span>
         </div>
 
-        <div class="flex items-center justify-between gap-2">
-          <span class="text-[var(--text-muted)] shrink-0">
-            {t("models.hoverProviderLabel")}
-          </span>
-          <span class="text-[var(--text-primary)] font-medium truncate">
-            {props.model.providerName}{" "}
-            <span class="font-mono text-[11px] text-[var(--text-faint)]">
-              ({props.model.providerID})
+        <Show when={!isOrch()}>
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-[var(--text-muted)] shrink-0">
+              {t("models.hoverProviderLabel")}
             </span>
-          </span>
-        </div>
+            <span class="text-[var(--text-primary)] font-medium truncate">
+              {props.model.providerName}{" "}
+              <span class="font-mono text-[11px] text-[var(--text-faint)]">
+                ({props.model.providerID})
+              </span>
+            </span>
+          </div>
 
-        <div class="flex items-center justify-between gap-2">
-          <span class="text-[var(--text-muted)] shrink-0">
-            {t("models.hoverModelIdLabel")}
-          </span>
-          <span class="font-mono text-[11px] text-[var(--text-secondary)] truncate">
-            {props.model.modelID}
-          </span>
-        </div>
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-[var(--text-muted)] shrink-0">
+              {t("models.hoverModelIdLabel")}
+            </span>
+            <span class="font-mono text-[11px] text-[var(--text-secondary)] truncate">
+              {props.model.modelID}
+            </span>
+          </div>
+        </Show>
 
         <Show when={isAuto()}>
           <div class="flex items-center justify-between gap-2 rounded-lg bg-[var(--accent-surface)]/40 px-2 py-1 text-[11px]">

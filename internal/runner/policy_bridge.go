@@ -25,8 +25,11 @@ const (
 	permissionCategoryBash     = shellpolicy.PermissionCategoryBash
 	permissionCategoryOther    = shellpolicy.PermissionCategoryOther
 
-	fileGrantPrefix = shellpolicy.FileGrantPrefix
-	grantKindFile   = shellpolicy.GrantKindFile
+	fileGrantPrefix       = shellpolicy.FileGrantPrefix
+	grantKindFile         = shellpolicy.GrantKindFile
+	sshHostGrantPrefix    = shellpolicy.SSHHostGrantPrefix
+	sshProfileGrantPrefix = shellpolicy.SSHProfileGrantPrefix
+	grantKindSSH          = shellpolicy.GrantKindSSH
 
 	sessionGrantRefusedDestructive = shellpolicy.SessionGrantRefusedDestructive
 	sessionGrantRefusedOpaque      = shellpolicy.SessionGrantRefusedOpaque
@@ -90,6 +93,13 @@ func grantableEditFiles(item map[string]interface{}, worktree string) []string {
 }
 func grantableInlineScriptRequest(item map[string]interface{}, worktree string) bool {
 	return shellpolicy.GrantableInlineScriptRequest(item, worktree)
+}
+func grantableSSHRequestClasses(item map[string]interface{}, worktree string) []string {
+	return shellpolicy.GrantableSSHRequestClasses(item, worktree)
+}
+func isSSHGrantClass(class string) bool { return shellpolicy.IsSSHGrantClass(class) }
+func sshGrantTarget(class string) (kind, target string, ok bool) {
+	return shellpolicy.SSHGrantTarget(class)
 }
 func isAbsOrRootedPath(p string) bool { return shellpolicy.IsAbsOrRootedPath(p) }
 func hasRiskySearchSelector(tool string, args map[string]interface{}) bool {

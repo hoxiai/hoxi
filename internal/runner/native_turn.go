@@ -32,6 +32,7 @@ type NativeTurnRequest struct {
 	ModelID             string
 	Effort              string
 	FastMode            bool
+	Orchestrator        *NativeOrchestratorConfig
 	System              string
 	History             []NativeMessage
 	InitialTodos        []NativeTodoItem
@@ -184,7 +185,7 @@ func (s *Service) startNativeTurn(
 	asstMsgID string,
 	deliveryParts ...MessagePart,
 ) error {
-	return s.launchNativeTurn(rec, mode, modelID, effort, systemPrompt, promptText, userInfo, storedParts, asstMsgID, false, deliveryParts...)
+	return s.launchNativeTurn(rec, mode, modelID, effort, systemPrompt, promptText, userInfo, storedParts, asstMsgID, false, nil, deliveryParts...)
 }
 
 func (s *Service) launchNativeTurn(
@@ -194,6 +195,7 @@ func (s *Service) launchNativeTurn(
 	storedParts []MessagePart,
 	asstMsgID string,
 	resumeFromHistory bool,
+	orchestrator *NativeOrchestratorConfig,
 	deliveryParts ...MessagePart,
 ) error {
 	s.mu.Lock()
@@ -640,6 +642,7 @@ func (s *Service) launchNativeTurn(
 			ModelID:         modelID,
 			Effort:          effort,
 			FastMode:        userInfo.ServiceTier == "fast",
+			Orchestrator:    orchestrator,
 			System:          systemPrompt,
 			History:         history,
 			InitialTodos:    extractLatestSessionTodos(rec.Turns),

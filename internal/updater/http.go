@@ -2,6 +2,7 @@ package updater
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -56,7 +57,20 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"native updater is not configured"}`, http.StatusServiceUnavailable)
 			return
 		}
-		if err := CheckNative(); err != nil {
+		var opts InstallOptions
+		if r.Body != nil {
+			var body struct {
+				Source         string `json:"source"`
+				UseSelfUpdater bool   `json:"useSelfUpdater"`
+			}
+			if raw, readErr := io.ReadAll(io.LimitReader(r.Body, 4096)); readErr == nil && len(strings.TrimSpace(string(raw))) > 0 {
+				if err := json.Unmarshal(raw, &body); err == nil {
+					opts.Source = NormalizeDownloadSource(body.Source)
+					opts.UseSelfUpdater = body.UseSelfUpdater
+				}
+			}
+		}
+		if err := CheckNativeWithOptions(opts); err != nil {
 			traceUpdate("updater install rejected", http.StatusConflict, time.Since(started))
 			w.WriteHeader(http.StatusConflict)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})

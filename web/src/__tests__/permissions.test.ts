@@ -14,6 +14,7 @@ import {
   handleIncomingPermissionRequest,
   isDestructivePermissionRequest,
   isFileGrantClass,
+  isSSHGrantClass,
   loadApprovalPolicy,
   markPermissionResolved,
   replyPermissionRequest,
@@ -404,6 +405,13 @@ describe("session kind grant", () => {
     const label = grantClassLabel(`file:${path}`);
     assertEqual(label.includes(path) && !label.includes("file:"), true);
     assertEqual(grantClassLabel("inline-script").includes("Python/Node"), true);
+    assertEqual(isSSHGrantClass("ssh:203.0.113.57"), true);
+    assertEqual(isSSHGrantClass("ssh-profile:staging-1"), true);
+    assertEqual(isSSHGrantClass("ssh:"), false);
+    assertEqual(isSSHGrantClass("ssh-profile:"), false);
+    assertEqual(isSSHGrantClass("dir-delete"), false);
+    assertEqual(grantClassLabel("ssh:203.0.113.57").includes("203.0.113.57"), true);
+    assertEqual(grantClassLabel("ssh-profile:staging-1").includes("staging-1"), true);
   });
 
   it("explains why a permission request triggered confirmation without leaking secrets", () => {
@@ -441,8 +449,28 @@ describe("session kind grant", () => {
     assertEqual(inlineNode.code, "inline_script");
     assertEqual(inlineNode.detail, "node");
 
-    const opaqueShell = explainPermissionRequest(bash('cat "$KUBECONFIG"'));
+    const credEnv = explainPermissionRequest(bash('cat "$KUBECONFIG"'));
+    assertEqual(credEnv.code, "secret_read");
+    assertEqual(credEnv.severity, "danger");
+
+    const opaqueShell = explainPermissionRequest(bash('cat "$CUSTOM_PATH"'));
     assertEqual(opaqueShell.code, "opaque_shell");
+
+    const dockerPush = explainPermissionRequest(bash("docker push registry.example.com/app:latest"));
+    assertEqual(dockerPush.code, "publish_or_force_push");
+    assertEqual(dockerPush.severity, "danger");
+
+    const suPriv = explainPermissionRequest(bash("su - root -c id"));
+    assertEqual(suPriv.code, "privilege_or_process");
+    assertEqual(suPriv.detail, "su");
+
+    const bashHook = explainPermissionRequest(bash("bash .git/hooks/pre-commit.sh"));
+    assertEqual(bashHook.code, "protected_path");
+    assertEqual(bashHook.severity, "danger");
+
+    const braceSecret = explainPermissionRequest(bash("cat {.e,}nv"));
+    assertEqual(braceSecret.code, "secret_read");
+    assertEqual(braceSecret.severity, "danger");
 
     const modeOnly = explainPermissionRequest(bash('git commit -m "fix: rm -rf false positive"'));
     assertEqual(modeOnly.code, "mode_policy");
@@ -451,6 +479,23 @@ describe("session kind grant", () => {
     const gitOut = explainPermissionRequest(bash("git log --output=.git/hooks/post-checkout"));
     assertEqual(gitOut.code, "protected_path");
     assertEqual(gitOut.severity, "danger");
+
+    const roInlineWithOpaque = explainPermissionRequest(
+      bash(`python3 -c 'print(1)' && cat "$CUSTOM_PATH"`)
+    );
+    assertEqual(roInlineWithOpaque.code, "opaque_shell");
+    assertEqual(roInlineWithOpaque.severity, "warn");
+
+    const sshHost = explainPermissionRequest({
+      permission: "bash",
+      patterns: ["ssh root@203.0.113.57 'uptime'"],
+      metadata: {
+        command: "ssh root@203.0.113.57 'uptime'",
+        grantClasses: ["ssh:203.0.113.57"],
+      },
+    });
+    assertEqual(sshHost.code, "remote_ssh");
+    assertEqual(sshHost.detail, "203.0.113.57");
   });
 
   it("sends grantClass only together with a one-time approval", async () => {

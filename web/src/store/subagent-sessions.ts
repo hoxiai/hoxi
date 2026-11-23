@@ -2,13 +2,19 @@
 // Subagent (task tool) session tree: child-ID resolution, titles, liveness,
 // parent/root lookups, code-session partitioning and drawer expansion state.
 import { createSignal, untrack } from "solid-js";
+import { unwrap } from "solid-js/store";
 import { hoxiAPI } from "../services/api";
 import type { SessionInfo, ToolPart } from "../services/sse-types";
-import { lookupSubagentChildren, lookupSubagentParent, subagentChildIDFromPart } from "./message-lookup";
+import {
+  getSubagentLinkVersion,
+  lookupSubagentChildren,
+  lookupSubagentParent,
+  subagentChildIDFromPart,
+} from "./message-lookup";
 import { isSessionBusy } from "./session-query";
 import { indexedSession, resolveSessionSurface } from "./session-index";
 import { subagentDisplayTitle, type SubagentTitle } from "./session-title";
-import { workspace, type MessageTurn } from "./workspace-state";
+import { getSessionIndexMutationVersion, workspace, type MessageTurn } from "./workspace-state";
 
 export function extractChildSubagentSessionId(tp: ToolPart): string | undefined {
   const direct = subagentChildIDFromPart(tp);
@@ -58,9 +64,15 @@ export function resolveSubagentTitle(
   parentID: string | null | undefined,
   childID: string | null | undefined,
   rawTitle?: string | null,
+  parentTitleHint?: string | null,
 ): SubagentTitle {
-  const parentTitle = parentID ? workspace.sessions.find((s) => s.id === parentID)?.title : undefined;
-  const fallback = rawTitle || workspace.sessions.find((s) => s.id === childID)?.title;
+  const parentTitle =
+    parentTitleHint !== undefined
+      ? parentTitleHint
+      : parentID
+        ? workspace.sessions.find((s) => s.id === parentID)?.title
+        : undefined;
+  const fallback = rawTitle || (childID ? workspace.sessions.find((s) => s.id === childID)?.title : undefined);
   return subagentDisplayTitle(parentTitle, fallback, () => subagentOrdinal(parentID, childID));
 }
 
@@ -280,7 +292,11 @@ export function groupSubagentsByRoot(
         addChild(s.id, child);
       }
     }
-    for (const childID of childSubagentIDsFromTurns(workspace.messagesBySession[s.id])) {
+    // `lookupSubagentChildren` already tracks real task/agent link updates via
+    // `subagentLinkVersion`; untracking the fallback turn scan keeps ordinary
+    // text/tool stream updates from invalidating sidebar session projections.
+    const turnChildIDs = untrack(() => childSubagentIDsFromTurns(workspace.messagesBySession[s.id]));
+    for (const childID of turnChildIDs) {
       const child = combinedByID.get(childID);
       if (child && !child.time?.archived) {
         addChild(s.id, child);
@@ -323,6 +339,39 @@ export function partitionCodeSessions(
   const roots = codeSessions.filter((s) => !resolveParentSessionID(s.id, byID));
   const subagentsByRoot = groupSubagentsByRoot(codeSessions, byID);
   return { codeSessions, roots, subagentsByRoot };
+}
+
+interface CachedCodePartitionEntry {
+  linkVer: number;
+  idxVer: number;
+  partition: CodeSessionPartition;
+}
+
+const codePartitionCache = new WeakMap<readonly SessionInfo[], CachedCodePartitionEntry>();
+
+/**
+ * Memoizes `partitionCodeSessions` by array identity for plain cached project
+ * lists (`projectSessions[path]`), while evaluating store proxies (`workspace.sessions`)
+ * directly so in-place store mutations stay reactive.
+ */
+export function partitionCachedCodeSessions(
+  rawSessions: readonly SessionInfo[],
+): CodeSessionPartition {
+  if (rawSessions.length === 0) {
+    return { codeSessions: [], roots: [], subagentsByRoot: new Map() };
+  }
+  if (unwrap(rawSessions) !== rawSessions) {
+    return partitionCodeSessions(rawSessions);
+  }
+  const linkVer = getSubagentLinkVersion();
+  const idxVer = getSessionIndexMutationVersion();
+  const hit = codePartitionCache.get(rawSessions);
+  if (hit && hit.linkVer === linkVer && hit.idxVer === idxVer) {
+    return hit.partition;
+  }
+  const partition = partitionCodeSessions(rawSessions);
+  codePartitionCache.set(rawSessions, { linkVer, idxVer, partition });
+  return partition;
 }
 
 function matchesSubagentQuery(session: SessionInfo, queryLower: string): boolean {
@@ -452,9 +501,10 @@ export function partitionVisibleSubagents(
 export function isSubagentDrawerExpanded(
   sessionID: string,
   autoExpand: boolean,
+  defaultExpanded = true,
 ): boolean {
   const entry = subagentDrawerOverrides()[sessionID];
-  if (!entry) return true;
+  if (!entry) return defaultExpanded || autoExpand;
   if (!entry.manual) {
     if (!entry.autoSnapshot && autoExpand) {
       entry.manual = true;

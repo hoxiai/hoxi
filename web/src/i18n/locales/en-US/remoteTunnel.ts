@@ -28,7 +28,6 @@ export const remoteTunnel = {
   pendingDenied: "The request was denied in GoPanel",
   pendingExpired: "The request expired, start again",
   manualToggle: "Enter a pairing code manually",
-  manualHide: "Hide manual entry",
   pairAction: "Pair",
   pairing: "Pairing",
   disableAction: "Unpair",

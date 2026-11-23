@@ -45,6 +45,7 @@ import ApprovalGateCard from "../approval/ApprovalGateCard";
 import QuestionDock from "../approval/QuestionDock";
 import { FileIcon } from "../icons";
 import ChangedFilesSummary from "./ChangedFilesSummary";
+import PendingRequestRecoveryBanner from "./PendingRequestRecoveryBanner";
 import PlanFollowupBar from "./PlanFollowupBar";
 import RevertBanner from "./RevertBanner";
 import TaskProgressCard from "./TaskProgressCard";
@@ -201,6 +202,7 @@ export default function ComposerShelf() {
           </div>
         )}
       </Show>
+      <PendingRequestRecoveryBanner />
       {/* Kilo QuestionDock: Docked Interactive Questions (question.asked) */}
       <Show when={pendingQuestions().length > 0}>
         <div class="mb-2.5 space-y-2">
@@ -220,8 +222,8 @@ export default function ComposerShelf() {
       </Show>
 
       {/* Context chips share one shelf with the compact task entry on the right. */}
-      <div class="mb-2 flex items-center gap-2">
-        <div class="flex min-w-0 flex-1 items-center justify-center gap-2 flex-wrap empty:hidden">
+      <div class="flex items-center gap-2">
+        <div class="mb-2 flex min-w-0 flex-1 items-center justify-center gap-2 flex-wrap empty:hidden">
           <RevertBanner />
           <PlanFollowupBar />
           <ChangedFilesSummary files={changedFiles()} variant="pill" />

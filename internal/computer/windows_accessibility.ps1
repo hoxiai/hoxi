@@ -46,14 +46,24 @@ if ($request.operation -eq 'focused') {
   @{ secure = [bool]$focused.Current.IsPassword } | ConvertTo-Json -Compress
   exit
 }
-$rows = New-Object 'System.Collections.Generic.List[object]'
+$visibleInteractive = New-Object 'System.Collections.Generic.List[object]'
+$visibleContent = New-Object 'System.Collections.Generic.List[object]'
 $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+$winRect = $root.Current.BoundingRectangle
+$script:visited = 0
+$maxVisited = 4000
+$interactiveTypes = @('ControlType.Button','ControlType.Edit','ControlType.ComboBox','ControlType.CheckBox','ControlType.RadioButton','ControlType.MenuItem','ControlType.TabItem','ControlType.Hyperlink','ControlType.ListItem','ControlType.Slider','ControlType.SplitButton')
+$containerTypes = @('ControlType.Window','ControlType.Pane','ControlType.Group','ControlType.Custom','ControlType.Document','ControlType.ScrollBar','ControlType.List','ControlType.Table','ControlType.Tree','ControlType.ToolBar','ControlType.Tab','ControlType.DataGrid','ControlType.TitleBar','ControlType.MenuBar')
 function Walk-Control($element, [int]$depth) {
-  if ($null -eq $element -or $depth -gt 14 -or $rows.Count -ge 300) { return }
+  if ($null -eq $element -or $depth -gt 32 -or $script:visited -ge $maxVisited) { return }
+  $script:visited++
   try {
     $current = $element.Current
     if ($current.ProcessId -ne [int]$request.process) { return }
+    $role = [string]$current.ControlType.ProgrammaticName
+    if ($role -eq 'ControlType.ScrollBar') { return }
     $secure = [bool]$current.IsPassword
+    $interactive = $secure -or ($interactiveTypes -contains $role)
     $name = ''; $value = ''
     if (-not $secure) {
       $name = [string]$current.Name
@@ -61,16 +71,44 @@ function Walk-Control($element, [int]$depth) {
       $pattern = $null
       if ($element.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
         $value = [string]$pattern.Current.Value
-        if ($value.Length -gt 1000) { $value = $value.Substring(0,1000) }
+        if ($value.Length -gt 1000) { $value = $value.Substring(0,496) + ' [...] ' + $value.Substring($value.Length - 497) }
       }
+      if ($name.Length -gt 0 -and $value.Length -gt 0 -and $name -eq $value) { $value = '' }
     }
     $bounds = $current.BoundingRectangle
-    if (-not $bounds.IsEmpty) {
-      $rows.Add(@{ id=$rows.Count+1;role=[string]$current.ControlType.ProgrammaticName;name=$name;value=$value;secure=$secure;bounds=@{x=$bounds.X;y=$bounds.Y;width=$bounds.Width;height=$bounds.Height} })
+    $hasSize = (-not $bounds.IsEmpty) -and $bounds.Width -gt 0.5 -and $bounds.Height -gt 0.5
+    $visible = $hasSize -and ($winRect.IsEmpty -or ($bounds.Left -lt $winRect.Right -and $bounds.Right -gt $winRect.Left -and $bounds.Top -lt $winRect.Bottom -and $bounds.Bottom -gt $winRect.Top))
+    $thinNameless = $interactive -and (-not $secure) -and ($name.Length -eq 0) -and ($value.Length -eq 0) -and ($bounds.Width -le 12 -or $bounds.Height -le 12)
+    $shouldEmit = $secure -or ($interactive -and $visible -and (-not $thinNameless)) -or ((-not ($containerTypes -contains $role)) -and $visible -and ($name.Length -gt 0 -or $value.Length -gt 0)) -or ($visible -and $name.Length -gt 0 -and $value.Length -gt 0)
+    if ($shouldEmit) {
+      $bx = if ($hasSize) { $bounds.X } else { 0 }
+      $by = if ($hasSize) { $bounds.Y } else { 0 }
+      $bw = if ($hasSize) { $bounds.Width } else { 0 }
+      $bh = if ($hasSize) { $bounds.Height } else { 0 }
+      $entry = @{ role=$role;name=$name;value=$value;secure=$secure;bounds=@{x=$bx;y=$by;width=$bw;height=$bh} }
+      if ([bool]$current.HasKeyboardFocus) { $entry['focused'] = $true }
+      if ($interactive -and (-not [bool]$current.IsEnabled)) { $entry['disabled'] = $true }
+      if ($interactive) { $visibleInteractive.Add($entry) }
+      elseif ($visibleContent.Count -lt 900) { $visibleContent.Add($entry) }
     }
+    if ($secure) { return }
+    if ($depth -gt 0 -and $hasSize -and (-not $visible) -and (-not $winRect.IsEmpty) -and $role -ne 'ControlType.Window' -and $role -ne 'ControlType.Menu') { return }
     $child = $walker.GetFirstChild($element)
-    while ($null -ne $child -and $rows.Count -lt 300) { Walk-Control $child ($depth+1); $child = $walker.GetNextSibling($child) }
+    while ($null -ne $child -and $script:visited -lt $maxVisited) { Walk-Control $child ($depth+1); $child = $walker.GetNextSibling($child) }
   } catch { }
 }
 Walk-Control $root 0
+$rows = New-Object 'System.Collections.Generic.List[object]'
+if ($visibleInteractive.Count -le 300) {
+  foreach ($item in $visibleInteractive) { $rows.Add($item) }
+} else {
+  for ($i = 0; $i -lt 150; $i++) { $rows.Add($visibleInteractive[$i]) }
+  for ($i = $visibleInteractive.Count - 150; $i -lt $visibleInteractive.Count; $i++) { $rows.Add($visibleInteractive[$i]) }
+}
+if ($rows.Count -lt 300 -and $visibleContent.Count -gt 0) {
+  $remain = 300 - $rows.Count
+  $start = [Math]::Max(0, $visibleContent.Count - $remain)
+  for ($i = $start; $i -lt $visibleContent.Count; $i++) { $rows.Add($visibleContent[$i]) }
+}
+for ($i = 0; $i -lt $rows.Count; $i++) { $rows[$i]['id'] = $i + 1 }
 @{elements=@($rows.ToArray())} | ConvertTo-Json -Depth 8 -Compress

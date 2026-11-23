@@ -13,6 +13,10 @@ import {
   inferProviderNpmFromEndpoint,
   syncAutoPoolsFromServer,
 } from "./auto-models";
+import {
+  fetchOrchestratorConfig,
+  peekOrchestratorConcreteModel,
+} from "./orchestrator-mode";
 import { splitAgyModelEffortSuffix } from "./provider-catalog";
 import { getTurnDispatchState } from "./auto-failover";
 import { parseModelString, sessionAIConfig, updateSessionAI } from "./session-ai";
@@ -27,6 +31,7 @@ import {
   EFFORT_KEY,
   FAVORITE_MODELS_KEY,
   OFFICIAL_PROVIDER_ID,
+  ORCHESTRATOR_PROVIDER_ID,
   RECENT_MODELS_KEY,
   SELECTED_MODEL_KEY,
   setWorkspace,
@@ -168,6 +173,11 @@ export function activeModelInfo() {
   if (!sel) return undefined;
   if (sel.providerID === AUTO_PROVIDER_ID) {
     return buildAutoVirtualProvider().models?.[sel.modelID];
+  }
+  if (sel.providerID === ORCHESTRATOR_PROVIDER_ID) {
+    const concrete = peekOrchestratorConcreteModel(workspace.activeSessionID, "orchestrator");
+    if (!concrete) return undefined;
+    return workspace.providers.find((p) => p.id === concrete.providerID)?.models?.[concrete.modelID];
   }
   const prov = workspace.providers.find((p) => p.id === sel.providerID);
   return prov?.models?.[sel.modelID];
@@ -472,13 +482,15 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
       providerAuthMethods: authMethods || {},
     });
     void syncAutoPoolsFromServer();
+    void fetchOrchestratorConfig();
 
     const current = workspace.defaultAI.model;
     const autoVirt = buildAutoVirtualProvider();
     const isValid =
       Boolean(
         current &&
-          ((current.providerID === AUTO_PROVIDER_ID && autoVirt.models?.[current.modelID]) ||
+          (current.providerID === ORCHESTRATOR_PROVIDER_ID ||
+            (current.providerID === AUTO_PROVIDER_ID && autoVirt.models?.[current.modelID]) ||
             all.some((p) => p.id === current.providerID && p.models && p.models[current.modelID]))
       );
 

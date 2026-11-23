@@ -332,9 +332,11 @@ export default function ProviderCatalogTab() {
                               <span class="text-[13px] font-semibold text-[var(--text-primary)] truncate">
                                 {item.name || item.id}
                               </span>
-                              <span class="rounded-md bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)]">
-                                {item.id}
-                              </span>
+                              <Show when={item.id.toLowerCase() !== (item.name || "").toLowerCase()}>
+                                <span class="rounded-md bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)]">
+                                  {item.id}
+                                </span>
+                              </Show>
                               <span
                                 class={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
                                   isImported()
@@ -349,15 +351,16 @@ export default function ProviderCatalogTab() {
                                 />
                                 {sourceLabel(item)}
                               </span>
-                              <ProviderHealthBadge providerID={item.id} />
+                              <ProviderHealthBadge providerID={item.id} compact />
                               <span class="text-[11px] text-[var(--text-faint)]">
                                 {t("models.modelsCount", { count: modelCount() })}
+                                <Show when={freeCount() > 0}>
+                                  {" · "}
+                                  <span class="text-[var(--ok-text)]">
+                                    {t("models.freeModelsCount", { count: freeCount() })}
+                                  </span>
+                                </Show>
                               </span>
-                              <Show when={freeCount() > 0}>
-                                <span class="rounded-full bg-[var(--ok-surface)] px-2 py-0.5 text-[11px] font-semibold text-[var(--ok-text)]">
-                                  {t("models.freeModelsCount", { count: freeCount() })}
-                                </span>
-                              </Show>
                             </div>
                             <Show when={customUrl()}>
                               <div class="mt-0.5 font-mono text-[11px] text-[var(--text-faint)] truncate">

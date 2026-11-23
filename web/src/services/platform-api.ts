@@ -27,8 +27,17 @@ export interface StartAuthResponse {
   authUrl: string;
 }
 
+export type UpdateDownloadSource = "auto" | "cdn" | "global";
+
 export interface UpdateMirrors {
+  cn?: string;
+  cdn?: string;
   global?: string;
+}
+
+export interface InstallUpdateOptions {
+  source?: UpdateDownloadSource;
+  useSelfUpdater?: boolean;
 }
 
 export interface NativeUpdateStatus {
@@ -56,6 +65,7 @@ export interface NativeUpdateProgress {
   phase: "preparing" | "downloading" | "verifying" | "staging" | "restarting" | "failed";
   downloadedBytes: number;
   totalBytes: number;
+  source?: string;
   error?: string;
 }
 
@@ -247,8 +257,20 @@ export const updaterAPI = {
   nativeStatus(): Promise<NativeUpdateStatus> {
     return requestJSON("/api/hoxi/updater/native");
   },
-  install(): Promise<{ started: true }> {
-    return requestJSON("/api/hoxi/updater/install", { method: "POST" });
+  install(options?: InstallUpdateOptions): Promise<{ started: true }> {
+    const hasCustomOptions = Boolean(
+      options && ((options.source && options.source !== "auto") || options.useSelfUpdater)
+    );
+    if (!hasCustomOptions) {
+      return requestJSON("/api/hoxi/updater/install", { method: "POST" });
+    }
+    return requestJSON("/api/hoxi/updater/install", {
+      method: "POST",
+      body: JSON.stringify({
+        ...(options?.source ? { source: options.source } : {}),
+        ...(options?.useSelfUpdater ? { useSelfUpdater: true } : {}),
+      }),
+    });
   },
   checkUpdate(): Promise<UpdateCheckResult> {
     return requestJSON("/api/hoxi/updater/check");

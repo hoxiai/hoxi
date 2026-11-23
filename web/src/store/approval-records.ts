@@ -26,15 +26,31 @@ export function grantableClasses(req: Partial<PermissionRequest> & Record<string
 }
 
 const FILE_GRANT_PREFIX = "file:";
+const SSH_HOST_GRANT_PREFIX = "ssh:";
+const SSH_PROFILE_GRANT_PREFIX = "ssh-profile:";
 
-/** A grant for one exact protected file (internal/runner/approval_file_grants.go). */
+/** A grant for one exact protected file (internal/runner/shellpolicy/file_grants.go). */
 export function isFileGrantClass(cls: string): boolean {
   return cls.startsWith(FILE_GRANT_PREFIX) && cls.length > FILE_GRANT_PREFIX.length;
+}
+
+/** A session grant for one remote SSH host or named hoxi_data SSH profile. */
+export function isSSHGrantClass(cls: string): boolean {
+  return (
+    (cls.startsWith(SSH_HOST_GRANT_PREFIX) && cls.length > SSH_HOST_GRANT_PREFIX.length) ||
+    (cls.startsWith(SSH_PROFILE_GRANT_PREFIX) && cls.length > SSH_PROFILE_GRANT_PREFIX.length)
+  );
 }
 
 export function grantClassLabel(cls: string): string {
   if (isFileGrantClass(cls)) {
     return t("approval.grantClassFileEdit", { path: cls.slice(FILE_GRANT_PREFIX.length) });
+  }
+  if (cls.startsWith(SSH_HOST_GRANT_PREFIX) && cls.length > SSH_HOST_GRANT_PREFIX.length) {
+    return t("approval.grantClassSSHHost", { host: cls.slice(SSH_HOST_GRANT_PREFIX.length) });
+  }
+  if (cls.startsWith(SSH_PROFILE_GRANT_PREFIX) && cls.length > SSH_PROFILE_GRANT_PREFIX.length) {
+    return t("approval.grantClassSSHProfile", { profile: cls.slice(SSH_PROFILE_GRANT_PREFIX.length) });
   }
   switch (cls) {
     case "temp-delete":

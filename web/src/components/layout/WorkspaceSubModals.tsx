@@ -4,6 +4,7 @@ import type { WorkspaceProfile } from "../../services/api";
 import {
   closeWorkspaceModal,
   DEFAULT_WORKSPACE_IDENTITY_COLOR,
+  errorMessageOf,
   normalizeFolderPath,
   openCreateWorkspaceModal,
   openDeleteWorkspaceModal,
@@ -42,7 +43,7 @@ export function DeleteWorkspaceModalView(props: {
       }
       closeWorkspaceModal();
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : String(err));
+      setErrorMsg(errorMessageOf(err, t("common.error")));
     } finally {
       setSaving(false);
     }

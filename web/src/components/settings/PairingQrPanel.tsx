@@ -2,7 +2,7 @@
 // Shows the LAN pairing QR and optional 6-digit one-time pairing code the
 // Hoxi mobile app uses to pair with this computer.
 import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
-import { Check, Copy, RefreshCw, X } from "lucide-solid";
+import { Check, ChevronRight, Copy, RefreshCw, X } from "lucide-solid";
 import { t } from "../../i18n";
 import {
   cancelPairingShortCode,
@@ -22,10 +22,15 @@ function formatShortCode(code: string): string {
 export function PairingQrPanel() {
   const [nowMs, setNowMs] = createSignal(Date.now());
   const [copied, setCopied] = createSignal(false);
+  const [shortCodeOpen, setShortCodeOpen] = createSignal(Boolean(pairing.shortCode));
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
 
   onMount(() => {
     void loadPairingCode();
+  });
+
+  createEffect(() => {
+    if (pairing.shortCode) setShortCodeOpen(true);
   });
 
   createEffect(() => {
@@ -67,7 +72,22 @@ export function PairingQrPanel() {
   };
 
   return (
-    <SettingGroup title={t("pairing.title")} tip={t("pairing.tip")}>
+    <SettingGroup
+      title={t("pairing.title")}
+      tip={t("pairing.tip")}
+      action={
+        <button
+          type="button"
+          class="hoxi-press inline-flex cursor-pointer items-center rounded-lg p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-50"
+          disabled={pairing.busy}
+          title={t("pairing.refreshAction")}
+          aria-label={t("pairing.refreshAction")}
+          onClick={() => void loadPairingCode()}
+        >
+          <RefreshCw size={14} class={pairing.busy ? "animate-spin" : ""} />
+        </button>
+      }
+    >
       <div class="flex flex-col items-center gap-3 px-5 py-6">
         <Show when={pairing.error}>
           <p role="alert" class="text-[12px] text-rose-500">
@@ -93,15 +113,6 @@ export function PairingQrPanel() {
               <div class="flex items-center gap-2 text-[13px]">
                 <span class="text-[var(--text-secondary)]">{t("pairing.scanHint")}</span>
                 <HelpTip text={t("pairing.addressTip", { url: code().url })} />
-                <button
-                  type="button"
-                  class="hoxi-press inline-flex cursor-pointer items-center rounded-lg p-1 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-50"
-                  disabled={pairing.busy}
-                  aria-label={t("pairing.refreshAction")}
-                  onClick={() => void loadPairingCode()}
-                >
-                  <RefreshCw size={14} />
-                </button>
               </div>
               <button
                 type="button"
@@ -112,9 +123,14 @@ export function PairingQrPanel() {
                 {t("pairing.rotateAction")}
               </button>
 
-              <div class="mt-3 w-full max-w-md border-t border-[var(--border-subtle)] pt-4">
-                <div class="mb-2 flex items-center justify-between gap-2">
-                  <div class="flex items-center gap-1.5 text-[12px] font-medium text-[var(--text-primary)]">
+              <details
+                class="group/shortcode mt-2 w-full max-w-md border-t border-[var(--border-subtle)] pt-3"
+                open={shortCodeOpen()}
+                onToggle={(e) => setShortCodeOpen(e.currentTarget.open)}
+              >
+                <summary class="flex cursor-pointer list-none items-center justify-between gap-2 text-[12px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] [&::-webkit-details-marker]:hidden">
+                  <div class="flex items-center gap-1.5">
+                    <ChevronRight size={13} class="transition-transform group-open/shortcode:rotate-90" />
                     <span>{t("pairing.shortCodeTitle")}</span>
                     <HelpTip text={t("pairing.shortCodeTip")} />
                   </div>
@@ -131,9 +147,9 @@ export function PairingQrPanel() {
                         : t("pairing.shortCodeExpired")}
                     </span>
                   </Show>
-                </div>
+                </summary>
 
-                <div class="flex items-center gap-2">
+                <div class="mt-2.5 flex items-center gap-2">
                   <input
                     type="url"
                     value={pairing.shortCodeRelayUrl}
@@ -204,7 +220,7 @@ export function PairingQrPanel() {
                     </div>
                   )}
                 </Show>
-              </div>
+              </details>
             </Show>
           )}
         </Show>

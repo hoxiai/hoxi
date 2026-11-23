@@ -23,6 +23,7 @@ export interface SessionInfo {
   slug?: string;
   projectID?: string;
   parentID?: string;
+  scheduleID?: string;
   surface?: SessionSurface;
   directory?: string;
   runtime?: SessionRuntime;
@@ -425,6 +426,12 @@ export type HoxiEvent =
         busy: string[];
         // sessionID -> unix ms when the turn was flagged as stalled.
         stalled?: Record<string, number>;
+      };
+    }
+  | {
+      type: "hoxi.schedule.updated";
+      properties: {
+        scheduleID?: string;
       };
     };
 

@@ -16,17 +16,20 @@ import {
 } from "lucide-solid";
 import type { PermissionRequest } from "../../services/sse-types";
 import {
+  errorMessageOf,
   explainPermissionRequest,
   isDestructivePermissionRequest,
   grantableClasses,
   grantClassLabel,
   isFileGrantClass,
+  isSSHGrantClass,
   isPermissionGoneError,
   isRunnerPermissionID,
   markPermissionResolved,
   openChangedFileInInspector,
   replyPermissionRequest,
   sessionGrantRefusal,
+  workspace,
   type PermissionReplyMode,
 } from "../../store/workspace";
 import { DiffChanges, FileIcon } from "../icons";
@@ -91,7 +94,18 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
   const rules = createMemo(() => deriveHierarchicalRules(props.request, command()));
   const isDestructive = createMemo(() => isDestructivePermissionRequest(props.request));
   const isRunner = createMemo(() => isRunnerPermissionID(props.request.id));
-  const approvalReason = createMemo(() => explainPermissionRequest(props.request));
+  const sessionWorktree = createMemo(() => {
+    const metaWt =
+      typeof props.request.metadata?.worktree === "string"
+        ? props.request.metadata.worktree.trim()
+        : "";
+    if (metaWt) return metaWt;
+    const sess = workspace.sessions.find((s) => s.id === props.request.sessionID);
+    return sess?.directory || workspace.rootDir || "";
+  });
+  const approvalReason = createMemo(() =>
+    explainPermissionRequest(props.request, { worktree: sessionWorktree() })
+  );
   const approvalReasonText = createMemo(() => {
     const info = approvalReason();
     const labelMap: Record<string, () => string> = {
@@ -109,15 +123,19 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
       high_risk: () => t("approval.reasonHighRisk"),
       inline_script: () => t("approval.reasonInlineScript"),
       opaque_shell: () => t("approval.reasonOpaqueShell"),
+      remote_ssh: () => t("approval.reasonRemoteSSH"),
       mode_policy: () => t("approval.reasonModePolicy"),
     };
     const base = (labelMap[info.code] ?? labelMap.mode_policy)();
     return info.detail ? t("approval.reasonWithDetail", { reason: base, detail: info.detail }) : base;
   });
   const sessionClasses = createMemo(() => grantableClasses(props.request));
-  const sessionClassLabel = createMemo(() =>
-    sessionClasses().every(isFileGrantClass) ? t("approval.allowSessionFile") : t("approval.allowSessionClass")
-  );
+  const sessionClassLabel = createMemo(() => {
+    const classes = sessionClasses();
+    if (classes.every(isFileGrantClass)) return t("approval.allowSessionFile");
+    if (classes.every(isSSHGrantClass)) return t("approval.allowSessionSSH");
+    return t("approval.allowSessionClass");
+  });
   // The gate keeps no session grant for an opaque command, so the card does
   // not offer one (sessionGrantRefusal mirrors internal/runner/approval_grants.go).
   const grantUnavailable = createMemo(
@@ -136,7 +154,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
         return;
       }
       console.error("session grant failed:", err);
-      setError(String(err));
+      setError(errorMessageOf(err, t("common.error")));
     } finally {
       setBusy(null);
     }
@@ -209,7 +227,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
         return;
       }
       console.error("permission reply failed:", err);
-      setError(String(err));
+      setError(errorMessageOf(err, t("common.error")));
     } finally {
       setBusy(null);
     }
@@ -234,7 +252,10 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
         </Show>
         <div class="ml-auto flex items-center gap-1.5 shrink-0">
           <Show when={remainingSeconds() !== null}>
-            <span class="inline-flex items-center gap-1 rounded-md border border-[var(--warn-border)] bg-[var(--bg-panel)]/70 px-1.5 py-0.5 font-mono text-[10.5px] text-[var(--warn-text)]">
+            <span
+              class="inline-flex items-center gap-1 rounded-md border border-[var(--warn-border)] bg-[var(--bg-panel)]/70 px-1.5 py-0.5 font-mono text-[10.5px] text-[var(--warn-text)]"
+              title={t("approval.timeoutHint")}
+            >
               <Clock size={10} />
               {t("approval.expiresIn", { seconds: remainingSeconds() ?? 0 })}
             </span>
@@ -474,6 +495,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
               <Show
                 when={
                   props.request.permission !== "hoxi_computer" &&
+                  props.request.permission !== "hoxi_schedule" &&
                   !grantUnavailable() &&
                   (sessionClasses().length > 0 || !isDestructive() || props.request.permission === "doom_loop")
                 }

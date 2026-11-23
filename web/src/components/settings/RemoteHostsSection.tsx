@@ -1,8 +1,9 @@
 // web/src/components/settings/RemoteHostsSection.tsx
-import { createSignal, For, onMount, Show } from "solid-js";
+import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { Activity, Plus, Server, Trash2 } from "lucide-solid";
 import { t } from "../../i18n";
 import {
+  errorMessageOf,
   loadRemoteHosts,
   probeRemoteHostById,
   remoteHosts,
@@ -12,12 +13,28 @@ import {
 import { SettingGroup } from "./setting-controls";
 
 export function RemoteHostsSection() {
+  const [showForm, setShowForm] = createSignal(false);
   const [target, setTarget] = createSignal("");
   const [name, setName] = createSignal("");
   const [token, setToken] = createSignal("");
   const [saving, setSaving] = createSignal(false);
   const [probingId, setProbingId] = createSignal<string | null>(null);
   const [feedback, setFeedback] = createSignal<{ ok: boolean; text: string } | null>(null);
+  let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const setTimedFeedback = (next: { ok: boolean; text: string }) => {
+    if (feedbackTimer !== undefined) clearTimeout(feedbackTimer);
+    setFeedback(next);
+    if (next.ok) {
+      feedbackTimer = setTimeout(() => {
+        feedbackTimer = undefined;
+        setFeedback(null);
+      }, 3000);
+    }
+  };
+  onCleanup(() => {
+    if (feedbackTimer !== undefined) clearTimeout(feedbackTimer);
+  });
 
   onMount(() => {
     void loadRemoteHosts().catch(() => {});
@@ -43,14 +60,15 @@ export function RemoteHostsSection() {
       setTarget("");
       setName("");
       setToken("");
+      setShowForm(false);
       const probe = await probeRemoteHostById(saved.id).catch(() => null);
       if (probe && !probe.ok && probe.error) {
-        setFeedback({ ok: false, text: t("settings.remoteHostOffline", { error: probe.error }) });
+        setTimedFeedback({ ok: false, text: t("settings.remoteHostOffline", { error: probe.error }) });
       } else {
-        setFeedback({ ok: true, text: t("settings.remoteHostSaved", { name: saved.name || saved.id }) });
+        setTimedFeedback({ ok: true, text: t("settings.remoteHostSaved", { name: saved.name || saved.id }) });
       }
     } catch (err: any) {
-      setFeedback({ ok: false, text: err?.message || String(err) });
+      setTimedFeedback({ ok: false, text: errorMessageOf(err, t("common.error")) });
     } finally {
       setSaving(false);
     }
@@ -63,12 +81,12 @@ export function RemoteHostsSection() {
     try {
       const res = await probeRemoteHostById(id);
       if (res.ok) {
-        setFeedback({ ok: true, text: t("settings.remoteHostOnline", { ms: String(res.latencyMs) }) });
+        setTimedFeedback({ ok: true, text: t("settings.remoteHostOnline", { ms: String(res.latencyMs) }) });
       } else {
-        setFeedback({ ok: false, text: t("settings.remoteHostOffline", { error: res.error || "failed" }) });
+        setTimedFeedback({ ok: false, text: t("settings.remoteHostOffline", { error: res.error || "failed" }) });
       }
     } catch (err: any) {
-      setFeedback({ ok: false, text: err?.message || String(err) });
+      setTimedFeedback({ ok: false, text: errorMessageOf(err, t("common.error")) });
     } finally {
       setProbingId(null);
     }
@@ -78,9 +96,9 @@ export function RemoteHostsSection() {
     setFeedback(null);
     try {
       await removeRemoteHost(id);
-      setFeedback({ ok: true, text: t("settings.remoteHostDeleted", { id }) });
+      setTimedFeedback({ ok: true, text: t("settings.remoteHostDeleted", { id }) });
     } catch (err: any) {
-      setFeedback({ ok: false, text: err?.message || String(err) });
+      setTimedFeedback({ ok: false, text: errorMessageOf(err, t("common.error")) });
     }
   };
 
@@ -88,9 +106,21 @@ export function RemoteHostsSection() {
     <SettingGroup
       title={t("settings.remoteHostsTitle")}
       tip={t("settings.remoteHostsSubtitle")}
+      action={
+        <button
+          type="button"
+          onClick={() => setShowForm((v) => !v)}
+          class="hoxi-press inline-flex items-center gap-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+        >
+          <Show when={!showForm()}>
+            <Plus size={12} />
+          </Show>
+          <span>{showForm() ? t("common.cancel") : t("settings.remoteHostMountBtn")}</span>
+        </button>
+      }
     >
-      <div class="p-4 space-y-3">
-        <form onSubmit={(e) => void onMountHost(e)} class="flex flex-wrap items-center gap-2">
+      <Show when={showForm()}>
+        <form onSubmit={(e) => void onMountHost(e)} class="flex flex-wrap items-center gap-2 p-4">
           <input
             type="text"
             placeholder={t("settings.remoteHostPairPlaceholder")}
@@ -123,64 +153,70 @@ export function RemoteHostsSection() {
             {t("settings.remoteHostMountBtn")}
           </button>
         </form>
+      </Show>
 
-        <div class="space-y-1.5">
-          <Show
-            when={remoteHosts().length > 0}
-            fallback={
-              <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-3.5 py-3 text-[12px] text-[var(--text-muted)]">
-                {t("settings.remoteHostsEmpty")}
-              </div>
-            }
-          >
-            <For each={remoteHosts()}>
-              {(host) => (
-                <div class="flex items-center justify-between gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-3.5 py-2">
-                  <div class="flex items-center gap-2 min-w-0">
-                    <Server size={14} class="text-[var(--accent-primary)] shrink-0" />
-                    <span class="text-[12px] font-semibold text-[var(--text-primary)]">
-                      {host.name || host.id}
-                    </span>
-                    <Show when={host.platform}>
-                      <span class="rounded-md bg-[var(--bg-panel)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-secondary)]">
-                        {host.platform}/{host.arch}
-                      </span>
-                    </Show>
-                    <Show when={typeof host.lastLatencyMs === "number" && host.lastSeenAt}>
-                      <span class="rounded-md bg-[var(--ok-surface)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--ok-text)]">
-                        {host.lastLatencyMs}ms
-                      </span>
-                    </Show>
-                    <span class="truncate font-mono text-[11px] text-[var(--text-muted)]">
-                      {host.url}
-                      {host.defaultDir ? ` · ${host.defaultDir}` : ""}
-                    </span>
-                  </div>
-                  <div class="flex items-center gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      disabled={probingId() === host.id}
-                      onClick={() => void onProbe(host.id)}
-                      class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-                    >
-                      <Activity size={12} />
-                      {probingId() === host.id ? t("settings.remoteHostProbingBtn") : t("settings.remoteHostProbeBtn")}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void onRemove(host.id)}
-                      class="text-[var(--text-muted)] hover:text-[var(--danger-text)] p-1 cursor-pointer"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                </div>
-              )}
-            </For>
+      <Show
+        when={remoteHosts().length > 0}
+        fallback={
+          <Show when={!showForm()}>
+            <p class="px-5 py-3.5 text-[12.5px] text-[var(--text-muted)]">
+              {t("settings.remoteHostsEmpty")}
+            </p>
           </Show>
+        }
+      >
+        <div class="p-4 space-y-1.5">
+          <For each={remoteHosts()}>
+            {(host) => (
+              <div class="flex items-center justify-between gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)]/70 px-3.5 py-2">
+                <div class="flex items-center gap-2 min-w-0">
+                  <Server size={14} class="text-[var(--accent-primary)] shrink-0" />
+                  <span class="text-[12px] font-semibold text-[var(--text-primary)]">
+                    {host.name || host.id}
+                  </span>
+                  <Show when={host.platform}>
+                    <span class="rounded-md bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-secondary)]">
+                      {host.platform}/{host.arch}
+                    </span>
+                  </Show>
+                  <Show when={typeof host.lastLatencyMs === "number" && host.lastSeenAt}>
+                    <span class="rounded-md bg-[var(--ok-surface)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--ok-text)]">
+                      {host.lastLatencyMs}ms
+                    </span>
+                  </Show>
+                  <span class="truncate font-mono text-[11px] text-[var(--text-muted)]">
+                    {host.url}
+                    {host.defaultDir ? ` · ${host.defaultDir}` : ""}
+                  </span>
+                </div>
+                <div class="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    disabled={probingId() === host.id}
+                    onClick={() => void onProbe(host.id)}
+                    class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                  >
+                    <Activity size={12} />
+                    {probingId() === host.id ? t("settings.remoteHostProbingBtn") : t("settings.remoteHostProbeBtn")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void onRemove(host.id)}
+                    title={t("common.delete")}
+                    aria-label={t("common.delete")}
+                    class="text-[var(--text-muted)] hover:text-[var(--danger-text)] p-1 cursor-pointer"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </For>
         </div>
+      </Show>
 
-        <Show when={feedback()}>
+      <Show when={feedback()}>
+        <div class="px-4 py-2.5">
           <div
             class={`rounded-xl border px-3.5 py-2 text-[12px] ${
               feedback()!.ok
@@ -190,8 +226,8 @@ export function RemoteHostsSection() {
           >
             {feedback()!.text}
           </div>
-        </Show>
-      </div>
+        </div>
+      </Show>
     </SettingGroup>
   );
 }

@@ -226,6 +226,27 @@ func (r *FileRevisionTracker) RecordTargetedMove(srcPath, dstPath string, prevCo
 
 // NewChildTracker creates a child subagent tracker seeded only with external
 // disk-conflict digests (`sha256`) and never inheriting `fullRead` privileges.
+// Clone returns a deep copy preserving fullRead and seenDirect observations so
+// a resumed subagent retains knowledge of files it already read or wrote.
+func (r *FileRevisionTracker) Clone() *FileRevisionTracker {
+	out := NewFileRevisionTracker()
+	if r == nil {
+		return out
+	}
+	r.mu.RLock()
+	for _, k := range r.order {
+		if snap, ok := r.files[k]; ok {
+			cp := snap
+			if len(snap.readSpans) > 0 {
+				cp.readSpans = append([]lineSpan(nil), snap.readSpans...)
+			}
+			out.storeLocked(k, cp)
+		}
+	}
+	r.mu.RUnlock()
+	return out
+}
+
 func (r *FileRevisionTracker) NewChildTracker() *FileRevisionTracker {
 	child := NewFileRevisionTracker()
 	if r == nil {

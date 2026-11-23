@@ -3,6 +3,7 @@ import { type Accessor, createSignal } from "solid-js";
 import { t } from "../../i18n";
 import {
   createPromptHistory,
+  errorMessageOf,
   stagePromptFile,
   uploadPromptAttachment,
 } from "../../store/workspace";
@@ -463,7 +464,7 @@ export function createImageAttachments(
         revokeBlobPreviewUrl(localPreviewUrl);
       }
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : String(err || "Stage failed"));
+      setNotice(errorMessageOf(err, "Stage failed"));
     } finally {
       setPendingCount((n) => Math.max(0, n - 1));
     }

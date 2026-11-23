@@ -22,10 +22,12 @@ import {
   clearSessionGoal,
   collectTurnEvidence,
   decideGoalTurn,
+  GOAL_MAX_CONTINUATIONS_LIMIT,
   GOAL_MAX_OBJECTIVE_LENGTH,
   type GoalCommand,
   parseGoalCommand,
   pauseSessionGoal,
+  resolveGoalMaxContinuations,
   sessionGoal,
   writeSessionGoal,
 } from "./session-goal-state";
@@ -62,6 +64,9 @@ function continuePrompt(objective: string): string {
 /** Handles `/goal` from the composer. Called before any message is sent. */
 export async function runGoalCommand(command: GoalCommand, sessionID: string | null): Promise<void> {
   if (command.kind === "invalid") {
+    if (command.error === "invalid-max") {
+      throw new Error(t("timeline.goalInvalidMax", { max: GOAL_MAX_CONTINUATIONS_LIMIT }));
+    }
     throw new Error(t("timeline.goalObjectiveTooLong", { max: GOAL_MAX_OBJECTIVE_LENGTH }));
   }
   if (command.kind === "status") {
@@ -72,11 +77,21 @@ export async function runGoalCommand(command: GoalCommand, sessionID: string | n
   if (command.kind === "pause") return pauseSessionGoal(sessionID, "manual");
   if (command.kind === "clear") return clearSessionGoal(sessionID);
   if (command.kind === "resume") return resumeSessionGoal(sessionID);
-  await startSessionGoal(sessionID, command.objective);
+  await startSessionGoal(sessionID, command.objective, command.maxContinuations);
 }
 
-export async function startSessionGoal(sessionID: string, objective: string): Promise<void> {
-  writeSessionGoal(sessionID, { objective, status: "active", continuations: 0, updatedAt: Date.now() });
+export async function startSessionGoal(
+  sessionID: string,
+  objective: string,
+  maxContinuations?: number
+): Promise<void> {
+  writeSessionGoal(sessionID, {
+    objective,
+    status: "active",
+    continuations: 0,
+    ...(maxContinuations !== undefined ? { maxContinuations } : {}),
+    updatedAt: Date.now(),
+  });
   await dispatchSessionPrompt(startPrompt(objective), sessionID);
 }
 
@@ -113,7 +128,11 @@ export async function advanceSessionGoal(sessionID: string): Promise<void> {
       workspace.messagesBySession[sessionID] ?? [],
       Boolean(workspace.interruptedBySession[sessionID])
     );
-    const decision = decideGoalTurn(evidence, current.continuations);
+    const decision = decideGoalTurn(
+      evidence,
+      current.continuations,
+      resolveGoalMaxContinuations(current)
+    );
     const now = Date.now();
     if (decision.kind === "continue") {
       writeSessionGoal(sessionID, { ...current, continuations: current.continuations + 1, updatedAt: now });

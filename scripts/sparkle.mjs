@@ -7,11 +7,32 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { normalizeVersion } from "./release-artifact.mjs";
 
+const OFFICIAL_CDN_BASES = ["https://cdn.hoxi.dev/hoxi-desktop"];
+
 export function httpsURL(value) {
   const url = new URL(value);
   assert.ok(url.protocol === "https:" && !url.username && !url.password && !url.hash,
     "Sparkle URLs must be HTTPS without credentials or fragments");
   return url.href;
+}
+
+function resolveConfiguredCdnBaseUrl(env = process.env) {
+  const pub = String(env?.HOXI_CDN_PUBLIC_URL || "").trim();
+  if (!pub) return "";
+  const origin = httpsURL(pub).replace(/\/+$/, "");
+  const prefix = String(env?.HOXI_CDN_PREFIX || "hoxi-desktop").trim().replace(/^\/+|\/+$/g, "");
+  assert.ok(prefix && !prefix.includes(".."), `Invalid HOXI_CDN_PREFIX: ${JSON.stringify(env?.HOXI_CDN_PREFIX)}`);
+  return `${origin}/${prefix.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+export function resolveSparkleEnclosureURL(version, env = process.env) {
+  const ver = normalizeVersion(version);
+  const file = `Hoxi-${ver}-darwin-arm64.dmg`;
+  const cdnBase = resolveConfiguredCdnBaseUrl(env);
+  if (cdnBase) {
+    return `${cdnBase}/v${ver}/${file}`;
+  }
+  return `https://github.com/hoxiai/hoxi/releases/download/v${ver}/${file}`;
 }
 
 function base64(value, length) {
@@ -30,16 +51,28 @@ export function sparkleConfig(env = process.env) {
   return { dir: path.resolve(values[0]), publicKey: base64(values[1], 32), feedURL };
 }
 
-export function validateSparkle(value, version, size) {
+export function validateSparkle(value, version, size, options = {}) {
   assert.ok(value && typeof value === "object", "Sparkle metadata required");
   const config = sparkleConfig({ HOXI_SPARKLE_DIR: ".", HOXI_SPARKLE_PUBLIC_KEY: value.publicKey,
     HOXI_SPARKLE_FEED_URL: value.feedURL });
-  assert.equal(value.version, normalizeVersion(version), "Sparkle version mismatch");
+  const ver = normalizeVersion(version);
+  assert.equal(value.version, ver, "Sparkle version mismatch");
   assert.equal(value.length, size, "Sparkle length mismatch");
   assert.ok(Number.isSafeInteger(size) && size > 0, "Invalid Sparkle length");
   const url = httpsURL(value.url);
-  assert.equal(url, `https://github.com/hoxiai/hoxi/releases/download/v${version}/Hoxi-${version}-darwin-arm64.dmg`,
-    "Sparkle enclosure must be the versioned GitHub asset");
+  const file = `Hoxi-${ver}-darwin-arm64.dmg`;
+  const allowedURLs = new Set([
+    `https://github.com/hoxiai/hoxi/releases/download/v${ver}/${file}`,
+    ...OFFICIAL_CDN_BASES.map((base) => `${base}/v${ver}/${file}`),
+  ]);
+  const configuredBase = options.cdnBaseUrl
+    ? httpsURL(options.cdnBaseUrl).replace(/\/+$/, "")
+    : resolveConfiguredCdnBaseUrl(options.env || process.env);
+  if (configuredBase) {
+    allowedURLs.add(`${configuredBase}/v${ver}/${file}`);
+  }
+  assert.ok(allowedURLs.has(url),
+    "Sparkle enclosure must be the versioned official GitHub or CDN asset");
   return { version: value.version, url, feedURL: config.feedURL, publicKey: config.publicKey,
     edSignature: base64(value.edSignature, 64), length: size };
 }
@@ -157,7 +190,7 @@ function signUpdate(dmg, version, output) {
   assert.ok(signature && length, "Unexpected sign_update output");
   version = normalizeVersion(version);
   const metadata = validateSparkle({ version, publicKey: config.publicKey, feedURL: config.feedURL,
-    url: `https://github.com/hoxiai/hoxi/releases/download/v${version}/Hoxi-${version}-darwin-arm64.dmg`,
+    url: resolveSparkleEnclosureURL(version),
     edSignature: signature[1], length: Number(length[1]) }, version, fs.statSync(dmg).size);
   verifyUpdateSignature(fs.readFileSync(dmg), metadata);
   fs.writeFileSync(output, JSON.stringify(metadata, null, 2) + "\n");

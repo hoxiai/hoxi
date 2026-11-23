@@ -134,5 +134,10 @@
   {"command": "python3 -c 'open(\".e\"+\"nv\",\"r\").read()'", "expect": "deny", "category": "secret"},
   {"command": "python3 -c 'open(\".git/hooks/pre-commit\",\"w\").write(\"echo hi\")'", "expect": "deny", "category": "secret"},
   {"command": "cat ~/.hoxi/media-roles.json", "expect": "deny", "category": "secret"},
-  {"command": "cat ~/.hoxi/intake.json", "expect": "deny", "category": "secret"}
+  {"command": "cat ~/.hoxi/intake.json", "expect": "deny", "category": "secret"},
+  {"command": "cat ~/.hoxi/schedules.json", "expect": "deny", "category": "secret"},
+  {"command": "hoxi schedule add --name test --interval 10 --prompt hi", "expect": "deny", "category": "tool"},
+  {"command": "hoxi schedule run sch_123", "expect": "deny", "category": "tool"},
+  {"command": "hoxi schedule list", "expect": "allow"},
+  {"command": "cat ~/.claude.json", "expect": "deny", "category": "secret"}
 ]

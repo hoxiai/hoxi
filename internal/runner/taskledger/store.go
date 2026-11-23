@@ -35,27 +35,36 @@ type PromptReceipt struct {
 	Deduplicated    bool   `json:"deduplicated,omitempty"`
 }
 
+// OrchestratorSpec records the Executor model pairing for an active native
+// Orchestrator turn so restart recovery preserves dual-model execution.
+type OrchestratorSpec struct {
+	ExecutorProviderID string `json:"executorProviderID"`
+	ExecutorModelID    string `json:"executorModelID"`
+	ExecutorEffort     string `json:"executorEffort,omitempty"`
+}
+
 // InflightTurnEntry records one active conversation turn so a graceful Hoxi
 // update or restart can resume the turn automatically, and an unexpected crash
 // can settle dangling in-flight tool states on the next boot.
 type InflightTurnEntry struct {
-	SessionID       string `json:"sessionID"`
-	Runtime         string `json:"runtime"`
-	ExternalID      string `json:"externalID,omitempty"`
-	UserMsgID       string `json:"userMsgID"`
-	AsstMsgID       string `json:"asstMsgID,omitempty"`
-	Mode            string `json:"mode,omitempty"`
-	ProviderID      string `json:"providerID,omitempty"`
-	ModelID         string `json:"modelID,omitempty"`
-	Effort          string `json:"effort,omitempty"`
-	FastMode        bool   `json:"fastMode,omitempty"`
-	CallerSystem    string `json:"callerSystem,omitempty"`
-	PromptText      string `json:"promptText,omitempty"`
-	ClientRequestID string `json:"clientRequestId,omitempty"`
-	StartedAt       int64  `json:"startedAt"`
-	UpdatedAt       int64  `json:"updatedAt"`
-	GracefulRestart bool   `json:"gracefulRestart,omitempty"`
-	RecoveryCount   int    `json:"recoveryCount,omitempty"`
+	SessionID       string            `json:"sessionID"`
+	Runtime         string            `json:"runtime"`
+	ExternalID      string            `json:"externalID,omitempty"`
+	UserMsgID       string            `json:"userMsgID"`
+	AsstMsgID       string            `json:"asstMsgID,omitempty"`
+	Mode            string            `json:"mode,omitempty"`
+	ProviderID      string            `json:"providerID,omitempty"`
+	ModelID         string            `json:"modelID,omitempty"`
+	Effort          string            `json:"effort,omitempty"`
+	FastMode        bool              `json:"fastMode,omitempty"`
+	Orchestrator    *OrchestratorSpec `json:"orchestrator,omitempty"`
+	CallerSystem    string            `json:"callerSystem,omitempty"`
+	PromptText      string            `json:"promptText,omitempty"`
+	ClientRequestID string            `json:"clientRequestId,omitempty"`
+	StartedAt       int64             `json:"startedAt"`
+	UpdatedAt       int64             `json:"updatedAt"`
+	GracefulRestart bool              `json:"gracefulRestart,omitempty"`
+	RecoveryCount   int               `json:"recoveryCount,omitempty"`
 }
 
 type persistedPromptReceipt struct {

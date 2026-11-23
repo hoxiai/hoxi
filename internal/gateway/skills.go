@@ -117,6 +117,10 @@ func (g *Gateway) resolveSkillContext(ctx context.Context, directory, sessionID,
 					}
 					sort.Strings(extraMCPServers)
 				}
+				surface := g.skillSurface(projDir, effDir)
+				if g.runner.IsAppDevSession(sessionID) {
+					surface = "code"
+				}
 				return skills.RequestContext{
 					SessionID:       sessionID,
 					Runtime:         rt,
@@ -125,7 +129,7 @@ func (g *Gateway) resolveSkillContext(ctx context.Context, directory, sessionID,
 					AllowedRoots:    allowedRoots,
 					ExtraSkillDirs:  extraSkillDirs,
 					ExtraMCPServers: extraMCPServers,
-					Surface:         g.skillSurface(projDir, effDir),
+					Surface:         surface,
 				}, nil
 			}
 		}

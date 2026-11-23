@@ -47,7 +47,7 @@ import {
 import { EarlierTurnsBanner } from "./EarlierTurnsBanner";
 import { UserTurnItem } from "./UserTurnItem";
 import TaskTimelineBar from "./TaskTimelineBar";
-import { SubagentSessionBanner } from "./AgentStackPill";
+import { SubagentSessionBanner } from "./SubagentSessionBanner";
 import QueuedPromptsList from "./QueuedPromptsList";
 import { SessionSkeleton } from "./SessionSkeleton";
 import { t } from "../../i18n";

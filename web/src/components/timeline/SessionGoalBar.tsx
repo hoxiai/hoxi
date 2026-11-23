@@ -4,6 +4,7 @@ import { CheckCircle2, LoaderCircle, OctagonAlert, Pause, Play, Target, X } from
 import {
   clearSessionGoal,
   pauseSessionGoal,
+  resolveGoalMaxContinuations,
   resumeSessionGoal,
   sessionGoal,
   workspace,
@@ -78,6 +79,11 @@ export default function SessionGoalBar() {
               <OctagonAlert size={10} class="text-[var(--danger-text)]" />
             </Show>
             <span>{statusLabel(g())}</span>
+            <Show when={g().continuations > 0 || g().maxContinuations !== undefined}>
+              <span class="font-mono text-[10.5px] text-[var(--text-muted)] tabular-nums">
+                {g().continuations}/{resolveGoalMaxContinuations(g())}
+              </span>
+            </Show>
           </span>
           <Show when={detailText(g())}>
             <span class="hidden min-w-0 max-w-[260px] truncate text-[var(--text-muted)] md:inline" title={detailText(g())}>

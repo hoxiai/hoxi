@@ -7,11 +7,14 @@ import UpdateProgressBar from "./UpdateProgressBar";
 import {
   closeDesktopUpdateModal,
   desktopUpdater,
+  desktopUpdateActiveSourceLabel,
   desktopUpdateButtonLabel,
   desktopUpdateDetailLabel,
   desktopUpdateProgressPercent,
   desktopUpdateSpeedEtaLabel,
   desktopUpdateStatusLabel,
+  getAcceleratedUpdateMirrorUrl,
+  getGitHubUpdateMirrorUrl,
   isDesktopUpdateInstalling,
   isUpdateModalOpen,
   openExternalURL,
@@ -30,6 +33,8 @@ function UpdateDialog(props: { state: Accessor<PresenceState> }) {
   });
 
   const updateResult = () => desktopUpdater.result;
+  const acceleratedUrl = () => getAcceleratedUpdateMirrorUrl(updateResult());
+  const githubUrl = () => getGitHubUpdateMirrorUrl(updateResult());
   const installing = isDesktopUpdateInstalling;
   const percent = () => desktopUpdateProgressPercent(desktopUpdater.progress);
 
@@ -131,6 +136,11 @@ function UpdateDialog(props: { state: Accessor<PresenceState> }) {
                 <span class="inline-flex items-center gap-2 font-medium text-[var(--text-primary)]">
                   <Spinner class="h-3.5 w-3.5 text-[var(--accent-primary)] shrink-0" />
                   <span>{desktopUpdateStatusLabel()}</span>
+                  <Show when={desktopUpdateActiveSourceLabel()}>
+                    <span class="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-muted)]">
+                      {desktopUpdateActiveSourceLabel()}
+                    </span>
+                  </Show>
                 </span>
                 <Show when={percent() !== undefined}>
                   <span class="font-mono font-semibold text-[var(--accent-text)]">{percent()}%</span>
@@ -160,9 +170,31 @@ function UpdateDialog(props: { state: Accessor<PresenceState> }) {
             </div>
           </Show>
           <Show when={desktopUpdater.error}>
-            <p role="alert" class="text-[12px] text-red-500">
-              {t("header.updateError", { error: desktopUpdater.error || "" })}
-            </p>
+            <div role="alert" class="space-y-2">
+              <p class="text-[12px] text-red-500">
+                {t("header.updateError", { error: desktopUpdater.error || "" })}
+              </p>
+              <Show when={desktopUpdater.nativeAvailable && !installing() && Boolean(updateResult()?.needUpdate)}>
+                <div class="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void startDesktopUpdate("cdn", true)}
+                    class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:bg-[var(--bg-hover)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                  >
+                    <Download size={11} />
+                    <span>{t("header.updateRetryViaCdn")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void startDesktopUpdate("global", true)}
+                    class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:bg-[var(--bg-hover)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                  >
+                    <ExternalLink size={11} />
+                    <span>{t("header.updateRetryViaGitHub")}</span>
+                  </button>
+                </div>
+              </Show>
+            </div>
           </Show>
           <Show when={updateResult()?.mandatory}>
             <div class="rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 text-[11px] text-amber-600 dark:text-amber-400">
@@ -203,14 +235,30 @@ function UpdateDialog(props: { state: Accessor<PresenceState> }) {
                 {installing() ? desktopUpdateButtonLabel() : t("header.updateInApp")}
               </button>
             </Show>
-            <Show when={updateResult()?.mirrors.global}>
+            <Show when={acceleratedUrl()}>
               <a
-                href={updateResult()?.mirrors.global}
+                href={acceleratedUrl()}
                 target="_blank"
                 rel="noreferrer"
                 onClick={(e) => {
                   e.preventDefault();
-                  const url = updateResult()?.mirrors.global;
+                  const url = acceleratedUrl();
+                  if (url) openExternalURL(url);
+                }}
+                class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)] px-3 py-1.5 text-[12px] font-medium text-[var(--text-secondary)] transition-colors cursor-pointer"
+              >
+                <Download size={12} />
+                <span>{t("header.updateModalDownloadCdn")}</span>
+              </a>
+            </Show>
+            <Show when={githubUrl()}>
+              <a
+                href={githubUrl()}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => {
+                  e.preventDefault();
+                  const url = githubUrl();
                   if (url) openExternalURL(url);
                 }}
                 class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)] px-3 py-1.5 text-[12px] font-medium text-[var(--text-secondary)] transition-colors cursor-pointer"
@@ -221,7 +269,8 @@ function UpdateDialog(props: { state: Accessor<PresenceState> }) {
             </Show>
             <Show
               when={
-                !updateResult()?.mirrors.global &&
+                !acceleratedUrl() &&
+                !githubUrl() &&
                 updateResult()?.downloadUrl
               }
             >

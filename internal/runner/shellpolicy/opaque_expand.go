@@ -382,6 +382,8 @@ func isValueClassSegment(seg string) bool {
 		return isValueClassRealpath(args)
 	case "md5", "shasum", "sha256sum", "md5sum":
 		return isValueClassChecksum(base, args)
+	case "xcrun":
+		return isValueClassXcrun(args)
 	}
 	return false
 }
@@ -554,21 +556,6 @@ func isSafeXargsSegment(rawArgs []string, piped bool, prevSeg string) bool {
 	return isSafeXargsTarget(targetBase, rest[1:], replToken)
 }
 
-func isQuotedDirGlobSuffix(s string, openIdx, closeIdx int) bool {
-	if openIdx < 0 || closeIdx <= openIdx+1 || s[closeIdx-1] != '/' {
-		return false
-	}
-	if strings.Trim(s[openIdx+1:closeIdx], "/") == "" {
-		return false
-	}
-	k := closeIdx + 1
-	for k < len(s) && !isWordBoundary(s[k]) {
-		k++
-	}
-	suf := s[closeIdx+1 : k]
-	return suf == "*" || extGlobRe.MatchString(suf)
-}
-
 // commandSubsAreValueClass reports whether every $(...) in s is a value-class
 // command that is itself not opaque. Nested substitutions fail closed.
 func commandSubsAreValueClass(s string) bool {
@@ -605,7 +592,9 @@ func commandSubsAreValueClass(s string) bool {
 			}
 			inner := s[i+2 : end]
 			if !isValueClassSegment(inner) || opaqueShellCore(inner, "", scriptTrustNone, false) {
-				return false
+				if !isLoopPathTransformValueSub(s, i, inner) {
+					return false
+				}
 			}
 			found = true
 			i = end

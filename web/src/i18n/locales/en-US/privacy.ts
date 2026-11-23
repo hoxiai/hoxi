@@ -10,8 +10,6 @@ export const privacy = {
   telemetryTitle: "Anonymous usage stats",
   telemetryDesc: "Send an anonymous install or launch event and the app version to hoxi.ai (off by default in source and development builds). No prompts, code, file paths or session content. When signed in, the request also carries your device token.",
   telemetrySuppressedByOffline: "Paused while silent offline mode is active",
-  telemetryOn: "On",
-  telemetryOff: "Off",
   telemetryEnvLocked: "Disabled by the HOXI_DISABLE_TELEMETRY or DO_NOT_TRACK environment variable",
   telemetryLoadError: "Could not load the telemetry preference",
   telemetrySaveError: "Could not save the telemetry preference. Nothing was sent",

@@ -82,7 +82,7 @@ func TestUnattendedDeniesOutsideEditAndUnknownTool(t *testing.T) {
 
 func TestUnattendedModeRequiresIsolation(t *testing.T) {
 	pol := ApprovalPolicy{Mode: ApprovalModeUnattended}
-	item := map[string]interface{}{"permission": "bash", "patterns": []string{"bash -c 'echo ok'"}}
+	item := map[string]interface{}{"permission": "bash", "patterns": []string{`bash -c "echo ok"`}}
 	if approvalAutoApprovesIsolated(item, pol, nil, t.TempDir(), false) {
 		t.Fatal("unattended allowed a command for a session that is not isolated")
 	}

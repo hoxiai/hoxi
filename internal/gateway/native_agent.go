@@ -253,7 +253,9 @@ func (g *gatewayNativeAgent) RunTurn(ctx context.Context, req runner.NativeTurnR
 	}
 
 	sysPrompt := req.System
-	if g.skillCatalog != nil && !strings.Contains(sysPrompt, "<available_skills>") {
+	if g.skillCatalog != nil &&
+		!strings.Contains(sysPrompt, "<available_skills>") &&
+		!strings.Contains(sysPrompt, "On-demand skills, listed by name only:") {
 		if cat := strings.TrimSpace(g.skillCatalog(ctx, req.SessionID, req.WorktreeDir)); cat != "" {
 			if strings.TrimSpace(sysPrompt) == "" {
 				sysPrompt = cat
@@ -357,6 +359,16 @@ func (g *gatewayNativeAgent) RunTurn(ctx context.Context, req runner.NativeTurnR
 			}
 		}
 	}
+	var orchCfg *agent.OrchestratorConfig
+	if req.Orchestrator != nil &&
+		strings.TrimSpace(req.Orchestrator.ExecutorProviderID) != "" &&
+		strings.TrimSpace(req.Orchestrator.ExecutorModelID) != "" {
+		orchCfg = &agent.OrchestratorConfig{
+			ExecutorProviderID: strings.TrimSpace(req.Orchestrator.ExecutorProviderID),
+			ExecutorModelID:    strings.TrimSpace(req.Orchestrator.ExecutorModelID),
+			ExecutorEffort:     strings.TrimSpace(req.Orchestrator.ExecutorEffort),
+		}
+	}
 	return g.engine.RunTurn(ctx, agent.TurnRequest{
 		SessionID:          req.SessionID,
 		WorktreeDir:        req.WorktreeDir,
@@ -365,6 +377,7 @@ func (g *gatewayNativeAgent) RunTurn(ctx context.Context, req runner.NativeTurnR
 		ModelID:            req.ModelID,
 		Effort:             req.Effort,
 		FastMode:           req.FastMode,
+		Orchestrator:       orchCfg,
 		System:             sysPrompt,
 		History:            history,
 		UserPrompt:         req.UserPrompt,

@@ -446,7 +446,7 @@ export async function logoutDesktopAccount(): Promise<void> {
   } catch (err) {
     // The device token may already be gone while dependent credential cleanup failed.
     await refreshAuthStatus();
-    setDesktopAuth("error", err instanceof Error ? err.message : "Logout failed");
+    setDesktopAuth("error", errorMessageOf(err, "Logout failed"));
     throw err;
   }
   resetLoggedOutState();

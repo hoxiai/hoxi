@@ -208,7 +208,7 @@ func (s *Service) GenerateImage(ctx context.Context, req llm.ImageRequest) (resp
 		}
 	}()
 
-	resp, resultErr = s.executeImageRequest(ctx, conn, prompt, req.InputImages, opts, false, timeout)
+	resp, resultErr = s.executeImageRequest(ctx, conn, prompt, req.InputImages, req.MaskImage, opts, false, timeout)
 	if resultErr == nil {
 		resp.ProviderID = conn.ProviderID
 		resp.ModelID = conn.ModelID
@@ -217,8 +217,18 @@ func (s *Service) GenerateImage(ctx context.Context, req llm.ImageRequest) (resp
 }
 
 func (s *Service) probeImageModel(ctx context.Context, conn imageGenConn) error {
-	_, err := s.executeImageRequest(ctx, conn, "Simple minimal blue circle icon on white background", nil, imageGenExecOptions{count: 1}, true, defaultImageProbeTimeout)
+	_, err := s.executeImageRequest(ctx, conn, "Simple minimal blue circle icon on white background", nil, nil, imageGenExecOptions{count: 1}, true, defaultImageProbeTimeout)
 	return err
+}
+
+func appendMaskInputImages(inputImages []llm.ImageInput, mask *llm.ImageInput) []llm.ImageInput {
+	if mask == nil || len(mask.Data) == 0 {
+		return inputImages
+	}
+	out := make([]llm.ImageInput, 0, len(inputImages)+1)
+	out = append(out, inputImages...)
+	out = append(out, *mask)
+	return out
 }
 
 func (s *Service) executeImageRequest(
@@ -226,10 +236,12 @@ func (s *Service) executeImageRequest(
 	conn imageGenConn,
 	prompt string,
 	inputImages []llm.ImageInput,
+	maskImage *llm.ImageInput,
 	opts imageGenExecOptions,
 	probeOnly bool,
 	timeout time.Duration,
 ) (llm.ImageResponse, error) {
+	chatInputs := appendMaskInputImages(inputImages, maskImage)
 	proto := effectiveProviderProtocol(conn.ProviderID, conn.NPM, conn.BaseURL)
 	if proto == "google" {
 		if isGoogleImagenModelID(conn.ModelID) {
@@ -239,7 +251,7 @@ func (s *Service) executeImageRequest(
 		if probeOnly {
 			probePrompt = "Reply with OK only, no image needed."
 		}
-		return s.googleGeminiGenerateImage(ctx, conn, probePrompt, inputImages, opts, probeOnly, timeout)
+		return s.googleGeminiGenerateImage(ctx, conn, probePrompt, chatInputs, opts, probeOnly, timeout)
 	}
 
 	if isConversationalImageModelID(conn.ModelID) {
@@ -249,19 +261,19 @@ func (s *Service) executeImageRequest(
 		} else if opts.aspectRatio != "" {
 			chatPrompt = prompt + "\n(Preferred aspect ratio: " + opts.aspectRatio + ")"
 		}
-		resp, err := s.openAIChatGenerateImage(ctx, conn, chatPrompt, inputImages, probeOnly, timeout)
+		resp, err := s.openAIChatGenerateImage(ctx, conn, chatPrompt, chatInputs, probeOnly, timeout)
 		if err == nil {
 			return resp, nil
 		}
 		if len(inputImages) == 0 && shouldFallbackImageEndpoint(err) {
-			if imgResp, imgErr := s.openAIImagesGenerate(ctx, conn, prompt, nil, opts, timeout); imgErr == nil {
+			if imgResp, imgErr := s.openAIImagesGenerate(ctx, conn, prompt, nil, nil, opts, timeout); imgErr == nil {
 				return imgResp, nil
 			}
 		}
 		return llm.ImageResponse{}, err
 	}
 
-	resp, err := s.openAIImagesGenerate(ctx, conn, prompt, inputImages, opts, timeout)
+	resp, err := s.openAIImagesGenerate(ctx, conn, prompt, inputImages, maskImage, opts, timeout)
 	if err == nil {
 		return resp, nil
 	}
@@ -270,7 +282,7 @@ func (s *Service) executeImageRequest(
 		if !probeOnly && opts.aspectRatio != "" {
 			chatPrompt = prompt + "\n(Preferred aspect ratio: " + opts.aspectRatio + ")"
 		}
-		if chatResp, chatErr := s.openAIChatGenerateImage(ctx, conn, chatPrompt, inputImages, probeOnly, timeout); chatErr == nil {
+		if chatResp, chatErr := s.openAIChatGenerateImage(ctx, conn, chatPrompt, chatInputs, probeOnly, timeout); chatErr == nil {
 			return chatResp, nil
 		}
 	}

@@ -8,6 +8,7 @@ export const common: CommonI18n = {
   cancel: "取消",
   confirm: "确认",
   save: "保存",
+  clear: "清除",
   delete: "删除",
   close: "关闭",
   apply: "应用",
@@ -28,4 +29,8 @@ export const common: CommonI18n = {
   unitYi: "亿",
   unitWanYi: "万亿",
   new: "新建",
+  retry: "重试",
+  reloadApp: "重新加载窗口",
+  renderErrorTitle: "当前视图渲染异常",
+  renderErrorHint: "其他区域不受影响，可尝试重新渲染当前视图或重新加载窗口",
 };

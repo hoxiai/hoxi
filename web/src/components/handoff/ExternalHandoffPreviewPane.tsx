@@ -91,34 +91,40 @@ export default function ExternalHandoffPreviewPane(props: {
                     · {t("leftNav.handoffChangedFilesTitle")} {props.detail?.changedFiles?.length}
                   </span>
                 </Show>
+                <Show when={props.detail?.fidelity?.targetRuntime}>
+                  {(engine) => (
+                    <span class="font-mono">
+                      · {t("leftNav.handoffTargetEngine", { engine: engine() })}
+                    </span>
+                  )}
+                </Show>
               </div>
             </div>
 
-            {/* Handoff Plan & Fidelity Banner */}
-            <Show when={props.detail?.fidelity}>
+            {/* Handoff Plan & Fidelity Caveats (only shown when target dir differs or caveats exist) */}
+            <Show
+              when={
+                props.detail?.fidelity &&
+                ((props.detail.fidelity.unsupportedFeatures?.length || 0) > 0 ||
+                  (Boolean(props.detail.fidelity.targetDirectory) &&
+                    props.detail.fidelity.targetDirectory !== cur().cwd))
+                  ? props.detail.fidelity
+                  : null
+              }
+            >
               {(fid) => (
                 <div class="border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]/60 px-5 py-2.5 space-y-2 text-[12px]">
-                  <div class="flex items-center justify-between">
-                    <span class="font-semibold text-[var(--text-secondary)]">
-                      {t("leftNav.handoffPreviewPlanTitle")}
-                    </span>
-                    <span class="font-mono text-[11px] text-[var(--text-muted)]">
-                      {t("leftNav.handoffTargetEngine", { engine: fid().targetRuntime })}
-                    </span>
-                  </div>
-
-                  <div class="flex flex-wrap items-center gap-3 text-[11px] text-[var(--text-muted)]">
-                    <span class="truncate max-w-[320px]" title={fid().targetDirectory}>
-                      {t("leftNav.handoffTargetDir", { dir: shortenPath(fid().targetDirectory) })}
-                    </span>
-                    <span>
-                      {t("leftNav.handoffRetainedStats", {
-                        turns: fid().retainedTurns,
-                        tools: fid().retainedToolCalls,
-                        files: fid().retainedFiles?.length || 0,
-                      })}
-                    </span>
-                  </div>
+                  <Show
+                    when={
+                      Boolean(fid().targetDirectory) && fid().targetDirectory !== cur().cwd
+                    }
+                  >
+                    <div class="flex flex-wrap items-center gap-3 text-[11px] text-[var(--text-muted)]">
+                      <span class="truncate max-w-[360px]" title={fid().targetDirectory}>
+                        {t("leftNav.handoffTargetDir", { dir: shortenPath(fid().targetDirectory) })}
+                      </span>
+                    </div>
+                  </Show>
 
                   <Show when={(fid().unsupportedFeatures?.length || 0) > 0}>
                     <div class="rounded-md border border-amber-500/20 bg-amber-500/5 px-2.5 py-1.5 space-y-1">

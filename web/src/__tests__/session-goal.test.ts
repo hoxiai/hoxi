@@ -4,8 +4,10 @@ import {
   collectTurnEvidence,
   decideGoalTurn,
   GOAL_MAX_CONTINUATIONS,
+  GOAL_MAX_CONTINUATIONS_LIMIT,
   GOAL_MAX_OBJECTIVE_LENGTH,
   parseGoalCommand,
+  resolveGoalMaxContinuations,
   restoreStoredGoals,
 } from "../store/session-goal-state";
 import {
@@ -51,6 +53,27 @@ describe("session goal command parsing", () => {
   it("rejects objectives over the length limit", () => {
     const long = "x".repeat(GOAL_MAX_OBJECTIVE_LENGTH + 1);
     assertDeepEqual(parseGoalCommand(`/goal ${long}`), { kind: "invalid", error: "objective-too-long" });
+  });
+
+  it("parses optional --max continuation budget and rejects invalid values", () => {
+    assertDeepEqual(parseGoalCommand("/goal --max 50 Keep driving Gemini"), {
+      kind: "set",
+      objective: "Keep driving Gemini",
+      maxContinuations: 50,
+    });
+    assertDeepEqual(parseGoalCommand("/goal --max=100 Run multi-round workflow"), {
+      kind: "set",
+      objective: "Run multi-round workflow",
+      maxContinuations: 100,
+    });
+    assertDeepEqual(parseGoalCommand("/goal --max 0 Nope"), { kind: "invalid", error: "invalid-max" });
+    assertDeepEqual(parseGoalCommand(`/goal --max ${GOAL_MAX_CONTINUATIONS_LIMIT + 1} Nope`), {
+      kind: "invalid",
+      error: "invalid-max",
+    });
+    assertDeepEqual(parseGoalCommand("/goal --max abc Nope"), { kind: "invalid", error: "invalid-max" });
+    assertDeepEqual(parseGoalCommand("/goal --max 10"), { kind: "invalid", error: "invalid-max" });
+    assertDeepEqual(parseGoalCommand("/goal --max"), { kind: "invalid", error: "invalid-max" });
   });
 
   it("parses local composer control commands without capturing custom command prefixes", () => {
@@ -122,6 +145,10 @@ describe("session goal turn decisions", () => {
   it("pauses at the continuation budget so cost cannot run away", () => {
     assertDeepEqual(decideGoalTurn(working, GOAL_MAX_CONTINUATIONS - 1), { kind: "continue" });
     assertDeepEqual(decideGoalTurn(working, GOAL_MAX_CONTINUATIONS), { kind: "pause", reason: "budget" });
+    assertDeepEqual(decideGoalTurn(working, 49, 50), { kind: "continue" });
+    assertDeepEqual(decideGoalTurn(working, 50, 50), { kind: "pause", reason: "budget" });
+    assertEqual(resolveGoalMaxContinuations({ maxContinuations: 50 }), 50);
+    assertEqual(resolveGoalMaxContinuations({ maxContinuations: 9999 }), GOAL_MAX_CONTINUATIONS);
   });
 });
 
@@ -201,13 +228,15 @@ describe("session goal turn evidence", () => {
 describe("session goal persistence", () => {
   it("restores an active goal as paused after a restart", () => {
     const restored = restoreStoredGoals({
-      ses_a: { objective: "Ship it", status: "active", continuations: 4, updatedAt: 10 },
-      ses_b: { objective: "Done", status: "complete", continuations: 1, updatedAt: 11 },
+      ses_a: { objective: "Ship it", status: "active", continuations: 4, maxContinuations: 60, updatedAt: 10 },
+      ses_b: { objective: "Done", status: "complete", continuations: 1, maxContinuations: 9999, updatedAt: 11 },
     });
     assertEqual(restored.ses_a.status, "paused");
     assertEqual(restored.ses_a.reason, "restart");
     assertEqual(restored.ses_a.continuations, 4);
+    assertEqual(restored.ses_a.maxContinuations, 60);
     assertEqual(restored.ses_b.status, "complete", "complete goals stay complete");
+    assertEqual(restored.ses_b.maxContinuations, undefined, "out-of-range maxContinuations must be discarded");
   });
 
   it("drops malformed entries and clamps overlong objectives", () => {

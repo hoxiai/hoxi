@@ -93,5 +93,17 @@ describe("desktop computer transport", () => {
       }),
       'type #1 "hello world" + Enter'
     );
+    assertEqual(
+      extractDescription({
+        id: "p3",
+        sessionID: "s1",
+        messageID: "m1",
+        type: "tool",
+        tool: "hoxi_computer",
+        callID: "c3",
+        state: { status: "running", input: { action: "wait", seconds: 15, screenshot: true }, time: { start: 1 } },
+      }),
+      "wait 15s + screenshot"
+    );
   });
 });

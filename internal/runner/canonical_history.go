@@ -46,7 +46,7 @@ func isMutatingToolPart(p MessagePart) bool {
 				return !ro
 			}
 			sub := strings.ToLower(strings.TrimSpace(firstString(p.State.Input["subagent_type"], p.State.Input["agent"])))
-			return sub == "general"
+			return sub == "general" || sub == "executor"
 		}
 		return false
 	}
@@ -164,7 +164,18 @@ func appendCanonicalMessage(msgs []NativeMessage, role string, blocks []NativeCo
 	return canonicalAppendMessage(msgs, role, blocks)
 }
 
-func (s *Service) appendToolMediaBlocks(meta map[string]interface{}, dst []NativeContentBlock) []NativeContentBlock {
+const maxReplayedEphemeralScreenshots = 2
+
+func isEphemeralScreenshotHistoryTool(toolName string) bool {
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "hoxi_computer", "hoxi_browser":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Service) appendToolMediaBlocks(meta map[string]interface{}, dst []NativeContentBlock, omitImages bool) []NativeContentBlock {
 	if s == nil || meta == nil {
 		return dst
 	}
@@ -174,6 +185,18 @@ func (s *Service) appendToolMediaBlocks(meta map[string]interface{}, dst []Nativ
 	}
 	resolveEntry := func(entry map[string]interface{}) {
 		if entry == nil {
+			return
+		}
+		mime := stringMetaField(entry, "mime")
+		filename := stringMetaField(entry, "filename")
+		if omitImages && strings.HasPrefix(strings.ToLower(mime), "image/") {
+			if filename == "" {
+				filename = "screenshot"
+			}
+			dst = append(dst, NativeContentBlock{
+				Type: "text",
+				Text: "[omitted earlier screenshot: " + filename + " (" + mime + ")]",
+			})
 			return
 		}
 		urlStr := stringMetaField(entry, "url")
@@ -188,8 +211,8 @@ func (s *Service) appendToolMediaBlocks(meta map[string]interface{}, dst []Nativ
 		if mb, ok := s.resolveNativeHistoryFileBlock(MessagePart{
 			Type:     "file",
 			URL:      urlStr,
-			Mime:     stringMetaField(entry, "mime"),
-			Filename: stringMetaField(entry, "filename"),
+			Mime:     mime,
+			Filename: filename,
 		}); ok {
 			dst = append(dst, mb)
 		}
@@ -207,6 +230,40 @@ func (s *Service) appendToolMediaBlocks(meta map[string]interface{}, dst []Nativ
 		}
 	}
 	return dst
+}
+
+func collectKeptEphemeralScreenshotParts(turns []MessageTurn, startIdx, firstTurnMinStep int) map[[2]int]bool {
+	var positions [][2]int
+	for idx := startIdx; idx < len(turns); idx++ {
+		t := turns[idx]
+		if !strings.EqualFold(strings.TrimSpace(t.Info.Role), "assistant") {
+			continue
+		}
+		minStep := 0
+		if idx == startIdx && firstTurnMinStep > 0 {
+			minStep = firstTurnMinStep
+		}
+		for pIdx, p := range t.Parts {
+			if p.Type != "tool" || p.State == nil || !isEphemeralScreenshotHistoryTool(p.Tool) {
+				continue
+			}
+			ps := partStep(p)
+			if minStep > 0 && ps > 0 && ps < minStep {
+				continue
+			}
+			if p.State.Metadata != nil && p.State.Metadata["mediaAttachments"] != nil {
+				positions = append(positions, [2]int{idx, pIdx})
+			}
+		}
+	}
+	if len(positions) <= maxReplayedEphemeralScreenshots {
+		return nil
+	}
+	kept := make(map[[2]int]bool, maxReplayedEphemeralScreenshots)
+	for _, pos := range positions[len(positions)-maxReplayedEphemeralScreenshots:] {
+		kept[pos] = true
+	}
+	return kept
 }
 
 // keepReasoningAffinity reports whether a recorded reasoning part came from the
@@ -267,6 +324,7 @@ func (s *Service) projectCanonicalNativeHistory(turns []MessageTurn, targetProvi
 		}
 	}
 
+	keptEphemeralScreenshots := collectKeptEphemeralScreenshotParts(turns, startIdx, firstTurnMinStep)
 	for idx := startIdx; idx < len(turns); idx++ {
 		t := turns[idx]
 		minStep := 0
@@ -341,7 +399,7 @@ func (s *Service) projectCanonicalNativeHistory(turns []MessageTurn, targetProvi
 				resultBlocks = nil
 			}
 
-			for _, p := range t.Parts {
+			for pIdx, p := range t.Parts {
 				if p.Type == "compaction" {
 					continue
 				}
@@ -409,6 +467,7 @@ func (s *Service) projectCanonicalNativeHistory(turns []MessageTurn, targetProvi
 						Signature: toolSig,
 					})
 
+					omitMedia := keptEphemeralScreenshots != nil && isEphemeralScreenshotHistoryTool(toolName) && !keptEphemeralScreenshots[[2]int{idx, pIdx}]
 					switch status {
 					case "completed":
 						resultBlocks = append(resultBlocks, NativeContentBlock{
@@ -417,7 +476,7 @@ func (s *Service) projectCanonicalNativeHistory(turns []MessageTurn, targetProvi
 							Text:      p.State.Output,
 							IsError:   false,
 						})
-						resultBlocks = s.appendToolMediaBlocks(p.State.Metadata, resultBlocks)
+						resultBlocks = s.appendToolMediaBlocks(p.State.Metadata, resultBlocks, omitMedia)
 					case "running":
 						// Unsettled mutating tool from a mid-flight snapshot/crash: warn explicitly.
 						resultBlocks = append(resultBlocks, NativeContentBlock{
@@ -437,7 +496,7 @@ func (s *Service) projectCanonicalNativeHistory(turns []MessageTurn, targetProvi
 							Text:      errOut,
 							IsError:   true,
 						})
-						resultBlocks = s.appendToolMediaBlocks(p.State.Metadata, resultBlocks)
+						resultBlocks = s.appendToolMediaBlocks(p.State.Metadata, resultBlocks, omitMedia)
 					}
 				}
 			}

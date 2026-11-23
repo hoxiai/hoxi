@@ -3,10 +3,13 @@ import { browserAPI, browserPoint, browserStreamURL, browserURL, connectBrowserS
 import {
   browserLoadPhase,
   displayBrowserAddress,
+  formatBrowserError,
   normalizeBrowserAddress,
   requiresBrowserTakeover,
   resolveBrowserInspectorSessionID,
+  resolveChromeConnectPlan,
 } from "../store/browser";
+import { t } from "../i18n";
 import { createBrowserController } from "../store/browser-controller";
 import { setSurfaceMode } from "../store/layout";
 import { setWorkspace, workspace } from "../store/workspace-state";
@@ -316,5 +319,51 @@ describe("Browser inspector", () => {
       if (originalDoc) Object.defineProperty(globalThis, "document", originalDoc);
       else Reflect.deleteProperty(globalThis, "document");
     }
+  });
+
+  it("formats raw HTTP browser errors into localized friendly text", () => {
+    assertEqual(
+      formatBrowserError(
+        new Error('HTTP 409: {"error":"disconnect the current browser before pairing Chrome"}')
+      ),
+      t("inspector.browser.errorDisconnectBeforePair")
+    );
+    assertEqual(
+      formatBrowserError(
+        'Error: HTTP 409: {"error":"Chrome pairing pending; connect the extension or cancel pairing first"}'
+      ),
+      t("inspector.browser.errorPairingPending")
+    );
+    assertEqual(
+      formatBrowserError(new Error('HTTP 503: {"error":"Chrome extension bridge is unavailable"}')),
+      t("inspector.browser.errorBridgeUnavailable")
+    );
+    assertEqual(
+      formatBrowserError(new Error('HTTP 502: {"error":"custom upstream failure"}')),
+      "custom upstream failure"
+    );
+    assertEqual(
+      formatBrowserError(new Error("HTTP 502: <html>bad gateway</html>")),
+      t("inspector.browser.errorUnknown")
+    );
+  });
+
+  it("plans Chrome pairing so stale or active browsers close first and connected Chrome stays intact", () => {
+    const idle = { url: "", title: "", tabs: [], tabID: "", manual: false };
+    assertEqual(resolveChromeConnectPlan(null), "close_then_pair");
+    assertEqual(resolveChromeConnectPlan({ ...idle, mode: "window" }), "pair");
+    assertEqual(resolveChromeConnectPlan({ ...idle, mode: "headless" }), "pair");
+    assertEqual(
+      resolveChromeConnectPlan({
+        ...idle,
+        mode: "window",
+        tabs: [{ id: "t1", title: "App", url: "https://example.com" }],
+        tabID: "t1",
+      }),
+      "close_then_pair"
+    );
+    assertEqual(resolveChromeConnectPlan({ ...idle, mode: "chrome", connected: false }), "close_then_pair");
+    assertEqual(resolveChromeConnectPlan({ ...idle, mode: "chrome", connected: true }), "already_connected");
+    assertEqual(resolveChromeConnectPlan({ ...idle, mode: "chrome" }), "already_connected");
   });
 });

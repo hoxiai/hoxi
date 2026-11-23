@@ -8,6 +8,7 @@ import {
   Cpu,
   Eye,
   KeyRound,
+  Layers,
   Search,
   Star,
   Zap,
@@ -15,7 +16,9 @@ import {
 import {
   AUTO_PROVIDER_ID,
   buildAutoVirtualProvider,
+  buildOrchestratorVirtualFlattenedModel,
   clampReasoningEffort,
+  getEffectiveOrchestratorPair,
   inferModelFastModeCapability,
   lookupModelContextLimit,
   inferModelEffortCapabilities,
@@ -24,8 +27,10 @@ import {
   isNonChatUtilityModelID,
   isOpenCodeProviderAvailable,
   OFFICIAL_PROVIDER_ID,
+  ORCHESTRATOR_PROVIDER_ID,
   openProviderModal,
   peekAutoModelTarget,
+  peekOrchestratorConcreteModel,
   resolveEffectiveFastMode,
   resolveFavoriteModelEntries,
   resolveRecentModelEntries,
@@ -49,6 +54,7 @@ import {
 } from "./model-selector-utils";
 import { ModelDetailsPopover } from "./ModelDetailsPopover";
 import { ModelProbeBadge, ModelProbeButton } from "./ModelProbeControl";
+import { OrchestratorSelectorRow } from "./OrchestratorSelectorRow";
 import { SelectedModelHoverCard } from "./SelectedModelHoverCard";
 
 function effortOptionLabel(level: ConcreteReasoningEffort): string {
@@ -79,6 +85,7 @@ export default function ModelSelector(props: { openRequest?: number }) {
   let popoverRef: HTMLDivElement | undefined;
   let searchInputRef: HTMLInputElement | undefined;
   let effortRowRef: HTMLDivElement | undefined;
+  let hoverOpenTimer: ReturnType<typeof setTimeout> | undefined;
   let hoverCloseTimer: ReturnType<typeof setTimeout> | undefined;
 
   const updatePopoverPosition = () => {
@@ -117,6 +124,10 @@ export default function ModelSelector(props: { openRequest?: number }) {
   };
 
   const cancelHoverClose = () => {
+    if (hoverOpenTimer) {
+      clearTimeout(hoverOpenTimer);
+      hoverOpenTimer = undefined;
+    }
     if (hoverCloseTimer) {
       clearTimeout(hoverCloseTimer);
       hoverCloseTimer = undefined;
@@ -125,7 +136,12 @@ export default function ModelSelector(props: { openRequest?: number }) {
 
   const showHover = () => {
     cancelHoverClose();
-    if (!open()) setTriggerHovered(true);
+    if (open()) return;
+    if (triggerHovered()) return;
+    hoverOpenTimer = setTimeout(() => {
+      hoverOpenTimer = undefined;
+      if (!open()) setTriggerHovered(true);
+    }, 220);
   };
 
   const hideHover = () => {
@@ -217,6 +233,9 @@ export default function ModelSelector(props: { openRequest?: number }) {
   const activeModelInfo = createMemo<FlattenedModel | null>(() => {
     const sel = workspace.selectedModel;
     if (!sel) return null;
+    if (sel.providerID === ORCHESTRATOR_PROVIDER_ID) {
+      return buildOrchestratorVirtualFlattenedModel(workspace.activeSessionID);
+    }
     if (sel.providerID === AUTO_PROVIDER_ID) {
       const autoFound = autoSystemModels().find((m) => m.modelID === sel.modelID);
       if (autoFound) return autoFound;
@@ -274,7 +293,12 @@ export default function ModelSelector(props: { openRequest?: number }) {
   });
 
   const effectiveReasoningEffort = createMemo<ReasoningEffort>(() => {
-    const raw = workspace.reasoningEffort;
+    const sel = workspace.selectedModel;
+    const raw =
+      workspace.reasoningEffort ||
+      (sel?.providerID === ORCHESTRATOR_PROVIDER_ID
+        ? getEffectiveOrchestratorPair(workspace.activeSessionID).orchestratorEffort
+        : "");
     const info = activeModelInfo();
     if (!raw) return "";
     if (info && !info.reasoning && (!info.efforts || info.efforts.length === 0)) {
@@ -286,13 +310,23 @@ export default function ModelSelector(props: { openRequest?: number }) {
   const activeSupportsFastMode = createMemo(() => {
     const sel = workspace.selectedModel;
     if (!sel) return false;
+    const concrete =
+      sel.providerID === ORCHESTRATOR_PROVIDER_ID
+        ? peekOrchestratorConcreteModel(workspace.activeSessionID, "orchestrator")
+        : sel;
+    if (!concrete) return false;
     const info = activeModelInfo();
-    return inferModelFastModeCapability(sel.providerID, sel.modelID, info, null, info?.baseURL);
+    return inferModelFastModeCapability(concrete.providerID, concrete.modelID, info, null, info?.baseURL);
   });
 
-  const effectiveFastMode = createMemo(() =>
-    resolveEffectiveFastMode(workspace.selectedModel, workspace.fastMode)
-  );
+  const effectiveFastMode = createMemo(() => {
+    const sel = workspace.selectedModel;
+    const concrete =
+      sel?.providerID === ORCHESTRATOR_PROVIDER_ID
+        ? peekOrchestratorConcreteModel(workspace.activeSessionID, "orchestrator")
+        : sel;
+    return resolveEffectiveFastMode(concrete, workspace.fastMode);
+  });
 
   const filteredModels = createMemo<FlattenedModel[]>(() => {
     const q = query().trim();
@@ -419,7 +453,7 @@ export default function ModelSelector(props: { openRequest?: number }) {
       if (!open() || !containerRef) return;
       const target = e.target as Node;
       const path = typeof e.composedPath === "function" ? e.composedPath() : [];
-      if (path.some((node) => node instanceof HTMLElement && node.hasAttribute("data-model-details"))) return;
+      if (path.some((node) => node instanceof HTMLElement && (node.hasAttribute("data-model-details") || node.hasAttribute("data-model-role-picker")))) return;
       const inTrigger = path.includes(containerRef) || containerRef.contains(target);
       const inPopover = Boolean(popoverRef && (path.includes(popoverRef) || popoverRef.contains(target)));
       if (!inTrigger && !inPopover) {
@@ -448,10 +482,17 @@ export default function ModelSelector(props: { openRequest?: number }) {
         title={activeModelInfo() ? undefined : t("timeline.selectModelToSend")}
       >
         <Show
-          when={activeModelInfo()?.providerID}
-          fallback={<Cpu size={12} class="shrink-0" />}
+          when={activeModelInfo()?.providerID === ORCHESTRATOR_PROVIDER_ID}
+          fallback={
+            <Show
+              when={activeModelInfo()?.providerID}
+              fallback={<Cpu size={12} class="shrink-0" />}
+            >
+              {(provID) => <ProviderIcon id={provID()} class="w-3.5 h-3.5 shrink-0" />}
+            </Show>
+          }
         >
-          {(provID) => <ProviderIcon id={provID()} class="w-3.5 h-3.5 shrink-0" />}
+          <Layers size={12} class="shrink-0 text-[var(--accent-primary)]" />
         </Show>
         <span class="truncate">
           {activeModelInfo()?.modelName || t("models.selectModel")}
@@ -550,29 +591,17 @@ export default function ModelSelector(props: { openRequest?: number }) {
                   }}
                   class="w-full bg-transparent text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none selectable-text"
                 />
-                <Show when={freeConnectedModels().length > 0}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const nextRail = rail() === "free" && !query().trim() ? "connected" : "free";
-                      setQuery("");
-                      setRail(nextRail);
-                      setDetails(null);
-                      setActiveIndex(0);
-                    }}
-                    class={`shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold transition-colors cursor-pointer ${
-                      rail() === "free" && !query().trim()
-                        ? "bg-[var(--ok-surface)] text-[var(--ok-text)] ring-1 ring-[var(--ok-text)]/30"
-                        : "bg-[var(--bg-inset)] text-[var(--text-secondary)] hover:bg-[var(--ok-surface)] hover:text-[var(--ok-text)]"
-                    }`}
-                  >
-                    <span>{t("models.freeModel")}</span>
-                    <span class="font-mono text-[11px] opacity-80">{freeConnectedModels().length}</span>
-                  </button>
-                </Show>
               </div>
 
               <div class="flex-1 overflow-y-auto p-1.5 space-y-0.5">
+                <Show
+                  when={
+                    (!query().trim() && (rail() === "connected" || rail() === AUTO_PROVIDER_ID)) ||
+                    /orchestrat|exec|\u7f16\u6392|\u6267\u884c/i.test(query().trim())
+                  }
+                >
+                  <OrchestratorSelectorRow onClosePopover={() => setOpen(false)} />
+                </Show>
                 <Show
                   when={filteredModels().length > 0}
                   fallback={
@@ -601,6 +630,30 @@ export default function ModelSelector(props: { openRequest?: number }) {
                       const ctxText = () => formatTokenLimit(item.contextLimit);
                       const inPrice = () => formatPricePerMillion(item.inputCost, item.priceCurrency);
                       const outPrice = () => formatPricePerMillion(item.outputCost, item.priceCurrency);
+                      const subtitleParts = () => {
+                        const parts: string[] = [];
+                        const showProvider =
+                          Boolean(query().trim()) ||
+                          rail() === "connected" ||
+                          rail() === "free" ||
+                          rail() === "favorites" ||
+                          rail() === "recent" ||
+                          rail() === AUTO_PROVIDER_ID;
+                        if (item.providerID === AUTO_PROVIDER_ID && peekAutoModelTarget(item.modelID)) {
+                          parts.push(
+                            `${item.providerName} · ${t("models.autoPoolActiveTarget", {
+                              model: `${peekAutoModelTarget(item.modelID)!.providerID}/${peekAutoModelTarget(item.modelID)!.modelID}`,
+                            })}`
+                          );
+                        } else if (showProvider) {
+                          parts.push(item.providerName);
+                        }
+                        if (ctxText()) parts.push(ctxText()!);
+                        if (!item.free && (inPrice() || outPrice())) {
+                          parts.push(`${inPrice() || "-"} / ${outPrice() || "-"}`);
+                        }
+                        return parts;
+                      };
 
                       return (
                         <div
@@ -650,29 +703,11 @@ export default function ModelSelector(props: { openRequest?: number }) {
                                 modelID={item.modelID}
                               />
                             </span>
-                            <span class="block truncate text-[11px] text-[var(--text-muted)]">
-                              {item.providerID === AUTO_PROVIDER_ID && peekAutoModelTarget(item.modelID)
-                                ? `${item.providerName} · ${t("models.autoPoolActiveTarget", {
-                                    model: `${peekAutoModelTarget(item.modelID)!.providerID}/${peekAutoModelTarget(item.modelID)!.modelID}`,
-                                  })}`
-                                : item.providerName}
-                              <Show when={ctxText()}>
-                                <span class="font-mono"> · {ctxText()}</span>
-                              </Show>
-                              <Show
-                                when={!item.free && (inPrice() || outPrice())}
-                                fallback={
-                                  <Show when={item.free}>
-                                    <span class="font-mono text-[var(--ok-text)]"> · $0</span>
-                                  </Show>
-                                }
-                              >
-                                <span class="font-mono">
-                                  {" "}
-                                  · {inPrice() || "-"} / {outPrice() || "-"}
-                                </span>
-                              </Show>
-                            </span>
+                            <Show when={subtitleParts().length > 0}>
+                              <span class="block truncate text-[11px] text-[var(--text-muted)]">
+                                {subtitleParts().join(" · ")}
+                              </span>
+                            </Show>
                           </button>
 
                           <div class="flex items-center gap-1 shrink-0">

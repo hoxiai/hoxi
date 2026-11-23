@@ -463,8 +463,12 @@ function RequestDetail(props: { entry: RequestLogEntry; onClose: () => void }) {
           </Show>
         )}
       </Show>
-      <pre class="overflow-auto whitespace-pre-wrap break-all rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-3 font-mono text-[11px] text-[var(--text-secondary)]">{JSON.stringify(props.entry, null, 2)}</pre>
-      <p class="text-[11px] text-[var(--text-faint)]">{t("diagnostics.detailsHint")}</p>
+      <details class="group/raw-json rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)]/60">
+        <summary class="flex cursor-pointer list-none items-center gap-1.5 px-3 py-2 text-[11.5px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] [&::-webkit-details-marker]:hidden">
+          <span>{t("diagnostics.rawRecord")}</span>
+        </summary>
+        <pre class="overflow-auto whitespace-pre-wrap break-all border-t border-[var(--border-subtle)] p-3 font-mono text-[11px] text-[var(--text-secondary)]">{JSON.stringify(props.entry, null, 2)}</pre>
+      </details>
     </section>
     </div>
   );

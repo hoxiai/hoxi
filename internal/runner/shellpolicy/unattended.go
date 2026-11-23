@@ -197,7 +197,7 @@ var (
 	unattendedPublishRe = regexp.MustCompile(`(?i)(?:^|[;&|(\n]|&&|\|\|)\s*(?:nohup\s+|time\s+|exec\s+|command\s+|env(?:\s+[A-Za-z_][A-Za-z0-9_]*=\S*)*\s+)*(?:git(?:\s+-C\s+\S+|\s+-c\s+\S+|\s+--git-dir=\S+|\s+--work-tree=\S+)*\s+push|gh\s+(?:release\s+create|pr\s+merge)|(?:npm|pnpm|yarn|bun)\s+(?:-r\s+|--recursive\s+)?publish|cargo\s+publish|twine\s+upload|gem\s+push|docker\s+push|terraform\s+(?:apply|destroy)|kubectl\s+(?:apply|delete)|helm\s+(?:install|upgrade)|(?:\./)?scripts/ai-release\.sh)\b`)
 	unattendedSudoRe    = regexp.MustCompile(`(?i)(?:^|[;&|(\n]|&&|\|\|)\s*(?:nohup\s+|time\s+|exec\s+|command\s+|env(?:\s+[A-Za-z_][A-Za-z0-9_]*=\S*)*\s+)*(?:sudo|su|doas)\b`)
 	unattendedEgressRe  = regexp.MustCompile(`(?i)\b(?:curl|wget|http)\b[^\n]*?(?:authorization|bearer|x-api-key|\$\{?[A-Za-z_][A-Za-z0-9_]*(?:_KEY|_TOKEN|_SECRET)\b)`)
-	unattendedSecretRe  = regexp.MustCompile(`(?i)(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/(?:\.ssh|\.aws|\.gnupg|\.kube|\.azure|\.codex)(?:/|$)|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/\.docker/config\.json|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/\.config/(?:gh|gcloud|opencode)(?:/|$)|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/\.local/share/opencode(?:/|$)|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/\.(?:netrc|npmrc|pypirc|git-credentials)\b|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/\.cargo/credentials|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/Library/Keychains(?:/|$)|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/\.hoxi/(?:relay-keys|work-apps|dataprofiles|tunnel(?:-dev)?|auth|cloudflared|pairing|approval-policy|models|media-roles|intake|hoxi)\.(?:json|db)\b|` + envFilePattern + `|` + envrcFilePattern + `|` + keyFilePattern)
+	unattendedSecretRe  = regexp.MustCompile(`(?i)(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/(?:\.ssh|\.aws|\.gnupg|\.kube|\.azure|\.codex)(?:/|$)|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/\.docker/config\.json|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/\.config/(?:gh|gcloud|opencode)(?:/|$)|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/\.local/share/opencode(?:/|$)|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/\.(?:netrc|npmrc|pypirc|git-credentials|claude\.json)\b|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/\.cargo/credentials|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/Library/Keychains(?:/|$)|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/\.hoxi/(?:relay-keys|work-apps|dataprofiles|tunnel(?:-dev)?|auth|cloudflared|pairing|approval-policy|models|media-roles|intake|schedules|hoxi)\.(?:json|db)\b|` + envFilePattern + `|` + envrcFilePattern + `|` + keyFilePattern)
 	unattendedWrappedRe = regexp.MustCompile(`(?i)(?:bash|sh|zsh|eval|xargs)\b[^|&;\n]*\b(?:git\s+push|sudo|publish)\b`)
 )
 
@@ -310,6 +310,12 @@ func unattendedArgvCategory(words []string) string {
 		if unattendedEgressRe.MatchString(joined) {
 			return unattendedCategoryEgress
 		}
+	case "hoxi", "hoxi.exe":
+		if len(words) >= 2 && strings.EqualFold(words[1], "schedule") {
+			if len(words) < 3 || !isReadOnlyHoxiScheduleSub(words[2]) {
+				return unattendedCategoryTool
+			}
+		}
 	}
 	if base == "ai-release.sh" || strings.HasSuffix(strings.ToLower(words[0]), "scripts/ai-release.sh") {
 		return unattendedCategoryPublish
@@ -354,6 +360,50 @@ func unattendedSecretDir(p string) bool {
 	for _, fragment := range []string{"/.ssh/", "/.aws/", "/.gnupg/", "/.kube/", "/.azure/", "/.codex/", "/library/keychains/", "/.config/gh/", "/.config/gcloud/", "/.config/opencode/", "/.local/share/opencode/"} {
 		if strings.Contains(slash, fragment) || strings.HasSuffix(slash, strings.TrimSuffix(fragment, "/")) {
 			return true
+		}
+	}
+	return false
+}
+
+func isReadOnlyHoxiScheduleSub(sub string) bool {
+	switch strings.ToLower(strings.TrimSpace(sub)) {
+	case "list", "ls", "history", "runs", "help", "-h", "--help":
+		return true
+	default:
+		return false
+	}
+}
+
+func hasMutatingHoxiScheduleCommand(blob string) bool {
+	if !strings.Contains(strings.ToLower(blob), "schedule") {
+		return false
+	}
+	for _, seg := range splitCommandChain(blob) {
+		words := shellWords(seg)
+		i := 0
+		for i < len(words) {
+			if envVarAssignmentWordRe.MatchString(words[i]) {
+				i++
+				continue
+			}
+			lw := strings.ToLower(filepath.Base(words[i]))
+			if lw == "env" || lw == "command" || lw == "nohup" || lw == "time" || lw == "exec" {
+				i++
+				for i < len(words) && strings.HasPrefix(words[i], "-") {
+					i++
+				}
+				continue
+			}
+			break
+		}
+		if len(words)-i < 2 {
+			continue
+		}
+		base := strings.ToLower(filepath.Base(words[i]))
+		if (base == "hoxi" || base == "hoxi.exe") && strings.EqualFold(words[i+1], "schedule") {
+			if len(words)-i < 3 || !isReadOnlyHoxiScheduleSub(words[i+2]) {
+				return true
+			}
 		}
 	}
 	return false

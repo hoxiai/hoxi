@@ -161,6 +161,7 @@ type ToolContext struct {
 	WorktreeDir        string
 	Mode               string
 	SubtaskDepth       int
+	OrchestratorOnly   bool
 	PermissionVetted   bool
 	VisibleMessages    []Message
 	Steer              SteerSource
@@ -253,6 +254,7 @@ type SubtaskRequest struct {
 	Prompt       string
 	Model        string
 	ResumeID     string
+	Fresh        bool
 }
 
 // SubtaskResult carries the final summary and resolved execution metadata.

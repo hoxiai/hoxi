@@ -28,7 +28,7 @@ func (d *openaiDriver) Protocol() llm.StreamProtocol {
 }
 
 func (d *openaiDriver) SystemPromptPatch() string {
-	return "Batch independent read/grep/glob calls in a single turn. Always inspect target lines before calling edit."
+	return ""
 }
 
 func (d *openaiDriver) BuildRequest(req ModelRequest) (llm.StreamHTTPRequest, error) {

@@ -52,13 +52,13 @@ interface PopoverBox {
   maxHeight: number;
 }
 
-function modelRow(prefix: string, model: PickerModel): Row {
+function modelRow(prefix: string, model: PickerModel, showProviderHint = true): Row {
   return {
     kind: "option",
     key: `${prefix}:${model.fullKey}`,
     value: model.fullKey,
     label: model.modelName,
-    hint: model.providerName,
+    hint: showProviderHint ? model.providerName : undefined,
     providerID: model.providerID,
     free: model.free,
     multiplier: model.multiplier,
@@ -181,15 +181,19 @@ export default function ModelRolePicker(props: {
       });
       for (const model of group.models) {
         out.push(
-          modelRow(`provider:${group.providerID}`, {
-            providerID: group.providerID,
-            providerName: group.providerName,
-            modelID: model.id,
-            modelName: model.name,
-            fullKey: model.fullKey,
-            free: model.free,
-            multiplier: model.multiplier,
-          })
+          modelRow(
+            `provider:${group.providerID}`,
+            {
+              providerID: group.providerID,
+              providerName: group.providerName,
+              modelID: model.id,
+              modelName: model.name,
+              fullKey: model.fullKey,
+              free: model.free,
+              multiplier: model.multiplier,
+            },
+            false
+          )
         );
       }
     }
@@ -360,6 +364,7 @@ export default function ModelRolePicker(props: {
             <div
               ref={popoverRef}
               role="listbox"
+              data-model-role-picker="1"
               data-state={state()}
               onKeyDown={handleKeyDown}
               style={{

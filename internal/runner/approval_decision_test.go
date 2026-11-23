@@ -67,16 +67,28 @@ func TestOpaqueInterpreterVariantsAsk(t *testing.T) {
 			t.Errorf("%s mode should run a read-only version-suffixed inline interpreter", mode)
 		}
 	}
+	for _, command := range []string{
+		`awk 'BEGIN {system("id")}'`,
+		`awk 'BEGIN{print "id" | "sh"}'`,
+		`python3.12 -c 'import os; os.mkdir(0)'`,
+		`node20 -e 'require("fs").rmSync("x")'`,
+	} {
+		t.Run("auto/"+command, func(t *testing.T) {
+			item := map[string]interface{}{"permission": "bash", "patterns": []string{command}}
+			if approvalAutoApproves(item, ApprovalPolicy{Mode: ApprovalModeAuto}, nil, "") {
+				t.Fatalf("automatically approved inline interpreter command in auto")
+			}
+		})
+	}
 	for _, mode := range []string{ApprovalModeAuto, ApprovalModeTrusted} {
-		commands := []string{`awk 'BEGIN {system("id")}'`, `awk 'BEGIN{print "id" | "sh"}'`}
-		if mode == ApprovalModeAuto {
-			commands = append(commands, `python3.12 -c 'import os; os.mkdir(0)'`, `node20 -e 'require("fs").rmSync("x")'`)
-		}
-		for _, command := range commands {
+		for _, command := range []string{
+			`awk 'BEGIN {system("rm -rf /")}'`,
+			`awk 'BEGIN {system("cat .env")}'`,
+		} {
 			t.Run(mode+"/"+command, func(t *testing.T) {
 				item := map[string]interface{}{"permission": "bash", "patterns": []string{command}}
 				if approvalAutoApproves(item, ApprovalPolicy{Mode: mode}, nil, "") {
-					t.Fatalf("automatically approved inline interpreter command in %s", mode)
+					t.Fatalf("automatically approved destructive interpreter command in %s", mode)
 				}
 			})
 		}

@@ -442,7 +442,16 @@ export default function TesterPortalApp() {
 
                         <PortalAttachmentGallery items={task().attachments ?? []} />
 
-                        <Show when={task().developerNote}>
+                        <Show
+                          when={
+                            Boolean(task().developerNote?.trim()) &&
+                            !followupComments().some(
+                              (c) =>
+                                c.authorRole === "developer" &&
+                                c.text?.trim() === task().developerNote?.trim()
+                            )
+                          }
+                        >
                           <div class="rounded-xl border border-[var(--ok-border)] bg-[var(--ok-surface)]/75 px-3.5 py-2.5">
                             <div class="mb-1 text-[11px] font-semibold text-[var(--ok-text)]">
                               {t("tasks.portalDeveloperNoteLabel")}
@@ -470,7 +479,16 @@ export default function TesterPortalApp() {
                         </div>
                       </Show>
 
-                      {/* Sanitized Live Execution Process (Markdown explanations + non-expandable steps) */}
+                      {/* Sanitized Live Execution Process (hidden while staged/reopened with no output yet) */}
+                      <Show
+                        when={
+                          !(
+                            (task().status === "staged" || task().status === "reopened") &&
+                            timelineTurns().length === 0 &&
+                            !task().summary
+                          )
+                        }
+                      >
                       <div class="space-y-2.5 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-5">
                         <div class="flex items-center justify-between">
                           <h3 class="text-[13px] font-semibold text-[var(--text-primary)]">
@@ -520,6 +538,7 @@ export default function TesterPortalApp() {
                           </div>
                         </Show>
                       </div>
+                      </Show>
 
                       {/* Follow-up & retest conversation thread */}
                       <Show when={followupComments().length > 0}>

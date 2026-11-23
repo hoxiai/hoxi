@@ -4,6 +4,7 @@ import { Dynamic } from "solid-js/web";
 import {
   ArrowRightLeft,
   Bot,
+  CalendarClock,
   Users,
   Brain,
   CornerDownLeft,
@@ -35,6 +36,7 @@ import {
   isSessionBusy,
   openFileInInspector,
   openHandoffModal,
+  openScheduleModal,
   openSettingsModal,
   selectSession,
   sessionDirectory,
@@ -58,6 +60,7 @@ interface PaletteItem {
   group: PaletteGroup;
   label: string;
   detail?: string;
+  searchText?: string;
   shortcut?: string;
   icon: PaletteIcon;
   run: () => void | Promise<void>;
@@ -81,6 +84,11 @@ function scoreMatch(query: string, text: string): number {
     if (pos === q.length) return 3;
   }
   return -1;
+}
+
+function pathBaseName(path: string): string {
+  const index = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return index >= 0 ? path.slice(index + 1) : path;
 }
 
 function pathDetail(path: string): string {
@@ -151,6 +159,25 @@ export default function CommandPalette(props: CommandPaletteProps) {
         label: t("commandPalette.actionOpenTasks"),
         icon: ListChecks,
         run: () => setWorkspace({ inspectorOpen: true, inspectorTab: "tasks" }),
+      },
+      {
+        id: "manage-schedules",
+        group: "actions",
+        label: t("schedules.paletteManage"),
+        icon: CalendarClock,
+        run: () => openScheduleModal({ directory: workspace.rootDir, projectID: workspace.activeProjectID || undefined }),
+      },
+      {
+        id: "create-schedule",
+        group: "actions",
+        label: t("schedules.paletteCreate"),
+        icon: CalendarClock,
+        run: () =>
+          openScheduleModal({
+            directory: workspace.rootDir,
+            projectID: workspace.activeProjectID || undefined,
+            createNew: true,
+          }),
       },
       {
         id: "open-skills",
@@ -263,7 +290,7 @@ export default function CommandPalette(props: CommandPaletteProps) {
         id: `session:${session.id}`,
         group: "sessions" as const,
         label: session.title || session.id,
-        detail: session.id,
+        searchText: session.id,
         icon: MessageSquare,
         run: () => selectSession(session.id),
       }))
@@ -298,8 +325,8 @@ export default function CommandPalette(props: CommandPaletteProps) {
       return fileResults().map((file) => ({
         id: `file:${file.path}`,
         group: "files" as const,
-        label: file.path,
-        detail: pathDetail(file.path),
+        label: pathBaseName(file.path),
+        detail: pathDetail(file.path) || undefined,
         icon: FileText,
         run: () => openFileInInspector(file.path),
       }));
@@ -317,7 +344,7 @@ export default function CommandPalette(props: CommandPaletteProps) {
       .slice(0, q ? 16 : 8)
       .map((entry) => entry.item);
     const sessions = sessionItems()
-      .map((item) => ({ item, score: scoreMatch(q, `${item.label} ${item.detail || ""}`) }))
+      .map((item) => ({ item, score: scoreMatch(q, `${item.label} ${item.searchText || ""}`) }))
       .filter((entry) => entry.score >= 0)
       .slice(0, q ? 12 : 6)
       .map((entry) => entry.item);

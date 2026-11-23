@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -95,17 +96,69 @@ func (s *Service) defaultModeWindow() bool {
 	return s.defaultWindow
 }
 
+// allocateLoopbackDebugPort reserves and releases an unused non-zero loopback
+// TCP port for Chrome's --remote-debugging-port flag. Passing a concrete
+// non-zero port in desktop window mode avoids Chromium's automatic
+// AutomationControlled mode (which activates on --remote-debugging-port=0)
+// without requiring --disable-blink-features=AutomationControlled, which
+// triggers Chrome's "unsupported command-line flag" warning infobar.
+func allocateLoopbackDebugPort() int {
+	ipv6Available := false
+	if probe6, err := net.Listen("tcp6", "[::1]:0"); err == nil {
+		ipv6Available = true
+		_ = probe6.Close()
+	}
+	for range 8 {
+		ln4, err := net.Listen("tcp4", "127.0.0.1:0")
+		if err != nil {
+			return 0
+		}
+		addr, ok := ln4.Addr().(*net.TCPAddr)
+		port := 0
+		if ok {
+			port = addr.Port
+		}
+		if port <= 0 {
+			_ = ln4.Close()
+			return 0
+		}
+		if !ipv6Available {
+			_ = ln4.Close()
+			return port
+		}
+		ln6, err6 := net.Listen("tcp6", net.JoinHostPort("::1", strconv.Itoa(port)))
+		if err6 == nil {
+			_ = ln6.Close()
+			_ = ln4.Close()
+			return port
+		}
+		_ = ln4.Close()
+	}
+	return 0
+}
+
 // allocatorOptions builds Chrome launch flags. Desktop window mode avoids
 // chromedp's headless test flags (--enable-automation, --disable-extensions,
-// --use-mock-keychain, --disable-features=site-per-process, etc.) so persistent
-// profiles behave like a normal desktop Chrome window.
+// --use-mock-keychain, --disable-features=site-per-process, etc.) and passes
+// an explicit loopback --remote-debugging-port so persistent profiles behave
+// like a normal desktop Chrome window without showing unsupported-flag banners.
 func (sc *scope) allocatorOptions(profile string) []chromedp.ExecAllocatorOption {
+	debugPort := 0
+	if sc.window {
+		debugPort = allocateLoopbackDebugPort()
+	}
+	return sc.allocatorOptionsWithDebugPort(profile, debugPort)
+}
+
+func (sc *scope) allocatorOptionsWithDebugPort(profile string, debugPort int) []chromedp.ExecAllocatorOption {
 	var opts []chromedp.ExecAllocatorOption
 	if sc.window {
 		opts = []chromedp.ExecAllocatorOption{
 			chromedp.NoFirstRun,
 			chromedp.NoDefaultBrowserCheck,
-			chromedp.Flag("disable-blink-features", "AutomationControlled"),
+		}
+		if debugPort > 0 && debugPort <= 65535 {
+			opts = append(opts, chromedp.Flag("remote-debugging-port", strconv.Itoa(debugPort)))
 		}
 	} else {
 		opts = append(opts, chromedp.DefaultExecAllocatorOptions[:]...)

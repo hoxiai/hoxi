@@ -53,6 +53,9 @@ func grantableRequestClasses(item map[string]interface{}, dir string) []string {
 	if classes := grantableRunnerToolEditFiles(item, dir); len(classes) > 0 {
 		return classes
 	}
+	if classes := grantableSSHRequestClasses(item, dir); len(classes) > 0 {
+		return classes
+	}
 	if strings.TrimSpace(dir) == "" || !isShellPermissionItem(item) {
 		return nil
 	}
@@ -126,6 +129,11 @@ func (g *approvalGate) addClassGrants(sessionID string, classes []string, source
 		kind, tool, pattern := grantKindClass, "bash", class
 		if isFileGrantClass(class) {
 			kind, tool, pattern = grantKindFile, "edit", strings.TrimPrefix(class, fileGrantPrefix)
+		} else if sshKind, target, ok := sshGrantTarget(class); ok {
+			kind, tool, pattern = grantKindSSH, "ssh", target
+			if sshKind == "profile" {
+				tool = "hoxi_data"
+			}
 		} else if !sessionGrantableClasses[class] {
 			continue
 		}

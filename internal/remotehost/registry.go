@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/diagnostics"
 )
 
 var validHostIDRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`)
@@ -303,7 +305,13 @@ func (s *Service) Probe(ctx context.Context, id string) (ProbeResult, error) {
 	req.Header.Set("Accept", "application/json")
 
 	started := time.Now()
-	client := &http.Client{Transport: s.transport, Timeout: 8 * time.Second}
+	client := &http.Client{
+		Transport: s.transport,
+		Timeout:   8 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return errors.New("redirects are not allowed on host-info probe")
+		},
+	}
 	resp, err := client.Do(req)
 	latency := time.Since(started).Milliseconds()
 	if err != nil {
@@ -383,22 +391,21 @@ func (s *Service) ProxyHTTP(w http.ResponseWriter, r *http.Request, hostID, subP
 	rp := &httputil.ReverseProxy{
 		Transport:     s.transport,
 		FlushInterval: -1,
+		ErrorLog:      diagnostics.NewQuietHTTPServerLogger(),
 		Director: func(out *http.Request) {
 			out.URL.Scheme = upstreamURL.Scheme
 			out.URL.Host = upstreamURL.Host
 			out.URL.Path = strings.TrimRight(upstreamURL.Path, "/") + subPath
 			out.URL.RawPath = ""
-			if strings.Contains(out.URL.RawQuery, "hoxiToken") {
-				if q, qErr := url.ParseQuery(out.URL.RawQuery); qErr == nil {
-					q.Del("hoxiToken")
-					out.URL.RawQuery = q.Encode()
-				}
+			if out.URL.RawQuery != "" {
+				out.URL.RawQuery = stripSensitiveQueryParam(out.URL.RawQuery, "hoxiToken")
 			}
 			out.Host = upstreamURL.Host
 			out.Header.Del("Cookie")
 			out.Header.Del("Origin")
 			out.Header.Del("Referer")
 			out.Header.Del("X-Hoxi-Token")
+			out.Header.Del("X-Hoxi-Host-Token")
 			out.Header.Set("Authorization", "Bearer "+entry.Token)
 		},
 		ErrorHandler: func(rw http.ResponseWriter, _ *http.Request, pErr error) {
@@ -406,6 +413,30 @@ func (s *Service) ProxyHTTP(w http.ResponseWriter, r *http.Request, hostID, subP
 		},
 	}
 	rp.ServeHTTP(w, r)
+}
+
+// stripSensitiveQueryParam removes every query key matching target (case-insensitively,
+// across both '&' and ';' separators), even when unrelated parameters contain malformed
+// percent-escapes that would cause url.ParseQuery to fail.
+func stripSensitiveQueryParam(rawQuery, target string) string {
+	if rawQuery == "" || target == "" {
+		return rawQuery
+	}
+	parts := strings.FieldsFunc(rawQuery, func(r rune) bool {
+		return r == '&' || r == ';'
+	})
+	kept := make([]string, 0, len(parts))
+	for _, part := range parts {
+		key, _, _ := strings.Cut(part, "=")
+		if strings.EqualFold(key, target) {
+			continue
+		}
+		if decoded, err := url.QueryUnescape(key); err == nil && strings.EqualFold(decoded, target) {
+			continue
+		}
+		kept = append(kept, part)
+	}
+	return strings.Join(kept, "&")
 }
 
 // RegisterRoutes mounts desktop-only `/api/hoxi/hosts` management, probe, and proxy routes.

@@ -3,6 +3,7 @@ import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-j
 import { LoaderCircle, ShieldCheck, ShieldOff } from "lucide-solid";
 import { t } from "../../i18n";
 import {
+  errorMessageOf,
   fetchSandboxSession,
   updateSandboxSession,
   type SandboxSessionState,
@@ -82,7 +83,7 @@ export default function CommandSandboxToggle(props: {
         report(next);
       }
     } catch (err) {
-      if (props.sessionID === id) setError(String(err));
+      if (props.sessionID === id) setError(errorMessageOf(err, t("common.error")));
     } finally {
       setSaving(false);
     }

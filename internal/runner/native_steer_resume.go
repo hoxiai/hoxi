@@ -311,10 +311,10 @@ func (s *Service) resumeNativeTurnFromLedger(_ context.Context, rec SessionRecor
 			Type:      "text",
 			Text:      promptBody,
 		}
-		return s.launchNativeTurn(rec, mode, modelID, effort, nativeSystem, promptBody, userInfo, []MessagePart{part}, asstMsgID, false, part)
+		return s.launchNativeTurn(rec, mode, modelID, effort, nativeSystem, promptBody, userInfo, []MessagePart{part}, asstMsgID, false, fromLedgerOrchestrator(entry.Orchestrator), part)
 	}
 
-	return s.launchNativeTurn(rec, mode, modelID, effort, nativeSystem, restartContinuationPrompt, userInfo, nil, asstMsgID, true)
+	return s.launchNativeTurn(rec, mode, modelID, effort, nativeSystem, restartContinuationPrompt, userInfo, nil, asstMsgID, true, fromLedgerOrchestrator(entry.Orchestrator))
 }
 
 func isThinkingSignatureErrorText(raw string) bool {

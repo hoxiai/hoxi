@@ -1,9 +1,10 @@
 // web/src/components/settings/DataProfilesSection.tsx
-import { createSignal, For, onMount, Show } from "solid-js";
+import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { CheckCircle2, Database, Lock, Plus, Terminal, Trash2 } from "lucide-solid";
 import { t } from "../../i18n";
 import {
   dataProfiles,
+  errorMessageOf,
   loadDataProfiles,
   removeDataProfile,
   runDataProfileTest,
@@ -33,6 +34,7 @@ function parseSSHTarget(raw: string): { user?: string; host: string; port?: numb
 }
 
 export function DataProfilesSection() {
+  const [showForm, setShowForm] = createSignal(false);
   const [id, setId] = createSignal("");
   const [kind, setKind] = createSignal<DataProfileKind>("postgres");
   const [target, setTarget] = createSignal("");
@@ -41,6 +43,21 @@ export function DataProfilesSection() {
   const [busy, setBusy] = createSignal(false);
   const [testingId, setTestingId] = createSignal<string | null>(null);
   const [status, setStatus] = createSignal<{ ok: boolean; text: string } | null>(null);
+  let statusTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const setTimedStatus = (next: { ok: boolean; text: string }) => {
+    if (statusTimer !== undefined) clearTimeout(statusTimer);
+    setStatus(next);
+    if (next.ok) {
+      statusTimer = setTimeout(() => {
+        statusTimer = undefined;
+        setStatus(null);
+      }, 3000);
+    }
+  };
+  onCleanup(() => {
+    if (statusTimer !== undefined) clearTimeout(statusTimer);
+  });
 
   onMount(() => {
     void loadDataProfiles().catch(() => {});
@@ -79,9 +96,10 @@ export function DataProfilesSection() {
       setId("");
       setTarget("");
       setSecret("");
-      setStatus({ ok: true, text: t("settings.dataProfileSaved", { id: cleanId }) });
+      setShowForm(false);
+      setTimedStatus({ ok: true, text: t("settings.dataProfileSaved", { id: cleanId }) });
     } catch (err: any) {
-      setStatus({ ok: false, text: err?.message || String(err) });
+      setTimedStatus({ ok: false, text: errorMessageOf(err, t("common.error")) });
     } finally {
       setBusy(false);
     }
@@ -93,9 +111,9 @@ export function DataProfilesSection() {
     setStatus(null);
     try {
       await runDataProfileTest(profileId);
-      setStatus({ ok: true, text: t("settings.dataProfileTestOk", { id: profileId }) });
+      setTimedStatus({ ok: true, text: t("settings.dataProfileTestOk", { id: profileId }) });
     } catch (err: any) {
-      setStatus({ ok: false, text: err?.message || String(err) });
+      setTimedStatus({ ok: false, text: errorMessageOf(err, t("common.error")) });
     } finally {
       setTestingId(null);
     }
@@ -105,9 +123,9 @@ export function DataProfilesSection() {
     setStatus(null);
     try {
       await removeDataProfile(profileId);
-      setStatus({ ok: true, text: t("settings.dataProfileDeleted", { id: profileId }) });
+      setTimedStatus({ ok: true, text: t("settings.dataProfileDeleted", { id: profileId }) });
     } catch (err: any) {
-      setStatus({ ok: false, text: err?.message || String(err) });
+      setTimedStatus({ ok: false, text: errorMessageOf(err, t("common.error")) });
     }
   };
 
@@ -115,9 +133,21 @@ export function DataProfilesSection() {
     <SettingGroup
       title={t("settings.dataProfilesTitle")}
       tip={t("settings.dataProfilesSubtitle")}
+      action={
+        <button
+          type="button"
+          onClick={() => setShowForm((v) => !v)}
+          class="hoxi-press inline-flex items-center gap-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+        >
+          <Show when={!showForm()}>
+            <Plus size={12} />
+          </Show>
+          <span>{showForm() ? t("common.cancel") : t("models.add")}</span>
+        </button>
+      }
     >
-      <div class="p-4 space-y-3">
-        <form onSubmit={(e) => void onSave(e)} class="space-y-2">
+      <Show when={showForm()}>
+        <form onSubmit={(e) => void onSave(e)} class="p-4 space-y-2">
           <div class="flex flex-wrap items-center gap-2">
             <input
               type="text"
@@ -174,69 +204,75 @@ export function DataProfilesSection() {
             </button>
           </div>
         </form>
+      </Show>
 
-        <div class="space-y-1.5">
-          <Show
-            when={dataProfiles().length > 0}
-            fallback={
-              <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-3.5 py-3 text-[12px] text-[var(--text-muted)]">
-                {t("settings.dataProfilesEmpty")}
-              </div>
-            }
-          >
-            <For each={dataProfiles()}>
-              {(item) => (
-                <div class="flex items-center justify-between gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-3.5 py-2">
-                  <div class="flex items-center gap-2 min-w-0">
-                    <Show
-                      when={item.kind === "ssh"}
-                      fallback={<Database size={14} class="text-[var(--accent-primary)] shrink-0" />}
-                    >
-                      <Terminal size={14} class="text-[var(--accent-primary)] shrink-0" />
-                    </Show>
-                    <span class="font-mono text-[12px] font-semibold text-[var(--text-primary)]">
-                      {item.id}
-                    </span>
-                    <span class="rounded-md bg-[var(--bg-panel)] px-1.5 py-0.5 font-mono text-[10px] uppercase text-[var(--text-secondary)]">
-                      {item.kind}
-                    </span>
-                    <Show when={item.readOnly}>
-                      <span class="rounded-md bg-[var(--ok-surface)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--ok-text)]">
-                        RO
-                      </span>
-                    </Show>
-                    <span class="truncate font-mono text-[11px] text-[var(--text-muted)]">
-                      {item.dsnMasked ||
-                        item.dbPath ||
-                        item.baseUrl ||
-                        (item.sshHost ? `${item.sshUser ? `${item.sshUser}@` : ""}${item.sshHost}:${item.sshPort || 22}` : "")}
-                    </span>
-                  </div>
-                  <div class="flex items-center gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      disabled={testingId() === item.id}
-                      onClick={() => void onTest(item.id)}
-                      class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-                    >
-                      <CheckCircle2 size={12} />
-                      {testingId() === item.id ? t("settings.dataProfileTestingBtn") : t("settings.dataProfileTestBtn")}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void onDelete(item.id)}
-                      class="text-[var(--text-muted)] hover:text-[var(--danger-text)] p-1 cursor-pointer"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                </div>
-              )}
-            </For>
+      <Show
+        when={dataProfiles().length > 0}
+        fallback={
+          <Show when={!showForm()}>
+            <p class="px-5 py-3.5 text-[12.5px] text-[var(--text-muted)]">
+              {t("settings.dataProfilesEmpty")}
+            </p>
           </Show>
+        }
+      >
+        <div class="p-4 space-y-1.5">
+          <For each={dataProfiles()}>
+            {(item) => (
+              <div class="flex items-center justify-between gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)]/70 px-3.5 py-2">
+                <div class="flex items-center gap-2 min-w-0">
+                  <Show
+                    when={item.kind === "ssh"}
+                    fallback={<Database size={14} class="text-[var(--accent-primary)] shrink-0" />}
+                  >
+                    <Terminal size={14} class="text-[var(--accent-primary)] shrink-0" />
+                  </Show>
+                  <span class="font-mono text-[12px] font-semibold text-[var(--text-primary)]">
+                    {item.id}
+                  </span>
+                  <span class="rounded-md bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10px] uppercase text-[var(--text-secondary)]">
+                    {item.kind}
+                  </span>
+                  <Show when={item.readOnly}>
+                    <span class="rounded-md bg-[var(--ok-surface)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--ok-text)]">
+                      RO
+                    </span>
+                  </Show>
+                  <span class="truncate font-mono text-[11px] text-[var(--text-muted)]">
+                    {item.dsnMasked ||
+                      item.dbPath ||
+                      item.baseUrl ||
+                      (item.sshHost ? `${item.sshUser ? `${item.sshUser}@` : ""}${item.sshHost}:${item.sshPort || 22}` : "")}
+                  </span>
+                </div>
+                <div class="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    disabled={testingId() === item.id}
+                    onClick={() => void onTest(item.id)}
+                    class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                  >
+                    <CheckCircle2 size={12} />
+                    {testingId() === item.id ? t("settings.dataProfileTestingBtn") : t("settings.dataProfileTestBtn")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void onDelete(item.id)}
+                    title={t("common.delete")}
+                    aria-label={t("common.delete")}
+                    class="text-[var(--text-muted)] hover:text-[var(--danger-text)] p-1 cursor-pointer"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </For>
         </div>
+      </Show>
 
-        <Show when={status()}>
+      <Show when={status()}>
+        <div class="px-4 py-2.5">
           <div
             class={`rounded-xl border px-3.5 py-2 text-[12px] ${
               status()!.ok
@@ -246,8 +282,8 @@ export function DataProfilesSection() {
           >
             {status()!.text}
           </div>
-        </Show>
-      </div>
+        </div>
+      </Show>
     </SettingGroup>
   );
 }

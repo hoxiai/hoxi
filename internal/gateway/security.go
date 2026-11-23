@@ -142,6 +142,7 @@ func isTokenProtectedHoxiHostPath(requestPath string) bool {
 		"/api/hoxi/agents",
 		"/api/hoxi/commands",
 		"/api/hoxi/lsp",
+		"/api/hoxi/schedules",
 		"/api/hoxi/system/cli-link",
 		"/api/hoxi/provider/catalog",
 		"/api/hoxi/provider/auth-methods",
@@ -153,6 +154,7 @@ func isTokenProtectedHoxiHostPath(requestPath string) bool {
 		return true
 	}
 	return strings.HasPrefix(requestPath, "/api/hoxi/pty/") ||
+		strings.HasPrefix(requestPath, "/api/hoxi/schedules/") ||
 		strings.HasPrefix(requestPath, "/api/hoxi/provider/credentials/") ||
 		strings.HasPrefix(requestPath, "/api/hoxi/provider/oauth/")
 }

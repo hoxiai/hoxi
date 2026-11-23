@@ -63,6 +63,30 @@ func (s *Service) nativePermissionHook(rec SessionRecord, asstMsgID string) func
 			}
 			return nil
 		}
+		if lowerTool == "hoxi_schedule" {
+			act := strings.ToLower(strings.TrimSpace(firstString(args["action"])))
+			if act == "list" || act == "get" {
+				if s.ApprovalPolicy().Mode != ApprovalModeManual {
+					return nil
+				}
+				approved, reason := s.gateToolCall(fakeHTTP, cred, req.ToolName, args, req.CallID)
+				if !approved {
+					return fmt.Errorf("%s", reason)
+				}
+				return nil
+			}
+			if strings.TrimSpace(rec.ScheduleID) != "" || s.isScheduledTurnActive(rec.ID) {
+				return fmt.Errorf("scheduled runs cannot create, modify, or delete scheduled tasks")
+			}
+			if s.ApprovalPolicy().Mode == ApprovalModeUnattended {
+				return fmt.Errorf("scheduled task changes require desktop confirmation and are unavailable in unattended mode")
+			}
+			approved, reason := s.gateScheduleMutation(fakeHTTP, cred, rec, args, req.CallID)
+			if !approved {
+				return fmt.Errorf("%s", reason)
+			}
+			return nil
+		}
 		if lowerTool == "hoxi_remote" || lowerTool == "hoxi_data" {
 			act := strings.ToLower(strings.TrimSpace(firstString(args["action"])))
 			if act == "list" || act == "test" {
@@ -182,6 +206,7 @@ func (s *Service) nativePermissionHook(rec SessionRecord, asstMsgID string) func
 				}
 			}
 		} else if req.IsRead {
+			rawTarget := rawHookToolPath(args)
 			target := resolveHookToolPath(rec.WorktreePath, args)
 			root, inReadRoot := matchSessionRoot(readRoots, target)
 			if inReadRoot {
@@ -189,8 +214,8 @@ func (s *Service) nativePermissionHook(rec SessionRecord, asstMsgID string) func
 			}
 			protectedCodeIdx := lowerTool == "hoxi_code_index" && target != "" && (!inReadRoot || isProtectedWorktreePath(root, target))
 			if !protectedCodeIdx && !hasRiskySearchSelector(lowerTool, args) &&
-				(target == "" || (inReadRoot && !isSensitiveExternalReadPath(target))) &&
-				!isSecretFilePath(target) && !isSecretFilePath(rawHookToolPath(args)) {
+				((rawTarget == "" && target == "") || (target != "" && inReadRoot && !isSensitiveExternalReadPath(target))) &&
+				!isSecretFilePath(target) && !isSecretFilePath(rawTarget) {
 				return nil
 			}
 		} else if target := resolveHookToolPath(rec.WorktreePath, args); target != "" {
@@ -305,6 +330,64 @@ func (s *Service) gateNativeToolCall(
 		return true, ""
 	}
 	reason := "The user rejected the " + tool + " call in Hoxi"
+	if msg := strings.TrimSpace(answer.Message); msg != "" {
+		reason += ": " + msg
+	}
+	return false, reason
+}
+
+func (s *Service) gateScheduleMutation(
+	r *http.Request,
+	cred hookCredential,
+	rec SessionRecord,
+	args map[string]interface{},
+	callID string,
+) (bool, string) {
+	id := runnerPermissionID + randomHex(12)
+	pretty, _ := json.MarshalIndent(args, "", "  ")
+	act := strings.ToLower(strings.TrimSpace(firstString(args["action"])))
+	if act == "" {
+		act = "mutate"
+	}
+	name := strings.TrimSpace(firstString(args["name"], args["id"]))
+	summary := "hoxi_schedule " + act
+	if name != "" {
+		summary += ": " + name
+	}
+	if cronExpr := strings.TrimSpace(firstString(args["cron"])); cronExpr != "" {
+		summary += " (" + cronExpr + ")"
+	} else if iv, ok := args["intervalMinutes"].(float64); ok && iv > 0 {
+		summary += fmt.Sprintf(" (every %dm)", int(iv))
+	}
+	meta := map[string]interface{}{
+		"tool":        "hoxi_schedule",
+		"action":      act,
+		"args":        string(pretty),
+		"source":      string(RuntimeNative),
+		"destructive": true,
+		"desktopOnly": true,
+		"description": summary,
+	}
+	if rec.WorktreePath != "" {
+		meta["cwd"] = rec.WorktreePath
+	}
+	permReq := map[string]interface{}{
+		"id":         id,
+		"sessionID":  cred.sessionID,
+		"permission": "hoxi_schedule",
+		"patterns":   []string{summary},
+		"always":     []string{},
+		"metadata":   meta,
+		"tool": map[string]interface{}{
+			"messageID": cred.messageID,
+			"callID":    callID,
+		},
+	}
+	answer := s.awaitReply(r, cred, id, permReq)
+	if answer.Reply == "once" {
+		return true, ""
+	}
+	reason := "The user rejected the scheduled task change in Hoxi"
 	if msg := strings.TrimSpace(answer.Message); msg != "" {
 		reason += ": " + msg
 	}

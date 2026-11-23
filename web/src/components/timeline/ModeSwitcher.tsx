@@ -56,8 +56,6 @@ function modeIcon(name: string) {
 
 function modeBadge(name: string): string | null {
   const lower = name.toLowerCase();
-  if (lower === "build") return t("timeline.buildMode");
-  if (lower === "plan") return t("timeline.planMode");
   if (lower === "ask") return t("timeline.askModeBadge");
   return null;
 }
@@ -160,9 +158,6 @@ export default function ModeSwitcher() {
           <div class="px-2.5 py-1.5 flex items-center justify-between border-b border-[var(--border-subtle)] mb-1">
             <span class="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
               {t("timeline.agentModes")}
-            </span>
-            <span class="text-[11px] text-[var(--text-muted)] font-mono">
-              {t("timeline.agentsAvailable", { count: agents().length })}
             </span>
           </div>
 

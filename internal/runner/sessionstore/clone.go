@@ -42,6 +42,23 @@ func CloneGenericMap(m map[string]interface{}) map[string]interface{} {
 	return out
 }
 
+func CloneStringSliceMap(m map[string][]string) map[string][]string {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string][]string, len(m))
+	for k, v := range m {
+		if v == nil {
+			out[k] = nil
+			continue
+		}
+		cp := make([]string, len(v))
+		copy(cp, v)
+		out[k] = cp
+	}
+	return out
+}
+
 func CloneStringMap(m map[string]string) map[string]string {
 	if m == nil {
 		return nil
@@ -138,6 +155,7 @@ func CloneRecord(r SessionRecord) SessionRecord {
 		copy(out.OpenCodeChildIDs, r.OpenCodeChildIDs)
 	}
 	out.OpenCodeDirectories = CloneStringMap(r.OpenCodeDirectories)
+	out.CLISystemDigests = CloneStringSliceMap(r.CLISystemDigests)
 	return out
 }
 

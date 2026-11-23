@@ -299,7 +299,7 @@ func TestGatewayNativeAgentForwardsForceAskAndTurnFinish(t *testing.T) {
 }
 
 func TestNormalizeComputerAgentInputCoercionAndStrictness(t *testing.T) {
-	coerced := normalizeComputerAgentInput(json.RawMessage(`{"action":"click","windowID":4821,"elementID":"12","deltaY":120.0,"clickCount":"2"}`))
+	coerced := normalizeComputerAgentInput(json.RawMessage(`{"action":"click","windowID":4821,"elementID":"12","deltaY":120.0,"clickCount":"2","seconds":"12.5"}`))
 	var parsed map[string]any
 	if err := json.Unmarshal(coerced, &parsed); err != nil {
 		t.Fatalf("unmarshal coerced: %v", err)
@@ -307,17 +307,17 @@ func TestNormalizeComputerAgentInputCoercionAndStrictness(t *testing.T) {
 	if parsed["windowID"] != "4821" {
 		t.Fatalf("expected windowID string '4821', got %#v", parsed["windowID"])
 	}
-	if parsed["elementID"] != float64(12) || parsed["deltaY"] != float64(120) || parsed["clickCount"] != float64(2) {
-		t.Fatalf("unexpected integer coercions: %+v", parsed)
+	if parsed["elementID"] != float64(12) || parsed["deltaY"] != float64(120) || parsed["clickCount"] != float64(2) || parsed["seconds"] != float64(12.5) {
+		t.Fatalf("unexpected numeric coercions: %+v", parsed)
 	}
 
 	// Malformed non-integer values must NOT be silently dropped or coerced, so decodeComputerJSON rejects them.
-	untouched := normalizeComputerAgentInput(json.RawMessage(`{"action":"scroll","windowID":"w1","elementID":"abc","deltaY":12.5}`))
+	untouched := normalizeComputerAgentInput(json.RawMessage(`{"action":"scroll","windowID":"w1","elementID":"abc","deltaY":12.5,"seconds":"bad"}`))
 	var bad map[string]any
 	if err := json.Unmarshal(untouched, &bad); err != nil {
 		t.Fatalf("unmarshal untouched: %v", err)
 	}
-	if bad["elementID"] != "abc" || bad["deltaY"] != 12.5 {
+	if bad["elementID"] != "abc" || bad["deltaY"] != 12.5 || bad["seconds"] != "bad" {
 		t.Fatalf("expected malformed values preserved for strict rejection, got %+v", bad)
 	}
 }

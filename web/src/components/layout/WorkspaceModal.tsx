@@ -5,6 +5,7 @@ import { hoxiAPI, type WorkspaceFolderInput } from "../../services/api";
 import {
   closeWorkspaceModal,
   DEFAULT_WORKSPACE_IDENTITY_COLOR,
+  errorMessageOf,
   findWorkspaceProfileByDir,
   findWorkspaceProfileById,
   normalizeFolderPath,
@@ -194,7 +195,7 @@ export default function WorkspaceModal() {
         appendFolderPath(res.path);
       }
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : String(err));
+      setErrorMsg(errorMessageOf(err, t("common.error")));
     }
   };
 
@@ -205,7 +206,7 @@ export default function WorkspaceModal() {
         replaceFolderPath(targetPath, res.path);
       }
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : String(err));
+      setErrorMsg(errorMessageOf(err, t("common.error")));
     }
   };
 
@@ -297,7 +298,7 @@ export default function WorkspaceModal() {
         await switchWorkspace(primary);
       }
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : String(err));
+      setErrorMsg(errorMessageOf(err, t("common.error")));
     } finally {
       setSaving(false);
     }

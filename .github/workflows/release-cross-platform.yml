@@ -7,17 +7,18 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v0.7.2)"
+        description: "Release tag (e.g. v0.7.3)"
         required: true
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.inputs.tag || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.inputs.tag != '' && (startsWith(github.event.inputs.tag, 'v') && github.event.inputs.tag || format('v{0}', github.event.inputs.tag)) || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   build-mobile-android:
     name: "Android: Build Hoxi Remote APK & Release"
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     permissions:
       contents: write
 
@@ -25,7 +26,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ github.event.inputs.tag != '' && (startsWith(github.event.inputs.tag, 'v') && github.event.inputs.tag || format('v{0}', github.event.inputs.tag)) || github.ref }}
 
       - name: Check if mobile/ exists in this repository
         id: check_mobile
@@ -42,14 +43,23 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Validate release version & versionCode
+      - name: Validate release version, versionCode & Android secrets
         if: steps.check_mobile.outputs.present == 'true'
         env:
           RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
+          set -euo pipefail
           VERSION="$(node scripts/release-artifact.mjs version "$RELEASE_TAG")"
+          TARGET_TAG="v${VERSION}"
           VERSION_CODE="$(node --input-type=module -e 'import { versionCode } from "./scripts/release-artifact.mjs"; console.log(Math.max(versionCode(process.argv[1]), 1));' "$VERSION")"
+          : "${ANDROID_KEYSTORE_BASE64:?ANDROID_KEYSTORE_BASE64 secret is required to sign release APKs}"
+          : "${ANDROID_KEYSTORE_PASSWORD:?ANDROID_KEYSTORE_PASSWORD secret is required}"
+          : "${ANDROID_KEY_ALIAS:?ANDROID_KEY_ALIAS secret is required}"
           echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG_NAME=$TARGET_TAG" >> "$GITHUB_ENV"
           echo "RELEASE_VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
 
       - name: Set up Java 17
@@ -87,6 +97,7 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
+          set -euo pipefail
           : "${ANDROID_KEYSTORE_BASE64:?ANDROID_KEYSTORE_BASE64 secret is required to sign release APKs}"
           : "${ANDROID_KEYSTORE_PASSWORD:?ANDROID_KEYSTORE_PASSWORD secret is required}"
           : "${ANDROID_KEY_ALIAS:?ANDROID_KEY_ALIAS secret is required}"
@@ -100,6 +111,7 @@ jobs:
         if: steps.check_mobile.outputs.present == 'true'
         working-directory: mobile
         run: |
+          set -euo pipefail
           flutter build apk --release \
             --build-name="$RELEASE_VERSION" \
             --build-number="$RELEASE_VERSION_CODE" \
@@ -113,7 +125,7 @@ jobs:
         if: steps.check_mobile.outputs.present == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          tag_name: ${{ env.RELEASE_TAG_NAME }}
           files: |
             build/bin/Hoxi-Remote-${{ env.RELEASE_VERSION }}-android.apk
             build/bin/Hoxi-Remote-${{ env.RELEASE_VERSION }}-android.apk.sha256

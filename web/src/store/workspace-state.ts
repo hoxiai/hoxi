@@ -36,15 +36,25 @@ export const VALID_REASONING_EFFORTS: readonly ReasoningEffort[] = [
   "max",
 ];
 
+export interface OrchestratorOverride {
+  orchestratorModel?: string;
+  orchestratorEffort?: ReasoningEffort;
+  executorModel?: string;
+  executorEffort?: ReasoningEffort;
+}
+
 export interface SessionAIConfig {
   model: SelectedModel | null;
   agent: string;
   effort: ReasoningEffort;
   fastMode?: boolean;
+  orchestratorOverride?: OrchestratorOverride;
 }
 
 export const SESSION_AI_KEY = "hoxi-session-ai:v1";
 export const DEFAULT_AGENT_KEY = "hoxi-default-agent:v1";
+export const ORCHESTRATOR_PROVIDER_ID = "hoxi-orchestrator";
+export const ORCHESTRATOR_MODEL_ID = "default";
 
 export function readStorageItem(key: string): string | null {
   try {
@@ -133,11 +143,32 @@ export function initialSessionAI(): Record<string, SessionAIConfig> {
     ) {
       continue;
     }
+    const rawOv = c.orchestratorOverride;
+    let orchestratorOverride: OrchestratorOverride | undefined;
+    if (rawOv && typeof rawOv === "object") {
+      const ov: OrchestratorOverride = {};
+      if (typeof rawOv.orchestratorModel === "string" && rawOv.orchestratorModel.includes("/")) {
+        ov.orchestratorModel = rawOv.orchestratorModel;
+      }
+      if (typeof rawOv.orchestratorEffort === "string" && VALID_REASONING_EFFORTS.includes(rawOv.orchestratorEffort as ReasoningEffort)) {
+        ov.orchestratorEffort = rawOv.orchestratorEffort as ReasoningEffort;
+      }
+      if (typeof rawOv.executorModel === "string" && rawOv.executorModel.includes("/")) {
+        ov.executorModel = rawOv.executorModel;
+      }
+      if (typeof rawOv.executorEffort === "string" && VALID_REASONING_EFFORTS.includes(rawOv.executorEffort as ReasoningEffort)) {
+        ov.executorEffort = rawOv.executorEffort as ReasoningEffort;
+      }
+      if (Object.keys(ov).length > 0) {
+        orchestratorOverride = ov;
+      }
+    }
     out[sid] = {
       model: c.model,
       agent: c.agent,
       effort: c.effort,
       ...(c.fastMode ? { fastMode: true } : {}),
+      ...(orchestratorOverride ? { orchestratorOverride } : {}),
     };
   }
   return out;

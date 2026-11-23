@@ -23,6 +23,7 @@ type HostStartOptions struct {
 	Name        string
 	PublicURL   string
 	RotateToken bool
+	AllowPublic bool
 }
 
 // HostDaemonStartFunc starts a long-lived headless Hoxi development host.
@@ -57,11 +58,12 @@ func runHostCommand(ctx context.Context, args []string, cwd string, stdout, stde
 		fs := flag.NewFlagSet("hoxi host start", flag.ContinueOnError)
 		fs.SetOutput(stderr)
 		var opts HostStartOptions
-		fs.StringVar(&opts.ListenAddr, "listen", remotehost.DefaultHostListenAddr, "TCP listen address (e.g. 0.0.0.0:5430)")
+		fs.StringVar(&opts.ListenAddr, "listen", remotehost.DefaultHostListenAddr, "TCP listen address (default 127.0.0.1:5430; use SSH/Tailscale or a TLS proxy for remote access)")
 		fs.StringVar(&opts.RootDir, "dir", cwd, "default workspace directory")
 		fs.StringVar(&opts.Name, "name", "", "display name for this development host")
 		fs.StringVar(&opts.PublicURL, "public-url", "", "reachable endpoint URL for the printed pair URI")
 		fs.BoolVar(&opts.RotateToken, "rotate-token", false, "generate a fresh bearer token before starting")
+		fs.BoolVar(&opts.AllowPublic, "allow-public", false, "allow non-private source IPs (only use behind an HTTPS reverse proxy)")
 		if _, err := parseFlagsInterspersed(fs, rest); err != nil {
 			return 2
 		}
@@ -129,26 +131,38 @@ func runHostCommand(ctx context.Context, args []string, cwd string, stdout, stde
 		}
 		probeCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
 		defer cancel()
-		req, _ := http.NewRequestWithContext(probeCtx, http.MethodGet, endpoint+"/api/hoxi/host-info", nil)
+		req, reqErr := http.NewRequestWithContext(probeCtx, http.MethodGet, endpoint+"/api/hoxi/host-info", nil)
+		if reqErr != nil {
+			if *asJSON {
+				_ = json.NewEncoder(stdout).Encode(map[string]any{"running": false, "endpoint": endpoint, "error": reqErr.Error()})
+			} else {
+				fmt.Fprintf(stderr, "Invalid host endpoint %q: %v\n", endpoint, reqErr)
+			}
+			return 1
+		}
 		req.Header.Set("Authorization", "Bearer "+cfg.Token)
 		started := time.Now()
 		client := &http.Client{
-			Transport: &http.Transport{Proxy: nil},
+			Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true},
 			Timeout:   4 * time.Second,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return fmt.Errorf("redirects are not allowed on host-info probe")
+			},
 		}
 		resp, doErr := client.Do(req)
 		rttMs := time.Since(started).Milliseconds()
 		if doErr != nil {
+			errMsg := strings.ReplaceAll(doErr.Error(), cfg.Token, "[REDACTED]")
 			if *asJSON {
-				_ = json.NewEncoder(stdout).Encode(map[string]any{"running": false, "endpoint": endpoint, "error": doErr.Error()})
+				_ = json.NewEncoder(stdout).Encode(map[string]any{"running": false, "endpoint": endpoint, "error": errMsg})
 			} else {
-				fmt.Fprintf(stdout, "Host %q (%s): offline (%v)\n", cfg.Name, endpoint, doErr)
+				fmt.Fprintf(stdout, "Host %q (%s): offline (%s)\n", cfg.Name, endpoint, errMsg)
 			}
 			return 1
 		}
 		defer resp.Body.Close()
 		var info remotehost.HostInfo
-		_ = json.NewDecoder(resp.Body).Decode(&info)
+		_ = json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&info)
 		if resp.StatusCode != http.StatusOK {
 			fmt.Fprintf(stderr, "Host probe returned HTTP %d\n", resp.StatusCode)
 			return 1
@@ -185,7 +199,7 @@ func resolveLocalProbeEndpoint(listenAddr string) string {
 
 func printHostHelp(w io.Writer) {
 	fmt.Fprintln(w, `Usage:
-  hoxi host start [--listen 0.0.0.0:5430] [--dir <path>] [--name <label>] [--public-url <endpoint>] [--rotate-token]
+  hoxi host start [--listen 127.0.0.1:5430] [--dir <path>] [--name <label>] [--public-url <endpoint>] [--rotate-token] [--allow-public]
   hoxi host status [--url <endpoint>] [--json]
   hoxi host token [--rotate]
   hoxi host pair-uri [--public-url <endpoint>] [--name <label>] [--rotate]`)

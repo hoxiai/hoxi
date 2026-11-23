@@ -48,6 +48,7 @@ var knownSubcommands = map[string]bool{
 	"video":         true,
 	"speech":        true,
 	"sessions":      true,
+	"schedule":      true,
 	"status":        true,
 	"install-cli":   true,
 	"uninstall-cli": true,
@@ -235,6 +236,8 @@ func Run(
 			return runModelsCommand(ctx, args[2:], cwd, defaultBridgeAddr, bootHeadless, stdout, stderr)
 		case "sessions":
 			return runSessionsCommand(ctx, args[2:], cwd, defaultBridgeAddr, bootHeadless, stdout, stderr)
+		case "schedule":
+			return runScheduleCommand(ctx, args[2:], cwd, defaultBridgeAddr, bootHeadless, stdout, stderr)
 		case "worktree":
 			return runWorktreeCommand(ctx, args[2:], cwd, defaultBridgeAddr, bootHeadless, stdout, stderr)
 		case "code-index", "codeindex":

@@ -4,8 +4,8 @@ import {
   AlertCircle,
   ArrowUpRight,
   Download,
+  Info,
   LoaderCircle,
-  RefreshCw,
   Search,
   ShieldCheck,
   Store,
@@ -42,6 +42,7 @@ function badgeClass(tone?: string): string {
 
 export default function SkillsMarketplaceView() {
   const [query, setQuery] = createSignal("");
+  const [showInfo, setShowInfo] = createSignal(false);
   const [pendingOverwrite, setPendingOverwrite] = createSignal<MarketplaceSkill | null>(null);
 
   createEffect(() => {
@@ -80,12 +81,7 @@ export default function SkillsMarketplaceView() {
   };
 
   return (
-    <div class="space-y-3">
-      <div class="flex items-start gap-1.5 rounded-lg bg-[var(--bg-inset)]/60 px-2.5 py-1.5 text-[11px] text-[var(--text-muted)]">
-        <ShieldCheck size={12} class="mt-0.5 shrink-0 text-[var(--accent-primary)]" />
-        <span>{t("skills.marketplaceHint")}</span>
-      </div>
-
+    <div class="space-y-2.5">
       <Show when={skillsStore.installNotice}>
         <div class="flex items-start justify-between gap-2 rounded-lg bg-[var(--bg-inset)] px-2.5 py-1.5 text-[11px] text-[var(--text-secondary)]">
           <span>{skillsStore.installNotice}</span>
@@ -128,7 +124,7 @@ export default function SkillsMarketplaceView() {
         )}
       </Show>
 
-      <div class="flex items-center justify-between gap-2">
+      <div class="flex items-center gap-1.5">
         <div class="relative flex min-w-0 flex-1 items-center">
           <Search size={13} class="absolute left-2.5 text-[var(--text-faint)] pointer-events-none" />
           <input
@@ -141,22 +137,22 @@ export default function SkillsMarketplaceView() {
         </div>
         <button
           type="button"
-          onClick={() => void loadSkillMarketplace({ forceRefresh: true })}
-          disabled={skillsStore.marketplaceLoading}
-          class="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-50 transition-colors cursor-pointer"
-          title={t("skills.refresh")}
+          onClick={() => setShowInfo((v) => !v)}
+          class={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer ${
+            showInfo() ? "bg-[var(--bg-hover)] text-[var(--text-primary)]" : ""
+          }`}
+          title={t("skills.marketplaceHint")}
+          aria-label={t("skills.marketplaceHint")}
+          aria-expanded={showInfo()}
         >
-          <RefreshCw
-            size={12}
-            class={skillsStore.marketplaceLoading ? "animate-spin" : ""}
-          />
-          <span>{skillsStore.marketplaceLoading ? t("skills.refreshing") : t("skills.refresh")}</span>
+          <Info size={13} />
         </button>
       </div>
 
-      <Show when={skillsStore.marketplaceSource}>
-        <div class="px-1 text-[11px] text-[var(--text-faint)]">
-          {t("skills.marketplaceSource", { host: hostOf(skillsStore.marketplaceSource) })}
+      <Show when={showInfo()}>
+        <div class="flex items-start gap-1.5 rounded-lg bg-[var(--bg-inset)]/60 px-2.5 py-1.5 text-[11px] leading-relaxed text-[var(--text-muted)]">
+          <ShieldCheck size={12} class="mt-0.5 shrink-0 text-[var(--accent-primary)]" />
+          <span>{t("skills.marketplaceHint")}</span>
         </div>
       </Show>
 
@@ -285,7 +281,11 @@ export default function SkillsMarketplaceView() {
 
       <div class="flex items-center justify-center gap-1.5 pt-1 text-[11px] text-[var(--text-faint)]">
         <Store size={11} />
-        <span>hoxi.ai</span>
+        <span>
+          {skillsStore.marketplaceSource
+            ? hostOf(skillsStore.marketplaceSource)
+            : "hoxi.ai"}
+        </span>
       </div>
     </div>
   );

@@ -1,6 +1,6 @@
 // web/src/components/settings/SettingsExtensionsTab.tsx
-import { createSignal, For, onMount, Show } from "solid-js";
-import { Blocks, Cpu, ExternalLink, Plus, Sparkles, Trash2 } from "lucide-solid";
+import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { Cpu, ExternalLink, Plus, Sparkles, Trash2 } from "lucide-solid";
 import { t } from "../../i18n";
 import {
   closeSettingsModal,
@@ -12,15 +12,31 @@ import {
 import SkillsInspectorView from "../skills/SkillsInspectorView";
 import { DataProfilesSection } from "./DataProfilesSection";
 import { RemoteHostsSection } from "./RemoteHostsSection";
-import { HelpTip, SettingGroup } from "./setting-controls";
+import { SettingGroup } from "./setting-controls";
 
 export function SettingsExtensionsTab() {
   const [mcpServers, setMcpServers] = createSignal<Record<string, any>>({});
+  const [showAddMcp, setShowAddMcp] = createSignal(false);
   const [mcpName, setMcpName] = createSignal("");
   const [mcpType, setMcpType] = createSignal<"local" | "remote">("local");
   const [mcpTarget, setMcpTarget] = createSignal("");
   const [saving, setSaving] = createSignal(false);
   const [feedback, setFeedback] = createSignal<{ ok: boolean; text: string } | null>(null);
+  let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const setTimedFeedback = (next: { ok: boolean; text: string }) => {
+    if (feedbackTimer !== undefined) clearTimeout(feedbackTimer);
+    setFeedback(next);
+    if (next.ok) {
+      feedbackTimer = setTimeout(() => {
+        feedbackTimer = undefined;
+        setFeedback(null);
+      }, 3000);
+    }
+  };
+  onCleanup(() => {
+    if (feedbackTimer !== undefined) clearTimeout(feedbackTimer);
+  });
 
   onMount(async () => {
     try {
@@ -49,10 +65,10 @@ export function SettingsExtensionsTab() {
       setMcpServers(cfg?.mcp && typeof cfg.mcp === "object" ? cfg.mcp : { [id]: entry });
       setMcpName("");
       setMcpTarget("");
-      setFeedback({ ok: true, text: t("models.mcpAdded", { id }) });
-      setTimeout(() => setFeedback(null), 3000);
+      setShowAddMcp(false);
+      setTimedFeedback({ ok: true, text: t("models.mcpAdded", { id }) });
     } catch (err: any) {
-      setFeedback({ ok: false, text: err?.message || t("models.mcpAddFailed") });
+      setTimedFeedback({ ok: false, text: err?.message || t("models.mcpAddFailed") });
     } finally {
       setSaving(false);
     }
@@ -64,10 +80,9 @@ export function SettingsExtensionsTab() {
     try {
       const cfg = await deleteMcpServer(id);
       setMcpServers(cfg?.mcp && typeof cfg.mcp === "object" ? cfg.mcp : {});
-      setFeedback({ ok: true, text: t("models.mcpRemoved", { id }) });
-      setTimeout(() => setFeedback(null), 3000);
+      setTimedFeedback({ ok: true, text: t("models.mcpRemoved", { id }) });
     } catch (err: any) {
-      setFeedback({ ok: false, text: err?.message || t("models.mcpRemoveFailed") });
+      setTimedFeedback({ ok: false, text: err?.message || t("models.mcpRemoveFailed") });
     } finally {
       setSaving(false);
     }
@@ -80,37 +95,25 @@ export function SettingsExtensionsTab() {
 
   return (
     <div class="space-y-6">
-      {/* Header */}
-      <div class="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/50 px-4 py-3">
-        <div class="flex items-center gap-3 min-w-0">
-          <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-surface)] text-[var(--accent-primary)]">
-            <Blocks size={16} />
-          </div>
-          <div class="flex items-center gap-2 min-w-0">
-            <h3 class="text-[13px] font-semibold text-[var(--text-primary)] truncate">
-              {t("settings.extensionsTitle")}
-            </h3>
-            <HelpTip text={t("settings.extensionsSubtitle")} />
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={openSkillsInWorkspaceInspector}
-          class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-1.5 text-[12px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer shrink-0"
-        >
-          <Sparkles size={13} class="text-[var(--accent-primary)]" />
-          <span>{t("settings.openSkillsInInspectorBtn")}</span>
-          <ExternalLink size={12} />
-        </button>
-      </div>
-
       {/* 1. MCP Servers */}
       <SettingGroup
         title={t("models.mcpTitle")}
         tip={t("models.mcpSubtitle")}
+        action={
+          <button
+            type="button"
+            onClick={() => setShowAddMcp((v) => !v)}
+            class="hoxi-press inline-flex items-center gap-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+          >
+            <Show when={!showAddMcp()}>
+              <Plus size={12} />
+            </Show>
+            <span>{showAddMcp() ? t("common.cancel") : t("models.add")}</span>
+          </button>
+        }
       >
-        <div class="p-4 space-y-3">
-          <form onSubmit={(e) => void onAddMcpServer(e)} class="flex flex-wrap items-center gap-2">
+        <Show when={showAddMcp()}>
+          <form onSubmit={(e) => void onAddMcpServer(e)} class="flex flex-wrap items-center gap-2 p-4">
             <input
               type="text"
               placeholder={t("models.mcpServerId")}
@@ -146,45 +149,50 @@ export function SettingsExtensionsTab() {
               {t("models.add")}
             </button>
           </form>
+        </Show>
 
-          <div class="space-y-1.5">
-            <Show
-              when={Object.keys(mcpServers()).length > 0}
-              fallback={
-                <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-3.5 py-3 text-[12px] text-[var(--text-muted)]">
-                  {t("models.noMcpServers")}
-                </div>
-              }
-            >
-              <For each={Object.entries(mcpServers())}>
-                {([id, srv]) => (
-                  <div class="flex items-center justify-between rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-3.5 py-2">
-                    <div class="flex items-center gap-2.5 min-w-0">
-                      <Cpu size={14} class="text-[var(--accent-primary)] shrink-0" />
-                      <span class="font-mono text-[12px] font-semibold text-[var(--text-primary)]">
-                        {id}
-                      </span>
-                      <span class="truncate font-mono text-[11px] text-[var(--text-muted)]">
-                        {Array.isArray(srv?.command)
-                          ? srv.command.join(" ")
-                          : srv?.url || srv?.type || "mcp"}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void onRemoveMcpServer(id)}
-                      class="text-[var(--text-muted)] hover:text-[var(--danger-text)] p-1 cursor-pointer"
-                      title={t("models.removeMcpTooltip")}
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                )}
-              </For>
+        <Show
+          when={Object.keys(mcpServers()).length > 0}
+          fallback={
+            <Show when={!showAddMcp()}>
+              <p class="px-5 py-3.5 text-[12.5px] text-[var(--text-muted)]">
+                {t("models.noMcpServers")}
+              </p>
             </Show>
+          }
+        >
+          <div class="p-4 space-y-1.5">
+            <For each={Object.entries(mcpServers())}>
+              {([id, srv]) => (
+                <div class="flex items-center justify-between rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)]/70 px-3.5 py-2">
+                  <div class="flex items-center gap-2.5 min-w-0">
+                    <Cpu size={14} class="text-[var(--accent-primary)] shrink-0" />
+                    <span class="font-mono text-[12px] font-semibold text-[var(--text-primary)]">
+                      {id}
+                    </span>
+                    <span class="truncate font-mono text-[11px] text-[var(--text-muted)]">
+                      {Array.isArray(srv?.command)
+                        ? srv.command.join(" ")
+                        : srv?.url || srv?.type || "mcp"}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void onRemoveMcpServer(id)}
+                    class="text-[var(--text-muted)] hover:text-[var(--danger-text)] p-1 cursor-pointer"
+                    title={t("models.removeMcpTooltip")}
+                    aria-label={t("models.removeMcpTooltip")}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              )}
+            </For>
           </div>
+        </Show>
 
-          <Show when={feedback()}>
+        <Show when={feedback()}>
+          <div class="px-4 py-2.5">
             <div
               class={`rounded-xl border px-3.5 py-2 text-[12px] ${
                 feedback()!.ok
@@ -194,8 +202,8 @@ export function SettingsExtensionsTab() {
             >
               {feedback()!.text}
             </div>
-          </Show>
-        </div>
+          </div>
+        </Show>
       </SettingGroup>
 
       {/* 2. Credential-Isolated Data & SSH Profiles */}
@@ -205,9 +213,25 @@ export function SettingsExtensionsTab() {
       <RemoteHostsSection />
 
       {/* 4. Agent Skills (Local + Marketplace) */}
-      <div class="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/35 overflow-hidden h-[540px] flex flex-col">
-        <SkillsInspectorView />
-      </div>
+      <SettingGroup
+        title={t("skills.title")}
+        tip={t("settings.extensionsSubtitle")}
+        action={
+          <button
+            type="button"
+            onClick={openSkillsInWorkspaceInspector}
+            class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer shrink-0"
+          >
+            <Sparkles size={12} class="text-[var(--accent-primary)]" />
+            <span>{t("settings.openSkillsInInspectorBtn")}</span>
+            <ExternalLink size={11} />
+          </button>
+        }
+      >
+        <div class="h-[520px] flex flex-col overflow-hidden">
+          <SkillsInspectorView alwaysActive />
+        </div>
+      </SettingGroup>
     </div>
   );
 }

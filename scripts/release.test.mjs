@@ -10,7 +10,8 @@ import {
   validateAppMetadata, validatePublication,
 } from "./release-artifact.mjs";
 import { releasePayload, publishRelease } from "./release-publisher.mjs";
-import { sparkleConfig, validateSparkle, validateSparkleApp, frameworkFiles, verifyUpdateSignature } from "./sparkle.mjs";
+import { sparkleConfig, validateSparkle, validateSparkleApp, frameworkFiles, verifyUpdateSignature, resolveSparkleEnclosureURL } from "./sparkle.mjs";
+import { hasCdnConfig, resolveCdnConfig, resolveCdnBaseUrl, signedRequest, uploadToCdn, syncDesktopRelease, desktopReleaseFiles } from "./upload-cdn.mjs";
 import { loadOpenCodeLock, parseOpenCodeVersion, verifyBinaryVersion } from "./opencode-lock.mjs";
 import { verifySQLiteArchive, sqliteAsset } from "./sqlite-tools.mjs";
 
@@ -142,35 +143,35 @@ test("opencode.lock pins every platform while release workflows ship lean sideca
     const macWorkflow = fs.readFileSync(macWorkflowPath, "utf8");
     assert.match(macWorkflow, /node scripts\/opencode-lock\.mjs verify/);
     assert.match(macWorkflow, /HOXI_BUNDLE_OPENCODE:\s*"0"/);
-    assert.doesNotMatch(macWorkflow, /opencode-arm64\.zip|opencode-amd64\.zip/);
+    assert.doesNotMatch(macWorkflow, /opencode-arm64\.zip|opencode-amd64\.zip|opencode-windows-|opencode-linux-/);
     assert.doesNotMatch(macWorkflow, /vars\.HOXI_OPENCODE_ARCHIVE_(URL|SHA256)/);
+    assert.doesNotMatch(macWorkflow, /releases\/latest\/download/);
     assert.match(macWorkflow, /HOXI_RELEASE_REPO:\s*\$\{\{ vars\.HOXI_RELEASE_REPO \}\}/);
     assert.match(macWorkflow, /HOXI_PUBLIC_RELEASE_TOKEN:\?/);
-    assert.match(macWorkflow, /repository:\s*\$\{\{ env\.RELEASE_TARGET_REPO \}\}/);
-
-    assert.doesNotMatch(crossWorkflow, /releases\/latest\/download/);
-    assert.match(crossWorkflow, /node scripts\/opencode-lock\.mjs verify/);
-    assert.match(crossWorkflow, /HOXI_BUNDLE_OPENCODE:\s*"0"/);
-    assert.doesNotMatch(crossWorkflow, /opencode-windows-|opencode-linux-/);
-    // Windows builds run for both amd64 and arm64 via a matrix without bundling opencode.exe.
-    assert.match(crossWorkflow, /arch: \[amd64, arm64\]/);
-    assert.match(crossWorkflow, /wails build -platform windows\/\$\{\{ matrix\.arch \}\} -nsis/);
-    assert.match(crossWorkflow, /Hoxi-\$\{RELEASE_VERSION\}-windows-\$\{\{ matrix\.arch \}\}-setup\.exe/);
-    assert.match(crossWorkflow, /Hoxi-\$\{RELEASE_VERSION\}-windows-\$\{\{ matrix\.arch \}\}\.zip/);
-    assert.match(crossWorkflow, /test ! -f build\/bin\/opencode\.exe/);
-    assert.match(crossWorkflow, /test ! -f build\/bin\/sqlite3\.exe/);
-    assert.match(crossWorkflow, /pe-arch\.mjs verify \$\{\{ matrix\.arch \}\} build\/bin\/Hoxi\.exe$/m);
-    assert.match(crossWorkflow, /7z a "\$ZIP_NAME" Hoxi\.exe$/m);
-    assert.match(crossWorkflow, /tar -czf "\$TAR_NAME" Hoxi hoxi\.desktop hoxi\.png/);
-    assert.match(crossWorkflow, /Hoxi-\$\{\{ env\.RELEASE_VERSION \}\}-linux-amd64\.tar\.gz\.sha256/);
-    assert.equal((crossWorkflow.match(/repository:\s*\$\{\{ env\.RELEASE_TARGET_REPO \}\}/g) || []).length, 2);
-    assert.equal((crossWorkflow.match(/HOXI_PUBLIC_RELEASE_TOKEN:\?/g) || []).length, 2);
-  } else {
-    // Public OSS exports intentionally omit desktop release jobs so v* tags
-    // only publish Hoxi Remote APK and never overwrite official desktop builds.
-    assert.doesNotMatch(crossWorkflow, /^\s+build-(windows|linux):/m);
-    assert.doesNotMatch(crossWorkflow, /HOXI_WORK_TOKEN|HOXI_RELEASE_REPO|HOXI_PUBLIC_RELEASE_TOKEN/);
+    // Unified desktop workflow builds macOS, Windows (amd64 + arm64), and Linux before one atomic publish job.
+    assert.match(macWorkflow, /^  preflight:$/m);
+    assert.match(macWorkflow, /^  build-macos:$/m);
+    assert.match(macWorkflow, /^  build-windows:$/m);
+    assert.match(macWorkflow, /^  build-linux:$/m);
+    assert.match(macWorkflow, /^  publish-release:$/m);
+    assert.match(macWorkflow, /needs:\s*\[preflight,\s*build-macos,\s*build-windows,\s*build-linux\]/);
+    assert.match(macWorkflow, /arch: \[amd64, arm64\]/);
+    assert.match(macWorkflow, /wails build -platform windows\/\$\{\{ matrix\.arch \}\} -nsis/);
+    assert.match(macWorkflow, /Hoxi-\$\{RELEASE_VERSION\}-windows-\$\{\{ matrix\.arch \}\}-setup\.exe/);
+    assert.match(macWorkflow, /Hoxi-\$\{RELEASE_VERSION\}-windows-\$\{\{ matrix\.arch \}\}\.zip/);
+    assert.match(macWorkflow, /test ! -f build\/bin\/opencode\.exe/);
+    assert.match(macWorkflow, /test ! -f build\/bin\/sqlite3\.exe/);
+    assert.match(macWorkflow, /pe-arch\.mjs verify \$\{\{ matrix\.arch \}\} build\/bin\/Hoxi\.exe$/m);
+    assert.match(macWorkflow, /7z a "\$ZIP_NAME" Hoxi\.exe$/m);
+    assert.match(macWorkflow, /tar -czf "\$TAR_NAME" Hoxi hoxi\.desktop hoxi\.png/);
+    assert.match(macWorkflow, /Hoxi-\$\{\{ env\.RELEASE_VERSION \}\}-linux-amd64\.tar\.gz\.sha256/);
+    assert.equal((macWorkflow.match(/uses:\s*softprops\/action-gh-release@v2/g) || []).length, 1,
+      "Desktop release workflow must upload all platform assets in one atomic publish-release step");
+    assert.equal((macWorkflow.match(/repository:\s*\$\{\{ env\.RELEASE_TARGET_REPO \}\}/g) || []).length, 1);
   }
+  // Cross-platform workflow stays scoped strictly to Hoxi Remote Android APK so desktop jobs never collide with OSS mirror tags.
+  assert.doesNotMatch(crossWorkflow, /^\s+build-(windows|linux):/m);
+  assert.doesNotMatch(crossWorkflow, /HOXI_WORK_TOKEN|HOXI_RELEASE_REPO|HOXI_PUBLIC_RELEASE_TOKEN/);
   assert.match(crossWorkflow, /build-mobile-android:/);
   assert.match(crossWorkflow, /applicationId = "ai\.hoxi\.remote"/);
   assert.match(crossWorkflow, /Hoxi-Remote-\$\{\{ env\.RELEASE_VERSION \}\}-android\.apk/);
@@ -250,8 +251,8 @@ test("tag workflow gates publication on tests, versioned artifacts and notarizat
   const workflow = fs.readFileSync(workflowPath, "utf8");
   const required = [
     'version "$RELEASE_TAG"',
-    "- name: Resolve release notes",
-    'docs/release-notes/v${RELEASE_VERSION}.md',
+    'MACOS_CERTIFICATE:?MACOS_CERTIFICATE is required',
+    'APPLE_API_ISSUER:?APPLE_API_ISSUER is required',
     "npm --prefix web run lint",
     "npm --prefix web test",
     "node --test scripts/release.test.mjs internal/opencode/browser_plugin_test.mjs",
@@ -268,14 +269,23 @@ test("tag workflow gates publication on tests, versioned artifacts and notarizat
     'verify-dmg "$DMG" "$RELEASE_VERSION"',
     'verify-distribution "$DMG"',
     "shasum -a 256",
+    "if: always()",
+    'security delete-keychain "$KEYCHAIN_PATH"',
+    'rm -f "${APPLE_API_KEY_PATH:-}"',
+    "needs: [preflight, build-macos, build-windows, build-linux]",
+    "- name: Resolve release notes",
+    'docs/release-notes/v${RELEASE_VERSION}.md',
+    "awk '{sub(/\\r$/, \"\"); print}'",
+    "sha256sum -c",
+    "- name: Mirror release artifacts to CDN",
     "uses: softprops/action-gh-release@v2",
     "body: ${{ env.RELEASE_NOTES }}",
     "build/bin/Hoxi-${{ env.RELEASE_VERSION }}-darwin-arm64.dmg",
     "build/bin/Hoxi-${{ env.RELEASE_VERSION }}-darwin-amd64.dmg",
+    "build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-amd64-setup.exe",
+    "build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-arm64-setup.exe",
+    "build/bin/Hoxi-${{ env.RELEASE_VERSION }}-linux-amd64.tar.gz",
     "fail_on_unmatched_files: true",
-    "if: always()",
-    'security delete-keychain "$KEYCHAIN_PATH"',
-    'rm -f "${APPLE_API_KEY_PATH:-}"',
   ];
   let position = -1;
   for (const gate of required) {
@@ -305,6 +315,7 @@ function fixture(t) {
   fs.copyFileSync(path.join(scripts, "ai-release.sh"), path.join(root, "scripts/ai-release.sh"));
   fs.copyFileSync(path.join(scripts, "release-artifact.mjs"), path.join(root, "scripts/policy.mjs"));
   fs.copyFileSync(path.join(scripts, "sparkle.mjs"), path.join(root, "scripts/sparkle.mjs"));
+  fs.copyFileSync(path.join(scripts, "upload-cdn.mjs"), path.join(root, "scripts/upload-cdn.mjs"));
   fs.copyFileSync(path.join(scripts, "opencode-lock.mjs"), path.join(root, "scripts/opencode-lock.mjs"));
   fs.writeFileSync(path.join(root, "scripts/release-artifact.mjs"), `
 import fs from 'node:fs';
@@ -851,18 +862,10 @@ test("stage-host.sh writes Windows-compatible portable go.work paths and commerc
   assert.match(stageHostSrc, /pwd -W/);
 
   const crossWorkflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/release-cross-platform.yml"), "utf8");
-  assert.match(crossWorkflow, /HOXI_WORK_TOKEN:\?[^\n]*Windows releases/);
-  assert.match(crossWorkflow, /clone --depth 1 https:\/\/github\.com\/hoxiai\/hoxi-ext\.git work/);
-  assert.doesNotMatch(crossWorkflow, /clone --depth 1 https:\/\/github\.com\/hoxiai\/hoxi-ext\.git \.\.\/hoxi-ext/);
   assert.doesNotMatch(crossWorkflow, /default:\s*"v0\.2\.1"/);
-  assert.match(crossWorkflow, /cygpath -m "\$WORK_DIR"/);
-  assert.match(crossWorkflow, /GOWORK="\$GO_WORK_FILE" go vet \.\/\.\.\./);
-  assert.match(crossWorkflow, /grep -q "modeExecuteLabel" web\/dist\/assets\/\*\.js/);
-  assert.match(crossWorkflow, /go version -m build\/bin\/Hoxi\.exe \| grep -Fq "\$BRIDGE_PKG"/);
-  assert.match(crossWorkflow, /git\/ref\/tags\/\$\{encodeURIComponent\(tag\)\}/);
-  assert.doesNotMatch(crossWorkflow, /if \[\[ -f "internal\/app\/work_bridge\.go" \]\]/);
-  assert.match(crossWorkflow, /ref: \$\{\{ github\.event\.inputs\.tag \|\| github\.ref \}\}/);
-  assert.match(crossWorkflow, /repository: \$\{\{ env\.RELEASE_TARGET_REPO \}\}/);
+  assert.match(crossWorkflow, /group:.*\bgithub\.ref_name\b/);
+  assert.doesNotMatch(crossWorkflow, /group:.*\bgithub\.ref\b(?!_name)/);
+  assert.match(crossWorkflow, /ANDROID_KEYSTORE_BASE64:\?/);
   assert.match(crossWorkflow, /tag_name: \$\{\{ env\.RELEASE_TAG_NAME \}\}/);
   for (const block of crossWorkflow.matchAll(/^        run: \|\n((?:          .*\n|\n)+)/gm)) {
     const shell = block[1].replace(/^          /gm, "");
@@ -870,17 +873,54 @@ test("stage-host.sh writes Windows-compatible portable go.work paths and commerc
     assert.equal(check.status, 0, check.stderr);
   }
 
-  const macWorkflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/release.yml"), "utf8");
-  assert.match(macWorkflow, /HOXI_WORK_TOKEN:\?[^\n]*macOS releases/);
-  assert.match(macWorkflow, /clone --depth 1 https:\/\/github\.com\/hoxiai\/hoxi-ext\.git work/);
-  assert.doesNotMatch(macWorkflow, /clone --depth 1 https:\/\/github\.com\/hoxiai\/hoxi-ext\.git \.\.\/hoxi-ext/);
-  assert.match(macWorkflow, /grep -q "modeExecuteLabel" web\/dist\/assets\/\*\.js/);
-  assert.match(macWorkflow, /go version -m "build\/bin\/Hoxi\.app\/Contents\/MacOS\/Hoxi" \| grep -Fq "\$BRIDGE_PKG"/);
-  assert.match(macWorkflow, /git\/ref\/tags\/\$\{encodeURIComponent\(tag\)\}/);
-  assert.doesNotMatch(macWorkflow, /if \[\[ -f "internal\/app\/work_bridge\.go" \]\]/);
-  assert.match(macWorkflow, /ref: \$\{\{ github\.event\.inputs\.tag \|\| github\.ref \}\}/);
-  assert.match(macWorkflow, /repository: \$\{\{ env\.RELEASE_TARGET_REPO \}\}/);
-  assert.match(macWorkflow, /tag_name: \$\{\{ env\.RELEASE_TAG_NAME \}\}/);
+  const desktopWorkflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/release.yml"), "utf8");
+  assert.match(desktopWorkflow, /group:.*\bgithub\.ref_name\b/);
+  assert.doesNotMatch(desktopWorkflow, /group:.*\bgithub\.ref\b(?!_name)/);
+  assert.match(desktopWorkflow, /HOXI_WORK_TOKEN:\?[^\n]*desktop releases/);
+  assert.match(desktopWorkflow, /HOXI_WORK_TOKEN cannot access/);
+  assert.match(desktopWorkflow, /HOXI_WORK_TOKEN:\?[^\n]*macOS releases/);
+  assert.match(desktopWorkflow, /HOXI_WORK_TOKEN:\?[^\n]*Windows releases/);
+  assert.match(desktopWorkflow, /HOXI_WORK_TOKEN:\?[^\n]*Linux releases/);
+  assert.match(desktopWorkflow, /ls-remote "\$WORK_REPO_URL"/);
+  assert.match(desktopWorkflow, /fetch --depth 1 origin "\$WORK_SHA"/);
+  assert.doesNotMatch(desktopWorkflow, /clone --depth 1 https:\/\/github\.com\/hoxiai\/hoxi-ext\.git \.\.\/hoxi-ext/);
+  assert.doesNotMatch(desktopWorkflow, /default:\s*"v0\.2\.1"/);
+  assert.match(desktopWorkflow, /cygpath -m "\$WORK_DIR"/);
+  assert.match(desktopWorkflow, /GOWORK="\$GO_WORK_FILE" go vet \.\/\.\.\./);
+  assert.match(desktopWorkflow, /grep -q "modeExecuteLabel" web\/dist\/assets\/\*\.js/);
+  assert.match(desktopWorkflow, /go version -m "build\/bin\/Hoxi\.app\/Contents\/MacOS\/Hoxi" \| grep -Fq "\$BRIDGE_PKG"/);
+  assert.match(desktopWorkflow, /go version -m build\/bin\/Hoxi\.exe \| grep -Fq "\$BRIDGE_PKG"/);
+  assert.match(desktopWorkflow, /go version -m build\/bin\/Hoxi \| grep -Fq "\$BRIDGE_PKG"/);
+  assert.match(desktopWorkflow, /git\/ref\/tags\/\$\{encodeURIComponent\(tag\)\}/);
+  assert.match(desktopWorkflow, /res\.status === 401 \|\| res\.status === 403/);
+  assert.match(desktopWorkflow, /res\.status !== 404 \|\| Date\.now\(\) >= deadline/);
+  assert.doesNotMatch(desktopWorkflow, /if \[\[ -f "internal\/app\/work_bridge\.go" \]\]/);
+  assert.match(desktopWorkflow, /ref: \$\{\{ needs\.preflight\.outputs\.release_tag \}\}/);
+  assert.match(desktopWorkflow, /repository: \$\{\{ env\.RELEASE_TARGET_REPO \}\}/);
+  assert.match(desktopWorkflow, /tag_name: \$\{\{ env\.RELEASE_TAG_NAME \}\}/);
+
+  const workCIPath = path.join(repoRoot, ".github/workflows/ci-work-integration.yml");
+  assert.equal(fs.existsSync(workCIPath), true, "Expected commercial Work integration CI workflow");
+  const workCI = fs.readFileSync(workCIPath, "utf8");
+  assert.match(workCI, /clone --depth 1 https:\/\/github\.com\/hoxiai\/hoxi-ext\.git work/);
+  assert.match(workCI, /npm --prefix web run lint/);
+  assert.match(workCI, /npm --prefix web run build/);
+  assert.match(workCI, /grep -q "modeExecuteLabel" web\/dist\/assets\/\*\.js/);
+  assert.match(workCI, /go run \.\/tools\/contractcheck/);
+  for (const block of workCI.matchAll(/^        run: \|\n((?:          .*\n|\n)+)/gm)) {
+    const shell = block[1].replace(/^          /gm, "");
+    const check = spawnSync("bash", ["-n"], { input: shell, encoding: "utf8" });
+    assert.equal(check.status, 0, check.stderr);
+  }
+
+  // Release notes delimiter framing must survive files lacking a trailing newline or using CRLF.
+  const notesTmp = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-release-notes-eof-"));
+  t.after(() => fs.rmSync(notesTmp, { recursive: true, force: true }));
+  const noEofNotes = path.join(notesTmp, "notes.md");
+  fs.writeFileSync(noEofNotes, "Line 1\r\nLine 2 without newline");
+  const awkCheck = spawnSync("bash", ["-c", 'awk \'{sub(/\\r$/, ""); print}\' "$1" && printf "DELIM\\n"', "bash", noEofNotes], { encoding: "utf8" });
+  assert.equal(awkCheck.status, 0, awkCheck.stderr);
+  assert.equal(awkCheck.stdout, "Line 1\nLine 2 without newline\nDELIM\n");
 
   const verifyOssPath = path.join(repoRoot, "client/scripts/verify_oss_root.py");
   if (fs.existsSync(verifyOssPath)) {
@@ -888,10 +928,12 @@ test("stage-host.sh writes Windows-compatible portable go.work paths and commerc
     t.after(() => fs.rmSync(ossStage, { recursive: true, force: true }));
     fs.mkdirSync(path.join(ossStage, ".github/workflows"), { recursive: true });
     fs.copyFileSync(path.join(repoRoot, ".github/workflows/release.yml"), path.join(ossStage, ".github/workflows/release.yml"));
+    fs.copyFileSync(path.join(repoRoot, ".github/workflows/ci-work-integration.yml"), path.join(ossStage, ".github/workflows/ci-work-integration.yml"));
     fs.copyFileSync(path.join(repoRoot, ".github/workflows/release-cross-platform.yml"), path.join(ossStage, ".github/workflows/release-cross-platform.yml"));
     const pyRun = spawnSync("python3", [verifyOssPath, ossStage], { encoding: "utf8" });
     assert.equal(pyRun.status, 0, pyRun.stderr || pyRun.stdout);
-    assert.equal(fs.existsSync(path.join(ossStage, ".github/workflows/release.yml")), false, "OSS export must remove release.yml so public mirror cannot overwrite official macOS builds");
+    assert.equal(fs.existsSync(path.join(ossStage, ".github/workflows/release.yml")), false, "OSS export must remove release.yml so public mirror cannot overwrite official desktop builds");
+    assert.equal(fs.existsSync(path.join(ossStage, ".github/workflows/ci-work-integration.yml")), false, "OSS export must remove ci-work-integration.yml");
     const ossCross = fs.readFileSync(path.join(ossStage, ".github/workflows/release-cross-platform.yml"), "utf8");
     assert.match(ossCross, /^name: Release Hoxi Remote \(Android\)$/m);
     assert.match(ossCross, /^  build-mobile-android:$/m);
@@ -951,4 +993,142 @@ test("stage-host.sh writes Windows-compatible portable go.work paths and commerc
   }
   assert.match(siblingGoWork, /replace github\.com\/hoxiai\/hoxi v0\.0\.0 => \./);
   assert.doesNotMatch(siblingGoWork, /"\/[a-z]\//i);
+});
+
+test("CDN mirror config fails closed on partial env, signs SigV4, skips identical digests, and publishes CDN + GitHub mirrors", async (t) => {
+  assert.equal(hasCdnConfig({}), false);
+  assert.throws(() => hasCdnConfig({ HOXI_CDN_PUBLIC_URL: "https://cdn.hoxi.dev" }), /Incomplete CDN/);
+  assert.throws(() => resolveCdnConfig({
+    HOXI_CDN_ENDPOINT: "http://insecure.r2.local",
+    HOXI_CDN_BUCKET: "hoxi",
+    HOXI_CDN_ACCESS_KEY_ID: "ak",
+    HOXI_CDN_SECRET_ACCESS_KEY: "sk",
+    HOXI_CDN_PUBLIC_URL: "https://cdn.hoxi.dev",
+  }), /HTTPS/);
+
+  const env = {
+    HOXI_CDN_ENDPOINT: "https://acc.r2.cloudflarestorage.com",
+    HOXI_CDN_BUCKET: "hoxi",
+    HOXI_CDN_ACCESS_KEY_ID: "token-id",
+    HOXI_CDN_TOKEN: "cfut_secret_token",
+    HOXI_CDN_PUBLIC_URL: "https://cdn.hoxi.dev/",
+  };
+  assert.equal(hasCdnConfig(env), true);
+  assert.equal(resolveCdnBaseUrl(env), "https://cdn.hoxi.dev/hoxi-desktop");
+  assert.equal(
+    resolveSparkleEnclosureURL("0.7.3", env),
+    "https://cdn.hoxi.dev/hoxi-desktop/v0.7.3/Hoxi-0.7.3-darwin-arm64.dmg"
+  );
+  assert.equal(
+    resolveSparkleEnclosureURL("0.7.3", {}),
+    "https://github.com/hoxiai/hoxi/releases/download/v0.7.3/Hoxi-0.7.3-darwin-arm64.dmg"
+  );
+
+  const cfg = resolveCdnConfig(env);
+  const req = signedRequest({
+    method: "PUT",
+    ...cfg,
+    key: "hoxi-desktop/v0.7.3/Hoxi-0.7.3-darwin-arm64.dmg",
+    body: Buffer.from("payload"),
+    headers: { "x-amz-meta-sha256": "a".repeat(64) },
+  });
+  assert.match(req.init.headers.authorization, /^AWS4-HMAC-SHA256 Credential=token-id\/\d{8}\/auto\/s3\/aws4_request/);
+  assert.match(req.init.headers.authorization, /x-amz-meta-sha256/);
+  assert.equal(req.url, "https://acc.r2.cloudflarestorage.com/hoxi/hoxi-desktop/v0.7.3/Hoxi-0.7.3-darwin-arm64.dmg");
+
+  // Virtual-hosted-style S3 endpoints (e.g. OSS/COS) auto-detect bucket host prefix without duplicating /bucket/.
+  const vhCfg = resolveCdnConfig({
+    ...env,
+    HOXI_CDN_ENDPOINT: "https://hoxi-dl.oss-cn-hangzhou.aliyuncs.com",
+    HOXI_CDN_BUCKET: "hoxi-dl",
+    HOXI_CDN_REGION: "oss-cn-hangzhou",
+  });
+  assert.equal(vhCfg.addressingStyle, "virtual");
+  const vhReq = signedRequest({
+    method: "PUT",
+    ...vhCfg,
+    key: "hoxi-desktop/v0.7.3/Hoxi-0.7.3-darwin-arm64.dmg",
+    body: Buffer.from("payload"),
+  });
+  assert.equal(vhReq.url, "https://hoxi-dl.oss-cn-hangzhou.aliyuncs.com/hoxi-desktop/v0.7.3/Hoxi-0.7.3-darwin-arm64.dmg");
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-cdn-sync-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const files = desktopReleaseFiles("0.7.3");
+  assert.equal(files.length, 16);
+  for (const item of files) {
+    fs.writeFileSync(path.join(dir, item.name), `content:${item.name}`);
+  }
+
+  const stored = new Map();
+  const mockFetch = async (url, init) => {
+    if (init.method === "HEAD") {
+      const hit = stored.get(url);
+      if (!hit) return new Response(null, { status: 404 });
+      return new Response(null, {
+        status: 200,
+        headers: { "x-amz-meta-sha256": hit.sha256, "content-length": String(hit.bytes.length) },
+      });
+    }
+    if (init.method === "PUT") {
+      const bytes = Buffer.from(init.body);
+      stored.set(url, { bytes, sha256: init.headers["x-amz-meta-sha256"] });
+      return new Response(null, { status: 200 });
+    }
+    return new Response(null, { status: 405 });
+  };
+
+  const first = await syncDesktopRelease({ version: "0.7.3", dir, config: cfg, fetchImpl: mockFetch });
+  assert.equal(first.uploaded, 16);
+  assert.equal(first.skipped, 0);
+  assert.equal(first.cdnBaseUrl, "https://cdn.hoxi.dev/hoxi-desktop");
+
+  // Re-running with identical bytes skips all 16 uploads without overwriting.
+  const second = await syncDesktopRelease({ version: "0.7.3", dir, config: cfg, fetchImpl: mockFetch });
+  assert.equal(second.uploaded, 0);
+  assert.equal(second.skipped, 16);
+
+  // Tampered overwrite attempt must fail closed.
+  fs.writeFileSync(path.join(dir, "checksums.txt"), "mutated-bytes");
+  await assert.rejects(
+    uploadToCdn({
+      config: cfg,
+      file: path.join(dir, "checksums.txt"),
+      key: "hoxi-desktop/v0.7.3/checksums.txt",
+      fetchImpl: async (url, init) => {
+        if (init.method === "HEAD") return new Response(null, { status: 200, headers: { "x-amz-meta-sha256": "0".repeat(64) } });
+        if (init.method === "GET") return new Response(stored.get(url).bytes, { status: 200 });
+        return new Response(null, { status: 500 });
+      },
+    }),
+    /different bytes/
+  );
+
+  // Sparkle and releasePayload accept cdn.hoxi.dev while preserving GitHub mirror metadata.
+  const cdnSparkle = {
+    ...sparkle,
+    version: "0.7.3",
+    url: "https://cdn.hoxi.dev/hoxi-desktop/v0.7.3/Hoxi-0.7.3-darwin-arm64.dmg",
+  };
+  const cdnPayload = releasePayload({
+    version: "0.7.3",
+    notes: "CDN release",
+    sha256: "a".repeat(64),
+    size: 1234,
+    sparkle: cdnSparkle,
+    cdnBaseUrl: "https://cdn.hoxi.dev/hoxi-desktop",
+    assetsMeta: {
+      "Hoxi-0.7.3-darwin-amd64.dmg": { sha256: "b".repeat(64), size: 2345 },
+      "Hoxi-0.7.3-windows-amd64-setup.exe": { sha256: "c".repeat(64), size: 3456 },
+    },
+  });
+  const macArm = cdnPayload.assets.find((a) => a.platform === "macos" && a.arch === "arm64");
+  const macIntel = cdnPayload.assets.find((a) => a.platform === "macos" && a.arch === "x64");
+  assert.equal(macArm.browser_download_url, "https://cdn.hoxi.dev/hoxi-desktop/v0.7.3/Hoxi-0.7.3-darwin-arm64.dmg");
+  assert.equal(macArm.mirrors.cdn, macArm.browser_download_url);
+  assert.equal(macArm.mirrors.global, "https://github.com/hoxiai/hoxi/releases/download/v0.7.3/Hoxi-0.7.3-darwin-arm64.dmg");
+  assert.equal(macIntel.sha256, "b".repeat(64));
+  assert.equal(macIntel.size, 2345);
+  assert.equal(cdnPayload.metaData.mirrors["windows-x64-zip"].cdn, "https://cdn.hoxi.dev/hoxi-desktop/v0.7.3/Hoxi-0.7.3-windows-amd64.zip");
+  assert.equal(cdnPayload.metaData.mirrors["windows-x64-zip"].global, "https://github.com/hoxiai/hoxi/releases/download/v0.7.3/Hoxi-0.7.3-windows-amd64.zip");
 });

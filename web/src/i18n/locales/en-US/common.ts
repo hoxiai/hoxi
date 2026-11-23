@@ -7,6 +7,7 @@ export const common = {
   cancel: "Cancel",
   confirm: "Confirm",
   save: "Save",
+  clear: "Clear",
   delete: "Delete",
   close: "Close",
   apply: "Apply",
@@ -28,4 +29,8 @@ export const common = {
   unitYi: "亿",
   unitWanYi: "万亿",
   new: "New",
+  retry: "Retry",
+  reloadApp: "Reload Window",
+  renderErrorTitle: "This view encountered an unexpected error",
+  renderErrorHint: "Other panes remain safe. You can retry rendering this view or reload the window.",
 };

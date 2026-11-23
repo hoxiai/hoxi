@@ -6,7 +6,7 @@ import type { SessionInfo } from "../../services/sse-types";
 import {
   isSessionArchived,
   normalizeFolderPath,
-  partitionCodeSessions,
+  partitionCachedCodeSessions,
   sessionActivityTime,
   workspace,
 } from "../../store/workspace";
@@ -69,6 +69,15 @@ function sessionsForProject(
   return source.projectSessions[normPath] || source.projectSessions[proj.path] || [];
 }
 
+export function filterCrossProjectSessions(
+  items: readonly CrossProjectSession[],
+  filterQuery: string,
+): CrossProjectSession[] {
+  const query = filterQuery.trim().toLowerCase();
+  if (!query) return items as CrossProjectSession[];
+  return items.filter((item) => matchesQuery(item, query));
+}
+
 /** Root sessions across every project, excluding archived and subagent children. */
 export function collectCrossProjectSessions(source: CrossProjectSource): CrossProjectSession[] {
   const query = source.filterQuery.trim().toLowerCase();
@@ -76,7 +85,7 @@ export function collectCrossProjectSessions(source: CrossProjectSource): CrossPr
   const seen = new Set<string>();
   const out: CrossProjectSession[] = [];
   for (const proj of source.allProjects) {
-    const { roots, subagentsByRoot } = partitionCodeSessions(
+    const { roots, subagentsByRoot } = partitionCachedCodeSessions(
       sessionsForProject(source, proj, activeRoot),
     );
     for (const session of roots) {

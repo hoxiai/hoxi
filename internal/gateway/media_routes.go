@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -75,16 +76,19 @@ func (g *Gateway) handleMediaCapabilities(w http.ResponseWriter, r *http.Request
 }
 
 type mediaImageRequest struct {
-	Prompt      string   `json:"prompt"`
-	ProviderID  string   `json:"providerID,omitempty"`
-	ModelID     string   `json:"modelID,omitempty"`
-	AspectRatio string   `json:"aspectRatio,omitempty"`
-	ImageSize   string   `json:"imageSize,omitempty"`
-	Count       int      `json:"count,omitempty"`
-	SessionID   string   `json:"sessionID,omitempty"`
-	Directory   string   `json:"directory,omitempty"`
-	InputPaths  []string `json:"inputPaths,omitempty"`
-	OutputPath  string   `json:"outputPath,omitempty"`
+	Prompt        string   `json:"prompt"`
+	ProviderID    string   `json:"providerID,omitempty"`
+	ModelID       string   `json:"modelID,omitempty"`
+	AspectRatio   string   `json:"aspectRatio,omitempty"`
+	ImageSize     string   `json:"imageSize,omitempty"`
+	Count         int      `json:"count,omitempty"`
+	SessionID     string   `json:"sessionID,omitempty"`
+	Directory     string   `json:"directory,omitempty"`
+	InputPaths    []string `json:"inputPaths,omitempty"`
+	InputDataURLs []string `json:"inputDataUrls,omitempty"`
+	MaskDataURL   string   `json:"maskDataUrl,omitempty"`
+	OutputPath    string   `json:"outputPath,omitempty"`
+	ReturnDataURL bool     `json:"returnDataUrl,omitempty"`
 }
 
 type mediaImageSavedItem struct {
@@ -92,6 +96,7 @@ type mediaImageSavedItem struct {
 	Mime     string `json:"mime"`
 	URL      string `json:"url,omitempty"`
 	Path     string `json:"path,omitempty"`
+	DataURL  string `json:"dataUrl,omitempty"`
 }
 
 func checkWorkspaceRelMediaRules(slashRel, target string, allowAttachmentSubdir bool) error {
@@ -241,11 +246,11 @@ func (g *Gateway) handleMediaImage(w http.ResponseWriter, r *http.Request) {
 		if !decodeAppJSON(w, r, &req, 4<<20) {
 			return
 		}
-	} else if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&req); err != nil {
+	} else if err := json.NewDecoder(io.LimitReader(r.Body, 36<<20)).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON payload")
 		return
 	}
-	if isAppMediaRequest(r) && (req.Directory != "" || r.URL.Query().Has("directory") || req.OutputPath != "" || req.SessionID != "" || len(req.InputPaths) != 0) {
+	if isAppMediaRequest(r) && (req.Directory != "" || r.URL.Query().Has("directory") || req.OutputPath != "" || req.SessionID != "" || len(req.InputPaths) != 0 || len(req.InputDataURLs) != 0 || strings.TrimSpace(req.MaskDataURL) != "" || req.ReturnDataURL) {
 		writeAppError(w, http.StatusForbidden, "FILES_FORBIDDEN", "application media endpoints do not access local files or desktop sessions")
 		return
 	}
@@ -296,6 +301,49 @@ func (g *Gateway) handleMediaImage(w http.ResponseWriter, r *http.Request) {
 			Data: raw,
 		})
 	}
+	if len(req.InputDataURLs) > 4 {
+		writeJSONError(w, http.StatusBadRequest, "at most 4 inline input images are allowed")
+		return
+	}
+	for _, rawDataURL := range req.InputDataURLs {
+		if strings.TrimSpace(rawDataURL) == "" {
+			continue
+		}
+		parsedMime, decoded, decErr := attachment.DecodeDataURL(rawDataURL, "")
+		if decErr != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid inputDataUrls item: "+decErr.Error())
+			return
+		}
+		if !strings.HasPrefix(strings.ToLower(parsedMime), "image/") {
+			writeJSONError(w, http.StatusBadRequest, "inputDataUrls must contain image/* data URLs")
+			return
+		}
+		if len(decoded) > attachment.MaxAttachmentBytes {
+			writeJSONError(w, http.StatusBadRequest, "inline input image exceeds 15 MB limit")
+			return
+		}
+		inputImages = append(inputImages, llm.ImageInput{
+			Mime: parsedMime,
+			Data: decoded,
+		})
+	}
+	var maskImage *llm.ImageInput
+	if strings.TrimSpace(req.MaskDataURL) != "" {
+		maskMime, maskBytes, maskErr := attachment.DecodeDataURL(req.MaskDataURL, "")
+		if maskErr != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid maskDataUrl: "+maskErr.Error())
+			return
+		}
+		if !strings.HasPrefix(strings.ToLower(maskMime), "image/") {
+			writeJSONError(w, http.StatusBadRequest, "maskDataUrl must contain an image/* data URL")
+			return
+		}
+		if len(maskBytes) > attachment.MaxAttachmentBytes {
+			writeJSONError(w, http.StatusBadRequest, "mask image exceeds 15 MB limit")
+			return
+		}
+		maskImage = &llm.ImageInput{Mime: maskMime, Data: maskBytes}
+	}
 
 	sessPID, sessMID := g.sessionActiveModel(req.SessionID)
 	resolvedPID, resolvedMID, resolution, hasImgModel := g.providers.ResolveImageModelForSession(
@@ -322,6 +370,7 @@ func (g *Gateway) handleMediaImage(w http.ResponseWriter, r *http.Request) {
 		ImageSize:   req.ImageSize,
 		Count:       req.Count,
 		InputImages: inputImages,
+		MaskImage:   maskImage,
 	})
 	if err != nil {
 		if writeAppMediaFailure(w, r, err) {
@@ -366,6 +415,13 @@ func (g *Gateway) handleMediaImage(w http.ResponseWriter, r *http.Request) {
 		item := mediaImageSavedItem{
 			Filename: fname,
 			Mime:     img.Mime,
+		}
+		if req.ReturnDataURL {
+			itemMime := strings.TrimSpace(img.Mime)
+			if itemMime == "" {
+				itemMime = "image/png"
+			}
+			item.DataURL = "data:" + itemMime + ";base64," + base64.StdEncoding.EncodeToString(img.Data)
 		}
 		if attStore != nil {
 			if meta, saveErr := attStore.Save(attachment.SaveRequest{

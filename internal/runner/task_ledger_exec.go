@@ -363,7 +363,7 @@ func (s *Service) resumeCLITurnFromLedger(rec SessionRecord, entry InflightTurnE
 		s.clearInflightTurn(rec.ID)
 		return startErr
 	}
-	s.recordCLISystemDelivered(rec.ID, rec.Runtime, entry.CallerSystem)
+	s.recordCLISystemDeliveredForTurn(rec, entry.CallerSystem)
 	return nil
 }
 

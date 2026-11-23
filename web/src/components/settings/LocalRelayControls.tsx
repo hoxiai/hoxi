@@ -2,7 +2,7 @@
 // Local OpenAI-compatible relay: endpoint discovery plus hk-* key management.
 // The relay listens on loopback only and is never opened over the GoPanel tunnel.
 import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
-import { Check, Copy, KeyRound, Plus, ShieldAlert, Trash2 } from "lucide-solid";
+import { Check, ChevronRight, Copy, KeyRound, Plus, ShieldAlert, Trash2 } from "lucide-solid";
 import { t } from "../../i18n";
 import {
   createLocalRelayKey,
@@ -28,7 +28,7 @@ function formatTime(ms?: number): string {
   }
 }
 
-function CopyField(props: { label: string; tip?: string; value: string }) {
+function CopyField(props: { label?: string; tip?: string; value: string }) {
   const [copied, setCopied] = createSignal(false);
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
   onCleanup(() => {
@@ -47,12 +47,14 @@ function CopyField(props: { label: string; tip?: string; value: string }) {
   };
   return (
     <div class="space-y-1.5">
-      <div class="flex items-center gap-1.5 text-[12px] font-medium text-[var(--text-secondary)]">
-        <span>{props.label}</span>
-        <Show when={props.tip}>
-          <HelpTip text={props.tip!} size={13} />
-        </Show>
-      </div>
+      <Show when={props.label}>
+        <div class="flex items-center gap-1.5 text-[12px] font-medium text-[var(--text-secondary)]">
+          <span>{props.label}</span>
+          <Show when={props.tip}>
+            <HelpTip text={props.tip!} size={13} />
+          </Show>
+        </div>
+      </Show>
       <div class="flex items-center gap-2">
         <code class="min-w-0 flex-1 truncate rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-2 font-mono text-[12px] text-[var(--text-primary)]">
           {props.value || "—"}
@@ -81,27 +83,33 @@ export function LocalRelaySettingsTab() {
 
   return (
     <div class="space-y-6">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div class="flex items-center gap-2">
-          <h3 class="text-[15px] font-semibold text-[var(--text-primary)]">{t("relay.title")}</h3>
-          <HelpTip text={t("relay.intro")} />
-        </div>
-        <div class="inline-flex items-center gap-1.5 text-[12px] text-[var(--text-muted)]">
-          <ShieldAlert size={13} class="shrink-0" />
-          <span>{t("relay.disclaimerTitle")}</span>
-          <HelpTip text={t("relay.disclaimerDesc")} size={13} />
-        </div>
-      </div>
-
-      <SettingGroup title={t("relay.endpointTitle")} tip={t("relay.endpointDesc")}>
-        <div class="space-y-4 px-5 py-4">
+      <SettingGroup
+        title={t("relay.endpointTitle")}
+        tip={`${t("relay.intro")}\n\n${t("relay.endpointDesc")}`}
+        action={
+          <div class="inline-flex items-center gap-1.5 text-[12px] text-[var(--text-muted)]">
+            <ShieldAlert size={13} class="shrink-0" />
+            <span>{t("relay.disclaimerTitle")}</span>
+            <HelpTip text={t("relay.disclaimerDesc")} size={13} />
+          </div>
+        }
+      >
+        <div class="space-y-3 px-5 py-4">
           <CopyField label={t("relay.baseURL")} value={localRelay.baseURL} />
-          <CopyField
-            label={t("relay.chatURL")}
-            tip={t("relay.modelHint", { auto: "hoxi-auto" })}
-            value={localRelay.chatURL}
-          />
-          <CopyField label={t("relay.modelsURL")} value={localRelay.modelsURL} />
+          <details class="group/relay-urls pt-1">
+            <summary class="flex cursor-pointer list-none items-center gap-1.5 text-[12px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] [&::-webkit-details-marker]:hidden">
+              <ChevronRight size={13} class="transition-transform group-open/relay-urls:rotate-90" />
+              <span>{t("relay.chatURL")} / {t("relay.modelsURL")}</span>
+            </summary>
+            <div class="mt-3 space-y-3">
+              <CopyField
+                label={t("relay.chatURL")}
+                tip={t("relay.modelHint", { auto: "hoxi-auto" })}
+                value={localRelay.chatURL}
+              />
+              <CopyField label={t("relay.modelsURL")} value={localRelay.modelsURL} />
+            </div>
+          </details>
         </div>
         <SettingRow label={t("relay.loopbackOnly")} tip={t("relay.loopbackOnlyDesc")} icon={ShieldAlert}>
           <span class="rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 text-[12px] font-medium text-emerald-500">
@@ -131,7 +139,7 @@ export function LocalRelaySettingsTab() {
                 {t("relay.createdTitle")}
               </div>
               <p class="text-[12px] text-[var(--text-secondary)]">{t("relay.createdDesc")}</p>
-              <CopyField label={t("relay.createKey")} value={localRelay.createdToken} />
+              <CopyField value={localRelay.createdToken} />
               <button type="button" class={buttonClass} onClick={dismissCreatedRelayToken}>
                 {t("relay.dismiss")}
               </button>

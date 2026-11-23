@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -75,14 +75,14 @@ func (s *workspaceStore) loadFromDisk(seedRootDir string) {
 				loaded = true
 			} else if backup, backupErr := s.backupCorruptFileLocked(); backupErr != nil {
 				s.persistBlocked = fmt.Errorf("workspaces file is corrupt and could not be backed up: %w", backupErr)
-				log.Printf("workspace store: %v (parse error: %v)", s.persistBlocked, parseErr)
+				slog.Warn("workspace store corrupt and backup failed", "source", "workspace", "error", s.persistBlocked, "parseError", parseErr)
 				return
 			} else {
-				log.Printf("workspace store: corrupt %s moved to %s: %v", s.storagePath, backup, parseErr)
+				slog.Warn("workspace store corrupt file backed up", "source", "workspace", "path", s.storagePath, "backup", backup, "parseError", parseErr)
 			}
 		case !errors.Is(err, os.ErrNotExist):
 			s.persistBlocked = fmt.Errorf("workspaces file is unreadable: %w", err)
-			log.Printf("workspace store: %v", s.persistBlocked)
+			slog.Warn("workspace store file unreadable", "source", "workspace", "error", s.persistBlocked)
 			return
 		}
 	}
@@ -91,7 +91,7 @@ func (s *workspaceStore) loadFromDisk(seedRootDir string) {
 		if ws, err := s.buildSeededWorkspace(seedRootDir); err == nil {
 			s.workspaces = []workspaceProfile{ws}
 			if err := s.persistLocked(); err != nil {
-				log.Printf("workspace store: persist seed: %v", err)
+				slog.Warn("workspace store persist seed failed", "source", "workspace", "error", err)
 			}
 		}
 	}
@@ -175,7 +175,7 @@ func (s *workspaceStore) snapshotLocked() storeState {
 func (s *workspaceStore) commitLocked(prev storeState) error {
 	if err := s.persistLocked(); err != nil {
 		s.workspaces, s.dismissed, s.removed = prev.workspaces, prev.dismissed, prev.removed
-		log.Printf("workspace store: persist failed: %v", err)
+		slog.Warn("workspace store persist failed", "source", "workspace", "error", err)
 		return fmt.Errorf("save workspaces: %w", err)
 	}
 	return nil

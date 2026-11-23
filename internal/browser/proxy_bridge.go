@@ -19,6 +19,7 @@ import (
 
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/chromedp"
+	"github.com/hoxiai/hoxi/internal/diagnostics"
 )
 
 const proxyBridgeDialTimeout = 5 * time.Second
@@ -247,6 +248,7 @@ func startLoopbackProxyBridge(ctx context.Context, upstream *url.URL, allowLoopb
 	}
 	b.srv = &http.Server{
 		Handler:           http.HandlerFunc(b.serveHTTP),
+		ErrorLog:          diagnostics.NewQuietHTTPServerLogger(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {

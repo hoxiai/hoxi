@@ -182,7 +182,7 @@ func TestNativePostEditDiagnosticsRustOffline(t *testing.T) {
 fi
 mode=$(cat "`+modeFile+`")
 if [ "$mode" = "offline_miss" ]; then
-  echo "error: failed to get \`+"`serde`"+` as a dependency of package \`+"`demo`"+` because --offline was specified"
+  printf '%s\n' 'error: failed to get `+"`serde`"+` as a dependency of package `+"`demo`"+` because --offline was specified'
   exit 101
 fi
 echo "src/lib.rs:4:12: error[E0308]: mismatched types"
@@ -362,7 +362,15 @@ func TestNativeDiagnosticsReportsUnavailableAndCooldown(t *testing.T) {
 func TestNativeToolLookupAndSubprocessEnvCaseInsensitiveKeys(t *testing.T) {
 	binDir := t.TempDir()
 	toolName := "hoxi-case-probe-bin"
-	toolPath := writeFakeExecutable(t, binDir, toolName, "exit 0")
+	var toolPath string
+	if runtime.GOOS == "windows" {
+		toolPath = filepath.Join(binDir, toolName+".cmd")
+		if err := os.WriteFile(toolPath, []byte("@exit /b 0\r\n"), 0o644); err != nil {
+			t.Fatalf("write fake windows executable: %v", err)
+		}
+	} else {
+		toolPath = writeFakeExecutable(t, binDir, toolName, "exit 0")
+	}
 
 	// Mixed-case `Path=` (Windows convention) must be discovered by resolveNativeToolBinaryFromEnv.
 	got := resolveNativeToolBinaryFromEnv([]string{"Path=" + binDir}, toolName)
@@ -381,5 +389,103 @@ func TestNativeToolLookupAndSubprocessEnvCaseInsensitiveKeys(t *testing.T) {
 		case "GIT_ASKPASS", "SSH_ASKPASS", "GIT_EDITOR":
 			t.Fatalf("expected %q stripped from nativeSubprocessEnv, got %v", kv, cleaned)
 		}
+	}
+}
+
+func TestNativePostEditDiagnosticsJSONAndJS(t *testing.T) {
+	root := t.TempDir()
+	svc := NewService(root, nil, nil, "")
+	rec := SessionRecord{
+		ID:           "ses_nat_diag_json_js",
+		Runtime:      string(RuntimeNative),
+		ProjectDir:   root,
+		WorktreePath: root,
+		SandboxMode:  "off",
+	}
+	diagFn := svc.nativeDiagnostics(rec)
+
+	// 1. Strict JSON: valid passes, broken reports exact line:col.
+	goodJSON := filepath.Join(root, "package.json")
+	if err := os.WriteFile(goodJSON, []byte("{\n  \"name\": \"demo\"\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := diagFn(context.Background(), root, goodJSON); got != "Passed: json syntax." {
+		t.Fatalf("expected valid package.json to pass, got: %q", got)
+	}
+
+	badJSON := filepath.Join(root, "broken.json")
+	if err := os.WriteFile(badJSON, []byte("{\n  \"a\": 1,\n  \"b\": }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := diagFn(context.Background(), root, badJSON); !strings.Contains(got, "[json]") || !strings.Contains(got, "broken.json:3:") {
+		t.Fatalf("expected broken.json line 3 syntax diagnostic, got: %q", got)
+	}
+
+	// 2. JSONC config files (tsconfig.json, hoxi.json) allow comments and trailing commas,
+	//    while still flagging real syntax errors and unterminated block comments.
+	goodTSConfig := filepath.Join(root, "tsconfig.json")
+	if err := os.WriteFile(goodTSConfig, []byte("{\n  // strict mode\n  \"compilerOptions\": {\n    \"strict\": true,\n  },\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := diagFn(context.Background(), root, goodTSConfig); got != "Passed: jsonc syntax." {
+		t.Fatalf("expected valid JSONC tsconfig.json to pass, got: %q", got)
+	}
+
+	badHoxiJSON := filepath.Join(root, "hoxi.json")
+	if err := os.WriteFile(badHoxiJSON, []byte("{\n  /* unterminated comment\n  \"skills\": []\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := diagFn(context.Background(), root, badHoxiJSON); !strings.Contains(got, "[jsonc]") || !strings.Contains(got, "hoxi.json:2:3") {
+		t.Fatalf("expected unterminated block comment at hoxi.json:2:3, got: %q", got)
+	}
+
+	// 3. JavaScript (.js/.mjs) via node --check and JSX via workspace oxlint.
+	if runtime.GOOS == "windows" {
+		return
+	}
+	binDir := filepath.Join(root, "fakebin")
+	nodeBinDir := filepath.Join(root, "node_modules", ".bin")
+	for _, d := range []string{binDir, nodeBinDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFakeExecutable(t, binDir, "node", `if [ "$1" = "--check" ]; then
+  if grep -q "BROKEN_SYNTAX" "$2"; then
+    echo "$2:2"
+    echo "SyntaxError: Unexpected token '}'"
+    exit 1
+  fi
+  exit 0
+fi
+exit 0`)
+	writeFakeExecutable(t, nodeBinDir, "oxlint", `if grep -q "BAD_JSX" "$2"; then
+  echo "App.jsx:1:10: error: Expected corresponding JSX closing tag"
+  exit 1
+fi
+exit 0`)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	goodMJS := filepath.Join(root, "script.mjs")
+	badJS := filepath.Join(root, "bad.js")
+	badJSX := filepath.Join(root, "App.jsx")
+	if err := os.WriteFile(goodMJS, []byte("export const x = 1;\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(badJS, []byte("function f() {\n  BROKEN_SYNTAX }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(badJSX, []byte("export const App = () => <div>BAD_JSX</span>;\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := svc.RunNativeDiagnostics(context.Background(), rec.ID, root, goodMJS); got != "Passed: node --check." {
+		t.Fatalf("expected good.mjs to pass node --check, got: %q", got)
+	}
+	if got := diagFn(context.Background(), root, badJS); !strings.Contains(got, "[node --check]") || !strings.Contains(got, "SyntaxError") {
+		t.Fatalf("expected bad.js node --check failure, got: %q", got)
+	}
+	if got := diagFn(context.Background(), root, badJSX); !strings.Contains(got, "[oxlint]") || !strings.Contains(got, "JSX") {
+		t.Fatalf("expected bad.jsx oxlint failure, got: %q", got)
 	}
 }

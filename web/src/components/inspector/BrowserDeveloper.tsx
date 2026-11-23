@@ -10,11 +10,8 @@ export default function BrowserDeveloper(props: {
   resetZoom: () => void;
 }) {
   const button = "rounded border border-[var(--border-subtle)] px-2 py-0.5 text-[11px] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer";
-  return <div class="shrink-0 border-b border-[var(--border-subtle)]">
-    <button class="w-full px-2 py-1 text-left text-[11px] hover:bg-[var(--bg-hover)] cursor-pointer" aria-expanded={props.developer.open()} onClick={() => props.developer.setOpen(value => !value)}>
-      {t("inspector.browser.developerTools")} {props.developer.open() ? "▾" : "▸"}
-    </button>
-    <Show when={props.developer.open()}><div class="space-y-2 px-2 pb-2 text-[11px]">
+  return <Show when={props.developer.open()}>
+    <div class="shrink-0 border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]/35 space-y-2 px-2 py-2 text-[11px]">
       <div class="flex flex-wrap items-center gap-2">
         <label title={props.chrome ? t("inspector.browser.chromeViewportHint") : props.window ? t("inspector.browser.windowViewportHint") : undefined}>{t("inspector.browser.viewportPreset")} <select value={props.chrome || props.developer.viewportMode() !== "actual" ? props.developer.viewportMode() : "fit"} disabled={props.window}
           class="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-1 py-0.5 disabled:opacity-50" onChange={event => props.developer.setViewportMode(event.currentTarget.value as BrowserViewportMode)}>
@@ -48,6 +45,6 @@ export default function BrowserDeveloper(props: {
           </div>}</For>
         </Show>
       </div>
-    </div></Show>
-  </div>;
+    </div>
+  </Show>;
 }

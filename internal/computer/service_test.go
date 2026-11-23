@@ -340,3 +340,90 @@ func TestDesktopForgetSessionReleasesAppOwnershipAndGrantSlots(t *testing.T) {
 		t.Fatalf("expected another session to authorize target app after ForgetSession, got %v", err)
 	}
 }
+
+func TestDesktopWaitClearAndCancelPaths(t *testing.T) {
+	s, f, scope := desktopFixture(t)
+
+	// Invalid wait durations must be rejected.
+	for _, bad := range []time.Duration{0, -time.Second, MaxWaitDuration + time.Second} {
+		if _, err := s.Wait(context.Background(), scope, "", bad, false); err == nil || err.Error() != "invalid_wait_seconds" {
+			t.Fatalf("expected invalid_wait_seconds for %v, got %v", bad, err)
+		}
+	}
+
+	// Normal short wait returns a fresh observation with waitedMs and optional image.
+	snap, err := s.Wait(context.Background(), scope, "", 15*time.Millisecond, true)
+	if err != nil {
+		t.Fatalf("Wait failed: %v", err)
+	}
+	if snap.ObservationID == "" || snap.Image != "jpeg-data" || snap.WaitedMs < 1 {
+		t.Fatalf("unexpected Wait snapshot: %+v", snap)
+	}
+
+	// Pause immediately cancels an in-flight Wait.
+	waitDone := make(chan error, 1)
+	go func() {
+		_, wErr := s.Wait(context.Background(), scope, "", 5*time.Second, false)
+		waitDone <- wErr
+	}()
+	time.Sleep(15 * time.Millisecond)
+	s.Pause(scope, true)
+	select {
+	case wErr := <-waitDone:
+		if wErr == nil || wErr.Error() != "app_permission_changed" {
+			t.Fatalf("expected app_permission_changed on Pause during Wait, got %v", wErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Pause did not wake up Wait promptly")
+	}
+	s.Pause(scope, false)
+
+	// Clear=true on non-type action must be rejected.
+	if err := ValidateAction(Action{Action: "click", ObservationID: strings.Repeat("a", 32), WindowID: "one", Clear: true}); err == nil {
+		t.Fatal("expected Clear=true on click to be rejected")
+	}
+
+	// Clear=true on type sends click -> selectAll -> Backspace -> type -> key.
+	snap2, err := s.Observe(context.Background(), scope, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.lastActions = nil
+	err = s.Execute(context.Background(), scope, Action{
+		Action:        "type",
+		ObservationID: snap2.ObservationID,
+		WindowID:      "one",
+		ElementID:     1,
+		Text:          "next prompt",
+		Clear:         true,
+		Key:           "Enter",
+	})
+	if err != nil {
+		t.Fatalf("type with Clear=true failed: %v", err)
+	}
+	if len(f.lastActions) != 5 ||
+		f.lastActions[0].Action != "click" ||
+		f.lastActions[1].Action != "key" || f.lastActions[1].Key != selectAllChord() ||
+		f.lastActions[2].Action != "key" || f.lastActions[2].Key != "Backspace" ||
+		f.lastActions[3].Action != "type" || f.lastActions[3].Clear ||
+		f.lastActions[4].Action != "key" || f.lastActions[4].Key != "Enter" {
+		t.Fatalf("unexpected clear+type+key sequence: %+v", f.lastActions)
+	}
+
+	// Stop cancels in-flight Wait immediately too.
+	waitDone2 := make(chan error, 1)
+	go func() {
+		_, wErr := s.Wait(context.Background(), scope, "", 5*time.Second, false)
+		waitDone2 <- wErr
+	}()
+	time.Sleep(15 * time.Millisecond)
+	s.Stop()
+	select {
+	case wErr := <-waitDone2:
+		if wErr == nil {
+			t.Fatal("expected Wait error after Stop")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Stop did not wake up Wait promptly")
+	}
+}

@@ -2,6 +2,7 @@
 import { createSignal, untrack } from "solid-js";
 import { createStore } from "solid-js/store";
 import { t } from "../i18n";
+import { errorMessageOf } from "../services/http";
 import {
   skillsAPI,
   type MarketplaceSkill,
@@ -329,7 +330,7 @@ export async function loadSkillsCatalog(options?: {
     return resp;
   } catch (err) {
     if (reqGen !== listRequestGen) return null;
-    const msg = err instanceof Error ? err.message : String(err || "Failed to load skills");
+    const msg = errorMessageOf(err, "Failed to load skills");
     setSkillsStore({ loading: false, error: msg, skills: [] });
     return null;
   }
@@ -383,7 +384,7 @@ export async function loadSkillDetail(
     return detail;
   } catch (err) {
     if (reqGen !== detailRequestGen) return null;
-    const msg = err instanceof Error ? err.message : String(err || "Failed to load skill detail");
+    const msg = errorMessageOf(err, "Failed to load skill detail");
     setSkillsStore({ detail: null, detailLoading: false, detailError: msg });
     return null;
   }
@@ -412,7 +413,7 @@ export async function loadSkillMarketplace(options?: {
     return list;
   } catch (err) {
     if (reqGen !== marketplaceRequestGen) return null;
-    const msg = err instanceof Error ? err.message : String(err || "Failed to load skills marketplace");
+    const msg = errorMessageOf(err, "Failed to load skills marketplace");
     setSkillsStore({ marketplaceLoading: false, marketplaceError: msg, marketplace: [] });
     return null;
   }
@@ -450,12 +451,10 @@ export async function installSkillFromMarketplace(
     });
     return true;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err || "");
+    const msg = errorMessageOf(err, clean);
     setSkillsStore({
       installingSlug: null,
-      installNotice: msg
-        ? t("skills.installFailed", { message: msg })
-        : t("skills.installFailed", { message: clean }),
+      installNotice: t("skills.installFailed", { message: msg }),
     });
     return false;
   }
@@ -530,10 +529,9 @@ export async function revalidateSkillForTargetDirectory(params: {
       reason: t("skills.reselectRequired", { name: selection.name }),
     };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err || "");
     return {
       ok: false,
-      reason: msg || t("skills.reselectRequired", { name: selection.name }),
+      reason: errorMessageOf(err, t("skills.reselectRequired", { name: selection.name })),
     };
   }
 }

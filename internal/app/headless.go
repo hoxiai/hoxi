@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/diagnostics"
 	"github.com/hoxiai/hoxi/internal/gateway"
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/notify"
@@ -134,7 +135,7 @@ func StartEphemeralHeadless(ctx context.Context, rootDir string) (string, func()
 		return dapp.EnsureEngine(ctx)
 	})
 
-	srv := &http.Server{Handler: gw, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
+	srv := &http.Server{Handler: gw, ErrorLog: diagnostics.NewQuietHTTPServerLogger(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
 	dapp.wsServer = srv
 	go func() {
 		_ = srv.Serve(listener)

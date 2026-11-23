@@ -10,6 +10,19 @@ import type {
 import { requestJSON, withDir } from "./http";
 import { officialChannelAPI, providerMcpOAuthAPI } from "./platform-api";
 
+export interface OrchestratorConfig {
+  orchestratorModel?: string;
+  orchestratorEffort?: string;
+  executorModel?: string;
+  executorEffort?: string;
+}
+
+export interface PromptOrchestrator {
+  executorProviderID: string;
+  executorModelID: string;
+  executorEffort?: string;
+}
+
 export const providerAndAssistAPI = {
   // Providers, Models & Auth (Unified Hoxi provider plane)
   listProviders(directory?: string): Promise<ProviderListResponse> {
@@ -114,6 +127,17 @@ export const providerAndAssistAPI = {
   deleteAutoPoolConfig(poolID: string): Promise<{ ok: boolean; autoPools: Record<string, any> }> {
     return requestJSON(`/api/hoxi/provider/auto-pools?poolID=${encodeURIComponent(poolID)}`, {
       method: "DELETE",
+    });
+  },
+  getOrchestratorConfig(): Promise<{ ok: boolean; config: OrchestratorConfig }> {
+    return requestJSON("/api/hoxi/provider/orchestrator");
+  },
+  saveOrchestratorConfig(
+    patch: Partial<Record<keyof OrchestratorConfig, string | null>>
+  ): Promise<{ ok: boolean; config: OrchestratorConfig }> {
+    return requestJSON("/api/hoxi/provider/orchestrator", {
+      method: "PUT",
+      body: JSON.stringify(patch),
     });
   },
   disposeGlobal(): Promise<void> {

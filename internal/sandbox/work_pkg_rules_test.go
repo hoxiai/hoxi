@@ -223,10 +223,8 @@ func TestWorkSetupInstallerProfileStrictlyConfinesWritesAndHardDeniesTargets(t *
 	toolchains := resolvePathSymlinks(hoxipaths.WorkToolchainsDir())
 	appRuntime := resolvePathSymlinks(hoxipaths.WorkRuntimeDir("ecom-ops"))
 	allowedTempSet := make(map[string]bool)
-	for _, tmp := range []string{os.TempDir(), "/tmp", "/private/tmp", "/private/var/folders"} {
-		if strings.TrimSpace(tmp) != "" {
-			allowedTempSet[resolvePathSymlinks(tmp)] = true
-		}
+	for _, rule := range canonicalSubtrees([]string{os.TempDir(), "/tmp", "/private/tmp", "/private/var/folders"}) {
+		allowedTempSet[rule.Path] = true
 	}
 
 	if !hasPathRule(profile.Filesystem.AllowWrite, toolchains, PathSubtree) {

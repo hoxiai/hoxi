@@ -2,9 +2,11 @@
 // substitution, secret or protected path) is unrolled up to 64 items and each
 // copy is judged as its own command. Over the cap the loop is left untouched.
 // Mirrors expandLiteralForLoops in internal/runner/opaque_expand.go.
-import { isWindowsTempPath } from "./policy-paths.js";
+import { scanShellWordSpans } from "./command-data-args.js";
+import { isProtectedPath, isProtectedShellReadPath, isSecretPath, isSensitiveExternalPath } from "./external-path-risk.js";
+import { isAbsPolicyPath, isWindowsDriveAbs, isWindowsTempPath } from "./policy-paths.js";
 import { normalizeNumericLoops } from "./numeric-loops.js";
-import { isSafeXargsTarget } from "./shell-idioms.js";
+import { containsMktempPlaceholder, isSafeXargsTarget } from "./shell-idioms.js";
 import { isScopedProjectScript, stripScriptRedirects } from "./shell-script.js";
 
 const MAX_LITERAL_LOOP_ITEMS = 64;
@@ -24,6 +26,14 @@ const XARGS_REPL_RE = /^(?:\{\}|%|[A-Za-z_][A-Za-z0-9_]*)$/;
 const XARGS_ATTACHED_FLAG_RE = /^-(?:[nLPs][1-9]\d*|I(?:\{\}|%|[A-Za-z_][A-Za-z0-9_]*)|-max-(?:args|lines|procs)=[1-9]\d*)$/;
 const UNAME_VALUE_FLAG_RE = /^-(?:[smranpv]+|-(?:all|kernel-name|kernel-release|kernel-version|machine|nodename|processor|operating-system))$/;
 const ID_VALUE_FLAG_RE = /^-[ugn]+$/;
+const QUOTED_DIR_PATH_SEGMENT_RE = /^[A-Za-z0-9@][A-Za-z0-9._@-]*$/;
+const QUOTED_DIR_GLOB_SUFFIX_RE = /^(?:[A-Za-z0-9_@-][A-Za-z0-9._@-]*)?\*[A-Za-z0-9._@*-]*$/;
+const QUOTED_DIR_SECRET_SUFFIX_RE = /(?:\.(?:env(?:\.|$)|pem$|key$|p12$|pfx$|jks$|keystore$|ppk$|asc$|gpg$)|(?:^|[._@*-])id_(?:rsa|ed25519|ecdsa|dsa)(?:$|[._@*-])|authorized_keys|credentials\.json|oauth_creds\.json)/i;
+const QUOTED_DIR_KEYWORDS = new Set([
+  "while", "until", "do", "done", "if", "then", "else", "elif", "fi", "!",
+  "nohup", "time", "exec", "command", "env", "sudo", "xargs", "timeout", "gtimeout",
+]);
+const QUOTED_DIR_ENV_ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
 export const SEQ_LOOP_PLACEHOLDER = "__hoxi_seq__";
 const isBoundary = (c) => " \t\r\n;&|()<>".includes(c);
@@ -238,12 +248,40 @@ function findLoopDone(s, i) {
 }
 
 export function isQuotedDirGlobSuffix(s, openIdx, closeIdx) {
-  if (openIdx < 0 || closeIdx <= openIdx + 1 || s[closeIdx - 1] !== "/") return false;
-  if (!s.slice(openIdx + 1, closeIdx).replaceAll("/", "")) return false;
+  if (openIdx <= 0 || closeIdx <= openIdx + 1 || (s[openIdx - 1] !== " " && s[openIdx - 1] !== "\t")) return false;
+  const quoted = s.slice(openIdx + 1, closeIdx);
+  if (!quoted.replaceAll("/", "") || quoted.startsWith("-") || quoted.includes("..") || /[\r\n\\]/.test(quoted) || containsMktempPlaceholder(quoted)) {
+    return false;
+  }
+  let p = openIdx;
+  while (p > 0 && (s[p - 1] === " " || s[p - 1] === "\t")) p--;
+  if (p === 0 || ";&|\n\r(`".includes(s[p - 1])) return false;
+  let prevStart = p;
+  while (prevStart > 0 && !isBoundary(s[prevStart - 1])) prevStart--;
+  const prevWord = s.slice(prevStart, p);
+  if (!prevWord || QUOTED_DIR_KEYWORDS.has(prevWord) || QUOTED_DIR_ENV_ASSIGN_RE.test(prevWord)) return false;
   let k = closeIdx + 1;
   while (k < s.length && !isBoundary(s[k])) k++;
   const suf = s.slice(closeIdx + 1, k);
-  return suf === "*" || EXT_GLOB_RE.test(suf);
+  if (!suf || suf.includes("..")) return false;
+  let lastSeg = suf;
+  if (s[closeIdx - 1] === "/") {
+    if (suf.includes("/")) return false;
+  } else {
+    if (!suf.startsWith("/") || suf === "/*") return false;
+    const parts = suf.slice(1).split("/");
+    for (let j = 0; j < parts.length - 1; j++) {
+      if (!QUOTED_DIR_PATH_SEGMENT_RE.test(parts[j])) return false;
+    }
+    lastSeg = parts[parts.length - 1];
+  }
+  if (!QUOTED_DIR_GLOB_SUFFIX_RE.test(lastSeg) || QUOTED_DIR_SECRET_SUFFIX_RE.test(lastSeg)) return false;
+  if (suf.startsWith("/") && (isSecretPath(suf) || isSensitiveExternalPath(suf) || isProtectedShellReadPath(suf))) {
+    return false;
+  }
+  const rawCombined = quoted + suf;
+  const combined = normalizeHomePrefixPath(rawCombined) || rawCombined;
+  return !isSecretPath(combined) && !isSensitiveExternalPath(combined) && !isProtectedShellReadPath(combined);
 }
 
 export function isStdinOnlyHeadTail(args) {
@@ -528,4 +566,209 @@ export function gitReadOnlyLoopExpansions(args, vars, deps) {
   if (sub === "worktree") return rest.length === 1 && rest[0] === "list";
   if (!GIT_LOOP_READ_SUBS.has(sub)) return false;
   return rest.every((a) => !GIT_LOOP_OUTPUT_RE.test(a) && (!a.includes("$") || (!a.startsWith("-") && onlyTrustedLoopVars(a))));
+}
+
+const LOOP_DOT_GLOB_RE = /(^|\/)\.[^/]*[*?]/;
+const LOOP_CTRL_KEYWORDS = new Set(["while", "until", "do", "done", "if", "then", "else", "elif", "fi", "!"]);
+const LOOP_REBINDERS = new Set(["declare", "local", "typeset", "readonly", "mapfile", "readarray", "let", "unset", "export"]);
+
+function stripLoopCtrlKeywords(words) {
+  let i = 0;
+  while (i < words.length && LOOP_CTRL_KEYWORDS.has(words[i])) i++;
+  return words.slice(i);
+}
+
+function exactSimpleVarRef(raw, harmlessEnvVars) {
+  let s = String(raw ?? "").trim();
+  if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) s = s.slice(1, -1);
+  if (!s.startsWith("$") || s.length < 2) return "";
+  let name = s.slice(1);
+  if (name.startsWith("{")) {
+    if (!name.endsWith("}") || name.length < 3) return "";
+    name = name.slice(1, -1);
+  }
+  if (!SHELL_VAR_NAME_RE.test(name) || harmlessEnvVars.has(name)) return "";
+  return name;
+}
+
+function parseLoopPathTransformSub(inner, harmlessEnvVars) {
+  const s = String(inner ?? "").trim();
+  if (!s || /[;|&`\r\n<>()\\']/.test(s)) return null;
+  const spans = scanShellWordSpans(s);
+  if (!spans || spans.length < 2 || spans.length > 3) return null;
+  const cmd = s.slice(spans[0].start, spans[0].end);
+  if (!["dirname", "basename", "/usr/bin/dirname", "/usr/bin/basename"].includes(cmd)) return null;
+  let argIdx = 1;
+  if (spans.length === 3) {
+    if (s.slice(spans[1].start, spans[1].end) !== "--") return null;
+    argIdx = 2;
+  }
+  const varName = exactSimpleVarRef(s.slice(spans[argIdx].start, spans[argIdx].end), harmlessEnvVars);
+  if (!varName) return null;
+  const tool = cmd.includes("/") ? cmd.slice(cmd.lastIndexOf("/") + 1) : cmd;
+  return { tool, varName };
+}
+
+function forLoopItemSafe(item) {
+  if (!item || item === SEQ_LOOP_PLACEHOLDER) return item === SEQ_LOOP_PLACEHOLDER;
+  if (/[$`\[]/.test(item) || LOOP_DOT_GLOB_RE.test(item)) return false;
+  return !isSecretPath(item) && !isSensitiveExternalPath(item) && !isProtectedShellReadPath(item);
+}
+
+export function isLoopPathTransformValueSub(s, cmdSubStart, inner, deps) {
+  const parsed = parseLoopPathTransformSub(inner, deps.harmlessEnvVars);
+  if (!parsed) return false;
+  let matched = false;
+  scanForLoops(s, (start, end, header, body, items) => {
+    if (matched || cmdSubStart < start || cmdSubStart >= end) return null;
+    const bodyEnd = end - "done".length;
+    const bodyStart = bodyEnd - body.length;
+    if (cmdSubStart < bodyStart || cmdSubStart >= bodyEnd) return null;
+    const loopName = readShellWord(header, "for".length)?.word || "";
+    if (loopName !== parsed.varName || items.length === 0 || items.length > MAX_LITERAL_LOOP_ITEMS) return null;
+    if (!items.every(forLoopItemSafe)) return null;
+    if (!literalLoopBindingStable(deps.bodyWords(body), parsed.varName)) return null;
+    matched = true;
+    return null;
+  });
+  return matched;
+}
+
+function isSafeScopedWorktreeDirSource(item) {
+  if (!item || item.startsWith("/") || item.startsWith("\\") || item.startsWith("~") || item.startsWith("-") ||
+      item.startsWith(".") || isWindowsDriveAbs(item) || /[$?\[{`\\'" \t\r\n]/.test(item) || item.includes("..")) {
+    return false;
+  }
+  if (!item.includes("/")) return false;
+  const trimmed = item.endsWith("/") ? item.slice(0, -1) : item;
+  if (!trimmed || trimmed.endsWith("/")) return false;
+  const parts = trimmed.split("/");
+  let globCount = 0;
+  for (const part of parts) {
+    if (!part || part.startsWith(".") || part.startsWith("-")) return false;
+    if (part.includes("*")) {
+      globCount++;
+      if (globCount > 1 || !QUOTED_DIR_GLOB_SUFFIX_RE.test(part) || QUOTED_DIR_SECRET_SUFFIX_RE.test(part)) return false;
+      continue;
+    }
+    if (!QUOTED_DIR_PATH_SEGMENT_RE.test(part)) return false;
+  }
+  const concrete = trimmed.replaceAll("*", "x");
+  return !isSecretPath(concrete) && !isSensitiveExternalPath(concrete) && !isProtectedShellReadPath(concrete) && !isProtectedPath(concrete);
+}
+
+function isDirLikeGlobItem(item) {
+  if (item.endsWith("/")) return true;
+  const parts = item.split("/");
+  return parts.length > 0 && parts[parts.length - 1].includes("*");
+}
+
+function prefixHasUnsafeCD(prefix, deps) {
+  const erased = deps.eraseSubshells(prefix);
+  for (const seg of deps.splitConstSegments(erased)) {
+    const text = erased.slice(seg.start, seg.end).trim();
+    if (!text || text.startsWith("#")) continue;
+    let words = stripLoopCtrlKeywords(deps.shellWords(text));
+    while (words.length > 0 && QUOTED_DIR_ENV_ASSIGN_RE.test(words[0])) words = words.slice(1);
+    if (words.length === 0) continue;
+    const norm = deps.normalizeAbsoluteTool(words[0]);
+    const base = norm.includes("/") ? norm.slice(norm.lastIndexOf("/") + 1) : norm;
+    if (base === "pushd" || base === "popd") return true;
+    if (base !== "cd") continue;
+    const target = deps.literalCDTarget(deps.stripCDNullRedirects(text));
+    if (!target || isAbsPolicyPath(target) || target.startsWith("~") || target.startsWith("-") || target.includes("..")) return true;
+    const cleanTarget = target.replaceAll("\\", "/").replace(/\/$/, "");
+    for (const part of cleanTarget.split("/")) {
+      if (!part || part.startsWith(".")) return true;
+    }
+    if (isSecretPath(target) || isSensitiveExternalPath(target) || isProtectedShellReadPath(target) || isProtectedPath(target)) return true;
+  }
+  return false;
+}
+
+function stripLeadingControlKeywordPrefix(seg) {
+  let s = String(seg ?? "").trim();
+  for (;;) {
+    const m = /^(?:do|then|else|elif)[ \t\r\n]+/.exec(s);
+    if (!m) return s;
+    s = s.slice(m[0].length).trim();
+  }
+}
+
+function parseDirnameAssignOf(seg, loopVar, deps) {
+  const s = stripLeadingControlKeywordPrefix(seg);
+  const eq = s.indexOf("=");
+  if (eq <= 0) return "";
+  const name = s.slice(0, eq);
+  if (name === loopVar || !SHELL_VAR_NAME_RE.test(name) || deps.harmlessEnvVars.has(name)) return "";
+  let val = s.slice(eq + 1).trim();
+  if (val.length >= 2 && val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
+  if (!val.startsWith("$(") || !val.endsWith(")") || deps.processSubstitutionEnd(val, 2) !== val.length - 1) return "";
+  const parsed = parseLoopPathTransformSub(val.slice(2, -1), deps.harmlessEnvVars);
+  if (!parsed || parsed.tool !== "dirname" || parsed.varName !== loopVar) return "";
+  return name;
+}
+
+function countVarBindings(body, name, deps) {
+  let count = 0;
+  for (const seg of deps.splitConstSegments(body)) {
+    let words = stripLoopCtrlKeywords(deps.shellWords(body.slice(seg.start, seg.end)));
+    if (words[0]?.startsWith(name + "[")) {
+      count += 2;
+      continue;
+    }
+    while (words.length > 0 && (QUOTED_DIR_ENV_ASSIGN_RE.test(words[0]) || words[0].startsWith(name + "+="))) {
+      if (words[0].startsWith(name + "=")) count++;
+      else if (words[0].startsWith(name + "+=")) count += 2;
+      words = words.slice(1);
+    }
+    if (words.length === 0) continue;
+    const base = words[0].includes("/") ? words[0].slice(words[0].lastIndexOf("/") + 1) : words[0];
+    if (base === "read" || LOOP_REBINDERS.has(base) || (base === "for" && words[1] === name)) count += 2;
+    if (base === "printf" && words.slice(1).includes("-v")) count += 2;
+  }
+  return count;
+}
+
+export function scopedDirVarsForSubshell(command, spStart, spEnd, deps) {
+  let result = null;
+  const subBody = command.slice(spStart + 1, spEnd);
+  const bodyWordsOf = (text) => deps.splitConstSegments(text).map((seg) => stripLoopCtrlKeywords(deps.shellWords(text.slice(seg.start, seg.end))));
+  scanForLoops(command, (start, end, header, body, items) => {
+    if (result || spStart < start || spEnd > end) return null;
+    const bodyEnd = end - "done".length;
+    const bodyStart = bodyEnd - body.length;
+    if (spStart < bodyStart || spEnd > bodyEnd) return null;
+    if (prefixHasUnsafeCD(command.slice(0, start), deps)) return null;
+    const loopVar = readShellWord(header, "for".length)?.word || "";
+    if (!loopVar || deps.harmlessEnvVars.has(loopVar) || items.length === 0 || items.length > MAX_LITERAL_LOOP_ITEMS) return null;
+    let allDirLike = true;
+    for (const item of items) {
+      if (!isSafeScopedWorktreeDirSource(item)) return null;
+      if (!isDirLikeGlobItem(item)) allDirLike = false;
+    }
+    const erasedBody = deps.eraseSubshells(body);
+    if (!literalLoopBindingStable(bodyWordsOf(erasedBody), loopVar) || !literalLoopBindingStable(bodyWordsOf(subBody), loopVar)) return null;
+    const dirs = new Set();
+    if (allDirLike) dirs.add(loopVar);
+    const relSubStart = spStart - bodyStart;
+    for (const seg of deps.splitConstSegments(body)) {
+      if (seg.end > relSubStart || seg.before === "p" || seg.before === "|" || seg.next === "p") continue;
+      const dirVar = parseDirnameAssignOf(body.slice(seg.start, seg.end), loopVar, deps);
+      if (!dirVar) continue;
+      if (countVarBindings(erasedBody, dirVar, deps) === 1 && literalLoopBindingStable(bodyWordsOf(subBody), dirVar)) dirs.add(dirVar);
+    }
+    if (dirs.size > 0) result = dirs;
+    return null;
+  });
+  return result;
+}
+
+export function isScopedDirCDArg(seg, scopedDirs, deps) {
+  if (!scopedDirs || scopedDirs.size === 0) return false;
+  const s = deps.stripCDNullRedirects(String(seg ?? "").trim());
+  const spans = scanShellWordSpans(s);
+  if (!spans || spans.length !== 2 || s.slice(spans[0].start, spans[0].end) !== "cd") return false;
+  const name = exactSimpleVarRef(s.slice(spans[1].start, spans[1].end), deps.harmlessEnvVars);
+  return Boolean(name) && scopedDirs.has(name);
 }

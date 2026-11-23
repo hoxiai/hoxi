@@ -241,6 +241,7 @@ func (s *Service) handleSessionRevert(w http.ResponseWriter, r *http.Request, se
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.forgetNativeSessionState(sessionID)
 	info := rec.ToSessionInfo()
 	s.broadcast(sessionID, SSEEvent{
 		Type:       "session.updated",
@@ -317,6 +318,7 @@ func (s *Service) handleSessionUnrevert(w http.ResponseWriter, r *http.Request, 
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.forgetNativeSessionState(sessionID)
 	info := rec.ToSessionInfo()
 	s.broadcast(sessionID, SSEEvent{
 		Type:       "session.updated",

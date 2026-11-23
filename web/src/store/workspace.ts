@@ -58,6 +58,11 @@ export * from "./auto-pool-defaults";
 export * from "./auto-breaker";
 export * from "./auto-candidate-status";
 export * from "./auto-failover";
+export * from "./orchestrator-mode";
+export type {
+  OrchestratorConfig,
+  PromptOrchestrator,
+} from "../services/provider-api";
 export * from "./skills";
 export * from "./terminal-context";
 export * from "./telemetry";
@@ -98,6 +103,21 @@ export * from "./companion";
 export * from "./host-profiles";
 export * from "./intake";
 export * from "./intake-portal";
+export * from "./schedules";
+export type {
+  ScheduleExecutionSpec,
+  ScheduleItem,
+  ScheduleMisfirePolicy,
+  ScheduleNotifyPolicy,
+  SchedulePatchPayload,
+  SchedulePreviewResponse,
+  ScheduleRunRecord,
+  ScheduleRunStatus,
+  ScheduleSkillRef,
+  ScheduleTriggerKind,
+  ScheduleTriggerSpec,
+  ScheduleUpsertPayload,
+} from "../services/schedules-api";
 export type {
   IntakeAttachmentRef,
   IntakeLinkItem,
@@ -125,3 +145,4 @@ export type { CliLinkStatus } from "../services/platform-api";
 
 export * from "./app-grants";
 export * from "./desktop-window";
+export { errorMessageOf } from "../services/http";

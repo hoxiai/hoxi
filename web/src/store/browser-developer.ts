@@ -3,6 +3,7 @@ import { browserWorkflowAPI, type BrowserDiagnostic } from "../services/browser-
 import type { BrowserScope } from "../services/browser";
 import { hoxiAPI } from "../services/api";
 import { setWorkspace } from "./workspace-state";
+import { formatBrowserError } from "./browser";
 import { t } from "../i18n";
 
 // "actual" keeps a linked Chrome tab at its own window size.
@@ -47,7 +48,7 @@ export function createBrowserDeveloper(options: Options) {
       try {
         const result = await browserWorkflowAPI.diagnostics(scope!, connection.abort.signal);
         if (valid(connection) && connection.revision === revision) { setDiagnostics(result.diagnostics); setError(""); }
-      } catch (err) { if (valid(connection)) setError(String(err)); }
+      } catch (err) { if (valid(connection)) setError(formatBrowserError(err)); }
       finally { if (valid(connection)) timer = setTimeout(poll, 1500); }
     }
     untrack(() => { void poll(); });
@@ -61,7 +62,7 @@ export function createBrowserDeveloper(options: Options) {
     try {
       const result = await browserWorkflowAPI.clearDiagnostics(connection.scope, connection.abort.signal);
       if (valid(connection) && connection.revision === revision) setDiagnostics(result.diagnostics);
-    } catch (err) { if (valid(connection)) setError(String(err)); }
+    } catch (err) { if (valid(connection)) setError(formatBrowserError(err)); }
   }
 
   async function attachScreenshot() {
@@ -76,7 +77,7 @@ export function createBrowserDeveloper(options: Options) {
         attachments: [...(previous?.attachments || []), { type: "file" as const, mime: result.mime, filename: result.filename, url: result.url }],
       }));
       setNotice(t("inspector.browser.screenshotAttached"));
-    } catch (err) { if (valid(connection)) options.error(String(err)); }
+    } catch (err) { if (valid(connection)) options.error(formatBrowserError(err)); }
     finally { if (valid(connection)) setCapturing(false); }
   }
   return { open, setOpen, viewportMode, setViewportMode, previewScale, setPreviewScale, diagnostics, error,

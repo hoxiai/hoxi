@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSelector, createSignal, onCleanup, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { Presence } from "../motion/Presence";
-import { GripVertical, MoreHorizontal, FolderPlus, Pencil, Layers, Trash2, Plus } from "lucide-solid";
+import { CalendarClock, GripVertical, MoreHorizontal, FolderPlus, Pencil, Layers, Trash2, Plus } from "lucide-solid";
 import {
   isSessionArchived,
   normalizeFolderPath,
@@ -9,6 +9,7 @@ import {
   openDeleteWorkspaceModal,
   openEditWorkspaceModal,
   openManageWorkspacesModal,
+  openScheduleModal,
   partitionCodeSessions,
   quickAddFolderToWorkspace,
   sortSessionsByActivity,
@@ -124,6 +125,22 @@ export function WorkspaceActionMenu(props: {
             >
               <Plus size={13} />
               <span>{t("leftNav.newWorkspace")}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                const ws = workspace.savedWorkspaces.find((item) => item.id === props.dirOrWorkspaceID);
+                openScheduleModal({
+                  projectID: ws?.id,
+                  directory: ws?.folders?.[0]?.path || props.dirOrWorkspaceID,
+                });
+              }}
+              class="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            >
+              <CalendarClock size={13} />
+              <span>{t("schedules.workspaceMenuAction")}</span>
             </button>
 
             <button

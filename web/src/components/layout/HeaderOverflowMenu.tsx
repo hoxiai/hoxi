@@ -8,17 +8,11 @@ import {
   Palette,
   RefreshCw,
   Settings,
-  Sparkles,
 } from "lucide-solid";
 import {
-  desktopUpdater,
-  hasDesktopUpdate,
   isDailyPulseSyncing,
-  isUpdateDraining,
-  openDesktopUpdateModal,
   openSettingsModal,
   refreshDailyDevPulse,
-  workspace,
 } from "../../store/workspace";
 import { t } from "../../i18n";
 import ThemeStyleContent from "./ThemeStyleContent";
@@ -36,8 +30,6 @@ export default function HeaderOverflowMenu() {
     setOpen(false);
     setPanel(null);
   };
-
-  const hasUpdate = () => hasDesktopUpdate() || isUpdateDraining();
 
   createEffect(() => {
     if (!open()) return;
@@ -90,9 +82,6 @@ export default function HeaderOverflowMenu() {
         aria-expanded={open()}
       >
         <MoreHorizontal size={16} />
-        <Show when={hasUpdate()}>
-          <span class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-[var(--accent-primary)]" />
-        </Show>
       </button>
 
       <Presence when={open()}>
@@ -108,33 +97,6 @@ export default function HeaderOverflowMenu() {
               when={panel()}
               fallback={
                 <div class="space-y-0.5">
-                  <Show when={!workspace.connected}>
-                    <div class="flex items-center gap-2 px-2.5 py-2 text-[11px] text-[var(--text-muted)]">
-                      <span class="inline-block h-1.5 w-1.5 rounded-full bg-[var(--warn)] animate-pulse" />
-                      <span>{t("common.connecting")}</span>
-                    </div>
-                  </Show>
-
-                  <Show when={hasUpdate()}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        close();
-                        openDesktopUpdateModal();
-                      }}
-                      class="w-full flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[12px] font-medium text-[var(--accent-text)] bg-[var(--accent-surface)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-                    >
-                      <Sparkles size={14} class="shrink-0" />
-                      <span class="flex-1 min-w-0 truncate">
-                        {isUpdateDraining()
-                          ? t("header.updateRestartRequired")
-                          : t("header.updateAvailableBadge", {
-                              version: `v${desktopUpdater.result?.latestVersion || ""}`,
-                            })}
-                      </span>
-                    </button>
-                  </Show>
-
                   <button type="button" onClick={() => setPanel("appearance")} class={rowClass}>
                     <Palette size={14} class="shrink-0" />
                     <span class="flex-1 min-w-0 truncate">{t("header.appearanceTooltip")}</span>

@@ -8,8 +8,10 @@ import {
   activeDirectory,
   isSessionBusy,
   loadIntakeTasks,
+  loadSchedules,
   pendingIntakeCount,
   setWorkspace,
+  unseenScheduleAlertsForWorkspace,
   workspace,
 } from "../../store/workspace";
 import { collectCycleChangedFiles } from "../timeline/tool-card-state";
@@ -59,6 +61,7 @@ export default function InspectorPane() {
 
   createEffect(() => {
     if (!workspace.inspectorOpen) return;
+    void loadSchedules().catch(() => {});
     const dir = (activeDirectory() ?? "").trim();
     if (dir) {
       void loadIntakeTasks(dir).catch(() => {});
@@ -116,8 +119,10 @@ export default function InspectorPane() {
 
   const tabLabel = (id: TabID) => {
     switch (id) {
-      case "diffs":
-        return `${t("inspector.tabs.diffs")} (${diffCount()})`;
+      case "diffs": {
+        const count = diffCount();
+        return count > 0 ? `${t("inspector.tabs.diffs")} (${count})` : t("inspector.tabs.diffs");
+      }
       case "memory":
         return t("inspector.tabs.memory");
       case "files":
@@ -130,10 +135,14 @@ export default function InspectorPane() {
         return t("computer.title");
       case "browser":
         return t("inspector.tabs.browser");
-      case "tasks":
-        return pendingIntakeCount() > 0
-          ? `${t("inspector.tabs.tasks")} (${pendingIntakeCount()})`
+      case "tasks": {
+        const badgeCount =
+          pendingIntakeCount() +
+          unseenScheduleAlertsForWorkspace(activeDirectory() || workspace.rootDir, workspace.activeProjectID || undefined);
+        return badgeCount > 0
+          ? `${t("inspector.tabs.tasks")} (${badgeCount})`
           : t("inspector.tabs.tasks");
+      }
     }
   };
 

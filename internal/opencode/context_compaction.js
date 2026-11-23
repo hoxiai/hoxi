@@ -98,8 +98,20 @@ export function compactToolOutputForModel(part) {
   return out !== rawOut ? out : null;
 }
 
+const MAX_LIVE_SCREENSHOT_PARTS = 4;
+const KEEP_LIVE_SCREENSHOT_PARTS = 2;
+
+function isEphemeralScreenshotPart(part) {
+  if (part?.type !== "tool") return false;
+  const toolName = String(part.tool || "").toLowerCase();
+  if (toolName !== "hoxi_computer" && toolName !== "hoxi_browser") return false;
+  const atts = part.state?.attachments;
+  return Array.isArray(atts) && atts.some((a) => String(a?.mime || "").toLowerCase().startsWith("image/"));
+}
+
 export function compactMessageHistory(messages) {
   if (!Array.isArray(messages)) return;
+  const screenshotRefs = [];
   for (const message of messages) {
     const parts = message?.parts;
     if (!Array.isArray(parts)) continue;
@@ -108,6 +120,20 @@ export function compactMessageHistory(messages) {
       if (compacted !== null) {
         parts[i] = { ...parts[i], state: { ...parts[i].state, output: compacted } };
       }
+      if (isEphemeralScreenshotPart(parts[i])) {
+        screenshotRefs.push({ parts, index: i });
+      }
+    }
+  }
+  if (screenshotRefs.length > MAX_LIVE_SCREENSHOT_PARTS) {
+    const dropCount = screenshotRefs.length - KEEP_LIVE_SCREENSHOT_PARTS;
+    for (let k = 0; k < dropCount; k++) {
+      const { parts, index } = screenshotRefs[k];
+      const part = parts[index];
+      const remaining = (part.state?.attachments || []).filter(
+        (a) => !String(a?.mime || "").toLowerCase().startsWith("image/")
+      );
+      parts[index] = { ...part, state: { ...part.state, attachments: remaining } };
     }
   }
 }

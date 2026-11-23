@@ -10,6 +10,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -53,6 +54,13 @@ type store struct {
 	// lastID keeps record IDs strictly increasing; Windows clock resolution can
 	// return the same nanosecond for consecutive records.
 	lastID int64
+	// Active-segment cache avoids scanning/chmodding the log directory on every
+	// append; refreshed on rotation, budget pressure, or prune interval expiry.
+	activePath   string
+	activePrefix string
+	activeSize   int64
+	totalBytes   int64
+	lastPruneAt  time.Time
 }
 
 var global struct {
@@ -228,6 +236,12 @@ func (s *store) files() ([]logFile, error) {
 	return files, nil
 }
 
+func (s *store) invalidateActiveSegment() {
+	s.activePath = ""
+	s.activePrefix = ""
+	s.activeSize = 0
+}
+
 func (s *store) prune(incoming int64) error {
 	_, err := s.pruneFiles(incoming)
 	return err
@@ -249,11 +263,15 @@ func (s *store) pruneFiles(incoming int64) ([]logFile, error) {
 			if err := os.Remove(f.path); err != nil {
 				return nil, err
 			}
+			if f.path == s.activePath {
+				s.invalidateActiveSegment()
+			}
 			total -= f.size
 			continue
 		}
 		kept = append(kept, f)
 	}
+	s.totalBytes = total
 	return kept, nil
 }
 
@@ -264,9 +282,6 @@ func (s *store) record(e Entry) {
 }
 
 func (s *store) append(e Entry) error {
-	if err := s.prepare(); err != nil {
-		return err
-	}
 	now := s.now().UTC()
 	e.Time = now
 	e = sanitize(e)
@@ -286,16 +301,55 @@ func (s *store) append(e Entry) error {
 	if len(data) > maxLineBytes {
 		return errors.New("diagnostics entry too large")
 	}
-	files, err := s.pruneFiles(int64(len(data)))
+	incoming := int64(len(data))
+	prefix := e.Kind + "-" + now.Format("20060102") + "-"
+
+	// Fast path: reuse the active segment when within segment/budget limits and
+	// recently pruned, avoiding a full directory scan on every log event while
+	// still Lstat-verifying file type, mode, and size against external changes.
+	if s.activePath != "" &&
+		s.activePrefix == prefix &&
+		s.activeSize+incoming <= s.segment &&
+		s.totalBytes+incoming <= s.budget &&
+		now.Sub(s.lastPruneAt) < time.Minute &&
+		!now.Before(s.lastPruneAt) {
+		if info, statErr := os.Lstat(s.activePath); statErr == nil &&
+			info.Mode().IsRegular() &&
+			(runtime.GOOS == "windows" || info.Mode().Perm() == 0600) &&
+			info.Size() == s.activeSize {
+			f, openErr := os.OpenFile(s.activePath, os.O_WRONLY|os.O_APPEND, 0600)
+			if openErr == nil {
+				_, writeErr := f.Write(data)
+				closeErr := f.Close()
+				if writeErr == nil && closeErr == nil {
+					s.activeSize += incoming
+					s.totalBytes += incoming
+					return nil
+				}
+			}
+		}
+		// File removed, symlinked, chmodded, or modified externally; fall through to full scan.
+		s.invalidateActiveSegment()
+	}
+
+	if err := s.prepare(); err != nil {
+		return err
+	}
+	files, err := s.pruneFiles(incoming)
 	if err != nil {
 		return err
 	}
+	var total int64
 	name := ""
-	prefix := e.Kind + "-" + now.Format("20060102") + "-"
+	var existingSize int64
+	for _, f := range files {
+		total += f.size
+	}
 	for i := len(files) - 1; i >= 0; i-- {
 		f := files[i]
-		if strings.HasPrefix(filepath.Base(f.path), prefix) && f.size+int64(len(data)) <= s.segment {
+		if strings.HasPrefix(filepath.Base(f.path), prefix) && f.size+incoming <= s.segment {
 			name = f.path
+			existingSize = f.size
 			break
 		}
 	}
@@ -305,6 +359,7 @@ func (s *store) append(e Entry) error {
 		name = filepath.Join(s.directory, prefix+fmt.Sprint(now.UnixNano())+".jsonl")
 		flags |= os.O_CREATE | os.O_EXCL
 		created = true
+		existingSize = 0
 	}
 	f, err := os.OpenFile(name, flags, 0600)
 	if err != nil {
@@ -316,8 +371,15 @@ func (s *store) append(e Entry) error {
 			return err
 		}
 	}
-	_, err = f.Write(data)
-	return err
+	if _, err = f.Write(data); err != nil {
+		return err
+	}
+	s.activePath = name
+	s.activePrefix = prefix
+	s.activeSize = existingSize + incoming
+	s.totalBytes = total + incoming
+	s.lastPruneAt = now
+	return nil
 }
 
 type filter struct {

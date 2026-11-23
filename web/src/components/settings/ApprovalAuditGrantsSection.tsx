@@ -138,40 +138,20 @@ export function ApprovalAuditGrantsSection() {
 
   return (
     <div class="space-y-6">
-      <SettingGroup
-        title={t("approval.grantsSectionTitle")}
-        tip={t("approval.grantsSectionDesc")}
-        action={
-          <div class="flex items-center gap-1.5">
-            <Show when={approvalGrants().length > 0}>
-              <button
-                type="button"
-                disabled={busyID() !== null}
-                onClick={() => void handleRevokeAll()}
-                class="inline-flex items-center gap-1 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-2.5 py-1 text-[12px] font-medium text-[var(--danger-text)] hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50"
-              >
-                <Trash2 size={12} />
-                {t("approval.revokeAllGrants", { count: approvalGrants().length })}
-              </button>
-            </Show>
+      <Show when={approvalGrants().length > 0}>
+        <SettingGroup
+          title={t("approval.grantsSectionTitle")}
+          tip={t("approval.grantsSectionDesc")}
+          action={
             <button
               type="button"
-              disabled={approvalRecordsLoading()}
-              onClick={() => void loadApprovalGrants()}
-              class="rounded-lg p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer disabled:opacity-50"
-              title={t("approval.auditRefresh")}
+              disabled={busyID() !== null}
+              onClick={() => void handleRevokeAll()}
+              class="inline-flex items-center gap-1 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-2.5 py-1 text-[12px] font-medium text-[var(--danger-text)] hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50"
             >
-              <RefreshCw size={14} />
+              <Trash2 size={12} />
+              {t("approval.revokeAllGrants", { count: approvalGrants().length })}
             </button>
-          </div>
-        }
-      >
-        <Show
-          when={approvalGrants().length > 0}
-          fallback={
-            <div class="px-4 py-3 text-[12.5px] text-[var(--text-muted)]">
-              {t("approval.grantsEmpty")}
-            </div>
           }
         >
           <div class="divide-y divide-[var(--border-subtle)] max-h-[240px] overflow-y-auto">
@@ -207,8 +187,8 @@ export function ApprovalAuditGrantsSection() {
               )}
             </For>
           </div>
-        </Show>
-      </SettingGroup>
+        </SettingGroup>
+      </Show>
 
       <SettingGroup
         title={t("approval.auditSectionTitle")}
@@ -229,11 +209,11 @@ export function ApprovalAuditGrantsSection() {
             <button
               type="button"
               disabled={approvalRecordsLoading()}
-              onClick={() => void loadApprovalAudit()}
+              onClick={() => void refreshAll()}
               class="rounded-lg p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer disabled:opacity-50"
               title={t("approval.auditRefresh")}
             >
-              <RefreshCw size={14} />
+              <RefreshCw size={14} class={approvalRecordsLoading() ? "animate-spin" : ""} />
             </button>
           </div>
         }
@@ -256,11 +236,13 @@ export function ApprovalAuditGrantsSection() {
                     >
                       {decisionLabel(entry.decision)}
                     </span>
-                    <span
-                      class={`rounded border px-1.5 py-0.5 text-[10.5px] ${sourceBadgeClass(entry.source)}`}
-                    >
-                      {sourceLabel(entry.source)}
-                    </span>
+                    <Show when={entry.source && entry.source !== "desktop"}>
+                      <span
+                        class={`rounded border px-1.5 py-0.5 text-[10.5px] ${sourceBadgeClass(entry.source)}`}
+                      >
+                        {sourceLabel(entry.source)}
+                      </span>
+                    </Show>
                     <Show when={entry.destructive}>
                       <span class="inline-flex items-center gap-1 rounded border border-[var(--danger-border)] bg-[var(--danger-surface)] px-1.5 py-0.5 text-[10.5px] font-semibold text-[var(--danger-text)]">
                         <ShieldAlert size={10} />

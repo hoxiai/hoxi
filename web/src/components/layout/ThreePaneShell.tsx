@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, lazy, onCleanup, onMount, Show, Suspense, untrack, type Accessor } from "solid-js";
 import CompactHeader from "./CompactHeader";
+import PaneErrorBoundary from "./PaneErrorBoundary";
 import type { CommandPaletteMode } from "./CommandPalette";
 import UpdateDrainNotice from "./UpdateDrainNotice";
 import UpdateWatcher from "./UpdateWatcher";
@@ -34,6 +35,7 @@ import {
   resolveEffectiveTheme,
   rightWidth,
   saveLayoutPrefs,
+  scheduleModalOpen,
   selectSession,
   setLeftNavOpen,
   setLeftWidth,
@@ -53,6 +55,7 @@ const ImagePreviewOverlay = lazy(() => import("../preview/ImagePreviewOverlay"))
 const DocumentPreviewOverlay = lazy(() => import("../preview/DocumentPreviewOverlay"));
 const WorkspaceModal = lazy(() => import("./WorkspaceModal"));
 const ExternalHandoffModal = lazy(() => import("../handoff/ExternalHandoffModal"));
+const ScheduleManagerModal = lazy(() => import("../schedules/ScheduleManagerModal"));
 const SettingsModal = lazy(() => import("../settings/SettingsModal"));
 
 interface ThreePaneShellProps {
@@ -79,6 +82,7 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
   const updateModalEverOpened = useEverOpened(isUpdateModalOpen);
   const workspaceModalEverOpened = useEverOpened(() => workspace.workspaceModalMode !== null);
   const handoffModalEverOpened = useEverOpened(() => workspace.handoffModalOpen);
+  const scheduleModalEverOpened = useEverOpened(scheduleModalOpen);
   const settingsEverOpened = useEverOpened(() => appSettings.modalOpen);
 
   const effectiveLeftWidth = () => (leftNavOpen() ? leftWidth() : 0);
@@ -162,6 +166,7 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
         appSettings.modalOpen &&
         !isUpdateModalOpen() &&
         !workspace.handoffModalOpen &&
+        !scheduleModalOpen() &&
         workspace.workspaceModalMode === null
       ) {
         ev.preventDefault();
@@ -362,7 +367,10 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
             workspace.inspectorOpen && workspace.inspectorMaximized ? "hidden" : ""
           } ${resizingSide() ? "pointer-events-none select-none" : ""}`}
         >
-          <Show when={!(isWorkSurface() && surfaceExtension.isMainViewActive?.() && surfaceExtension.renderMainView)} fallback={surfaceExtension.renderMainView?.()}>
+          <Show
+            when={!(isWorkSurface() && surfaceExtension.isMainViewActive?.() && surfaceExtension.renderMainView)}
+            fallback={<PaneErrorBoundary>{surfaceExtension.renderMainView?.()}</PaneErrorBoundary>}
+          >
           <div
             aria-hidden={isNewConversation()}
             class={`flex min-h-0 flex-col overflow-hidden ${
@@ -372,7 +380,9 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
             }`}
           >
             <div class={isNewConversation() ? "hidden" : "flex flex-1 min-h-0 flex-col overflow-hidden"}>
-              <MessageStream hidden={isNewConversation()} />
+              <PaneErrorBoundary>
+                <MessageStream hidden={isNewConversation()} />
+              </PaneErrorBoundary>
             </div>
           </div>
           <div class="flex flex-col shrink-0 pt-2">
@@ -477,11 +487,13 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
               width: workspace.inspectorMaximized ? "100%" : `${inspectorWidth()}px`,
             }}
           >
-            <Suspense>
-              <Show when={inspectorEverOpened()}>
-                <InspectorPane />
-              </Show>
-            </Suspense>
+            <PaneErrorBoundary compact>
+              <Suspense>
+                <Show when={inspectorEverOpened()}>
+                  <InspectorPane />
+                </Show>
+              </Suspense>
+            </PaneErrorBoundary>
           </div>
         </div>
       </main>
@@ -511,6 +523,9 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
         </Show>
         <Show when={handoffModalEverOpened()}>
           <ExternalHandoffModal />
+        </Show>
+        <Show when={scheduleModalEverOpened()}>
+          <ScheduleManagerModal />
         </Show>
         <Show when={settingsEverOpened()}>
           <SettingsModal />

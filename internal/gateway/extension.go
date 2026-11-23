@@ -81,6 +81,9 @@ func (g *Gateway) extensionSessionMCPServers(sessionID, directory string) map[st
 	if g == nil || strings.TrimSpace(sessionID) == "" {
 		return nil
 	}
+	if g.runner != nil && g.runner.IsAppDevSession(sessionID) {
+		return nil
+	}
 	var merged map[string]any
 	for _, ext := range g.extensions {
 		provider, ok := ext.(SessionMCPExtension)

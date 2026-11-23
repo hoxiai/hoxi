@@ -10,7 +10,8 @@ import { createBrowserDeveloper, browserViewportPresets } from "./browser-develo
 import { writeDesktopClipboard } from "../services/desktop-events";
 import {
   connectBrowserStream, createChromePairing, displayBrowserAddress, executeBrowserAction, fetchBrowserState,
-  normalizeBrowserAddress, releaseBrowserPointer, resolveBrowserInspectorSessionID, observeBrowserVisibility, decodeBrowserFrame,
+  formatBrowserError, normalizeBrowserAddress, releaseBrowserPointer, resolveBrowserInspectorSessionID,
+  resolveChromeConnectPlan, observeBrowserVisibility, decodeBrowserFrame,
   browserLoadPhase, requiresBrowserTakeover,
   type BrowserAction, type BrowserActionResult, type BrowserScope, type BrowserState, type BrowserStreamPhase,
 } from "./browser";
@@ -144,7 +145,7 @@ export function createBrowserController() {
           if (guard()) return next;
         }
       } catch (err) {
-        if (valid(connection)) setError(String(err));
+        if (valid(connection)) setError(formatBrowserError(err));
       } finally {
         if (action.action === "control") connection.manualRequested = false;
         connection.pending--;
@@ -279,7 +280,7 @@ export function createBrowserController() {
       const result = await createChromePairing(connection.scope, connection.controller.signal);
       if (valid(connection)) { setPairCode(result.code); setPairExpires(Date.now() + result.expiresIn * 1000); setPairCopied(false); }
     } catch (err) {
-      if (valid(connection)) setError(String(err));
+      if (valid(connection)) setError(formatBrowserError(err));
     } finally {
       connection.pending--;
       if (valid(connection)) setBusy(false);
@@ -296,7 +297,12 @@ export function createBrowserController() {
   async function connectExistingChrome() {
     const connection = current;
     if (!connection || !valid(connection) || busy()) return;
-    if (running()) await enqueueAction(connection, { action: "close" });
+    const plan = resolveChromeConnectPlan(state());
+    if (plan === "already_connected") return;
+    if (plan === "close_then_pair") {
+      const closed = await enqueueAction(connection, { action: "close" });
+      if (!closed) return;
+    }
     if (valid(connection)) await pairChrome();
   }
 
@@ -425,7 +431,7 @@ export function createBrowserController() {
         }
         if (valid(connection)) { setPollError(""); setNow(Date.now()); }
       } catch (err) {
-        if (valid(connection)) setPollError(String(err));
+        if (valid(connection)) setPollError(formatBrowserError(err));
       } finally {
         if (valid(connection)) {
           const active = running() || pairing() || chromeLinked() || busy();
@@ -481,7 +487,7 @@ export function createBrowserController() {
       if (!valid(connection)) return;
       const next = await executeBrowserAction(connection.scope, { action: "stop_loading" }, connection.controller.signal);
       if (valid(connection)) { applyState(next); setError(""); }
-    } catch (err) { if (valid(connection)) setError(String(err)); }
+    } catch (err) { if (valid(connection)) setError(formatBrowserError(err)); }
     finally { if (valid(connection)) setStopping(false); }
   }
 

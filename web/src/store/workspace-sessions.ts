@@ -136,56 +136,58 @@ export function syncSessionFieldsInPlace(target: SessionInfo, source: SessionInf
 }
 
 export function reconcileSessionsInPlace(incomingList: SessionInfo[]): void {
-  indexSessions(incomingList);
-  setWorkspace(
-    produce((state) => {
-      const existingById = new Map(state.sessions.map((s) => [s.id, s]));
-      const incomingIds = new Set(incomingList.map((s) => s.id));
-      const root = normalizeFolderPath(state.rootDir);
-      const next: SessionInfo[] = [];
-      for (const s of state.sessions) {
-        if (incomingIds.has(s.id) || isSessionDeleted(s.id)) continue;
-        const sDir = normalizeFolderPath(
-          state.worktreeBySession[s.id]?.directory || s.directory
-        );
-        const ownsDir =
-          !sDir ||
-          sDir === root ||
-          sDir.startsWith(`${root}/.hoxi/worktrees/`);
-        if (ownsDir && (s.id === state.activeSessionID || isSessionBusy(s.id))) {
-          next.push(s);
-        }
-      }
-      let orderOrLengthChanged = state.sessions.length !== incomingList.length + next.length;
-      for (let i = 0; i < incomingList.length; i++) {
-        const incoming = incomingList[i];
-        const existing = existingById.get(incoming.id);
-        const targetIdx = next.length;
-        if (existing) {
-          syncSessionFieldsInPlace(existing, incoming);
-          next.push(existing);
-          if (state.sessions[targetIdx]?.id !== incoming.id) orderOrLengthChanged = true;
-        } else {
-          next.push(
-            incoming.revert && shouldSuppressStaleRevert(incoming.id)
-              ? { ...incoming, revert: undefined }
-              : incoming
+  batch(() => {
+    indexSessions(incomingList);
+    setWorkspace(
+      produce((state) => {
+        const existingById = new Map(state.sessions.map((s) => [s.id, s]));
+        const incomingIds = new Set(incomingList.map((s) => s.id));
+        const root = normalizeFolderPath(state.rootDir);
+        const next: SessionInfo[] = [];
+        for (const s of state.sessions) {
+          if (incomingIds.has(s.id) || isSessionDeleted(s.id)) continue;
+          const sDir = normalizeFolderPath(
+            state.worktreeBySession[s.id]?.directory || s.directory
           );
-          orderOrLengthChanged = true;
-        }
-      }
-      if (orderOrLengthChanged) {
-        const nextIds = new Set(next.map((s) => s.id));
-        for (const prevId of existingById.keys()) {
-          if (!nextIds.has(prevId) && prevId !== state.activeSessionID) {
-            cancelScheduledWorktreeStatus(prevId);
-            cancelScheduledSessionDiff(prevId);
+          const ownsDir =
+            !sDir ||
+            sDir === root ||
+            sDir.startsWith(`${root}/.hoxi/worktrees/`);
+          if (ownsDir && (s.id === state.activeSessionID || isSessionBusy(s.id))) {
+            next.push(s);
           }
         }
-        state.sessions = next;
-      }
-    })
-  );
+        let orderOrLengthChanged = state.sessions.length !== incomingList.length + next.length;
+        for (let i = 0; i < incomingList.length; i++) {
+          const incoming = incomingList[i];
+          const existing = existingById.get(incoming.id);
+          const targetIdx = next.length;
+          if (existing) {
+            syncSessionFieldsInPlace(existing, incoming);
+            next.push(existing);
+            if (state.sessions[targetIdx]?.id !== incoming.id) orderOrLengthChanged = true;
+          } else {
+            next.push(
+              incoming.revert && shouldSuppressStaleRevert(incoming.id)
+                ? { ...incoming, revert: undefined }
+                : incoming
+            );
+            orderOrLengthChanged = true;
+          }
+        }
+        if (orderOrLengthChanged) {
+          const nextIds = new Set(next.map((s) => s.id));
+          for (const prevId of existingById.keys()) {
+            if (!nextIds.has(prevId) && prevId !== state.activeSessionID) {
+              cancelScheduledWorktreeStatus(prevId);
+              cancelScheduledSessionDiff(prevId);
+            }
+          }
+          state.sessions = next;
+        }
+      })
+    );
+  });
 }
 
 export function replaceSession(info: SessionInfo) {

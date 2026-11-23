@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -22,7 +23,7 @@ import (
 )
 
 const (
-	DefaultHostListenAddr = "0.0.0.0:5430"
+	DefaultHostListenAddr = "127.0.0.1:5430"
 	PairURIScheme         = "hoxi-host"
 )
 
@@ -270,5 +271,47 @@ func WrapBearerGuardWithGatewayToken(expectedToken, internalGatewayToken string,
 			r2.Header.Set("X-Hoxi-Token", innerGatewayTok)
 		}
 		next.ServeHTTP(w, r2)
+	})
+}
+
+// IsPrivateNetworkClient reports whether remoteAddr belongs to loopback,
+// RFC1918/ULA private ranges, link-local unicast, or CGNAT (100.64.0.0/10,
+// e.g. Tailscale). Public internet source addresses return false.
+func IsPrivateNetworkClient(remoteAddr string) bool {
+	host := strings.TrimSpace(remoteAddr)
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if i := strings.IndexByte(host, '%'); i >= 0 {
+		host = host[:i]
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
+		return true
+	}
+	if v4 := ip.To4(); v4 != nil && v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127 {
+		return true
+	}
+	return false
+}
+
+// WrapPrivateNetworkGuard rejects public internet source addresses before token
+// verification so an accidental wildcard bind on a cloud host never exposes the
+// plaintext host daemon over the public internet.
+func WrapPrivateNetworkGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !IsPrivateNetworkClient(r.RemoteAddr) {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": "host daemon only accepts loopback or private-network clients (pass --allow-public when placed behind a TLS reverse proxy)",
+			})
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }

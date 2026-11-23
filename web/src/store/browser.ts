@@ -1,4 +1,6 @@
 // web/src/store/browser.ts
+import { errorMessageOf } from "../services/http";
+import { t, type TxKey } from "../i18n";
 import {
   browserAPI,
   browserPoint,
@@ -113,4 +115,45 @@ export function executeBrowserAction(
 
 export function createChromePairing(scope: BrowserScope, signal: AbortSignal) {
   return browserAPI.pair(scope, signal);
+}
+
+export type ChromeConnectPlan = "already_connected" | "close_then_pair" | "pair";
+
+export function resolveChromeConnectPlan(state: BrowserState | null): ChromeConnectPlan {
+  if (!state) return "close_then_pair";
+  if (state.mode === "chrome") {
+    return state.connected === false ? "close_then_pair" : "already_connected";
+  }
+  return state.tabs.length > 0 ? "close_then_pair" : "pair";
+}
+
+const BROWSER_ERROR_KEYS: Record<string, TxKey> = {
+  "disconnect the current browser before pairing Chrome": "inspector.browser.errorDisconnectBeforePair",
+  "Chrome extension bridge is unavailable": "inspector.browser.errorBridgeUnavailable",
+  "cannot create Chrome connection code": "inspector.browser.errorCannotCreatePairCode",
+  "Chrome pairing pending; connect the extension or cancel pairing first": "inspector.browser.errorPairingPending",
+  "Chrome not connected": "inspector.browser.errorChromeNotConnected",
+  "browser not started": "inspector.browser.errorBrowserNotStarted",
+  "browser not started; navigate to a URL first": "inspector.browser.errorBrowserNotStarted",
+  "browser not running": "inspector.browser.errorBrowserNotStarted",
+  "no browser tab open for this session; navigate to a URL first": "inspector.browser.errorNoTabOpen",
+  "manual control is active": "inspector.browser.errorManualControlActive",
+  "use the native Chrome file dialog": "inspector.browser.errorUseNativeChromeDialog",
+  "use Chrome's native upload and download dialogs for Chrome Link": "inspector.browser.errorUseNativeChromeDialog",
+  "reload Hoxi Browser Link to reset page zoom": "inspector.browser.errorReloadChromeExtension",
+  "reload Hoxi Browser Link in chrome://extensions to use the clipboard and context menu": "inspector.browser.errorReloadChromeExtension",
+  "reload Hoxi Browser Link in chrome://extensions to use loading controls": "inspector.browser.errorReloadChromeExtension",
+  "reload Hoxi Browser Link to use browser diagnostics": "inspector.browser.errorReloadChromeExtension",
+  "reload Hoxi Browser Link in chrome://extensions to use browser diagnostics": "inspector.browser.errorReloadChromeExtension",
+  "take manual control before uploading": "inspector.browser.errorTakeManualControlBeforeUpload",
+  "page dialog expired": "inspector.browser.errorPageDialogExpired",
+  "cannot answer page dialog": "inspector.browser.errorCannotAnswerPageDialog",
+  "download not found in this browser": "inspector.browser.errorDownloadNotFound",
+  "native save dialog requires the desktop app": "inspector.browser.errorNativeSaveRequiresDesktop",
+};
+
+export function formatBrowserError(err: unknown): string {
+  const message = errorMessageOf(err, t("inspector.browser.errorUnknown"));
+  const key = BROWSER_ERROR_KEYS[message];
+  return key ? t(key) : message;
 }

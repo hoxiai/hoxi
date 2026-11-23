@@ -335,6 +335,10 @@ func (s *Service) replyRunnerPermission(w http.ResponseWriter, r *http.Request, 
 		writeJSONError(w, http.StatusForbidden, "store publication requires one-time approval on the desktop")
 		return
 	}
+	if permissionName(pa.req) == "hoxi_schedule" && (body.Reply == "always" || body.GrantClass || isRemoteApprovalSource(source)) {
+		writeJSONError(w, http.StatusForbidden, "scheduled task changes require one-time approval on the desktop")
+		return
+	}
 	reply := approvalReply{Reply: body.Reply, Message: body.Message, Source: source}
 	var granted []string
 	if body.GrantClass {

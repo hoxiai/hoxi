@@ -14,6 +14,7 @@ type SessionMetadata struct {
 	Title, ProjectID, ProviderID, ModelID, Mode, ExternalID string
 	ArchivedAt                                              int64
 	ContextPending                                          bool
+	CLISystemDigests                                        map[string][]string
 }
 
 // UpdateMetadata persists small session changes without loading or cloning turns.
@@ -31,11 +32,12 @@ func (s *Store) updateMetadata(id string, touch bool, fn func(*SessionMetadata))
 	next := ss.rec
 	meta := SessionMetadata{Title: next.Title, ProjectID: next.ProjectID, ProviderID: next.ProviderID,
 		ModelID: next.ModelID, Mode: next.Mode, ExternalID: next.ExternalID, ArchivedAt: next.ArchivedAt,
-		ContextPending: next.ContextPending}
+		ContextPending: next.ContextPending, CLISystemDigests: CloneStringSliceMap(next.CLISystemDigests)}
 	fn(&meta)
 	next.Title, next.ProjectID, next.ProviderID = meta.Title, meta.ProjectID, meta.ProviderID
 	next.ModelID, next.Mode, next.ExternalID = meta.ModelID, meta.Mode, meta.ExternalID
 	next.ArchivedAt, next.ContextPending = meta.ArchivedAt, meta.ContextPending
+	next.CLISystemDigests = CloneStringSliceMap(meta.CLISystemDigests)
 	if touch {
 		next.UpdatedAt = time.Now().UnixMilli()
 	}

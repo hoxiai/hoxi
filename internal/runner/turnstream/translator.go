@@ -49,8 +49,11 @@ type TurnTranslator struct {
 
 	// CreateChild registers a subagent's child session with the host.
 	CreateChild func(ChildSessionSpec) (SessionInfo, bool)
-	children    map[string]*childSink
-	childOrder  []string
+	// UpdateChildExternalID backfills a child session's runtime conversation ID
+	// when the runtime emits or flushes it after the child session was opened.
+	UpdateChildExternalID func(childID, externalID string)
+	children              map[string]*childSink
+	childOrder            []string
 
 	claudeMsgUsage         map[string]claudeUsage
 	claudeLastParentMsgKey string

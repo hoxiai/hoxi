@@ -1,6 +1,84 @@
 package shellpolicy
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
+
+var (
+	quotedDirPathSegmentRe  = regexp.MustCompile(`^[A-Za-z0-9@][A-Za-z0-9._@-]*$`)
+	quotedDirGlobSuffixRe   = regexp.MustCompile(`^(?:[A-Za-z0-9_@-][A-Za-z0-9._@-]*)?\*[A-Za-z0-9._@*-]*$`)
+	quotedDirSecretSuffixRe = regexp.MustCompile(`(?i)(?:\.(?:env(?:\.|$)|pem$|key$|p12$|pfx$|jks$|keystore$|ppk$|asc$|gpg$)|(?:^|[._@*-])id_(?:rsa|ed25519|ecdsa|dsa)(?:$|[._@*-])|authorized_keys|credentials\.json|oauth_creds\.json)`)
+	quotedDirWrapperPrev    = setOf("nohup", "time", "exec", "command", "env", "sudo", "xargs", "timeout", "gtimeout")
+)
+
+func isGlobCommandWord(w string) bool {
+	if strings.ContainsAny(w, "*?") {
+		return true
+	}
+	return w != "[" && w != "[[" && strings.Contains(w, "[")
+}
+
+func isQuotedDirGlobSuffix(s string, openIdx, closeIdx int) bool {
+	if openIdx <= 0 || closeIdx <= openIdx+1 || (s[openIdx-1] != ' ' && s[openIdx-1] != '\t') {
+		return false
+	}
+	quoted := s[openIdx+1 : closeIdx]
+	if strings.Trim(quoted, "/") == "" || strings.HasPrefix(quoted, "-") || strings.Contains(quoted, "..") || strings.ContainsAny(quoted, "\r\n\\") || containsMktempPlaceholder(quoted) {
+		return false
+	}
+	p := openIdx
+	for p > 0 && (s[p-1] == ' ' || s[p-1] == '\t') {
+		p--
+	}
+	if p == 0 || strings.IndexByte(";&|\n\r(`", s[p-1]) >= 0 {
+		return false
+	}
+	prevStart := p
+	for prevStart > 0 && !isWordBoundary(s[prevStart-1]) {
+		prevStart--
+	}
+	prevWord := s[prevStart:p]
+	if prevWord == "" || shellKeywords[prevWord] || quotedDirWrapperPrev[prevWord] || envVarAssignmentWordRe.MatchString(prevWord) {
+		return false
+	}
+	k := closeIdx + 1
+	for k < len(s) && !isWordBoundary(s[k]) {
+		k++
+	}
+	suf := s[closeIdx+1 : k]
+	if suf == "" || strings.Contains(suf, "..") {
+		return false
+	}
+	lastSeg := suf
+	if s[closeIdx-1] == '/' {
+		if strings.Contains(suf, "/") {
+			return false
+		}
+	} else {
+		if !strings.HasPrefix(suf, "/") || suf == "/*" {
+			return false
+		}
+		parts := strings.Split(suf[1:], "/")
+		for _, dir := range parts[:len(parts)-1] {
+			if !quotedDirPathSegmentRe.MatchString(dir) {
+				return false
+			}
+		}
+		lastSeg = parts[len(parts)-1]
+	}
+	if !quotedDirGlobSuffixRe.MatchString(lastSeg) || quotedDirSecretSuffixRe.MatchString(lastSeg) {
+		return false
+	}
+	if strings.HasPrefix(suf, "/") && (isSecretFilePath(suf) || isSensitiveExternalPath(suf) || isProtectedShellReadPath(suf)) {
+		return false
+	}
+	combined := quoted + suf
+	if synth, ok := normalizeHomePrefixPath(combined); ok {
+		combined = synth
+	}
+	return !isSecretFilePath(combined) && !isSensitiveExternalPath(combined) && !isProtectedShellReadPath(combined)
+}
 
 func hasOpaqueShellSyntax(s string) bool {
 	var quote byte

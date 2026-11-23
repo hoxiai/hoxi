@@ -52,6 +52,7 @@ type turnLedgerState struct {
 	promptReceipts     syncMap[string, cachedPromptReceipt]   // sessionID\x00clientRequestID -> cachedPromptReceipt
 	permissionReplies  syncMap[string, cachedPermissionReply] // permissionID\x00clientRequestID -> cachedPermissionReply
 	cliSystemDelivered syncMap[string, string]                // sessionID\x00runtime -> last delivered caller system prompt
+	cliSystemDigests   syncMap[string, []string]              // sessionID\x00runtime -> delivered system block digests
 	turnRetryDelays    []time.Duration
 }
 
@@ -71,27 +72,28 @@ type Service struct {
 	fileCoord   *fileEditCoordinator
 	stall       stallPolicy
 
-	mu                 sync.Mutex
-	turnMu             sessionTurnLocks
-	procs              map[string]*activeProcess
-	childBusy          map[string]bool
-	subs               map[chan SSEEvent]string
-	sseReplay          sseReplayRing
-	seqSeed            int64
-	nativeEngine       NativeEngine
-	streamClient       llm.StreamClient
-	imageClient        llm.ImageClient
-	videoClient        llm.VideoClient
-	audioClient        llm.AudioClient
-	skillResolver      func(ctx context.Context, directory, sessionID string, sel SkillSelection) (ResolvedSkill, error)
-	sessionContext     func(sessionID, directory string) string
-	sessionMCP         SessionMCPResolver
-	projectResolver    ProjectResolver
-	permissionRules    func() map[string]interface{}
-	dataProfileChecker DataProfileSafetyChecker
-	onPolicySaved      func()
-	onSummary          func(sessionID, body string)
-	onDeleted          func(sessionID string)
+	mu                  sync.Mutex
+	turnMu              sessionTurnLocks
+	procs               map[string]*activeProcess
+	childBusy           map[string]bool
+	subs                map[chan SSEEvent]string
+	sseReplay           sseReplayRing
+	seqSeed             int64
+	nativeEngine        NativeEngine
+	streamClient        llm.StreamClient
+	imageClient         llm.ImageClient
+	videoClient         llm.VideoClient
+	audioClient         llm.AudioClient
+	skillResolver       func(ctx context.Context, directory, sessionID string, sel SkillSelection) (ResolvedSkill, error)
+	sessionContext      func(sessionID, directory string) string
+	sessionMCP          SessionMCPResolver
+	projectResolver     ProjectResolver
+	permissionRules     func() map[string]interface{}
+	dataProfileChecker  DataProfileSafetyChecker
+	onPolicySaved       func()
+	onSummary           func(sessionID, body string)
+	onDeleted           func(sessionID string)
+	scheduledTurnActive func(sessionID string) bool
 
 	openCodeBridgeState
 	sessionDiffState
@@ -108,6 +110,43 @@ func (s *Service) SetSessionContextResolver(fn func(sessionID, directory string)
 	s.mu.Lock()
 	s.sessionContext = fn
 	s.mu.Unlock()
+}
+
+// SetScheduledTurnChecker injects a callback reporting whether a session is
+// currently executing a turn triggered by the scheduler.
+func (s *Service) SetScheduledTurnChecker(fn func(sessionID string) bool) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.scheduledTurnActive = fn
+	s.mu.Unlock()
+}
+
+func (s *Service) isScheduledTurnActive(sessionID string) bool {
+	if s == nil || strings.TrimSpace(sessionID) == "" {
+		return false
+	}
+	s.mu.Lock()
+	fn := s.scheduledTurnActive
+	s.mu.Unlock()
+	if fn == nil {
+		return false
+	}
+	return fn(sessionID)
+}
+
+// BroadcastScheduleUpdated notifies connected SSE clients that scheduled task state changed.
+func (s *Service) BroadcastScheduleUpdated(scheduleID string) {
+	if s == nil {
+		return
+	}
+	s.broadcast("", SSEEvent{
+		Type: "hoxi.schedule.updated",
+		Properties: map[string]interface{}{
+			"scheduleID": strings.TrimSpace(scheduleID),
+		},
+	})
 }
 
 func (s *Service) resolveSessionContextBlock(sessionID, directory string) string {

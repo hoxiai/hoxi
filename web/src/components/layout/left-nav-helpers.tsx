@@ -63,14 +63,63 @@ export function FolderIcon(props: { open?: boolean; color?: string; class?: stri
   );
 }
 
+let cachedShortDayFormatter: Intl.DateTimeFormat | null = null;
+let cachedTodayStartMs = 0;
+let cachedTodayEndMs = 0;
+
+function startOfTodayMs(nowMs: number): number {
+  if (nowMs >= cachedTodayStartMs && nowMs < cachedTodayEndMs) {
+    return cachedTodayStartMs;
+  }
+  const now = new Date(nowMs);
+  cachedTodayStartMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  cachedTodayEndMs = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
+  return cachedTodayStartMs;
+}
+
 export function dayLabel(ts: number): string {
-  const d = new Date(ts);
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfToday = startOfTodayMs(Date.now());
   const dayMs = 86400000;
   if (ts >= startOfToday) return t("common.today");
   if (ts >= startOfToday - dayMs) return t("common.yesterday");
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  try {
+    cachedShortDayFormatter ??= new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
+    return cachedShortDayFormatter.format(ts);
+  } catch {
+    return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+}
+
+export function sameProjectNavEntries(
+  a: readonly ProjectNavEntry[],
+  b: readonly ProjectNavEntry[],
+): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (
+      x.workspaceId !== y.workspaceId ||
+      x.name !== y.name ||
+      x.path !== y.path ||
+      x.color !== y.color ||
+      x.sandboxes !== y.sandboxes ||
+      x.vcs !== y.vcs ||
+      x.isPinned !== y.isPinned ||
+      x.folders.length !== y.folders.length
+    ) {
+      return false;
+    }
+    for (let j = 0; j < x.folders.length; j++) {
+      const fx = x.folders[j];
+      const fy = y.folders[j];
+      if (fx.path !== fy.path || fx.isPrimary !== fy.isPrimary || fx.missing !== fy.missing) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 const EMPTY_PENDING_SET = new Set<string>();

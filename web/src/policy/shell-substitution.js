@@ -527,8 +527,15 @@ function scanSSHSegmentWords(seg) {
   for (let i = 0; i < seg.length; i++) {
     const c = seg[i];
     if (quote === "'") {
-      if (c === "'") quote = "";
-      else {
+      if (c === "'") {
+        if (seg.slice(i + 1, i + 4) === "\\''") {
+          cur += "'";
+          inWord = true;
+          i += 3;
+          continue;
+        }
+        quote = "";
+      } else {
         cur += c;
         inWord = true;
       }
@@ -538,8 +545,9 @@ function scanSSHSegmentWords(seg) {
       if (c === "\\") {
         if (i + 1 >= seg.length) return null;
         const next = seg[i + 1];
-        if (next === "$" || next === "`" || next === "\n" || next === "\r") return null;
-        if (next !== '"' && next !== "\\") cur += "\\";
+        if (next === "`" || next === "\n" || next === "\r") return null;
+        if (next === "$" && (i + 2 >= seg.length || !/[A-Za-z0-9_]/.test(seg[i + 2]))) return null;
+        if (next !== '"' && next !== "\\" && next !== "$") cur += "\\";
         cur += next;
         inWord = true;
         i++;
@@ -661,15 +669,15 @@ function isSafeRemoteSSHSegment(seg) {
     } else if (a.startsWith("-i") && a.length > 2) {
       if (!isSSHIdentityKeyArg(a.slice(2))) return false;
     } else if (a === "-o") {
-      if (i + 1 >= args.length || args[i + 1].includes("<") || args[i + 1].includes(">") || SSH_UNSAFE_OPT_RE.test(args[i + 1])) return false;
+      if (i + 1 >= args.length || /[<>$]/.test(args[i + 1]) || SSH_UNSAFE_OPT_RE.test(args[i + 1])) return false;
       i++;
     } else if (a.startsWith("-o") && a.length > 2) {
-      if (SSH_UNSAFE_OPT_RE.test(a.slice(2))) return false;
+      if (a.includes("$") || SSH_UNSAFE_OPT_RE.test(a.slice(2))) return false;
     } else if (a === "-p" || a === "-l" || a === "-J") {
-      if (i + 1 >= args.length || args[i + 1].includes("<") || args[i + 1].includes(">")) return false;
+      if (i + 1 >= args.length || /[<>$]/.test(args[i + 1])) return false;
       i++;
     } else if (a.startsWith("-p") && a.length > 2) {
-      continue;
+      if (a.includes("$")) return false;
     } else if (SSH_SAFE_SHORT_FLAG_RE.test(a)) {
       continue;
     } else if (a.startsWith("-")) {
@@ -698,17 +706,18 @@ function rewriteSafeRemoteSCPSegment(seg) {
       if (!isSSHIdentityKeyArg(a.slice(2))) return "";
       out.push("-i", MASKED_DATA_ARGUMENT);
     } else if (a === "-o") {
-      if (i + 1 >= args.length || SSH_UNSAFE_OPT_RE.test(args[i + 1])) return "";
+      if (i + 1 >= args.length || args[i + 1].includes("$") || SSH_UNSAFE_OPT_RE.test(args[i + 1])) return "";
       out.push(a, args[i + 1]);
       i++;
     } else if (a.startsWith("-o") && a.length > 2) {
-      if (SSH_UNSAFE_OPT_RE.test(a.slice(2))) return "";
+      if (a.includes("$") || SSH_UNSAFE_OPT_RE.test(a.slice(2))) return "";
       out.push(a);
     } else if (a === "-P" || a === "-l") {
-      if (i + 1 >= args.length) return "";
+      if (i + 1 >= args.length || args[i + 1].includes("$")) return "";
       out.push(a, args[i + 1]);
       i++;
     } else if (a.startsWith("-P") && a.length > 2) {
+      if (a.includes("$")) return "";
       out.push(a);
     } else if (SCP_SAFE_SHORT_FLAG_RE.test(a)) {
       out.push(a);

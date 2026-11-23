@@ -12,7 +12,7 @@ type subtaskTool struct{}
 func (t *subtaskTool) Name() string     { return "task" }
 func (t *subtaskTool) IsReadOnly() bool { return true }
 func (t *subtaskTool) Description() string {
-	return "Delegate broad, open-ended research or a cohesive multi-step subtask to an isolated in-process subagent (subagent_type: 'explore' for broad read-only codebase/web research, 'scout' for multi-area symbol/file discovery across unfamiliar directories, 'general' for cohesive full-capability execution, or a custom subagent). Do NOT use task for simple questions, reading 1–3 known files, single symbol/grep lookups, or small focused edits—use hoxi_code_index, read, glob, grep, and edit tools directly in the main turn because subagents cold-start without the parent's loaded context. Read-only task calls ('explore', 'scout') run concurrently when genuinely independent (consolidate closely related checks rather than spawning many tiny subagents), whereas write-capable 'general' subagents run serially in the shared worktree and serialize calls placed after them in the same turn; never split edits into multiple 'general' calls expecting parallelism."
+	return "Delegate broad research or a cohesive multi-step subtask to an isolated in-process subagent ('executor', 'explore', 'scout', 'general', or custom ID). Skip for simple questions, 1–3 known files, or small edits. Read-only subagents run concurrently; write-capable ones run serially in the shared worktree."
 }
 func (t *subtaskTool) Parameters() map[string]any {
 	return map[string]any{
@@ -20,23 +20,27 @@ func (t *subtaskTool) Parameters() map[string]any {
 		"properties": map[string]any{
 			"subagent_type": map[string]any{
 				"type":        "string",
-				"description": "Subagent profile to invoke: 'explore' (default, read-only broad research), 'scout' (read-only multi-area locator), 'general' (cohesive full tool access), or a configured custom subagent ID",
+				"description": "Profile: 'executor', 'explore' (default), 'scout', 'general', or custom subagent ID",
 			},
 			"description": map[string]any{
 				"type":        "string",
-				"description": "Short 3-6 word label for this subtask",
+				"description": "Short 3-6 word label",
 			},
 			"prompt": map[string]any{
 				"type":        "string",
-				"description": "Self-contained instructions and target directories/symbols to investigate or execute",
+				"description": "Self-contained instructions and target paths/symbols",
 			},
 			"model": map[string]any{
 				"type":        "string",
-				"description": "Optional model override ('providerID/modelID', same-provider 'modelID', or explicit 'economy'/'fast'); otherwise uses the configured subagent role model or inherits the parent model without automatic downgrading",
+				"description": "Optional override ('providerID/modelID', 'modelID', or 'economy'/'fast')",
 			},
 			"resume": map[string]any{
 				"type":        "string",
-				"description": "Optional subagent_id from an earlier task result in this session to resume with its prior conversation context intact",
+				"description": "Optional subagent_id from an earlier task result to resume",
+			},
+			"fresh": map[string]any{
+				"type":        "boolean",
+				"description": "Set true to start a fresh executor thread",
 			},
 		},
 		"required": []string{"description", "prompt"},
@@ -51,6 +55,7 @@ func (t *subtaskTool) Execute(ctx context.Context, tc ToolContext, input json.Ra
 		Prompt       string `json:"prompt"`
 		Model        string `json:"model"`
 		Resume       string `json:"resume"`
+		Fresh        bool   `json:"fresh"`
 	}
 	if err := json.Unmarshal(input, &args); err != nil {
 		return ToolOutput{Title: "task", IsError: true}, err
@@ -80,6 +85,7 @@ func (t *subtaskTool) Execute(ctx context.Context, tc ToolContext, input json.Ra
 		Prompt:       prompt,
 		Model:        strings.TrimSpace(args.Model),
 		ResumeID:     strings.TrimSpace(args.Resume),
+		Fresh:        args.Fresh,
 	})
 	resolvedType := strings.TrimSpace(res.SubagentType)
 	if resolvedType == "" {

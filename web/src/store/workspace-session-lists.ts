@@ -1,4 +1,4 @@
-import { createSignal, untrack } from "solid-js";
+import { batch, createSignal, untrack } from "solid-js";
 import type { SessionInfo } from "../services/sse-types";
 import { hoxiAPI } from "../services/api";
 import { filterProjectSessions, indexSessions, setCachedProjectSessions } from "./session-index";
@@ -58,9 +58,12 @@ export function createProjectSessionLists() {
           const list = await hoxiAPI.listSessions(path, projectID);
           if (!isCurrent()) return;
           const owned = filtered(Array.isArray(list) ? list : [], path, projectID);
-          indexSessions(owned.map((s) => s.directory ? s : { ...s, directory: path }));
+          const indexedInput = owned.map((s) => (s.directory ? s : { ...s, directory: path }));
           setCachedProjectSessions(path, owned);
-          setSessions((prev) => ({ ...prev, [path]: owned }));
+          batch(() => {
+            indexSessions(indexedInput);
+            setSessions((prev) => ({ ...prev, [path]: owned }));
+          });
         }
       } catch (err) {
         console.error(`Failed to load sessions for ${path}:`, err);

@@ -2,7 +2,6 @@
 
 export const relay = {
   title: "Local model relay",
-  subtitle: "Let other local AI tools call the models you already configured here",
   intro:
     "Hoxi exposes an OpenAI-compatible endpoint on loopback only. Cline, Continue, Cherry Studio, Open WebUI, aider or any script can point at it and reuse your configured providers. Requests still go straight from this Mac to the provider you configured; nothing is proxied through Hoxi servers.",
   endpointTitle: "Endpoint",
@@ -12,7 +11,6 @@ export const relay = {
   modelsURL: "Model list",
   copy: "Copy",
   copied: "Copied",
-  copyFailed: "Could not copy to clipboard",
   keysTitle: "Relay keys",
   keysDesc: "Clients authenticate with an hk-* key. Upstream provider keys never leave this machine and are never handed to clients",
   noKeys: "No relay key yet. Create one, then paste it into the client's API key field",
@@ -27,7 +25,6 @@ export const relay = {
   lastUsed: "Last used",
   neverUsed: "Never used",
   created: "Created",
-  keyCount: "{count} keys",
   loadError: "Could not load the local relay status",
   createError: "Could not create the relay key",
   revokeError: "Could not revoke the relay key",

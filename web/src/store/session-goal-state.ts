@@ -7,8 +7,10 @@ import type { MessagePart } from "../services/sse-types";
 import { readStorageJSON, writeStorageJSON, type MessageTurn } from "./workspace-state";
 
 export const GOAL_MAX_OBJECTIVE_LENGTH = 10000;
-/** Automatic continuations allowed before the goal pauses for review (cost guard). */
+/** Automatic continuations allowed by default before the goal pauses for review (cost guard). */
 export const GOAL_MAX_CONTINUATIONS = 20;
+/** Hard upper ceiling for explicit `/goal --max <N>` overrides. */
+export const GOAL_MAX_CONTINUATIONS_LIMIT = 200;
 export const GOAL_STORAGE_KEY = "hoxi.session-goals:v1";
 export const GOAL_REPORT_TOOL = "goal_report";
 
@@ -20,6 +22,7 @@ export interface SessionGoal {
   status: SessionGoalStatus;
   reason?: string;
   continuations: number;
+  maxContinuations?: number;
   updatedAt: number;
 }
 
@@ -28,8 +31,16 @@ export type GoalCommand =
   | { kind: "pause" }
   | { kind: "resume" }
   | { kind: "clear" }
-  | { kind: "set"; objective: string }
-  | { kind: "invalid"; error: "objective-too-long" };
+  | { kind: "set"; objective: string; maxContinuations?: number }
+  | { kind: "invalid"; error: "objective-too-long" | "invalid-max" };
+
+export function resolveGoalMaxContinuations(goal?: Pick<SessionGoal, "maxContinuations"> | null): number {
+  const raw = goal?.maxContinuations;
+  if (typeof raw === "number" && Number.isInteger(raw) && raw >= 1 && raw <= GOAL_MAX_CONTINUATIONS_LIMIT) {
+    return raw;
+  }
+  return GOAL_MAX_CONTINUATIONS;
+}
 
 /** Parses `/goal ...`; returns null for any text that is not a goal command. */
 export function parseGoalCommand(text: string): GoalCommand | null {
@@ -41,8 +52,23 @@ export function parseGoalCommand(text: string): GoalCommand | null {
   if (word === "pause") return { kind: "pause" };
   if (word === "resume") return { kind: "resume" };
   if (word === "clear") return { kind: "clear" };
-  if (rest.length > GOAL_MAX_OBJECTIVE_LENGTH) return { kind: "invalid", error: "objective-too-long" };
-  return { kind: "set", objective: rest };
+  let objective = rest;
+  let maxContinuations: number | undefined;
+  if (/^--max(?:\s|$|=)/i.test(rest)) {
+    const maxMatch = /^--max(?:=|\s+)(\S+)(?:\s+([\s\S]*))?$/i.exec(rest);
+    if (!maxMatch || !/^\d+$/.test(maxMatch[1])) return { kind: "invalid", error: "invalid-max" };
+    const parsed = Number.parseInt(maxMatch[1], 10);
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > GOAL_MAX_CONTINUATIONS_LIMIT) {
+      return { kind: "invalid", error: "invalid-max" };
+    }
+    objective = (maxMatch[2] ?? "").trim();
+    if (!objective) return { kind: "invalid", error: "invalid-max" };
+    maxContinuations = parsed;
+  }
+  if (objective.length > GOAL_MAX_OBJECTIVE_LENGTH) return { kind: "invalid", error: "objective-too-long" };
+  return maxContinuations !== undefined
+    ? { kind: "set", objective, maxContinuations }
+    : { kind: "set", objective };
 }
 
 export interface GoalTurnEvidence {
@@ -60,13 +86,20 @@ export type GoalDecision =
   | { kind: "pause"; reason: GoalPauseReason };
 
 /** Pure transition rule applied once per idle turn. */
-export function decideGoalTurn(evidence: GoalTurnEvidence, continuations: number): GoalDecision {
+export function decideGoalTurn(
+  evidence: GoalTurnEvidence,
+  continuations: number,
+  maxContinuations = GOAL_MAX_CONTINUATIONS
+): GoalDecision {
   if (evidence.interrupted) return { kind: "pause", reason: "stopped" };
   if (evidence.errored) return { kind: "pause", reason: "error" };
   if (evidence.report?.status === "complete") return { kind: "complete", reason: evidence.report.reason };
   if (evidence.report?.status === "blocked") return { kind: "blocked", reason: evidence.report.reason };
   if (evidence.completedTools === 0) return { kind: "pause", reason: "no-progress" };
-  if (continuations >= GOAL_MAX_CONTINUATIONS) return { kind: "pause", reason: "budget" };
+  const limit = Number.isInteger(maxContinuations) && maxContinuations >= 1
+    ? Math.min(maxContinuations, GOAL_MAX_CONTINUATIONS_LIMIT)
+    : GOAL_MAX_CONTINUATIONS;
+  if (continuations >= limit) return { kind: "pause", reason: "budget" };
   return { kind: "continue" };
 }
 
@@ -136,11 +169,19 @@ export function restoreStoredGoals(raw: unknown): Record<string, SessionGoal> {
     if (typeof goal.objective !== "string" || !goal.objective.trim()) continue;
     const wasActive = goal.status === "active";
     const known = goal.status === "paused" || goal.status === "blocked" || goal.status === "complete";
+    const restoredMax =
+      typeof goal.maxContinuations === "number" &&
+      Number.isInteger(goal.maxContinuations) &&
+      goal.maxContinuations >= 1 &&
+      goal.maxContinuations <= GOAL_MAX_CONTINUATIONS_LIMIT
+        ? goal.maxContinuations
+        : undefined;
     out[sessionID] = {
       objective: goal.objective.slice(0, GOAL_MAX_OBJECTIVE_LENGTH),
       status: known ? goal.status! : "paused",
       reason: wasActive ? "restart" : typeof goal.reason === "string" ? goal.reason : undefined,
       continuations: typeof goal.continuations === "number" && goal.continuations >= 0 ? goal.continuations : 0,
+      ...(restoredMax !== undefined ? { maxContinuations: restoredMax } : {}),
       updatedAt: typeof goal.updatedAt === "number" ? goal.updatedAt : Date.now(),
     };
   }

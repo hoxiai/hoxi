@@ -159,6 +159,7 @@ type SessionInfo struct {
 	ProjectID      string               `json:"projectID,omitempty"`
 	Directory      string               `json:"directory"`
 	ParentID       string               `json:"parentID,omitempty"`
+	ScheduleID     string               `json:"scheduleID,omitempty"`
 	Surface        string               `json:"surface,omitempty"`
 	Title          string               `json:"title"`
 	Version        string               `json:"version,omitempty"`
@@ -307,6 +308,7 @@ type SessionRecord struct {
 	ID             string         `json:"id"`
 	ProjectID      string         `json:"projectID,omitempty"`
 	ParentID       string         `json:"parentID,omitempty"`
+	ScheduleID     string         `json:"scheduleID,omitempty"`
 	Surface        string         `json:"surface,omitempty"`
 	Subagent       bool           `json:"subagent,omitempty"`
 	Runtime        string         `json:"runtime"`
@@ -332,13 +334,14 @@ type SessionRecord struct {
 	RevertPaths    []string       `json:"revertPaths,omitempty"`
 	// RevertScope records which part of the workspace an unrevert may restore:
 	// the whole exclusive worktree or only RevertPaths (which may be empty).
-	RevertScope         string            `json:"revertScope,omitempty"`
-	Snapshots           map[string]string `json:"snapshots,omitempty"`
-	OpenCodeIDs         []string          `json:"openCodeIDs,omitempty"`
-	OpenCodeChildIDs    []string          `json:"openCodeChildIDs,omitempty"`
-	OpenCodeDirectories map[string]string `json:"openCodeDirectories,omitempty"`
-	ContextPending      bool              `json:"contextPending,omitempty"`
-	ContextTurnCount    int               `json:"contextTurnCount,omitempty"`
+	RevertScope         string              `json:"revertScope,omitempty"`
+	Snapshots           map[string]string   `json:"snapshots,omitempty"`
+	OpenCodeIDs         []string            `json:"openCodeIDs,omitempty"`
+	OpenCodeChildIDs    []string            `json:"openCodeChildIDs,omitempty"`
+	OpenCodeDirectories map[string]string   `json:"openCodeDirectories,omitempty"`
+	CLISystemDigests    map[string][]string `json:"cliSystemDigests,omitempty"`
+	ContextPending      bool                `json:"contextPending,omitempty"`
+	ContextTurnCount    int                 `json:"contextTurnCount,omitempty"`
 }
 
 type PartKey struct {
@@ -366,6 +369,7 @@ func (r SessionRecord) ToSessionInfo() SessionInfo {
 	return SessionInfo{
 		ID:             r.ID,
 		ParentID:       r.ParentID,
+		ScheduleID:     r.ScheduleID,
 		Surface:        NormalizeSessionSurface(r.Surface, dir),
 		Managed:        true,
 		Slug:           r.ID,

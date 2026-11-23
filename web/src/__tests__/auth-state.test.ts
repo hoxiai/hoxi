@@ -356,6 +356,8 @@ describe("readable server error text", () => {
     assertEqual(errorMessageOf(new Error('HTTP 400: {"msg":"bad input"}'), "x"), "bad input");
     assertEqual(errorMessageOf(new Error('HTTP 400: {"message":"nope"}'), "x"), "nope");
     assertEqual(errorMessageOf(new Error('HTTP 502: {"error":{"message":"upstream down"}}'), "x"), "upstream down");
+    assertEqual(errorMessageOf('Error: HTTP 409: {"error":"conflict"}', "x"), "conflict");
+    assertEqual(errorMessageOf({ message: 'HTTP 409: {"error":"object conflict"}' }, "x"), "object conflict");
   });
 
   it("falls back for empty, unknown-shape or HTML bodies and keeps other errors", () => {

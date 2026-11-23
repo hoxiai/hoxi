@@ -11,6 +11,8 @@ import {
   desktopUpdateSpeedEtaLabel,
   desktopUpdateStatusLabel,
   formatUpdateSpeed,
+  getAcceleratedUpdateMirrorUrl,
+  getGitHubUpdateMirrorUrl,
   isDesktopUpdateInstalling,
   isSelfUpdateActive,
   recordUpdateDownloadSample,
@@ -18,6 +20,7 @@ import {
   installCliLink,
   refreshDesktopUpdateStatus,
   resetUpdateDownloadMetrics,
+  setDesktopUpdateSource,
   setDesktopUpdater,
   startDesktopUpdate,
   uninstallCliLink,
@@ -295,6 +298,59 @@ describe("desktop update notification policy", () => {
       cliLinkAPI.getStatus = oldGet;
       cliLinkAPI.install = oldInstall;
       cliLinkAPI.uninstall = oldUninstall;
+    }
+  });
+
+  it("resolves CDN and GitHub mirrors and forwards explicit download source options", async () => {
+    const oldStatus = updaterAPI.nativeStatus;
+    const oldInstall = updaterAPI.install;
+    const saved = { ...desktopUpdater };
+    const installCalls: Array<{ source?: string; useSelfUpdater?: boolean } | undefined> = [];
+    try {
+      const sample = {
+        currentVersion: "0.7.2",
+        latestVersion: "0.7.3",
+        versionCode: 7003,
+        needUpdate: true,
+        title: "Hoxi v0.7.3",
+        releaseNotes: "notes",
+        downloadUrl: "https://cdn.hoxi.dev/hoxi-desktop/v0.7.3/Hoxi-0.7.3-darwin-arm64.dmg",
+        mirrors: {
+          cdn: "https://cdn.hoxi.dev/hoxi-desktop/v0.7.3/Hoxi-0.7.3-darwin-arm64.dmg",
+          global: "https://github.com/hoxiai/hoxi/releases/download/v0.7.3/Hoxi-0.7.3-darwin-arm64.dmg",
+        },
+        mandatory: false,
+        checkedAt: "2026-11-22T00:00:00Z",
+      };
+      assertEqual(getAcceleratedUpdateMirrorUrl(sample), sample.mirrors.cdn);
+      assertEqual(getGitHubUpdateMirrorUrl(sample), sample.mirrors.global);
+      assertEqual(
+        getAcceleratedUpdateMirrorUrl({
+          ...sample,
+          mirrors: { ...sample.mirrors, cn: "https://dl.example.cn/hoxi.dmg" },
+        }),
+        "https://dl.example.cn/hoxi.dmg"
+      );
+
+      updaterAPI.nativeStatus = async () => ({ available: true, draining: false });
+      updaterAPI.install = async (opts) => {
+        installCalls.push(opts);
+        return { started: true };
+      };
+      setDesktopUpdater({ nativeAvailable: true, isInstalling: false, progress: null, error: null });
+      setDesktopUpdateSource("cdn");
+      await startDesktopUpdate();
+      setDesktopUpdater({ isInstalling: false, progress: null, error: null });
+      await startDesktopUpdate("global", true);
+      assertEqual(installCalls.length, 2);
+      assertEqual(installCalls[0]?.source, "cdn");
+      assertEqual(installCalls[0]?.useSelfUpdater, undefined);
+      assertEqual(installCalls[1]?.source, "global");
+      assertEqual(installCalls[1]?.useSelfUpdater, true);
+    } finally {
+      updaterAPI.nativeStatus = oldStatus;
+      updaterAPI.install = oldInstall;
+      setDesktopUpdater(saved);
     }
   });
 });

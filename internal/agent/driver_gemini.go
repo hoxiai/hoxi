@@ -18,7 +18,7 @@ func newGeminiDriver() ModelDriver { return &geminiDriver{} }
 func (d *geminiDriver) Protocol() llm.StreamProtocol { return llm.ProtocolGoogle }
 
 func (d *geminiDriver) SystemPromptPatch() string {
-	return "Batch read-only file and search calls in parallel. Keep edits surgical and verify changes with targeted commands."
+	return ""
 }
 
 func (d *geminiDriver) BuildRequest(req ModelRequest) (llm.StreamHTTPRequest, error) {

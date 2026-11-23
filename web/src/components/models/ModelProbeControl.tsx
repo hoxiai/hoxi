@@ -3,6 +3,7 @@ import { createSignal, Show } from "solid-js";
 import { LoaderCircle, Radar } from "lucide-solid";
 import {
   AUTO_PROVIDER_ID,
+  ORCHESTRATOR_PROVIDER_ID,
   probeProviderModel,
   workspace,
 } from "../../store/workspace";
@@ -51,7 +52,9 @@ export function ModelProbeButton(props: {
   const [probing, setProbing] = createSignal(false);
   const [probeError, setProbeError] = createSignal<string | null>(null);
   const canProbe = () =>
-    props.providerID !== AUTO_PROVIDER_ID && props.source !== "runner";
+    props.providerID !== AUTO_PROVIDER_ID &&
+    props.providerID !== ORCHESTRATOR_PROVIDER_ID &&
+    props.source !== "runner";
   const unavailable = () => probeRecord(props.providerID, props.modelID)?.lastProbeOk === false;
 
   const runProbe = async () => {

@@ -5,7 +5,8 @@ import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { normalizeVersion, validatePublication } from "./release-artifact.mjs";
-import { validateSparkle } from "./sparkle.mjs";
+import { httpsURL, validateSparkle } from "./sparkle.mjs";
+import { resolveCdnBaseUrl } from "./upload-cdn.mjs";
 
 export const APP_KEY = "hoxi-desktop";
 export const DEFAULT_RELEASE_API_URL = "https://hoxi.dev/api/releases";
@@ -14,49 +15,119 @@ function githubBase(version) {
   return `https://github.com/hoxiai/hoxi/releases/download/v${version}`;
 }
 
-export function releasePayload({ version, notes, sha256, size, mandatory = false, sparkle, minimumMacOS, commit, htmlUrl }) {
+function normalizeCdnVersionBase(cdnBaseUrl, version) {
+  if (!cdnBaseUrl) return "";
+  const clean = httpsURL(cdnBaseUrl).replace(/\/+$/, "");
+  return `${clean}/v${version}`;
+}
+
+function assetExtra(assetsMeta, name) {
+  const entry = assetsMeta && typeof assetsMeta === "object" ? assetsMeta[name] : null;
+  if (!entry || typeof entry !== "object") return {};
+  const extra = {};
+  if (typeof entry.sha256 === "string" && /^[a-f0-9]{64}$/.test(entry.sha256)) {
+    extra.sha256 = entry.sha256;
+  }
+  if (Number.isSafeInteger(entry.size) && entry.size > 0) {
+    extra.size = entry.size;
+  }
+  return extra;
+}
+
+export function releasePayload({
+  version,
+  notes,
+  sha256,
+  size,
+  mandatory = false,
+  sparkle,
+  minimumMacOS,
+  commit,
+  htmlUrl,
+  cdnBaseUrl = "",
+  assetsMeta,
+}) {
   version = normalizeVersion(version);
   if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error("A verified SHA-256 is required");
   if (!Number.isSafeInteger(size) || size <= 0) throw new Error("A non-empty artifact is required");
-  const sig = sparkle === undefined ? undefined : validateSparkle(sparkle, version, size);
+  const cleanCdnBase = cdnBaseUrl ? httpsURL(cdnBaseUrl).replace(/\/+$/, "") : "";
+  const sig = sparkle === undefined
+    ? undefined
+    : validateSparkle(sparkle, version, size, cleanCdnBase ? { cdnBaseUrl: cleanCdnBase } : {});
   if (minimumMacOS !== undefined && !/^\d+\.\d+(?:\.\d+)?$/.test(minimumMacOS)) {
     throw new Error("Invalid minimum macOS version");
   }
 
-  const base = githubBase(version);
-  const macUrl = `${base}/Hoxi-${version}-darwin-arm64.dmg`;
-  const macAmd64Url = `${base}/Hoxi-${version}-darwin-amd64.dmg`;
-  const winUrl = `${base}/Hoxi-${version}-windows-amd64-setup.exe`;
-  const winArm64Url = `${base}/Hoxi-${version}-windows-arm64-setup.exe`;
-  const linuxUrl = `${base}/Hoxi-${version}-linux-amd64.tar.gz`;
+  const ghBase = githubBase(version);
+  const cdnVerBase = normalizeCdnVersionBase(cleanCdnBase, version);
+  const urlFor = (name) => (cdnVerBase ? `${cdnVerBase}/${name}` : `${ghBase}/${name}`);
+  const mirrorsFor = (name) => (cdnVerBase
+    ? { cdn: `${cdnVerBase}/${name}`, global: `${ghBase}/${name}` }
+    : { global: `${ghBase}/${name}` });
+
+  const macName = `Hoxi-${version}-darwin-arm64.dmg`;
+  const macAmd64Name = `Hoxi-${version}-darwin-amd64.dmg`;
+  const winName = `Hoxi-${version}-windows-amd64-setup.exe`;
+  const winZipName = `Hoxi-${version}-windows-amd64.zip`;
+  const winArm64Name = `Hoxi-${version}-windows-arm64-setup.exe`;
+  const winArm64ZipName = `Hoxi-${version}-windows-arm64.zip`;
+  const linuxName = `Hoxi-${version}-linux-amd64.tar.gz`;
+
+  const macUrl = urlFor(macName);
+  const macAmd64Url = urlFor(macAmd64Name);
+  const winUrl = urlFor(winName);
+  const winArm64Url = urlFor(winArm64Name);
+  const linuxUrl = urlFor(linuxName);
 
   const assets = [
     {
-      name: `Hoxi-${version}-darwin-arm64.dmg`, url: macUrl, browser_download_url: macUrl,
+      name: macName, url: macUrl, browser_download_url: macUrl,
       platform: "macos", arch: "arm64", package: "desktop", size, sha256,
+      ...(cdnVerBase ? { mirrors: mirrorsFor(macName) } : {}),
       ...(sig ? { edSignature: sig.edSignature, signature: sig.edSignature } : {}),
       ...(minimumMacOS ? { minimumSystemVersion: minimumMacOS } : {}),
     },
     {
       // Intel Mac DMG. Sparkle stays bound to the single arm64 appcast
       // enclosure above; the Intel bundle uses the arch-aware self-updater.
-      name: `Hoxi-${version}-darwin-amd64.dmg`, url: macAmd64Url, browser_download_url: macAmd64Url,
+      name: macAmd64Name, url: macAmd64Url, browser_download_url: macAmd64Url,
       platform: "macos", arch: "x64", package: "desktop",
+      ...assetExtra(assetsMeta, macAmd64Name),
+      ...(cdnVerBase ? { mirrors: mirrorsFor(macAmd64Name) } : {}),
       ...(minimumMacOS ? { minimumSystemVersion: minimumMacOS } : {}),
     },
     {
-      name: `Hoxi-${version}-windows-amd64-setup.exe`, url: winUrl, browser_download_url: winUrl,
+      name: winName, url: winUrl, browser_download_url: winUrl,
       platform: "windows", arch: "x64", package: "desktop",
+      ...assetExtra(assetsMeta, winName),
+      ...(cdnVerBase ? { mirrors: mirrorsFor(winName) } : {}),
     },
     {
-      name: `Hoxi-${version}-windows-arm64-setup.exe`, url: winArm64Url, browser_download_url: winArm64Url,
+      name: winArm64Name, url: winArm64Url, browser_download_url: winArm64Url,
       platform: "windows", arch: "arm64", package: "desktop",
+      ...assetExtra(assetsMeta, winArm64Name),
+      ...(cdnVerBase ? { mirrors: mirrorsFor(winArm64Name) } : {}),
     },
     {
-      name: `Hoxi-${version}-linux-amd64.tar.gz`, url: linuxUrl, browser_download_url: linuxUrl,
+      name: linuxName, url: linuxUrl, browser_download_url: linuxUrl,
       platform: "linux", arch: "x64", package: "desktop",
+      ...assetExtra(assetsMeta, linuxName),
+      ...(cdnVerBase ? { mirrors: mirrorsFor(linuxName) } : {}),
     },
   ];
+
+  const metaMirrors = cdnVerBase
+    ? {
+        "mac-arm64": mirrorsFor(macName),
+        "mac-x64": mirrorsFor(macAmd64Name),
+        "windows-x64": mirrorsFor(winName),
+        "windows-amd64": mirrorsFor(winName),
+        "windows-x64-zip": mirrorsFor(winZipName),
+        "windows-arm64": mirrorsFor(winArm64Name),
+        "windows-arm64-zip": mirrorsFor(winArm64ZipName),
+        "linux-x64": mirrorsFor(linuxName),
+      }
+    : undefined;
 
   const title = `Hoxi Desktop v${version}`;
   const body = notes || title;
@@ -78,6 +149,8 @@ export function releasePayload({ version, notes, sha256, size, mandatory = false
     metaData: {
       ...(minimumMacOS ? { minimumSystemVersion: minimumMacOS } : {}),
       ...(mandatory ? { mandatory: true } : {}),
+      ...(cleanCdnBase ? { cdnBaseUrl: cleanCdnBase } : {}),
+      ...(metaMirrors ? { mirrors: metaMirrors } : {}),
       ...(sig ? { sparkle: sig } : {}),
     },
   };
@@ -127,6 +200,7 @@ export async function publishRelease(payload, { key, url = DEFAULT_RELEASE_API_U
 
 async function main() {
   const input = JSON.parse(fs.readFileSync(0, "utf8"));
+  const cdnBaseUrl = input.cdnBaseUrl || resolveCdnBaseUrl(process.env);
   const payload = releasePayload({
     version: input.version,
     notes: input.notes,
@@ -136,6 +210,8 @@ async function main() {
     sparkle: input.sparkle,
     minimumMacOS: input.minimumMacOS,
     commit: input.commit || process.env.GITHUB_SHA,
+    cdnBaseUrl,
+    assetsMeta: input.assetsMeta,
   });
   console.log(JSON.stringify(await publishRelease(payload, {
     key: process.env.HOXI_RELEASE_KEY,

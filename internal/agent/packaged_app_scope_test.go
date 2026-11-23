@@ -47,4 +47,21 @@ func TestPackagedAppSessionGuidanceAndToolFiltering(t *testing.T) {
 	if !hasToolSpec(specs, "mcp_call_tool") || !hasToolSpec(specs, "mcp_list_tools") {
 		t.Fatalf("expected packaged app session to retain MCP tools when not omitted")
 	}
+
+	// 3. App Dev mode (<hoxi_work_app_dev_mode>) must override packaged-app
+	// restrictions even if <hoxi_work_app> is present, preserving coding guidance
+	// and hoxi_code_index.
+	appDevSystem := "<hoxi_work_app_dev_mode>\nBuild Hoxi Work App Bundles.\n</hoxi_work_app_dev_mode>\n\n" + packagedAppSystem
+	devPrompt, _ := buildSystemPromptWithRules("/tmp/ws", appDevSystem, "", "app-dev", 0, nil)
+	if !strings.Contains(devPrompt, "Prefer hoxi_code_index") {
+		t.Fatalf("expected app-dev session to retain coding hoxi_code_index guidance, got:\n%s", devPrompt)
+	}
+	if strings.Contains(devPrompt, "Do NOT browse, glob, grep, or read the app package's internal source files") {
+		t.Fatalf("app-dev session must not inject packaged-app no-source-diving guidance")
+	}
+	devCatalog := newHostToolCatalog(nil, nil)
+	devCatalog.configureAppScope(appDevSystem)
+	if !hasToolSpec(devCatalog.specs(reg, "app-dev", 0), "hoxi_code_index") {
+		t.Fatalf("expected app-dev session to expose hoxi_code_index")
+	}
 }

@@ -285,7 +285,7 @@ func HoxiQuitApplication() {
 
 func formatTrayTooltip(summary Summary) string {
 	if !summary.Available {
-		return "Hoxi: OpenCode 引擎正在启动"
+		return "Hoxi：服务正在启动"
 	}
 	return fmt.Sprintf("Hoxi：待审批 %d · 运行中 %d", summary.Attention, summary.Running)
 }

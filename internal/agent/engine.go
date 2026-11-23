@@ -33,6 +33,8 @@ type TurnRequest struct {
 	ModelID             string
 	Effort              string
 	FastMode            bool
+	Orchestrator        *OrchestratorConfig
+	yieldOnParentSteer  SteerSource
 	System              string
 	SystemSuffix        string
 	History             []Message
@@ -201,6 +203,10 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 	catalog.configureMCP(req.WorktreeDir, cfgDoc, req.MCPConfig, req.History)
 	catalog.configureAppScope(callerSystem)
 	catalog.configureTaskPolicy(origMode, agentMap, cfgDoc)
+	if isOrchestratorActive(req) {
+		catalog.configureOrchestrator(true, effectiveMode)
+		systemPrompt = appendSystemPromptSuffix(systemPrompt, orchestratorProtocolGuidance)
+	}
 	toolSpecs := catalog.specs(e.registry, effectiveMode, req.SubtaskDepth)
 	compactLimit := effectiveCompactContextLimit(target.ContextLimit, toolSpecs)
 	loopGuard := newStepLoopGuard()
@@ -264,6 +270,11 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 	for step := 1; step <= maxSteps; step++ {
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if req.SubtaskDepth > 0 && step > 1 && hasPendingParentSteer(req.yieldOnParentSteer) {
+			emit(EngineEvent{Kind: EngineTextEnd, Step: step, Text: executorYieldNotice})
+			emit(EngineEvent{Kind: EngineTurnFinish, Step: step, Finish: "stop"})
+			return nil
 		}
 		if steered := drainSteerMessages(req.Steer); len(steered) > 0 {
 			msgs = append(msgs, steered...)
@@ -582,6 +593,10 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 			}
 			systemPrompt, _ = buildSystemPromptWithRules(req.WorktreeDir, callerSystem, drv.SystemPromptPatch(), effectiveMode, req.SubtaskDepth, cfgDoc)
 			catalog.configureTaskPolicy(origMode, agentMap, cfgDoc)
+			if isOrchestratorActive(req) {
+				catalog.configureOrchestrator(true, effectiveMode)
+				systemPrompt = appendSystemPromptSuffix(systemPrompt, orchestratorProtocolGuidance)
+			}
 			buildMaxSteps, _ := resolveEffectiveMaxSteps(req.MaxSteps, "build", req.SubtaskDepth, cfgDoc)
 			if step+buildMaxSteps > maxSteps {
 				maxSteps = step + buildMaxSteps

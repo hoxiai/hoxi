@@ -1,6 +1,7 @@
 // Safe shell idioms that reduce false-positive prompts without weakening hard
 // security floors. Mirrors internal/runner/shellpolicy/opaque_idioms.go.
 import { isProtectedPath, isProtectedShellReadPath, isSecretPath, isSensitiveExternalPath } from "./external-path-risk.js";
+import { scanShellWordSpans } from "./command-data-args.js";
 
 export const MKTEMP_PLACEHOLDER_PREFIX = "__hoxi_mktemp_";
 
@@ -25,6 +26,17 @@ const TRAP_CLEANUP_SIGNALS = new Set(["EXIT", "0", "INT", "TERM", "HUP"]);
 const REALPATH_SAFE_FLAGS = new Set(["-q", "--quiet", "-m", "--canonicalize-missing", "-e", "--canonicalize-existing", "-s", "--no-symlinks"]);
 const CHECKSUM_SAFE_FLAGS = new Set(["-b", "-t", "--tag"]);
 const SHELL_KEYWORDS = new Set(["while", "until", "do", "done", "if", "then", "else", "elif", "fi", "!"]);
+const BENIGN_PATH_ENV_VARS = new Set(["PATH", "NODE_PATH", "GOCACHE", "GOMODCACHE", "GOPATH"]);
+const SAFE_SHELL_C_LITERAL_VARS = new Set(["GOOS", "GOARCH", "CGO_ENABLED", "GOFLAGS", "NODE_ENV", "CI", "TZ", "LC_ALL", "LANG", "NO_COLOR", "FORCE_COLOR", "TERM", "GOWORK", "HOXI_ALLOW_DIRTY_EXPORT"]);
+const SAFE_SHELL_C_BINARIES = new Set(["sh", "bash", "zsh", "/bin/sh", "/bin/bash", "/usr/bin/bash", "/bin/zsh", "/usr/bin/zsh"]);
+const XCRUN_VALUE_QUERY_FLAGS = new Set(["--show-sdk-path", "--show-sdk-version", "--show-sdk-build-version", "--show-sdk-platform-path", "--show-sdk-platform-version"]);
+const XCRUN_SDK_NAME_RE = /^[A-Za-z0-9._-]+$/;
+const SAFE_SHELL_C_FLAG_RE = /^-[eul]*c$/;
+const SAFE_SHELL_C_OPT_RE = /^-[eul]+$/;
+const SAFE_SHELL_C_VAL_RE = /^[A-Za-z0-9_.,:/=+-]*$/;
+const DEV_NULL_WORD_RE = /^(?:\d*|&)>>?\/dev\/null$/;
+const DUP_STREAM_WORD_RE = /^\d*>&[12]$/;
+const REDIRECT_WORD_RE = /^(?:\d*|&)>>?$/;
 const MAX_PATH_BRACE_ITEMS = 64;
 
 const isBoundary = (c) => " \t\r\n;&|()<>".includes(c);
@@ -401,4 +413,186 @@ function splitTrapActionTokens(s) {
   if (quote) return null;
   if (inTok) tokens.push(cur);
   return tokens;
+}
+
+export function isValueClassXcrun(args) {
+  let hasQuery = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--sdk") {
+      if (i + 1 >= args.length || !XCRUN_SDK_NAME_RE.test(args[i + 1])) return false;
+      i++;
+    } else if (a.startsWith("--sdk=")) {
+      if (!XCRUN_SDK_NAME_RE.test(a.slice("--sdk=".length))) return false;
+    } else if (XCRUN_VALUE_QUERY_FLAGS.has(a)) {
+      if (hasQuery) return false;
+      hasQuery = true;
+    } else {
+      return false;
+    }
+  }
+  return hasQuery;
+}
+
+export function isBenignToolchainEnvAssignment(word, wordExpansionNames, harmlessEnvVars) {
+  const eq = word.indexOf("=");
+  if (eq <= 0) return false;
+  const name = word.slice(0, eq);
+  const value = word.slice(eq + 1);
+  if (!BENIGN_PATH_ENV_VARS.has(name) || /[`;&|<>()]/.test(value)) return false;
+  const names = wordExpansionNames(value);
+  if (names === null || !names.every((n) => harmlessEnvVars.has(n))) return false;
+  if (name === "PATH") return true;
+  if (!value) return false;
+  for (const entry of value.split(":")) {
+    if (!entry || /[*?[]/.test(entry)) return false;
+    let check = entry;
+    for (const pfx of ["~/", "$HOME/", "${HOME}/"]) {
+      if (check.startsWith(pfx) && check.length > pfx.length) {
+        check = "/__home__/" + check.slice(pfx.length);
+        break;
+      }
+    }
+    if (check.startsWith("$PWD/")) check = "/__pwd__/" + check.slice("$PWD/".length);
+    else if (check.startsWith("${PWD}/")) check = "/__pwd__/" + check.slice("${PWD}/".length);
+    else if (check === "$PWD" || check === "${PWD}") check = "/__pwd__";
+    if (check.includes("$")) return false;
+    if (check.replaceAll("\\", "/").split("/").includes("..")) return false;
+    if (isSecretPath(check) || isSensitiveExternalPath(check) || isProtectedShellReadPath(check)) return false;
+  }
+  return true;
+}
+
+function isSafeShellCPrefixEnv(word, deps) {
+  if (isBenignToolchainEnvAssignment(word, deps.wordExpansionNames, deps.harmlessEnvVars)) return true;
+  const eq = word.indexOf("=");
+  if (eq <= 0) return false;
+  const name = word.slice(0, eq);
+  const value = word.slice(eq + 1);
+  if (name === "TMPDIR") {
+    return value === "/tmp" || value === "/private/tmp";
+  }
+  return SAFE_SHELL_C_LITERAL_VARS.has(name) && SAFE_SHELL_C_VAL_RE.test(value) && !value.includes("..");
+}
+
+function extractSafeSingleQuotedShellC(seg, deps) {
+  const s = String(seg || "").trim();
+  if (!s || s.startsWith("#")) return null;
+  const spans = scanShellWordSpans(s);
+  if (!spans || spans.length < 3) return null;
+  let idx = 0;
+  while (idx < spans.length && ENV_ASSIGN_WORD_RE.test(spans[idx].word)) {
+    if (!isSafeShellCPrefixEnv(spans[idx].word, deps)) return null;
+    idx++;
+  }
+  if (idx >= spans.length) return null;
+  const rawCmd = s.slice(spans[idx].start, spans[idx].end);
+  if (/['"$`\\]/.test(rawCmd) || !SAFE_SHELL_C_BINARIES.has(rawCmd)) return null;
+  idx++;
+  let foundC = false;
+  while (idx < spans.length) {
+    const w = spans[idx].word;
+    if (w === "-o" && idx + 1 < spans.length && (spans[idx + 1].word === "pipefail" || spans[idx + 1].word === "errexit")) {
+      idx += 2;
+      continue;
+    }
+    if (SAFE_SHELL_C_FLAG_RE.test(w)) {
+      foundC = true;
+      idx++;
+      break;
+    }
+    if (SAFE_SHELL_C_OPT_RE.test(w)) {
+      idx++;
+      continue;
+    }
+    return null;
+  }
+  if (!foundC || idx >= spans.length) return null;
+  const rawScript = s.slice(spans[idx].start, spans[idx].end);
+  if (rawScript.length < 2 || rawScript[0] !== "'" || rawScript[rawScript.length - 1] !== "'") return null;
+  const inner = rawScript.slice(1, -1);
+  if (inner.includes("'") || !inner.trim()) return null;
+  idx++;
+  while (idx < spans.length) {
+    const w = spans[idx].word;
+    if (DEV_NULL_WORD_RE.test(w) || DUP_STREAM_WORD_RE.test(w)) {
+      idx++;
+      continue;
+    }
+    if (REDIRECT_WORD_RE.test(w) && idx + 1 < spans.length && spans[idx + 1].word === "/dev/null") {
+      idx += 2;
+      continue;
+    }
+    return null;
+  }
+  return inner;
+}
+
+export function unwrapTopLevelSingleQuotedShellC(s, allow, deps) {
+  let out = "";
+  let quote = "";
+  let parenDepth = 0;
+  let segStart = 0;
+  let pipedIn = false;
+  const flush = (segEnd, nextPiped) => {
+    const seg = s.slice(segStart, segEnd);
+    if (!pipedIn) {
+      const inner = extractSafeSingleQuotedShellC(seg, deps);
+      out += inner !== null && allow(inner) ? " : " : seg;
+    } else {
+      out += seg;
+    }
+    pipedIn = nextPiped;
+  };
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    const next = i + 1 < s.length ? s[i + 1] : "";
+    if (quote === "'") {
+      if (c === "'") quote = "";
+      continue;
+    }
+    if (c === "\\" && i + 1 < s.length) {
+      i++;
+      continue;
+    }
+    if (quote === '"') {
+      if (c === '"') quote = "";
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      quote = c;
+      continue;
+    }
+    if (c === "(") {
+      parenDepth++;
+      continue;
+    }
+    if (c === ")") {
+      if (parenDepth > 0) parenDepth--;
+      continue;
+    }
+    if (parenDepth > 0) continue;
+    let sepLen = 0;
+    let nextPipe = false;
+    if ((c === "&" && next === "&") || (c === "|" && next === "|") || (c === "|" && next === "&")) {
+      sepLen = 2;
+      nextPipe = c === "|" && next === "&";
+    } else if (c === ";" || c === "\n") {
+      sepLen = 1;
+    } else if (c === "|") {
+      sepLen = 1;
+      nextPipe = true;
+    } else if (c === "&" && (i === 0 || s[i - 1] !== ">") && next !== ">") {
+      sepLen = 1;
+    }
+    if (sepLen > 0) {
+      flush(i, nextPipe);
+      out += s.slice(i, i + sepLen);
+      i += sepLen - 1;
+      segStart = i + 1;
+    }
+  }
+  if (quote || parenDepth !== 0) return s;
+  flush(s.length, false);
+  return out;
 }

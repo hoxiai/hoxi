@@ -3,6 +3,8 @@
 import { createSignal } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { hoxiAPI, type RequestLogContent, type RequestLogEntry } from "../services/api";
+import { errorMessageOf } from "../services/http";
+import { t } from "../i18n";
 
 // A store (not a signal) so a refresh reconciles by message id: untouched rows
 // keep their identity and are not re-created in the table.
@@ -36,7 +38,7 @@ export async function loadRequestLog(opts: { silent?: boolean } = {}) {
     if (!opts.silent) {
       setRequestLog(reconcile([], { key: "id" }));
     }
-    setRequestLogError(String(err?.message || err || ""));
+    setRequestLogError(errorMessageOf(err, t("common.error")));
   } finally {
     if (!opts.silent) {
       activeNonSilent = Math.max(0, activeNonSilent - 1);

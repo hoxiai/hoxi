@@ -23,6 +23,7 @@ import {
   createConvoyHistoryLoader,
   createConvoyPlan,
   draftConvoyPlan,
+  errorMessageOf,
   fetchConvoyPlan,
   resolveConvoyModelForSession,
   retryConvoyPlan,
@@ -204,7 +205,7 @@ export default function ConvoyModal(props: {
     try {
       setPlan(await retryConvoyPlan(current.id));
     } catch (err) {
-      setError(String(err));
+      setError(errorMessageOf(err, t("common.error")));
     } finally {
       setRetrying(false);
     }
@@ -255,7 +256,7 @@ export default function ConvoyModal(props: {
       );
     } catch (err) {
       if (generation !== draftGeneration) return;
-      setError(String(err));
+      setError(errorMessageOf(err, t("common.error")));
     } finally {
       if (generation === draftGeneration) setDrafting(false);
     }
@@ -296,7 +297,7 @@ export default function ConvoyModal(props: {
       });
       setPlan(created);
     } catch (err) {
-      setError(String(err));
+      setError(errorMessageOf(err, t("common.error")));
     } finally {
       setStarting(false);
     }
@@ -308,7 +309,7 @@ export default function ConvoyModal(props: {
     try {
       setPlan(await cancelConvoyPlan(current.id));
     } catch (err) {
-      setError(String(err));
+      setError(errorMessageOf(err, t("common.error")));
     }
   };
 

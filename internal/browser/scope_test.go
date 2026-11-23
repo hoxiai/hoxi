@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -129,11 +130,10 @@ func TestProfileResolverIsolatesPersistentStoreProfiles(t *testing.T) {
 }
 
 func TestWindowAllocatorOptionsAvoidAutomationFlags(t *testing.T) {
-	collectArgs := func(t *testing.T, window bool) []string {
+	collectArgsFromOpts := func(t *testing.T, base []chromedp.ExecAllocatorOption) []string {
 		t.Helper()
-		sc := &scope{window: window, width: 1280, height: 800}
 		var captured []string
-		opts := append(sc.allocatorOptions("/tmp/hoxi-test-profile"),
+		opts := append(base,
 			chromedp.ExecPath("/nonexistent-chrome-binary"),
 			chromedp.ModifyCmdFunc(func(cmd *exec.Cmd) {
 				captured = append([]string(nil), cmd.Args...)
@@ -149,11 +149,18 @@ func TestWindowAllocatorOptionsAvoidAutomationFlags(t *testing.T) {
 		}
 		return captured
 	}
+	collectArgs := func(t *testing.T, window bool) []string {
+		t.Helper()
+		sc := &scope{window: window, width: 1280, height: 800}
+		return collectArgsFromOpts(t, sc.allocatorOptions("/tmp/hoxi-test-profile"))
+	}
 
 	winArgs := collectArgs(t, true)
 	for _, forbidden := range []string{
 		"--headless",
 		"--enable-automation",
+		"--disable-blink-features=AutomationControlled",
+		"--remote-debugging-port=0",
 		"--disable-extensions",
 		"--use-mock-keychain",
 		"--password-store=basic",
@@ -165,7 +172,6 @@ func TestWindowAllocatorOptionsAvoidAutomationFlags(t *testing.T) {
 	for _, required := range []string{
 		"--no-first-run",
 		"--no-default-browser-check",
-		"--disable-blink-features=AutomationControlled",
 		"--disable-back-forward-cache",
 		"--user-data-dir=/tmp/hoxi-test-profile",
 	} {
@@ -173,10 +179,71 @@ func TestWindowAllocatorOptionsAvoidAutomationFlags(t *testing.T) {
 			t.Fatalf("window mode missing %q in args: %v", required, winArgs)
 		}
 	}
+	foundDebugPort := false
+	for _, arg := range winArgs {
+		if raw, ok := strings.CutPrefix(arg, "--remote-debugging-port="); ok {
+			port, err := strconv.Atoi(raw)
+			if err != nil || port <= 0 || port > 65535 {
+				t.Fatalf("window mode invalid debug port %q in args: %v", arg, winArgs)
+			}
+			foundDebugPort = true
+		}
+	}
+	if !foundDebugPort {
+		t.Fatalf("window mode missing explicit non-zero --remote-debugging-port in args: %v", winArgs)
+	}
+
+	// Fallback when port allocation fails (debugPort == 0) must still avoid the
+	// unsupported --disable-blink-features banner and fall back to chromedp's port=0.
+	fallbackScope := &scope{window: true, width: 1280, height: 800}
+	fallbackArgs := collectArgsFromOpts(t, fallbackScope.allocatorOptionsWithDebugPort("/tmp/hoxi-test-profile", 0))
+	if slices.Contains(fallbackArgs, "--disable-blink-features=AutomationControlled") {
+		t.Fatalf("window fallback mode should not pass unsupported blink flag, got args: %v", fallbackArgs)
+	}
+	if !slices.Contains(fallbackArgs, "--remote-debugging-port=0") {
+		t.Fatalf("window fallback mode should fall back to --remote-debugging-port=0, got args: %v", fallbackArgs)
+	}
 
 	headlessArgs := collectArgs(t, false)
 	if !slices.Contains(headlessArgs, "--headless") {
 		t.Fatalf("headless mode should still include --headless, got: %v", headlessArgs)
+	}
+	if !slices.Contains(headlessArgs, "--remote-debugging-port=0") {
+		t.Fatalf("headless mode should keep --remote-debugging-port=0, got: %v", headlessArgs)
+	}
+}
+
+func TestWindowModeAvoidsWebdriverWithoutBadFlags(t *testing.T) {
+	if os.Getenv("HOXI_BROWSER_TEST") != "1" {
+		t.Skip("set HOXI_BROWSER_TEST=1 to run Chrome integration tests")
+	}
+	pageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte("<!doctype html><title>Window Check</title><p>ok</p>"))
+	}))
+	defer pageServer.Close()
+
+	s := New()
+	defer s.Close()
+	s.SetAgentToken("secret")
+	s.SetDefaultWindowMode(true)
+	s.SetProfileRoot(filepath.Join(t.TempDir(), "browser-profile"))
+
+	dir := t.TempDir()
+	wNav := request(t, s, dir, "ses_win_webdriver", "action", `{"action":"navigate","url":`+strconvQuote(pageServer.URL)+`}`, true)
+	if wNav.Code != 200 {
+		t.Fatalf("navigate failed: %d %s", wNav.Code, wNav.Body.String())
+	}
+	wEval := request(t, s, dir, "ses_win_webdriver", "action", `{"action":"evaluate","text":"navigator.webdriver"}`, true)
+	if wEval.Code != 200 {
+		t.Fatalf("evaluate failed: %d %s", wEval.Code, wEval.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(wEval.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["result"] != "false" {
+		t.Fatalf("expected navigator.webdriver to be false in desktop window mode, got %v", out["result"])
 	}
 }
 

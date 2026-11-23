@@ -52,6 +52,12 @@ export function resolveMissingMediaCapability(
 
 export default function ToolMissingMediaCard(props: { part: ToolPart }) {
   const missingCap = createMemo(() => resolveMissingMediaCapability(props.part));
+  const superseded = createMemo(() => {
+    const turns = workspace.messagesBySession[props.part.sessionID] ?? [];
+    const idx = turns.findIndex((m) => m.info.id === props.part.messageID);
+    if (idx < 0) return false;
+    return turns.slice(idx + 1).some((m) => m.info.role === "user");
+  });
 
   const hintText = createMemo(() => {
     const cap = missingCap();
@@ -86,7 +92,7 @@ export default function ToolMissingMediaCard(props: { part: ToolPart }) {
   };
 
   return (
-    <Show when={missingCap()}>
+    <Show when={!superseded() && missingCap() ? missingCap() : null}>
       {(cap) => (
         <div
           class="ml-3 mt-1.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/70 px-3 py-2 text-[12px]"

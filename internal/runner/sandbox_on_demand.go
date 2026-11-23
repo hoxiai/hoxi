@@ -41,7 +41,7 @@ func (s *Service) handleSandboxRoute(w http.ResponseWriter, r *http.Request) {
 // change the answer.
 func (s *Service) onDemandSandboxProfile(sessionID, directory, command string) string {
 	mode := s.ApprovalPolicy().Mode
-	if (mode != ApprovalModeAuto && mode != ApprovalModeTrusted) || !sandbox.Available() ||
+	if mode != ApprovalModeAuto || !sandbox.Available() ||
 		strings.TrimSpace(command) == "" || strings.TrimSpace(directory) == "" ||
 		optsOutOfOnDemandSandbox(command) {
 		return ""

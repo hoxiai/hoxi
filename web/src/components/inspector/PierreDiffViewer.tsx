@@ -315,68 +315,72 @@ export default function PierreDiffViewer() {
             {t("inspector.diffs.scopeSession")}
           </button>
         </div>
-        <button type="button" onClick={() => setWorkspace("inspectedDiffFile", null)}
-          title={t("inspector.diffs.backToTree")}
-          class="ml-auto flex shrink-0 items-center gap-1.5 px-1 text-[11px] font-mono tabular-nums cursor-pointer">
-          <span class="text-[var(--ok-text)]">+{totals().add}</span>
-          <span class="text-[var(--danger-text)]">-{totals().del}</span>
-        </button>
-        <Show when={selectedDiff()}>
-          <button type="button" onClick={() => setDiffStyle(diffStyle() === "unified" ? "split" : "unified")}
-            title={diffStyle() === "unified" ? t("inspector.diffs.split") : t("inspector.diffs.unified")}
-            aria-label={diffStyle() === "unified" ? t("inspector.diffs.split") : t("inspector.diffs.unified")}
+        <div class="ml-auto flex shrink-0 items-center gap-1">
+          <Show when={diffs().length > 0}>
+            <button type="button" onClick={() => setWorkspace("inspectedDiffFile", null)}
+              title={t("inspector.diffs.backToTree")}
+              class="flex shrink-0 items-center gap-1.5 px-1 text-[11px] font-mono tabular-nums cursor-pointer">
+              <span class="text-[var(--ok-text)]">+{totals().add}</span>
+              <span class="text-[var(--danger-text)]">-{totals().del}</span>
+            </button>
+          </Show>
+          <Show when={selectedDiff()}>
+            <button type="button" onClick={() => setDiffStyle(diffStyle() === "unified" ? "split" : "unified")}
+              title={diffStyle() === "unified" ? t("inspector.diffs.split") : t("inspector.diffs.unified")}
+              aria-label={diffStyle() === "unified" ? t("inspector.diffs.split") : t("inspector.diffs.unified")}
+              class="shrink-0 rounded-md p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer">
+              <Show when={diffStyle() === "unified"} fallback={<Rows2 size={13} />}><Columns2 size={13} /></Show>
+            </button>
+          </Show>
+          <button type="button" onClick={() => void onRefresh()} disabled={refreshing()}
+            title={t("inspector.diffs.refresh")} aria-label={t("inspector.diffs.refresh")}
             class="shrink-0 rounded-md p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer">
-            <Show when={diffStyle() === "unified"} fallback={<Rows2 size={13} />}><Columns2 size={13} /></Show>
+            <RefreshCw size={13} class={refreshing() ? "animate-spin" : ""} />
           </button>
-        </Show>
-        <button type="button" onClick={() => void onRefresh()} disabled={refreshing()}
-          title={t("inspector.diffs.refresh")} aria-label={t("inspector.diffs.refresh")}
-          class="shrink-0 rounded-md p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer">
-          <RefreshCw size={13} class={refreshing() ? "animate-spin" : ""} />
-        </button>
-        <Show when={(activeWt()?.aheadCount ?? 0) > 0}>
-          <button
-            type="button"
+          <Show when={(activeWt()?.aheadCount ?? 0) > 0}>
+            <button
+              type="button"
+              disabled={pushing() || committing()}
+              onClick={() => void onPushWorktree()}
+              title={t("inspector.diffs.pushAheadBtn", { count: activeWt()?.aheadCount ?? 0 })}
+              aria-label={t("inspector.diffs.pushAheadBtn", { count: activeWt()?.aheadCount ?? 0 })}
+              class="shrink-0 inline-flex items-center gap-1 rounded-md bg-[var(--bg-inset)] px-1.5 py-0.5 text-[11px] font-mono text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-40 cursor-pointer"
+            >
+              <ArrowUpFromLine size={11} class={pushing() ? "animate-bounce" : ""} />
+              <span>{pushing() ? t("inspector.diffs.pushingBtn") : `↑${activeWt()?.aheadCount ?? 0}`}</span>
+            </button>
+          </Show>
+          <PullRequestBadge
+            directory={activeWt()?.directory || activeDirectory()}
+            branch={activeWt()?.branch}
+            compareURL={compareURL()}
+            active={workspace.inspectorOpen && workspace.inspectorTab === "diffs"}
+            canCreate={
+              Boolean(compareURL()) &&
+              ((activeWt()?.aheadCount ?? 0) > 0 ||
+                Boolean(activeWt()?.hasUpstream) ||
+                Boolean(committedHash()))
+            }
             disabled={pushing() || committing()}
-            onClick={() => void onPushWorktree()}
-            title={t("inspector.diffs.pushAheadBtn", { count: activeWt()?.aheadCount ?? 0 })}
-            aria-label={t("inspector.diffs.pushAheadBtn", { count: activeWt()?.aheadCount ?? 0 })}
-            class="shrink-0 inline-flex items-center gap-1 rounded-md bg-[var(--bg-inset)] px-1.5 py-0.5 text-[11px] font-mono text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-40 cursor-pointer"
-          >
-            <ArrowUpFromLine size={11} class={pushing() ? "animate-bounce" : ""} />
-            <span>{pushing() ? t("inspector.diffs.pushingBtn") : `↑${activeWt()?.aheadCount ?? 0}`}</span>
-          </button>
-        </Show>
-        <PullRequestBadge
-          directory={activeWt()?.directory || activeDirectory()}
-          branch={activeWt()?.branch}
-          compareURL={compareURL()}
-          active={workspace.inspectorOpen && workspace.inspectorTab === "diffs"}
-          canCreate={
-            Boolean(compareURL()) &&
-            ((activeWt()?.aheadCount ?? 0) > 0 ||
-              Boolean(activeWt()?.hasUpstream) ||
-              Boolean(committedHash()))
-          }
-          disabled={pushing() || committing()}
-          onCreate={onOpenCreatePR}
-        />
-        <PullRequestIssuesButton
-          directory={activeWt()?.directory || activeDirectory()}
-          branch={activeWt()?.branch}
-          sessionID={workspace.activeSessionID || undefined}
-          active={workspace.inspectorOpen && workspace.inspectorTab === "diffs"}
-          disabled={pushing() || committing()}
-        />
-        <Show when={diffs().length > 0}>
-          <button type="button" onClick={() => setCommitExpanded(!commitExpanded())}
-            aria-expanded={commitExpanded()} aria-controls="diff-commit-editor"
-            title={t("inspector.diffs.commitBtn", { count: diffs().length })}
-            aria-label={t("inspector.diffs.commitBtn", { count: diffs().length })}
-            class={`shrink-0 rounded-md p-1.5 cursor-pointer transition-colors ${commitExpanded() ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]" : "text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--accent-primary)]"}`}>
-            <GitCommitHorizontal size={14} />
-          </button>
-        </Show>
+            onCreate={onOpenCreatePR}
+          />
+          <PullRequestIssuesButton
+            directory={activeWt()?.directory || activeDirectory()}
+            branch={activeWt()?.branch}
+            sessionID={workspace.activeSessionID || undefined}
+            active={workspace.inspectorOpen && workspace.inspectorTab === "diffs"}
+            disabled={pushing() || committing()}
+          />
+          <Show when={diffs().length > 0}>
+            <button type="button" onClick={() => setCommitExpanded(!commitExpanded())}
+              aria-expanded={commitExpanded()} aria-controls="diff-commit-editor"
+              title={t("inspector.diffs.commitBtn", { count: diffs().length })}
+              aria-label={t("inspector.diffs.commitBtn", { count: diffs().length })}
+              class={`shrink-0 rounded-md p-1.5 cursor-pointer transition-colors ${commitExpanded() ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]" : "text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--accent-primary)]"}`}>
+              <GitCommitHorizontal size={14} />
+            </button>
+          </Show>
+        </div>
       </div>
       <Show when={activeWt()?.health === "absent-restorable"}>
         <div class="shrink-0 mx-2.5 my-1 flex items-center justify-between gap-2 rounded-lg px-3 py-2 bg-[var(--warn-surface)]/70 text-[11px]">

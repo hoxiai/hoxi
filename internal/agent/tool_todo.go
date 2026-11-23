@@ -199,11 +199,17 @@ func (t *todoWriteTool) Execute(_ context.Context, tc ToolContext, input json.Ra
 	}
 	storeSessionTodos(tc.SessionID, normalized)
 
-	encoded, _ := json.MarshalIndent(normalized, "", "  ")
+	inProgress := 0
+	for _, item := range normalized {
+		if item.Status == "in_progress" {
+			inProgress++
+		}
+	}
 	title := fmt.Sprintf("%d/%d todos completed", completed, len(normalized))
+	summary := fmt.Sprintf("Updated %d todos (%d completed, %d in_progress)", len(normalized), completed, inProgress)
 	return ToolOutput{
 		Title:    title,
-		Output:   string(encoded),
+		Output:   summary,
 		Metadata: map[string]any{"todos": normalized},
 	}, nil
 }

@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/runner/turnstream"
 )
 
 // Antigravity subagents run as their own conversations inside the parent's
@@ -23,13 +25,19 @@ const (
 
 // agyHookOrigin is the conversation a hook call came from.
 type agyHookOrigin struct {
-	convID  string // conversation the call belongs to ("" when unknown)
-	childID string // subagent child session, empty for the session itself
+	convID    string // conversation the call belongs to ("" when unknown)
+	childID   string // subagent child session, empty for the session itself
+	synthetic bool   // true when verified via parent transcript before a child SessionRecord exists
 }
 
 // guardKey scopes per-stream doom-loop state, so parallel subagents do not
 // interleave their call histories with each other or with the parent.
+// Synthetic subagent keys are prefixed with "<sessionID>:agy_sub:" so
+// resetTurn/forget on the parent session always cleans them without leaking.
 func (o agyHookOrigin) guardKey(sessionID string) string {
+	if o.synthetic && sessionID != "" && o.convID != "" {
+		return sessionID + ":agy_sub:" + o.convID
+	}
 	if o.childID != "" {
 		return o.childID
 	}
@@ -58,6 +66,9 @@ func (s *Service) resolveAgyHookOrigin(r *http.Request, rec SessionRecord, convI
 	for {
 		if childID, ok := s.store.SubagentChildByExternalID(rec.ID, convID); ok {
 			return agyHookOrigin{convID: convID, childID: childID}, true
+		}
+		if turnstream.IsAgySubagentConversation(ext, convID) {
+			return agyHookOrigin{convID: convID, childID: "agy_sub_" + convID, synthetic: true}, true
 		}
 		remaining := time.Until(deadline)
 		if remaining <= 0 {

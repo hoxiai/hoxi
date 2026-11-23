@@ -3,7 +3,6 @@ import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { Presence } from "../motion/Presence";
 import {
   Cpu,
-  GitBranch,
   LoaderCircle,
   Paperclip,
   Plus,
@@ -12,13 +11,11 @@ import {
   Workflow,
 } from "lucide-solid";
 import { t } from "../../i18n";
-import { unattendedGapFor } from "../../store/workspace";
 import { isWorkSurface, surfaceExtension } from "../layout/surface-extension";
 
 export default function ComposerToolsPopover(props: {
   workspaceReady: boolean;
   skillActive?: boolean;
-  sandboxMode: "local" | "worktree";
   runtime: string;
   busy?: boolean;
   canEnhance: boolean;
@@ -27,7 +24,6 @@ export default function ComposerToolsPopover(props: {
   onOpenSkills: () => void;
   onOpenCodeSearch: () => void;
   onOpenConvoy: () => void;
-  onSwitchSandbox: () => void;
   onToggleEngine?: () => void;
   onEnhance: () => void;
 }) {
@@ -178,24 +174,6 @@ export default function ComposerToolsPopover(props: {
                   >
                     {props.runtime === "native" ? t("timeline.runtimeNativeShort") : t("timeline.runtimeOpenCode")}
                   </span>
-                </button>
-              </Show>
-              <Show when={unattendedGapFor(props.runtime, props.sandboxMode)}>
-                {(gap) => (
-                  <p class="px-2.5 py-1.5 text-[11px] text-[var(--danger-text)]">
-                    {gap() === "runtime" ? t("approval.unattendedRuntimeUnsupported") : t("approval.unattendedNotIsolated")}
-                  </p>
-                )}
-              </Show>
-              <Show when={props.sandboxMode === "local"}>
-                <button
-                  type="button"
-                  disabled={!props.workspaceReady}
-                  onClick={() => run(props.onSwitchSandbox)}
-                  class="w-full flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
-                >
-                  <GitBranch size={14} class="shrink-0" />
-                  <span class="flex-1 min-w-0 truncate">{t("timeline.sandboxEnableWorktree")}</span>
                 </button>
               </Show>
             </Show>

@@ -28,6 +28,8 @@ var (
 	trapCleanupSignals    = setOf("EXIT", "0", "INT", "TERM", "HUP")
 	realpathSafeFlags     = setOf("-q", "--quiet", "-m", "--canonicalize-missing", "-e", "--canonicalize-existing", "-s", "--no-symlinks")
 	checksumSafeFlags     = setOf("-b", "-t", "--tag")
+	xcrunValueQueryFlags  = setOf("--show-sdk-path", "--show-sdk-version", "--show-sdk-build-version", "--show-sdk-platform-path", "--show-sdk-platform-version")
+	xcrunSDKNameRe        = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 )
 
 func containsMktempPlaceholder(s string) bool {
@@ -639,4 +641,30 @@ func splitTrapActionTokens(s string) ([]string, bool) {
 		tokens = append(tokens, cur.String())
 	}
 	return tokens, true
+}
+
+func isValueClassXcrun(args []string) bool {
+	hasQuery := false
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--sdk":
+			if i+1 >= len(args) || !xcrunSDKNameRe.MatchString(args[i+1]) {
+				return false
+			}
+			i++
+		case strings.HasPrefix(a, "--sdk="):
+			if !xcrunSDKNameRe.MatchString(strings.TrimPrefix(a, "--sdk=")) {
+				return false
+			}
+		case xcrunValueQueryFlags[a]:
+			if hasQuery {
+				return false
+			}
+			hasQuery = true
+		default:
+			return false
+		}
+	}
+	return hasQuery
 }

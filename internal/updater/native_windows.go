@@ -114,7 +114,11 @@ func NativeAvailable() bool {
 	return winNativeReady.Load()
 }
 
-func CheckNative() (installErr error) {
+func CheckNative() error {
+	return CheckNativeWithOptions(InstallOptions{})
+}
+
+func CheckNativeWithOptions(opts InstallOptions) (installErr error) {
 	if !NativeAvailable() {
 		return errors.New("native updater is unavailable")
 	}
@@ -168,8 +172,8 @@ func CheckNative() (installErr error) {
 		return errors.New("application is already up to date")
 	}
 
-	archiveURL := resolveWindowsArchiveURL(res)
-	if archiveURL == "" {
+	candidates := resolveWindowsArchiveCandidates(res, opts.Source)
+	if len(candidates) == 0 {
 		cleanupAbort()
 		return errors.New("update download URL is missing")
 	}
@@ -184,7 +188,7 @@ func CheckNative() (installErr error) {
 		return fmt.Errorf("create staging directory: %w", err)
 	}
 	setInstallPhase("downloading")
-	if err := downloadAndStageWindowsZip(ctx, nil, archiveURL, res.SHA256, stageDir, func(p InstallProgress) {
+	if err := downloadAndStageWindowsZipCandidates(ctx, nil, candidates, res.SHA256, stageDir, func(p InstallProgress) {
 		installProgress.Store(&p)
 	}); err != nil {
 		_ = os.RemoveAll(stageDir)

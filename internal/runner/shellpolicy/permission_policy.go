@@ -45,11 +45,12 @@ var (
 		`(?:>>?|\b(?:cp|mv|install|ln|rsync|tee)\b[^\n;&|]*|\bsed\b[^\n;&|]*[ \t]-[a-z0-9]*i[^\n;&|]*)[ \t]*(?:[^\s;&|]*/)?\.(?:git/(?:hooks/|config\b)|opencode/|claude/|agents/|hoxi/skills/|vscode/settings\.json\b|gemini/(?:settings|config/hooks)\.json\b)`,
 		// Credential directories and standalone credential files
 		`(?:>>?|\b(?:cp|mv|install|ln|rsync|tee)\b[^\n;&|]*|\bsed\b[^\n;&|]*[ \t]-[a-z0-9]*i[^\n;&|]*)[ \t]*(?:[^\s;&|]*/)?hoxi\.json(?:$|[\s;&|)'"*?])`,
-		`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.(?:ssh|aws|gnupg|kube|codex)/`,
-		`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?(?:\.config/opencode|\.local/share/opencode)/`,
-		`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.(?:netrc|npmrc|git-credentials|credentials\.json)(?:$|[\s;&|)'"*?])`,
+		`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.(?:ssh|aws|gnupg|kube|azure|codex)/`,
+		`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?(?:\.config/(?:gh|gcloud|opencode)|\.local/share/opencode)/`,
+		`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?library/keychains/`,
+		`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.(?:netrc|npmrc|pypirc|git-credentials|credentials\.json|claude\.json)(?:$|[\s;&|)'"*?])`,
 		`\.claude/\.credentials\.json`,
-		`\.hoxi/(?:models|media-roles|intake|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|work-apps|dataprofiles|approval-policy|hoxi)\.(?:json|db)`,
+		`\.hoxi/(?:models|media-roles|intake|schedules|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|work-apps|dataprofiles|approval-policy|hoxi)\.(?:json|db)`,
 		`\.docker/config\.json`,
 		// .env / .env.* / .envrc and private key files
 		envFilePattern,
@@ -62,7 +63,7 @@ var (
 		`\bterraform\s+(?:destroy|apply)\b`,
 		`\bkubectl\s+delete\b`,
 		`\bdocker\s+(?:system\s+prune|rm|rmi)\b`,
-		`/api/hoxi/(?:tools/run|dataprofiles\b|intake\b|computer/(?:action|grant|pause|stop))\b`,
+		`/api/hoxi/(?:tools/run|dataprofiles\b|intake\b|schedules\b|computer/(?:action|grant|pause|stop))\b`,
 	}, "|"))
 
 	// Git option abbreviations (`--forc`, `--har`), combined short flags
@@ -194,7 +195,7 @@ func hasDestructiveGitCleanOrRestore(blob string) bool {
 }
 
 func matchesDestructive(blob string) bool {
-	return destructiveRe.MatchString(blob) || destructiveGitRe.MatchString(blob) || hasDestructiveGitCleanOrRestore(blob) || hasProtectedGitOutput(blob) || hasUnsafeClaudeSkillShellAccess(blob)
+	return destructiveRe.MatchString(blob) || destructiveGitRe.MatchString(blob) || hasDestructiveGitCleanOrRestore(blob) || hasProtectedGitOutput(blob) || hasUnsafeClaudeSkillShellAccess(blob) || hasMutatingHoxiScheduleCommand(blob)
 }
 
 // decideCommandPermission mirrors decidePermission({permission:"bash", patterns:[command]}).

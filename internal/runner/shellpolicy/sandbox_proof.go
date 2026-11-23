@@ -98,7 +98,7 @@ func sandboxWrappedProfile(item map[string]interface{}) (string, bool) {
 }
 
 func sandboxCoversOpacity(item map[string]interface{}, mode, worktree string) bool {
-	if mode != ApprovalModeAuto && mode != ApprovalModeTrusted {
+	if mode != ApprovalModeAuto {
 		return false
 	}
 	proof, ok := item[sandboxProofKey].(sandboxProof)

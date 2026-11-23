@@ -8,6 +8,8 @@ import {
 } from "../services/forge";
 import type { MessagePart, SnapshotFileDiff } from "../services/sse-types";
 import { AUTO_PROVIDER_ID, isModelFree, resolveAutoModelTarget } from "./auto-models";
+import { peekOrchestratorConcreteModel } from "./orchestrator-mode";
+import { ORCHESTRATOR_PROVIDER_ID } from "./workspace-state";
 import { resolveInternalLLMModel } from "./provider-catalog";
 import {
   readStorageItem,
@@ -74,6 +76,9 @@ function parseProviderModelKey(raw?: unknown): SelectedModel | null {
   if (!providerID || !modelID) return null;
   if (providerID === AUTO_PROVIDER_ID) {
     return resolveAutoModelTarget(modelID, { advance: true });
+  }
+  if (providerID === ORCHESTRATOR_PROVIDER_ID) {
+    return peekOrchestratorConcreteModel(workspace.activeSessionID, "executor");
   }
   const exists = workspace.providers.some(
     (p) => p.id === providerID && p.models && p.models[modelID]

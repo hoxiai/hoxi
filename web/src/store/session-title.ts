@@ -3,6 +3,8 @@ import { dictionaries, locale, t } from "../i18n";
 import { hoxiAPI } from "../services/api";
 import type { SessionInfo } from "../services/sse-types";
 import { AUTO_PROVIDER_ID, resolveAutoModelTarget } from "./auto-models";
+import { peekOrchestratorConcreteModel } from "./orchestrator-mode";
+import { ORCHESTRATOR_PROVIDER_ID } from "./workspace-state";
 import { resolveInternalLLMModel } from "./provider-catalog";
 import { readStorageRecord, workspace, writeStorageJSON, type SelectedModel } from "./workspace-state";
 
@@ -258,6 +260,8 @@ function resolveTitleModel(hint?: SelectedModel): SelectedModel | null {
   const rawFallback = hint || workspace.selectedModel || null;
   const fallback = rawFallback?.providerID === AUTO_PROVIDER_ID
     ? resolveAutoModelTarget(rawFallback.modelID, { advance: false }) || rawFallback
+    : rawFallback?.providerID === ORCHESTRATOR_PROVIDER_ID
+    ? peekOrchestratorConcreteModel(workspace.activeSessionID, "executor") || rawFallback
     : rawFallback;
   return resolveInternalLLMModel(
     small,

@@ -157,6 +157,22 @@ func TestComputerAndBrowserSchemaAlignmentAndAnthropicMultiToolMediaOrder(t *tes
 	if ccProp["maximum"] != 3 {
 		t.Fatalf("hoxi_computer.clickCount maximum must be 3, got %v", ccProp["maximum"])
 	}
+	compActEnum, _ := compProps["action"].(map[string]any)["enum"].([]string)
+	hasWait := false
+	for _, a := range compActEnum {
+		if a == "wait" {
+			hasWait = true
+		}
+	}
+	if !hasWait {
+		t.Fatalf("hoxi_computer missing wait action: %v", compActEnum)
+	}
+	if secProp, _ := compProps["seconds"].(map[string]any); secProp == nil || secProp["maximum"] != 60 {
+		t.Fatalf("hoxi_computer.seconds schema invalid: %#v", secProp)
+	}
+	if _, hasClear := compProps["clear"]; !hasClear {
+		t.Fatal("hoxi_computer missing clear parameter")
+	}
 
 	brTool, ok := reg.Get("hoxi_browser")
 	if !ok {

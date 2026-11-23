@@ -92,6 +92,7 @@ export default function ContextProgressPill() {
     const id = workspace.activeSessionID;
     if (!id) return null;
     const turns = workspace.messagesBySession[id] ?? [];
+    if (turns.length === 0) return null;
     return computeSessionContextWatermark(turns, contextLimit());
   });
 

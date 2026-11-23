@@ -314,3 +314,130 @@ func TestUnifiedAbsoluteAndRelativeWorkspacePathsFoldAcrossReadEditPatchAndSibli
 		t.Fatalf("expected <environment> extraction and explicit worktreeDir to produce identical pruned messages")
 	}
 }
+
+func TestPruneStaleToolScreenshotsPreservesUserMediaAndKVCacheHysteresis(t *testing.T) {
+	makeScreenshotStep := func(id, toolName, filename, data string) []agent.Message {
+		return []agent.Message{
+			{
+				Role: agent.RoleAssistant,
+				Content: []agent.ContentBlock{{
+					Type:  agent.ContentToolUse,
+					ID:    id,
+					Name:  toolName,
+					Input: json.RawMessage(`{"action":"screenshot"}`),
+				}},
+			},
+			{
+				Role: agent.RoleUser,
+				Content: []agent.ContentBlock{
+					{Type: agent.ContentToolResult, ToolUseID: id, Text: `{"app":{"name":"Gemini"},"windowID":"w1","observationID":"obs_` + id + `","elements":[{"id":1}],"waitedMs":5000}`},
+					{Type: agent.ContentMedia, MimeType: "image/jpeg", Data: data, Filename: filename},
+				},
+			},
+		}
+	}
+
+	// User-uploaded image + MCP image must NEVER be pruned by screenshot windowing.
+	var msgs []agent.Message
+	msgs = append(msgs, agent.Message{
+		Role: agent.RoleUser,
+		Content: []agent.ContentBlock{
+			{Type: agent.ContentText, Text: "Control Gemini using this reference"},
+			{Type: agent.ContentMedia, MimeType: "image/png", Data: "USER_IMG", Filename: "ref.png"},
+		},
+	})
+	msgs = append(msgs, makeScreenshotStep("mcp_1", "mcp_call_tool", "diagram.png", "MCP_IMG")...)
+
+	// Up to 4 live hoxi_computer screenshots must stay untouched (KV-cache hysteresis).
+	for i := 1; i <= 4; i++ {
+		msgs = append(msgs, makeScreenshotStep(fmt.Sprintf("c%d", i), "hoxi_computer", "hoxi_computer.jpg", fmt.Sprintf("FRAME_%d", i))...)
+	}
+	atFour := agent.PruneOldToolResults(msgs, "sys", 200000)
+	bOrig, _ := json.Marshal(msgs)
+	bFour, _ := json.Marshal(atFour)
+	if string(bOrig) != string(bFour) {
+		t.Fatal("expected <= 4 live screenshots to stay byte-identical for KV-cache stability")
+	}
+
+	// Adding a 5th screenshot plus a mixed-tool step (hoxi_computer + mcp_call_tool) must NOT drop MCP media.
+	mixedStep := []agent.Message{
+		{
+			Role: agent.RoleAssistant,
+			Content: []agent.ContentBlock{
+				{Type: agent.ContentToolUse, ID: "c5", Name: "hoxi_computer", Input: json.RawMessage(`{"action":"screenshot"}`)},
+				{Type: agent.ContentToolUse, ID: "mcp_mix", Name: "mcp_call_tool", Input: json.RawMessage(`{"tool":"plot"}`)},
+			},
+		},
+		{
+			Role: agent.RoleUser,
+			Content: []agent.ContentBlock{
+				{Type: agent.ContentToolResult, ToolUseID: "c5", Text: `{"windowID":"w1"}`},
+				{Type: agent.ContentToolResult, ToolUseID: "mcp_mix", Text: `{"ok":true}`},
+				{Type: agent.ContentMedia, MimeType: "image/jpeg", Data: "FRAME_5", Filename: "hoxi_computer.jpg"},
+				{Type: agent.ContentMedia, MimeType: "image/png", Data: "MCP_MIX_IMG", Filename: "chart.png"},
+			},
+		},
+	}
+	msgs5 := append(append([]agent.Message(nil), msgs...), mixedStep...)
+	pruned5 := agent.PruneOldToolResults(msgs5, "sys", 200000)
+
+	var liveComputerFrames []string
+	var omittedCount int
+	var hasUserImg, hasMCPImg, hasMixedMCPImg bool
+	for _, m := range pruned5 {
+		for _, b := range m.Content {
+			if b.Type == agent.ContentMedia {
+				switch b.Data {
+				case "USER_IMG":
+					hasUserImg = true
+				case "MCP_IMG":
+					hasMCPImg = true
+				case "MCP_MIX_IMG":
+					hasMixedMCPImg = true
+				default:
+					liveComputerFrames = append(liveComputerFrames, b.Data)
+				}
+			}
+			if b.Type == agent.ContentText && strings.Contains(b.Text, "[omitted earlier screenshot: hoxi_computer.jpg (image/jpeg)]") {
+				omittedCount++
+			}
+		}
+	}
+	if !hasUserImg || !hasMCPImg || !hasMixedMCPImg {
+		t.Fatalf("user or MCP media unexpectedly pruned: user=%v mcp=%v mixedMcp=%v", hasUserImg, hasMCPImg, hasMixedMCPImg)
+	}
+	if omittedCount != 3 || strings.Join(liveComputerFrames, ",") != "FRAME_4,FRAME_5" {
+		t.Fatalf("expected 3 omitted and latest 2 [FRAME_4,FRAME_5] kept, got omitted=%d live=%v", omittedCount, liveComputerFrames)
+	}
+
+	// Strictly idempotent on repeated calls.
+	prunedAgain := agent.PruneOldToolResults(pruned5, "sys", 200000)
+	b1, _ := json.Marshal(pruned5)
+	b2, _ := json.Marshal(prunedAgain)
+	if string(b1) != string(b2) {
+		t.Fatal("screenshot pruning must be strictly idempotent")
+	}
+
+	// Large hoxi_computer JSON tool output pruned under context pressure gets structured summary.
+	bigElements := make([]map[string]any, 40)
+	for i := range bigElements {
+		bigElements[i] = map[string]any{"id": i + 1, "role": "AXButton", "name": strings.Repeat("AllowAction", 8)}
+	}
+	bigJSON, _ := json.Marshal(map[string]any{
+		"app":           map[string]any{"name": "Gemini"},
+		"windowID":      "win-9",
+		"observationID": "obs_big",
+		"waitedMs":      10000,
+		"elements":      bigElements,
+	})
+	var tightMsgs []agent.Message
+	tightMsgs = append(tightMsgs, makeToolStep("hc1", "hoxi_computer", map[string]any{"action": "wait", "seconds": 10}, string(bigJSON), false)...)
+	for i := 0; i < 6; i++ {
+		tightMsgs = append(tightMsgs, makeToolStep(fmt.Sprintf("r%d", i), "read", map[string]any{"filePath": "a.go"}, strings.Repeat("line of code\n", 140), false)...)
+	}
+	prunedTight := agent.PruneOldToolResults(tightMsgs, "sys", 4000)
+	gotSummary := prunedTight[1].Content[0].Text
+	if !strings.Contains(gotSummary, "(hoxi_computer); app=Gemini window=win-9 observation=obs_big elements=40 waitedMs=10000") {
+		t.Fatalf("expected structured hoxi_computer prune summary, got: %q", gotSummary)
+	}
+}

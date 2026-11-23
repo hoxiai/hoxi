@@ -10,7 +10,7 @@ import type {
   OldSessionsPreview,
   SystemStorageStats,
 } from "../../services/api";
-import { deleteOldSessions, previewOldSessions } from "../../store/workspace";
+import { deleteOldSessions, errorMessageOf, previewOldSessions } from "../../store/workspace";
 import { locale, t, type TxKey } from "../../i18n";
 import { Spinner } from "../icons";
 import { HelpTip, SegmentedPills } from "./setting-controls";
@@ -28,7 +28,7 @@ const REASON_KEYS: Record<OldSessionSkipReason, TxKey> = {
 };
 
 function errorText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+  return errorMessageOf(err, t("common.error"));
 }
 
 export function OldSessionsCleanup(props: {

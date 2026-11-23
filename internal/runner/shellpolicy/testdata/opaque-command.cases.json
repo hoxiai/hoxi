@@ -274,7 +274,7 @@
   },
   {
     "command": "bash -c 'echo hi'",
-    "opaque": true
+    "opaque": false
   },
   {
     "command": "cat `ls`",
@@ -1948,6 +1948,406 @@
   },
   {
     "command": "rm -rf /tmp/__hoxi_mktemp_0__",
+    "opaque": true
+  },
+  {
+    "command": "ps aux | grep -iE \"gemini\\.app|Gemini\\.app|Antigravity\\.app|Hoxi\\.app\" | grep -v grep ; ls -ld /Applications/*Gemini* /Applications/*Hoxi* \"$HOME/Applications/\"*Gemini* 2>/dev/null || true",
+    "opaque": false
+  },
+  {
+    "command": "ls -ld \"$HOME/Applications/\"Gemini*.app 2>/dev/null || true",
+    "opaque": false
+  },
+  {
+    "command": "ls \"$HOME/Applications/\".env*",
+    "opaque": true
+  },
+  {
+    "command": "ls \"$HOME/Applications/\"*.env",
+    "opaque": true
+  },
+  {
+    "command": "ls \"$HOME/Applications/\"*.pem",
+    "opaque": true
+  },
+  {
+    "command": "ls \"$HOME/Applications/\"*id_rsa*",
+    "opaque": true
+  },
+  {
+    "command": "ls \"$HOME/Applications/\"*..*",
+    "opaque": true
+  },
+  {
+    "command": "ls \"$HOME/Applications/\"*/*.app",
+    "opaque": true
+  },
+  {
+    "command": "ls \"$HOME/Applications/\"foo",
+    "opaque": true
+  },
+  {
+    "command": "ls \"$HOME/.ssh/\"*Gemini*",
+    "opaque": true
+  },
+  {
+    "command": "\"/bin/\"*sh",
+    "opaque": true
+  },
+  {
+    "command": "true && \"/bin/\"*sh",
+    "opaque": true
+  },
+  {
+    "command": "FOO=1 \"/bin/\"*sh",
+    "opaque": true
+  },
+  {
+    "command": "which -a go || ls /opt/homebrew/bin/go /usr/local/go/bin/go 2>/dev/null; ls -d \"$HOME\"/go/pkg/mod/github.com/chromedp/chromedp@* 2>/dev/null",
+    "opaque": false
+  },
+  {
+    "command": "ls -d \"${HOME}\"/go/pkg/mod/github.com/chromedp/chromedp@* 2>/dev/null",
+    "opaque": false
+  },
+  {
+    "command": "ls -d \"$GOPATH\"/pkg/mod/github.com/chromedp/chromedp@* 2>/dev/null",
+    "opaque": false
+  },
+  {
+    "command": "ls -d \"$HOME/go/pkg/mod/github.com/chromedp/\"chromedp@* 2>/dev/null",
+    "opaque": false
+  },
+  {
+    "command": "ls \"$HOME\"/.ssh/*",
+    "opaque": true
+  },
+  {
+    "command": "ls \"$HOME\"/.hoxi/*",
+    "opaque": true
+  },
+  {
+    "command": "ls \"$HOME\"/.env*",
+    "opaque": true
+  },
+  {
+    "command": "ls \"$HOME/.ssh\"/id_*",
+    "opaque": true
+  },
+  {
+    "command": "ls \"$HOME\"/Library/Keychains/*",
+    "opaque": true
+  },
+  {
+    "command": "ls \"$GOPATH\"/etc/pass*",
+    "opaque": true
+  },
+  {
+    "command": "ls \"/etc\"/pass*",
+    "opaque": true
+  },
+  {
+    "command": "ls \".git\"/hooks/*",
+    "opaque": true
+  },
+  {
+    "command": "ls \"$HOME\"/*",
+    "opaque": true
+  },
+  {
+    "command": "ls \"$HOME\"/go/../.ssh/*",
+    "opaque": true
+  },
+  {
+    "command": "ls \"$HOME\"/go/*/chromedp@*",
+    "opaque": true
+  },
+  {
+    "command": "ls \"$HOME\"/go//pkg/chromedp@*",
+    "opaque": true
+  },
+  {
+    "command": "ls \"$HOME\"/go/pkg/chromedp",
+    "opaque": true
+  },
+  {
+    "command": "ls \"$HOME\"/go/pkg/*@id_rsa*",
+    "opaque": true
+  },
+  {
+    "command": "ls \"$HOME/Applications/\"/foo*",
+    "opaque": true
+  },
+  {
+    "command": "ls -f\"$HOME\"/go/pkg/*",
+    "opaque": true
+  },
+  {
+    "command": "\"$HOME\"/bin/*",
+    "opaque": true
+  },
+  {
+    "command": "nohup \"/bin/\"*sh",
+    "opaque": true
+  },
+  {
+    "command": "timeout 5 \"/bin/\"*sh",
+    "opaque": true
+  },
+  {
+    "command": "env -u FOO \"/bin/\"*sh",
+    "opaque": true
+  },
+  {
+    "command": "TMP=\"$(mktemp -d)\"\ncat \"$TMP\"/etc/pass*",
+    "opaque": true
+  },
+  {
+    "command": "TMP=\"$(mktemp -d)\"\nrm -rf \"$TMP\"/*",
+    "opaque": true
+  },
+  {
+    "command": "export PATH=\"$PATH:/opt/homebrew/bin:/usr/local/go/bin:/usr/local/bin\" && for mod_file in work/go/*/go.mod; do mod_dir=\"$(dirname \"$mod_file\")\"; echo \"=== $mod_dir ===\"; (cd \"$mod_dir\" && go vet ./... && go test -race ./...); done",
+    "opaque": false
+  },
+  {
+    "command": "for mod_file in work/go/*/go.mod; do\n  mod_dir=\"$(dirname \"$mod_file\")\"\n  echo \"=== $mod_dir ===\"\n  (cd \"$mod_dir\" && go vet ./... && go test -race ./...)\ndone",
+    "opaque": false
+  },
+  {
+    "command": "for d in work/go/*/; do echo \"=== $d ===\"; (cd \"$d\" && go vet ./...); done",
+    "opaque": false
+  },
+  {
+    "command": "cd work && for mod_file in go/*/go.mod; do mod_dir=\"$(dirname \"$mod_file\")\"; (cd \"$mod_dir\" && go test ./...); done",
+    "opaque": false
+  },
+  {
+    "command": "readlink \"$HOME/go/bin/go\" && ls \"$HOMEBREW_PREFIX/bin\" \"$NVM_DIR\" \"$XDG_CACHE_HOME\"",
+    "opaque": false
+  },
+  {
+    "command": "cat \"$XDG_CONFIG_HOME/gh/hosts.yml\"",
+    "opaque": true
+  },
+  {
+    "command": "for mod_file in ../*/go.mod; do mod_dir=\"$(dirname \"$mod_file\")\"; (cd \"$mod_dir\" && go test ./...); done",
+    "opaque": true
+  },
+  {
+    "command": "for mod_file in /*/go.mod; do mod_dir=\"$(dirname \"$mod_file\")\"; (cd \"$mod_dir\" && go test ./...); done",
+    "opaque": true
+  },
+  {
+    "command": "for mod_file in .hoxi/*/go.mod; do mod_dir=\"$(dirname \"$mod_file\")\"; (cd \"$mod_dir\" && go test ./...); done",
+    "opaque": true
+  },
+  {
+    "command": "for mod_file in work/go/*/.env; do mod_dir=\"$(dirname \"$mod_file\")\"; (cd \"$mod_dir\" && ls); done",
+    "opaque": true
+  },
+  {
+    "command": "for mod_file in work/go/*/*/go.mod; do mod_dir=\"$(dirname \"$mod_file\")\"; (cd \"$mod_dir\" && go test ./...); done",
+    "opaque": true
+  },
+  {
+    "command": "cd /etc && for f in */conf; do d=\"$(dirname \"$f\")\"; (cd \"$d\" && ls); done",
+    "opaque": true
+  },
+  {
+    "command": "cd /Users/u && for f in */Keychains; do d=\"$(dirname \"$f\")\"; (cd \"$d\" && ls); done",
+    "opaque": true
+  },
+  {
+    "command": "for mod_file in work/go/*/go.mod; do mod_dir=\"$(cat .env)\"; (cd \"$mod_dir\" && ls); done",
+    "opaque": true
+  },
+  {
+    "command": "for mod_file in work/go/*/go.mod; do mod_dir=\"$(dirname \"$mod_file\")\"; (cd \"$mod_dir\" && rm -rf .); done",
+    "opaque": true
+  },
+  {
+    "command": "for mod_file in work/go/*/go.mod; do mod_dir=\"$(dirname \"$mod_file\")\"; (cd \"$mod_dir\" && git reset --hard); done",
+    "opaque": true
+  },
+  {
+    "command": "for mod_file in work/go/*/go.mod; do mod_dir=\"$(dirname \"$mod_file\")\"; (cd \"$mod_dir\" && cat .env); done",
+    "opaque": true
+  },
+  {
+    "command": "for mod_file in work/go/*/go.mod; do mod_dir=\"$(dirname \"$mod_file\")\"; (cd \"$mod_dir\" && cd .. && ls); done",
+    "opaque": true
+  },
+  {
+    "command": "for mod_file in work/go/*/go.mod; do mod_dir=\"$(dirname \"$mod_file\")\"; (cd \"$mod_dir/..\" && go test ./...); done",
+    "opaque": true
+  },
+  {
+    "command": "for mod_file in work/go/*/go.mod; do mod_dir=\"$(dirname \"$mod_file\")\"; (mod_dir=/etc; cd \"$mod_dir\" && ls); done",
+    "opaque": true
+  },
+  {
+    "command": "for mod_file in work/go/*/go.mod; do mod_dir=\"$(dirname \"$mod_file\")\"; mod_dir=/etc; (cd \"$mod_dir\" && ls); done",
+    "opaque": true
+  },
+  {
+    "command": "for mod_file in work/go/*/go.mod; do (cd \"$mod_dir\" && go test ./...); mod_dir=\"$(dirname \"$mod_file\")\"; done",
+    "opaque": true
+  },
+  {
+    "command": "for mod_file in work/go/*/go.mod; do mod_dir=\"$(dirname \"$mod_file\")\"; echo \"$mod_dir\"; done; (cd \"$mod_dir\" && go test ./...)",
+    "opaque": true
+  },
+  {
+    "command": "for mod_file in work/go/*/go.mod; do mod_dir=\"$(dirname \"$mod_file\")\"; rm -rf \"$mod_dir\"; done",
+    "opaque": true
+  },
+  {
+    "command": "for mod_file in work/go/*/go.mod; do mod_dir=\"$(dirname \"$mod_file\")\"; git -c \"$mod_dir\" status; done",
+    "opaque": true
+  },
+  {
+    "command": "PATH=\"/opt/homebrew/bin:/usr/local/go/bin:$HOME/go/bin:$PATH\" bash -c 'cd gp-agent && go list -deps ./init/caddy | grep -i -E \"caddy.*(encode|standard|zstd|gzip|compress)\"'",
+    "opaque": false
+  },
+  {
+    "command": "PATH=\"/opt/homebrew/bin:/usr/local/go/bin:$HOME/go/bin:$PATH\" GOCACHE=/tmp/go-build-cache TMPDIR=/tmp bash -c 'set -euo pipefail\n(cd gp-agent && go test -v ./... && go build -o /tmp/gp-agent-check .)\nrm -f /tmp/gp-agent-check'",
+    "opaque": false
+  },
+  {
+    "command": "export PATH=\"/usr/local/go/bin:/opt/homebrew/bin:$PATH\" && NODE_PATH=\"$PWD/web/node_modules\" web/node_modules/.bin/esbuild internal/opencode/browser_plugin.js --bundle --outfile=internal/opencode/browser_plugin.mjs",
+    "opaque": false
+  },
+  {
+    "command": "NODE_PATH=\"$PWD/web/node_modules:$PWD/site/build/node_modules\" node site/themes/hoxi/scripts/check-releases.mjs",
+    "opaque": false
+  },
+  {
+    "command": "SDK=$(xcrun --sdk iphoneos --show-sdk-path); swiftc -typecheck -parse-as-library -sdk \"$SDK\" -target arm64-apple-ios13.0 AppDelegate.swift 2>&1",
+    "opaque": false
+  },
+  {
+    "command": "ls -la \"$HOME/.pub-cache/hosted\" 2>/dev/null || ls -la \"$PUB_CACHE\" 2>/dev/null",
+    "opaque": false
+  },
+  {
+    "command": "ssh -o ConnectTimeout=8 root@203.0.113.10 -i ~/.ssh/id_117 'docker exec app_web sh -c '\\''strings app | grep -E \"AuthConnectSignin\" | head -n 45'\\'''",
+    "opaque": false
+  },
+  {
+    "command": "ssh -o BatchMode=yes -o ConnectTimeout=8 root@198.51.100.7 \"TS=20261122-185400; echo \\$TS\"",
+    "opaque": false
+  },
+  {
+    "command": "bash -c \"$CMD\"",
+    "opaque": true
+  },
+  {
+    "command": "bash -c \"echo hi\"",
+    "opaque": true
+  },
+  {
+    "command": "bash -c \"echo $(id)\"",
+    "opaque": true
+  },
+  {
+    "command": "bash -c $'echo hi'",
+    "opaque": true
+  },
+  {
+    "command": "BASH_ENV=/tmp/x.sh bash -c 'echo hi'",
+    "opaque": true
+  },
+  {
+    "command": "ENV=/tmp/x.sh sh -c 'echo hi'",
+    "opaque": true
+  },
+  {
+    "command": "TMPDIR=/Users/u/code bash -c 'echo hi'",
+    "opaque": true
+  },
+  {
+    "command": "bash --rcfile /tmp/x.sh -c 'echo hi'",
+    "opaque": true
+  },
+  {
+    "command": "bash -i -c 'echo hi'",
+    "opaque": true
+  },
+  {
+    "command": "bash -c 'echo $1' _ .env",
+    "opaque": true
+  },
+  {
+    "command": "echo hi | bash -c 'cat'",
+    "opaque": true
+  },
+  {
+    "command": "bash -c 'sh -c \"echo hi\"'",
+    "opaque": true
+  },
+  {
+    "command": "bash -c 'cat \"$KUBECONFIG\"'",
+    "opaque": true
+  },
+  {
+    "command": "NODE_PATH=\"$HOME/.ssh\" node x.js",
+    "opaque": true
+  },
+  {
+    "command": "NODE_PATH=\"$SECRET\" node x.js",
+    "opaque": true
+  },
+  {
+    "command": "NODE_PATH=\"$PWD/../.git\" node x.js",
+    "opaque": true
+  },
+  {
+    "command": "SDK=$(xcrun sh -c id); swiftc -sdk \"$SDK\" a.swift",
+    "opaque": true
+  },
+  {
+    "command": "SDK=$(xcrun --sdk iphoneos --show-sdk-path); rm -rf \"$SDK\"",
+    "opaque": true
+  },
+  {
+    "command": "ssh root@203.0.113.57 \"echo $(id)\"",
+    "opaque": true
+  },
+  {
+    "command": "ssh root@203.0.113.57 \"echo $SECRET\"",
+    "opaque": true
+  },
+  {
+    "command": "ssh -o ProxyCommand=\"echo \\$X\" root@203.0.113.57 'id'",
+    "opaque": true
+  },
+  {
+    "command": "ssh localhost 'echo '\\''hi'\\'''",
+    "opaque": true
+  },
+  {
+    "command": "TMPDIR=/tmp/custom bash -c 'echo hi'",
+    "opaque": true
+  },
+  {
+    "command": "PATH=\"$SECRET\" bash -c 'echo hi'",
+    "opaque": true
+  },
+  {
+    "command": "export PATH=\"$HOME/go/bin:$PATH\"; FOO=bar; echo \"$FOO\"",
+    "opaque": false
+  },
+  {
+    "command": "export PATH=\"$HOME/go/bin:$PATH\"; PATH=/evil; FOO=bar; echo \"$FOO\"",
+    "opaque": true
+  },
+  {
+    "command": "export PATH=\"$SECRET:$PATH\"; FOO=bar; echo \"$FOO\"",
+    "opaque": true
+  },
+  {
+    "command": "export PATH=\"$HOME/go/bin:$PATH\"; FOO=.env; cat \"$FOO\"",
     "opaque": true
   }
 ]

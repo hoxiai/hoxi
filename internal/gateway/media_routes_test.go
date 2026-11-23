@@ -205,3 +205,39 @@ func TestMediaRoutesRejectRemoteTunnelAndProtectedPaths(t *testing.T) {
 		t.Fatalf("expected imageModel preserved and videoModel cleared, got %+v", afterBody.Roles)
 	}
 }
+
+func TestMediaImageInputDataURLsValidation(t *testing.T) {
+	wsDir := t.TempDir()
+	t.Setenv("HOME", wsDir)
+	t.Setenv("HOXI_HOME", filepath.Join(wsDir, ".hoxi-home"))
+
+	g := &Gateway{
+		rootDir:   wsDir,
+		mux:       http.NewServeMux(),
+		providers: provider.NewService(0, "", wsDir, nil),
+	}
+	g.registerMediaRoutes()
+
+	for _, body := range []string{
+		`{"prompt":"repaint","inputDataUrls":["data:text/plain;base64,aGVsbG8="]}`,
+		`{"prompt":"repaint","inputDataUrls":["not-a-data-url"]}`,
+		`{"prompt":"repaint","inputDataUrls":["data:image/png;base64,AA==","data:image/png;base64,AA==","data:image/png;base64,AA==","data:image/png;base64,AA==","data:image/png;base64,AA=="]}`,
+		`{"prompt":"repaint","maskDataUrl":"data:text/plain;base64,aGVsbG8="}`,
+		`{"prompt":"repaint","maskDataUrl":"not-a-mask"}`,
+	} {
+		rec := httptest.NewRecorder()
+		g.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/hoxi/media/image", bytes.NewReader([]byte(body))))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for invalid inline image payload %s, got %d (%s)", body, rec.Code, rec.Body.String())
+		}
+	}
+
+	// Valid inline PNG + mask dataUrl proceeds past validation cleanly.
+	tinyPNG := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+	validBody := `{"prompt":"repaint","aspectRatio":"1:1","returnDataUrl":true,"inputDataUrls":["` + tinyPNG + `"],"maskDataUrl":"` + tinyPNG + `"}`
+	okRec := httptest.NewRecorder()
+	g.mux.ServeHTTP(okRec, httptest.NewRequest(http.MethodPost, "/api/hoxi/media/image", bytes.NewReader([]byte(validBody))))
+	if okRec.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 structured response for valid inputDataUrls, got %d (%s)", okRec.Code, okRec.Body.String())
+	}
+}

@@ -15,6 +15,7 @@ var deferredHostTools = []string{
 	"hoxi_computer",
 	"hoxi_data",
 	"hoxi_image",
+	"hoxi_schedule",
 	"hoxi_speech",
 	"hoxi_tools",
 	"hoxi_video",
@@ -30,7 +31,7 @@ type loadHostTool struct{}
 func (*loadHostTool) Name() string     { return "load_host_tool" }
 func (*loadHostTool) IsReadOnly() bool { return true }
 func (*loadHostTool) Description() string {
-	return "Load a browser, desktop-control, data-profile (HTTP/SQL/SSH), tools-gateway, image, speech, or video tool's full parameters for the next step. Then call the named tool."
+	return "Load a browser, desktop-control, data-profile, scheduled-task, tools-gateway, image, speech, or video tool's full parameters for the next step. Then call the named tool."
 }
 func (*loadHostTool) Parameters() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{"name": map[string]any{"type": "string", "enum": deferredHostTools}}, "required": []string{"name"}}
@@ -58,11 +59,12 @@ func requestedHostTool(input json.RawMessage) string {
 }
 
 type hostToolCatalog struct {
-	onDemand      bool
-	omitMCP       bool
-	omitCodeIndex bool
-	omitTask      bool
-	loaded        map[string]bool
+	onDemand            bool
+	omitMCP             bool
+	omitCodeIndex       bool
+	omitTask            bool
+	omitDirectExecution bool
+	loaded              map[string]bool
 }
 
 // The visible transcript is already scoped to one session and includes restored turns.
@@ -120,6 +122,9 @@ func (c hostToolCatalog) specs(reg ToolRegistry, mode string, depth int) []ToolS
 		if c.omitTask && spec.Name == "task" {
 			continue
 		}
+		if c.omitDirectExecution && isOrchestratorDirectExecutionTool(spec.Name) {
+			continue
+		}
 		out = append(out, spec)
 	}
 	return out
@@ -135,6 +140,14 @@ func (c *hostToolCatalog) configureAppScope(callerSystem string) {
 
 func (c *hostToolCatalog) configureTaskPolicy(primaryMode string, agentMap map[string]llm.AgentSpec, cfgDoc map[string]any) {
 	c.omitTask = !llm.HasAnyAllowedSubagent(primaryMode, agentMap, cfgDoc)
+}
+
+func (c *hostToolCatalog) configureOrchestrator(active bool, effectiveMode string) {
+	if !active {
+		return
+	}
+	c.omitTask = false
+	c.omitDirectExecution = !strings.EqualFold(strings.TrimSpace(effectiveMode), "plan")
 }
 
 func hasConfiguredMCPServers(worktreeDir string, cfgDoc map[string]any, mcpCfg MCPConfigSource) bool {

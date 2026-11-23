@@ -330,6 +330,61 @@ func (s *Service) VerifySelection(ctx context.Context, directory, sessionID stri
 	return detail.SkillDescriptor, nil
 }
 
+// ResolveByNameOrKey resolves a skill in directory by canonical key (skl_...)
+// and/or skill name so callers such as scheduled tasks always persist and pass
+// a verified key+name pair.
+func (s *Service) ResolveByNameOrKey(ctx context.Context, directory, sessionID, runtime, key, name string) (SkillDescriptor, error) {
+	key = strings.TrimSpace(key)
+	name = strings.TrimSpace(name)
+	if key == "" && name == "" {
+		return SkillDescriptor{}, fmt.Errorf("%w: skill key or name is required", ErrBadRequest)
+	}
+	rc, err := s.resolveContext(ctx, directory, sessionID, runtime)
+	if err != nil {
+		return SkillDescriptor{}, err
+	}
+	entries, err := s.loadOpenCodeCatalog(ctx, rc, true)
+	if err != nil {
+		return SkillDescriptor{}, err
+	}
+	checkAvailable := func(desc SkillDescriptor) (SkillDescriptor, error) {
+		if desc.Exposure == ExposureUnavailable {
+			return SkillDescriptor{}, fmt.Errorf("%w: %s", ErrUnsupported, unavailableMessage(desc))
+		}
+		return desc, nil
+	}
+	if key != "" {
+		for _, entry := range entries {
+			if entry.detail.Key == key && (name == "" || strings.EqualFold(entry.detail.Name, name)) {
+				return checkAvailable(entry.detail.SkillDescriptor)
+			}
+		}
+	}
+	if name != "" {
+		for _, entry := range entries {
+			if entry.detail.Name == name {
+				return checkAvailable(entry.detail.SkillDescriptor)
+			}
+		}
+		for _, entry := range entries {
+			if strings.EqualFold(entry.detail.Name, name) {
+				return checkAvailable(entry.detail.SkillDescriptor)
+			}
+		}
+	}
+	label := firstNonEmptySkillStr(name, key)
+	return SkillDescriptor{}, fmt.Errorf("%w: skill %q is not available in the active directory", ErrNotFound, label)
+}
+
+func firstNonEmptySkillStr(vals ...string) string {
+	for _, v := range vals {
+		if t := strings.TrimSpace(v); t != "" {
+			return t
+		}
+	}
+	return ""
+}
+
 func (s *Service) resolveContext(ctx context.Context, directory, sessionID, requestedRuntime string) (RequestContext, error) {
 	if s.resolver == nil {
 		return RequestContext{}, fmt.Errorf("%w: skill context resolver is not configured", ErrBadRequest)

@@ -45,7 +45,7 @@ var (
 
 func (s *Service) nativeOnDemandSandboxProfile(sessionID, rootDir, command string) string {
 	mode := s.ApprovalPolicy().Mode
-	if (mode != ApprovalModeAuto && mode != ApprovalModeTrusted) || !sandbox.Available() ||
+	if mode != ApprovalModeAuto || !sandbox.Available() ||
 		strings.TrimSpace(command) == "" || strings.TrimSpace(rootDir) == "" ||
 		optsOutOfOnDemandSandbox(command) {
 		return ""

@@ -18,6 +18,7 @@ import {
   type ApprovalMode,
 } from "../../store/workspace";
 import { t } from "../../i18n";
+import { HelpTip } from "../settings/setting-controls";
 
 interface ApprovalModeOption {
   id: ApprovalMode;
@@ -33,6 +34,12 @@ interface ApprovalModeOption {
     | "approval.modeManualShort"
     | "approval.modeTrustedShort"
     | "approval.modeUnattendedShort";
+  briefKey:
+    | "approval.modeAutoBrief"
+    | "approval.modeSmartBrief"
+    | "approval.modeManualBrief"
+    | "approval.modeTrustedBrief"
+    | "approval.modeUnattendedBrief";
   descKey:
     | "approval.modeAutoDesc"
     | "approval.modeSmartDesc"
@@ -47,19 +54,30 @@ const MODE_OPTIONS: ApprovalModeOption[] = [
     id: "auto",
     labelKey: "approval.modeAutoLabel",
     shortKey: "approval.modeAutoShort",
+    briefKey: "approval.modeAutoBrief",
     descKey: "approval.modeAutoDesc",
     badgeKey: "approval.modeAutoBadge",
+  },
+  {
+    id: "trusted",
+    labelKey: "approval.modeTrustedLabel",
+    shortKey: "approval.modeTrustedShort",
+    briefKey: "approval.modeTrustedBrief",
+    descKey: "approval.modeTrustedDesc",
+    badgeKey: "approval.modeTrustedBadge",
   },
   {
     id: "manual",
     labelKey: "approval.modeManualLabel",
     shortKey: "approval.modeManualShort",
+    briefKey: "approval.modeManualBrief",
     descKey: "approval.modeManualDesc",
   },
   {
     id: "unattended",
     labelKey: "approval.modeUnattendedLabel",
     shortKey: "approval.modeUnattendedShort",
+    briefKey: "approval.modeUnattendedBrief",
     descKey: "approval.modeUnattendedDesc",
     badgeKey: "approval.modeUnattendedBadge",
   },
@@ -67,7 +85,6 @@ const MODE_OPTIONS: ApprovalModeOption[] = [
 
 function normalizeDisplayMode(mode: ApprovalMode): ApprovalMode {
   if (mode === "smart") return "auto";
-  if (mode === "trusted") return "unattended";
   return mode;
 }
 
@@ -247,19 +264,24 @@ export default function ApprovalModePill(props: {
 
                     <div class="flex-1 min-w-0">
                       <div class="flex items-center justify-between gap-1.5">
-                        <span
-                          class={`text-[12px] font-medium ${
-                            isSelected()
-                              ? "text-[var(--text-primary)] font-semibold"
-                              : ""
-                          }`}
-                        >
-                          {t(opt.labelKey)}
-                        </span>
+                        <div class="flex items-center gap-1 min-w-0">
+                          <span
+                            class={`truncate text-[12px] font-medium ${
+                              isSelected()
+                                ? "text-[var(--text-primary)] font-semibold"
+                                : ""
+                            }`}
+                          >
+                            {t(opt.labelKey)}
+                          </span>
+                          <HelpTip size={12} text={t(opt.descKey)} />
+                        </div>
                         <Show when={opt.badgeKey}>
                           <span
-                            class={`rounded px-1.5 py-[1px] text-[11px] font-medium ${
-                              opt.id === "trusted" ? "bg-[var(--danger-surface)] text-[var(--danger-text)] border border-[var(--danger-border)]" : "bg-[var(--ok-surface)] text-[var(--ok-text)] border border-[var(--ok-border)]"
+                            class={`shrink-0 rounded px-1.5 py-[1px] text-[10.5px] font-medium ${
+                              opt.id === "trusted" || opt.id === "unattended"
+                                ? "bg-[var(--danger-surface)] text-[var(--danger-text)] border border-[var(--danger-border)]"
+                                : "bg-[var(--ok-surface)] text-[var(--ok-text)] border border-[var(--ok-border)]"
                             }`}
                           >
                             {t(opt.badgeKey!)}
@@ -267,7 +289,7 @@ export default function ApprovalModePill(props: {
                         </Show>
                       </div>
                       <p class="mt-0.5 text-[11px] leading-snug text-[var(--text-muted)]">
-                        {t(opt.descKey)}
+                        {t(opt.briefKey)}
                       </p>
                     </div>
 

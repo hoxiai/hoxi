@@ -20,7 +20,7 @@
 - **远程协同通道**（不开放公网端口，复用同一远程路由白名单）：① **GoPanel 反向隧道**（`internal/tunnel` + `gateway/tunnel.go`），含 APNs 计数推送；② **局域网配对直连**（`internal/pairing` + `gateway/lan.go`，监听 `:5417`，仅限局域网，令牌存 `~/.hoxi/pairing.json`）；③ **Cloudflare Tunnel 与反向代理入口**（`internal/cloudflared` + `gateway/ingress.go`，监听 `127.0.0.1:5418`，仅认独立 `relayToken`，凭据存 `~/.hoxi/cloudflared.json`）
 - **提供商、中转、自动选模与多模态生成**（`internal/provider` + `gateway/media_routes.go`）：① 回环 OpenAI 兼容中转（`relay.go` + `relay_keys.go`，`hk-*` 哈希存 `~/.hoxi/relay-keys.json`，永不入隧道）；② 官方账号直连（`official.go`，独立写入 `hoxi-official`，退出同步清理）；③ `hoxi-auto` 自动池与熔断（`auto_router.go` + `breaker.go` + `quota_reset.go`，存 `~/.hoxi/provider-breakers.json`），前端 `auto-models.ts` 会话粘性选模保 KV Cache，`auto-failover.ts` 遇限流/额度/鉴权/模型错误立即换候选，多轮会话遇瞬态网络/5xx 优先同模型重试 1 次保缓存后再切换；④ 本机图片、视频与语音生成（`hoxi_image` / `hoxi_video` / `hoxi_speech`、`/api/hoxi/media/{image,video,speech,roles}`，默认角色存 `~/.hoxi/media-roles.json`）执行三级自检：先查当前会话模型自身原生输出能力（`session_self`），再查用户在「默认与辅助模型分配」设定的默认媒体模型（`role_default`）或本机已配置专职模型（`configured_model`），无本机能力时返回 `missingCapability` 并由前端 `ToolCard` 展示非模态内联引导卡（去配置本地模型 / 云端 `hoxi_tools` / SVG 替代）；支持 MCP OAuth 2.1 PKCE（`mcp_oauth.go`）
 
-- **任务总览**（`web/src/store/task-overview.ts`）：已完成、失败或取消的编队子任务和子会话可从桌面任务列表移除。移除是本地显示偏好，不删除会话、编队记录、工作树或代码改动；运行中的行不可移除。
+- **任务总览与定时任务**（`internal/scheduler` + `web/src/store/task-overview.ts` + `web/src/store/schedules.ts`）：已完成、失败或取消的编队子任务和子会话可从桌面任务列表移除（本地显示偏好，不删除会话或代码改动；运行中的行不可移除）。工作区级定时任务存本机 `~/.hoxi/schedules.json`（受 `hoxipaths` 与审批策略保护、不入远程隧道），支持 Cron/固定间隔、绑定固定会话或按次新建会话（默认 `local` 不强制 worktree，可选 `worktree` 与命令沙箱）、可选绑定 Skill 与显式模型配置，并可通过原生 `hoxi_schedule` 工具经桌面一次性审批确认创建（定时会话自身禁止递归修改）及 `hoxi schedule` CLI 管理。
 
 ### 1.2 目录结构
 
@@ -38,7 +38,7 @@
 │   ├── provider/                     # [业务层] 提供商配置、llm.Client 实现、本机中转、官方直连、自动池与熔断
 │   ├── worktree/, workspace/         # [业务层] Git worktree 沙箱、Diff、快照 / 多工作区配置
 │   ├── browser/, computer/, termhost/# [业务层] Chrome 检视器、Chrome Link / 原生窗口读取与前台输入 / 宿主 PTY
-│   ├── handoff/, orchestration/, intake/ # [业务层] 跨 CLI 会话接管与桥接 / 多 Agent DAG Convoy 编排 / 单项目测试协作提单与脱敏进度流
+│   ├── handoff/, orchestration/, intake/, scheduler/ # [业务层] 跨 CLI 会话接管与桥接 / 多 Agent DAG Convoy 编排 / 单项目测试协作提单 / 本机工作区级定时任务调度
 │   ├── codeindex/, recall/, forge/   # [业务层] 符号分块、调用链启发式与向量/BM25 索引 / 跨会话 BM25 召回 / GitHub & GitLab
 │   ├── skills/, tools/               # [业务层] Agent Skills 与免 Key 工具网桥
 │   ├── tunnel/, pairing/, cloudflared/, remotehost/ # [业务层] GoPanel 隧道 / 扫码配对与 E2EE / Cloudflare Tunnel / 跨平台 `hoxi host` 无头宿主与挂载
@@ -48,6 +48,7 @@
 ├── web/scripts/                      # check-i18n.ts, check-lines.ts（800 行与分层门禁）, check-cycles.ts, run-tests.ts
 ├── extensions/chrome/                # Chrome Link MV3 扩展（worker.js, protocol.js, popup）
 ├── .hoxi/{skills,memory}/            # Hoxi 项目配置与状态根：.hoxi/skills/ 可随仓库共享，.hoxi/{memory,worktrees,attachments}/ 为 git-ignored
+├── tools/{contractcheck,agenteval}/  # 架构契约门禁（DAG/800行/传输层/插件同步）与原生 Agent 真实编码评测基准
 └── docs/, scripts/                   # 架构护栏、隧道、更新与发版指南 / 一键发版与打包脚本
 ```
 
@@ -55,7 +56,7 @@
 
 ### 1.3 远程请求与断线故障边界
 
-- 桌面消息发送前持久保存有界请求 ID/会话/原目录，不保存提示词或附件正文；断线后按原 ID 回查，未确认（含可能先于原 POST 的 `not_admitted`）阻止重发，确认后刷新历史。业务失败后的新执行仍新 ID，等待后复核取消/轮次。暂未覆盖手机或提交/审批客户端持久恢复；长期未知状态尚无人工解除入口
+- 桌面消息发送前持久保存有界请求 ID/会话/原目录，不保存提示词或附件正文；断线后按原 ID 回查，未确认（含可能先于原 POST 的 `not_admitted`）阻止重发，确认后刷新历史。桌面输入框上方针对长期停留在未知状态或本地记录损坏的会话提供重新核查与二次确认的人工解除锁定横幅（解除后绝不自动重发原命令）。业务失败后的新执行仍新 ID，等待后复核取消/轮次。暂未覆盖手机或提交/审批客户端持久恢复
 - 已存在账本读取失败、JSON 损坏或版本不支持时保留原文件及私有备份，消息/审批/提交准入及回查拒绝，不以空记录覆盖；恢复有效账本并重启后继续，首次安装文件不存在仍正常初始化
 
 - 消息提交、审批答复与工作树提交携带 `clientRequestId` 时，复用现有持久化请求账本；同 ID 内容变化返回 `409 request_conflict`，中断且无法确认的操作返回 `outcome_unknown`，不得自动生成新 ID 重放

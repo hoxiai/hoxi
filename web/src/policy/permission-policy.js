@@ -62,11 +62,12 @@ const DESTRUCTIVE_RE = new RegExp(
     String.raw`(?:>>?|\b(?:cp|mv|install|ln|rsync|tee)\b[^\n;&|]*|\bsed\b[^\n;&|]*[ \t]-[a-z0-9]*i[^\n;&|]*)[ \t]*(?:[^\s;&|]*\/)?\.(?:git\/(?:hooks\/|config\b)|opencode\/|claude\/|agents\/|hoxi\/skills\/|vscode\/settings\.json\b|gemini\/(?:settings|config\/hooks)\.json\b)`,
     // Credential directories and standalone credential files
     String.raw`(?:>>?|\b(?:cp|mv|install|ln|rsync|tee)\b[^\n;&|]*|\bsed\b[^\n;&|]*[ \t]-[a-z0-9]*i[^\n;&|]*)[ \t]*(?:[^\s;&|]*\/)?hoxi\.json(?:$|[\s;&|)'"*?])`,
-    String.raw`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:ssh|aws|gnupg|kube|codex)\/`,
-    String.raw`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?(?:\.config\/opencode|\.local\/share\/opencode)\/`,
-    String.raw`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:netrc|npmrc|git-credentials|credentials\.json)(?:$|[\s;&|)'"*?])`,
+    String.raw`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:ssh|aws|gnupg|kube|azure|codex)\/`,
+    String.raw`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?(?:\.config\/(?:gh|gcloud|opencode)|\.local\/share\/opencode)\/`,
+    String.raw`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?library\/keychains\/`,
+    String.raw`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:netrc|npmrc|pypirc|git-credentials|credentials\.json|claude\.json)(?:$|[\s;&|)'"*?])`,
     String.raw`\.claude\/\.credentials\.json`,
-    String.raw`\.hoxi\/(?:models|media-roles|intake|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|work-apps|dataprofiles|approval-policy|hoxi)\.(?:json|db)`,
+    String.raw`\.hoxi\/(?:models|media-roles|intake|schedules|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|work-apps|dataprofiles|approval-policy|hoxi)\.(?:json|db)`,
     String.raw`\.docker\/config\.json`,
     // .env / .env.* / .envrc and private key files
     ENV_FILE_PATTERN,
@@ -79,7 +80,7 @@ const DESTRUCTIVE_RE = new RegExp(
     String.raw`\bterraform\s+(?:destroy|apply)\b`,
     String.raw`\bkubectl\s+delete\b`,
     String.raw`\bdocker\s+(?:system\s+prune|rm|rmi)\b`,
-    String.raw`\/api\/hoxi\/(?:tools\/run|dataprofiles\b|intake\b|computer\/(?:action|grant|pause|stop))\b`,
+    String.raw`\/api\/hoxi\/(?:tools\/run|dataprofiles\b|intake\b|schedules\b|computer\/(?:action|grant|pause|stop))\b`,
   ].join("|"),
   "i",
 );
@@ -593,8 +594,40 @@ function hasDestructiveGitCleanOrRestore(blob) {
   return false;
 }
 
+const HOXI_SCHEDULE_READ_SUBS = new Set(["list", "ls", "history", "runs", "help", "-h", "--help"]);
+const ENV_ASSIGN_WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+export function hasMutatingHoxiScheduleCommand(blob) {
+  if (!String(blob || "").toLowerCase().includes("schedule")) return false;
+  for (const seg of splitCommandChain(blob)) {
+    const words = shellWords(seg);
+    let i = 0;
+    while (i < words.length) {
+      if (ENV_ASSIGN_WORD_RE.test(words[i])) {
+        i++;
+        continue;
+      }
+      const lw = words[i].replace(/^.*[\\/]/, "").toLowerCase();
+      if (lw === "env" || lw === "command" || lw === "nohup" || lw === "time" || lw === "exec") {
+        i++;
+        while (i < words.length && words[i].startsWith("-")) i++;
+        continue;
+      }
+      break;
+    }
+    if (words.length - i < 2) continue;
+    const base = words[i].replace(/^.*[\\/]/, "").toLowerCase();
+    if ((base === "hoxi" || base === "hoxi.exe") && words[i + 1].toLowerCase() === "schedule") {
+      if (words.length - i < 3 || !HOXI_SCHEDULE_READ_SUBS.has(words[i + 2].toLowerCase())) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function matchesDestructive(blob) {
-  return DESTRUCTIVE_RE.test(blob) || DESTRUCTIVE_GIT_RE.test(blob) || hasDestructiveGitCleanOrRestore(blob) || hasProtectedGitOutput(blob, splitCommandChain, shellWords) || hasUnsafeClaudeSkillShellAccess(blob, splitCommandChain, shellWords);
+  return DESTRUCTIVE_RE.test(blob) || DESTRUCTIVE_GIT_RE.test(blob) || hasDestructiveGitCleanOrRestore(blob) || hasProtectedGitOutput(blob, splitCommandChain, shellWords) || hasUnsafeClaudeSkillShellAccess(blob, splitCommandChain, shellWords) || hasMutatingHoxiScheduleCommand(blob);
 }
 
 function hoxiToolsAction(input) {
@@ -637,13 +670,28 @@ function isMutatingHoxiData(input) {
   return true;
 }
 
+function isMutatingHoxiSchedule(input) {
+  const permission = String(input?.permission || input?.type || "").toLowerCase();
+  const meta = input?.metadata || {};
+  const toolName = String(meta.tool || input?.tool?.name || input?.patterns?.[0] || "").trim().toLowerCase();
+  if (permission !== "hoxi_schedule" && toolName !== "hoxi_schedule") return false;
+  let argsObj = null;
+  if (meta.args && typeof meta.args === "object") {
+    argsObj = meta.args;
+  } else if (typeof meta.args === "string" && meta.args.trim().startsWith("{")) {
+    try { argsObj = JSON.parse(meta.args); } catch { /* ignore */ }
+  }
+  const act = String(meta.action || argsObj?.action || "").trim().toLowerCase();
+  return act !== "list" && act !== "get";
+}
+
 export function isDestructivePermissionRequest(input) {
   const permission = String(input?.permission || input?.type || "").toLowerCase();
   if (permission === "hoxi_computer" || String(input?.metadata?.tool || "").toLowerCase() === "hoxi_computer") return true;
   if (permission === "doom_loop") return true;
   const hoxiTools = hoxiToolsAction(input);
   if (hoxiTools.isHoxiTools) return hoxiTools.action !== "discover" && hoxiTools.action !== "inspect";
-  if (isMutatingHoxiData(input)) return true;
+  if (isMutatingHoxiData(input) || isMutatingHoxiSchedule(input)) return true;
   if (hasNonCanonicalClaudeSkillPath(input)) return true;
   if (permission === "external_directory") {
     // OpenCode raises this for every read/write outside the session directory,

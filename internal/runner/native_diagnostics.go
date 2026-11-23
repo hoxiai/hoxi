@@ -1,9 +1,12 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,6 +20,7 @@ import (
 const (
 	maxTrackedTSCCacheSessions = 128
 	diagToolCooldownDuration   = 60 * time.Second
+	maxNativeJSONDiagBytes     = 8 << 20
 )
 
 var (
@@ -57,8 +61,22 @@ func noteDiagToolBudgetExceeded(sessionID, extKey string) {
 	diagCooldownMu.Unlock()
 }
 
+// RunNativeDiagnostics runs Hoxi's post-edit static diagnostic checks against
+// filePath within worktreeRoot using the same checker logic as native sessions.
+func (s *Service) RunNativeDiagnostics(ctx context.Context, sessionID, worktreeRoot, filePath string) string {
+	rec := SessionRecord{
+		ID:           strings.TrimSpace(sessionID),
+		Runtime:      string(RuntimeNative),
+		ProjectDir:   worktreeRoot,
+		WorktreePath: worktreeRoot,
+		SandboxMode:  "off",
+	}
+	return s.nativeDiagnostics(rec)(ctx, worktreeRoot, filePath)
+}
+
 // nativeDiagnostics runs fast post-edit/write static checks (go vet for Go
-// packages, tsc --noEmit for TypeScript, vue-tsc/oxlint for Vue SFCs, cargo
+// packages, tsc --noEmit for TypeScript, node --check/oxlint for JavaScript,
+// pure-Go syntax check for JSON/JSONC, vue-tsc/oxlint for Vue SFCs, cargo
 // check for Rust, php -l for PHP, ruff/ast for Python, and dart analyze for
 // Flutter/Dart) under the same Seatbelt confinement and sanitized environment
 // as the session itself, cooling down any checker that exceeds its budget.
@@ -89,6 +107,12 @@ func (s *Service) nativeDiagnostics(rec SessionRecord) func(ctx context.Context,
 			res = s.runNativeGoVetDiagnostic(diagCtx, rec, worktreeRoot, filePath)
 		case ".ts", ".tsx", ".mts", ".cts":
 			res = s.runNativeTSCDiagnostic(diagCtx, rec, worktreeRoot, filePath)
+		case ".js", ".mjs", ".cjs":
+			res = s.runNativeJSDiagnostic(diagCtx, rec, worktreeRoot, filePath)
+		case ".jsx":
+			res = s.runNativeJSXDiagnostic(diagCtx, rec, worktreeRoot, filePath)
+		case ".json":
+			res = runNativeJSONDiagnostic(filePath)
 		case ".vue":
 			res = s.runNativeVueDiagnostic(diagCtx, rec, worktreeRoot, filePath)
 		case ".rs":
@@ -256,6 +280,234 @@ func cleanupSessionTSCCache(sessionID string) {
 
 func isUnsupportedTSCIncrementalError(out string) bool {
 	return strings.Contains(out, "TS5052") || strings.Contains(out, "TS5053") || strings.Contains(out, "TS5069") || strings.Contains(out, "TS5074")
+}
+
+func (s *Service) runNativeJSDiagnostic(ctx context.Context, rec SessionRecord, worktreeRoot, filePath string) string {
+	pkgRoot := findAncestorWithFile(filepath.Dir(filePath), worktreeRoot, "package.json")
+	if pkgRoot == "" {
+		pkgRoot = worktreeRoot
+	}
+	if nodeBin := resolveNativeToolBinary(rec, "node"); nodeBin != "" {
+		out, code, err := s.execNativeConfined(ctx, rec, nil, pkgRoot, nodeBin, []string{"--check", filePath}, "", nativeDiagMaxOutputBytes*2)
+		if ctx.Err() != nil {
+			return ""
+		}
+		if err == nil && code == 0 {
+			return "Passed: node --check."
+		}
+		if formatted := formatDiagnosticLines(out, filepath.Base(filePath), nativeDiagMaxLines, nativeDiagMaxOutputBytes); formatted != "" {
+			return "[node --check]\n" + formatted
+		}
+		return diagnosticExitStatus(code, err)
+	}
+	return s.runNativeJSXDiagnostic(ctx, rec, worktreeRoot, filePath)
+}
+
+func (s *Service) runNativeJSXDiagnostic(ctx context.Context, rec SessionRecord, worktreeRoot, filePath string) string {
+	pkgRoot := findAncestorWithFile(filepath.Dir(filePath), worktreeRoot, "package.json")
+	if pkgRoot == "" {
+		pkgRoot = worktreeRoot
+	}
+	if oxlintBin := resolveWorkspaceNodeBin(rec, pkgRoot, worktreeRoot, "oxlint"); oxlintBin != "" {
+		out, code, err := s.execNativeConfined(ctx, rec, nil, pkgRoot, oxlintBin, []string{"--quiet", filePath}, "", nativeDiagMaxOutputBytes*2)
+		if ctx.Err() != nil {
+			return ""
+		}
+		if err == nil && code == 0 {
+			return "Passed: oxlint."
+		}
+		if formatted := formatDiagnosticLines(out, filepath.Base(filePath), nativeDiagMaxLines, nativeDiagMaxOutputBytes); formatted != "" {
+			return "[oxlint]\n" + formatted
+		}
+		return diagnosticExitStatus(code, err)
+	}
+	return ""
+}
+
+func isJSONCConfigFile(filePath string) bool {
+	base := strings.ToLower(filepath.Base(filePath))
+	parent := strings.ToLower(filepath.Base(filepath.Dir(filePath)))
+	if base == "hoxi.json" || base == "opencode.json" || parent == ".vscode" {
+		return true
+	}
+	if strings.HasSuffix(base, ".json") && (strings.HasPrefix(base, "tsconfig") || strings.HasPrefix(base, "jsconfig")) {
+		return true
+	}
+	return false
+}
+
+// normalizeJSONC strips // and /* */ comments and trailing commas outside
+// string literals while preserving newlines and exact 1:1 byte offsets.
+func normalizeJSONC(src []byte) ([]byte, int, bool) {
+	out := make([]byte, len(src))
+	inString := false
+	escaped := false
+	for i := 0; i < len(src); i++ {
+		b := src[i]
+		if inString {
+			out[i] = b
+			if escaped {
+				escaped = false
+			} else if b == '\\' {
+				escaped = true
+			} else if b == '"' {
+				inString = false
+			}
+			continue
+		}
+		if b == '"' {
+			inString = true
+			out[i] = b
+			continue
+		}
+		if b == '/' && i+1 < len(src) && src[i+1] == '/' {
+			out[i] = ' '
+			out[i+1] = ' '
+			i += 2
+			for i < len(src) && src[i] != '\n' {
+				if src[i] == '\r' {
+					out[i] = '\r'
+				} else {
+					out[i] = ' '
+				}
+				i++
+			}
+			if i < len(src) {
+				out[i] = '\n'
+			}
+			continue
+		}
+		if b == '/' && i+1 < len(src) && src[i+1] == '*' {
+			start := i
+			out[i] = ' '
+			out[i+1] = ' '
+			i += 2
+			closed := false
+			for i < len(src) {
+				if src[i] == '*' && i+1 < len(src) && src[i+1] == '/' {
+					out[i] = ' '
+					out[i+1] = ' '
+					i++
+					closed = true
+					break
+				}
+				if src[i] == '\n' || src[i] == '\r' {
+					out[i] = src[i]
+				} else {
+					out[i] = ' '
+				}
+				i++
+			}
+			if !closed {
+				return nil, start, false
+			}
+			continue
+		}
+		out[i] = b
+	}
+
+	// Second pass: clear trailing commas before } or ] outside strings.
+	inString = false
+	escaped = false
+	for i := 0; i < len(out); i++ {
+		b := out[i]
+		if inString {
+			if escaped {
+				escaped = false
+			} else if b == '\\' {
+				escaped = true
+			} else if b == '"' {
+				inString = false
+			}
+			continue
+		}
+		if b == '"' {
+			inString = true
+			continue
+		}
+		if b == ',' {
+			j := i + 1
+			for j < len(out) && (out[j] == ' ' || out[j] == '\t' || out[j] == '\r' || out[j] == '\n') {
+				j++
+			}
+			if j < len(out) && (out[j] == '}' || out[j] == ']') {
+				out[i] = ' '
+			}
+		}
+	}
+	return out, 0, true
+}
+
+func offsetToLineCol(src []byte, offset int) (int, int) {
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > len(src) {
+		offset = len(src)
+	}
+	line := 1
+	col := 1
+	for i := 0; i < offset; {
+		r, size := utf8.DecodeRune(src[i:offset])
+		if r == '\n' {
+			line++
+			col = 1
+		} else if r != '\r' {
+			col++
+		}
+		i += size
+	}
+	return line, col
+}
+
+func runNativeJSONDiagnostic(filePath string) string {
+	st, err := os.Stat(filePath)
+	if err != nil || st.IsDir() {
+		return ""
+	}
+	if st.Size() > maxNativeJSONDiagBytes {
+		return "Not run: JSON file exceeds diagnostic size limit."
+	}
+	raw, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Sprintf("Check failed: %v", err)
+	}
+	data := bytes.TrimPrefix(raw, []byte{0xEF, 0xBB, 0xBF})
+	isJSONC := isJSONCConfigFile(filePath)
+	checkBuf := data
+	if isJSONC {
+		norm, badPos, ok := normalizeJSONC(data)
+		if !ok {
+			line, col := offsetToLineCol(data, badPos)
+			return fmt.Sprintf("[jsonc]\n%s:%d:%d: unterminated block comment", filepath.Base(filePath), line, col)
+		}
+		checkBuf = norm
+	}
+	if json.Valid(checkBuf) {
+		if isJSONC {
+			return "Passed: jsonc syntax."
+		}
+		return "Passed: json syntax."
+	}
+	var parsed any
+	uErr := json.Unmarshal(checkBuf, &parsed)
+	tag := "json"
+	if isJSONC {
+		tag = "jsonc"
+	}
+	var synErr *json.SyntaxError
+	if errors.As(uErr, &synErr) {
+		pos := int(synErr.Offset)
+		if pos > 0 {
+			pos--
+		}
+		line, col := offsetToLineCol(data, pos)
+		return fmt.Sprintf("[%s]\n%s:%d:%d: %s", tag, filepath.Base(filePath), line, col, synErr.Error())
+	}
+	if uErr != nil {
+		return fmt.Sprintf("[%s]\n%s: %v", tag, filepath.Base(filePath), uErr)
+	}
+	return fmt.Sprintf("[%s]\n%s: invalid JSON syntax", tag, filepath.Base(filePath))
 }
 
 func (s *Service) runNativeVueDiagnostic(ctx context.Context, rec SessionRecord, worktreeRoot, filePath string) string {

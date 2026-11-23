@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   One-line Windows installer for Hoxi Desktop.
@@ -14,6 +14,8 @@
 param(
   [string]$Version = "",
   [string]$InstallDir = (Join-Path $env:LOCALAPPDATA "Programs\Hoxi"),
+  [string]$Mirror = $env:HOXI_INSTALL_MIRROR,
+  [string]$Proxy = $env:HOXI_INSTALL_PROXY,
   [switch]$Portable,
   [switch]$NoLaunch
 )
@@ -38,7 +40,11 @@ $ApiUrl = if ([string]::IsNullOrWhiteSpace($Version)) {
 
 Write-Host "==> Fetching Hoxi release metadata from GitHub..." -ForegroundColor Cyan
 $Headers = @{ "User-Agent" = "Hoxi-Windows-Installer" }
-$Release = Invoke-RestMethod -Uri $ApiUrl -Headers $Headers -Method Get
+$RestParams = @{ Uri = $ApiUrl; Headers = $Headers; Method = "Get" }
+if (-not [string]::IsNullOrWhiteSpace($Proxy)) {
+  $RestParams["Proxy"] = $Proxy
+}
+$Release = Invoke-RestMethod @RestParams
 $TagName = [string]$Release.tag_name
 $Ver = $TagName.TrimStart("v", "V")
 if ([string]::IsNullOrWhiteSpace($Ver)) {
@@ -51,6 +57,34 @@ $ZipName   = "Hoxi-$Ver-windows-$Arch.zip"
 $SetupAsset = $Release.assets | Where-Object { $_.name -eq $SetupName } | Select-Object -First 1
 $ZipAsset   = $Release.assets | Where-Object { $_.name -eq $ZipName }   | Select-Object -First 1
 
+function Build-MirrorUrl {
+  param(
+    [Parameter(Mandatory = $true)][string]$Prefix,
+    [Parameter(Mandatory = $true)][string]$OfficialUrl,
+    [Parameter(Mandatory = $true)][string]$FileName
+  )
+  $CleanPrefix = $Prefix.Trim().TrimEnd("/")
+  if ($CleanPrefix -notmatch "^https://[^/\s]+") {
+    throw "Mirror URL must use HTTPS: $Prefix"
+  }
+  if ($CleanPrefix -match "^https://[^/]+/.+") {
+    return "$CleanPrefix/v$Ver/$FileName"
+  }
+  return "$CleanPrefix/$OfficialUrl"
+}
+
+function Invoke-HoxiDownload {
+  param(
+    [Parameter(Mandatory = $true)][string]$Uri,
+    [Parameter(Mandatory = $true)][string]$OutFile
+  )
+  $WebParams = @{ Uri = $Uri; OutFile = $OutFile; UseBasicParsing = $true }
+  if (-not [string]::IsNullOrWhiteSpace($Proxy)) {
+    $WebParams["Proxy"] = $Proxy
+  }
+  Invoke-WebRequest @WebParams
+}
+
 function Get-VerifiedDownload {
   param(
     [Parameter(Mandatory = $true)][string]$AssetUrl,
@@ -62,9 +96,26 @@ function Get-VerifiedDownload {
   $ShaFile = "$OutFile.sha256"
   $ShaUrl  = "$AssetUrl.sha256"
 
-  Write-Host "==> Downloading $FileName..." -ForegroundColor Cyan
-  Invoke-WebRequest -Uri $AssetUrl -OutFile $OutFile -UseBasicParsing
-  Invoke-WebRequest -Uri $ShaUrl -OutFile $ShaFile -UseBasicParsing
+  # Security invariant: SHA-256 sidecar is always fetched from the official origin,
+  # never from a user-supplied mirror.
+  Write-Host "==> Fetching official SHA-256 checksum for $FileName..." -ForegroundColor Cyan
+  Invoke-HoxiDownload -Uri $ShaUrl -OutFile $ShaFile
+
+  $Downloaded = $false
+  if (-not [string]::IsNullOrWhiteSpace($Mirror)) {
+    $MirrorUrl = Build-MirrorUrl -Prefix $Mirror -OfficialUrl $AssetUrl -FileName $FileName
+    Write-Host "==> Downloading $FileName via mirror..." -ForegroundColor Cyan
+    try {
+      Invoke-HoxiDownload -Uri $MirrorUrl -OutFile $OutFile
+      $Downloaded = $true
+    } catch {
+      Write-Host "==> Mirror download failed; falling back to official release URL..." -ForegroundColor Yellow
+    }
+  }
+  if (-not $Downloaded) {
+    Write-Host "==> Downloading $FileName..." -ForegroundColor Cyan
+    Invoke-HoxiDownload -Uri $AssetUrl -OutFile $OutFile
+  }
 
   $RawSha = (Get-Content -Path $ShaFile -Raw).Trim()
   $ExpectedSha = ($RawSha -split "\s+" | Where-Object { $_ -match "^[0-9a-fA-F]{64}$" } | Select-Object -First 1)

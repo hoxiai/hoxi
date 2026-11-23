@@ -45,14 +45,16 @@ import {
   eraseSubshells,
   findSubshellSpans,
   isHarmlessSet,
+  processSubstitutionEnd,
   setLiteralJudge,
   shellExpansionNames,
   skipSafeBraceSpan,
+  splitConstSegments,
   unwrapCommandPrefixes,
   wordExpansionNames,
 } from "./shell-constants.js";
 import { inlineScriptsReadOnly } from "./inline-script-readonly.js";
-import { containsMktempPlaceholder, isExactMktempPlaceholderPath, isSafeDoubleBracketArgs } from "./shell-idioms.js";
+import { containsMktempPlaceholder, isBenignToolchainEnvAssignment, isExactMktempPlaceholderPath, isSafeDoubleBracketArgs, unwrapTopLevelSingleQuotedShellC } from "./shell-idioms.js";
 import {
   SEQ_LOOP_PLACEHOLDER,
   gitReadOnlyLoopExpansions,
@@ -63,8 +65,10 @@ import {
   isSafeHomeScriptWord,
   isSafeShellScriptSegment,
   isSafeXargsSegment,
+  isScopedDirCDArg,
   isStdinOnlyHeadTail,
   normalizeNumericForHeaders,
+  scopedDirVarsForSubshell,
 } from "./shell-loops.js";
 
 const BENIGN_PATH_EXPORT_RE = /^export[ \t]+PATH=[A-Za-z0-9_./:$~{}-]+$/;
@@ -87,6 +91,7 @@ const DOT_GLOB_RE = /(^|\/)\.[^/]*[*?]/;
 const GIT_GLOBAL_VALUE_FLAGS = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"]);
 
 const baseName = (w) => (w.includes("/") ? w.slice(w.lastIndexOf("/") + 1) : w);
+const isGlobCommandWord = (w) => /[*?]/.test(w) || (w !== "[" && w !== "[[" && w.includes("["));
 
 function hasOpaqueShellSyntax(s) {
   let quote = "";
@@ -321,7 +326,30 @@ function runsScriptNamedElsewhere(command) {
   return false;
 }
 
-function isOpaqueShellCommandDepth(command, worktree, options, depth) {
+function subshellsClear(command, spans, worktree, options, depth) {
+  const scopedDeps = {
+    literalCDTarget,
+    stripCDNullRedirects,
+    eraseSubshells,
+    splitConstSegments,
+    shellWords,
+    normalizeAbsoluteTool,
+    harmlessEnvVars: HARMLESS_ENV_VARS,
+    processSubstitutionEnd,
+  };
+  for (const [start, end] of spans) {
+    const body = command.slice(start + 1, end);
+    if (!isOpaqueShellCommandDepth(body, worktree, options, depth + 1, null)) continue;
+    if (depth === 0 && !isDestructivePermissionRequest({ permission: "bash", patterns: [body] })) {
+      const dirs = scopedDirVarsForSubshell(command, start, end, scopedDeps);
+      if (dirs && dirs.size > 0 && !isOpaqueShellCommandDepth(body, worktree, options, depth + 1, dirs)) continue;
+    }
+    return false;
+  }
+  return true;
+}
+
+function isOpaqueShellCommandDepth(command, worktree, options, depth, scopedDirs = null) {
   const raw = String(command ?? "");
   if (depth > MAX_SUBSHELL_DEPTH || raw.includes(CMD_SUBST_VAR) || raw.includes(SEQ_LOOP_PLACEHOLDER) || (depth === 0 && containsMktempPlaceholder(raw))) return true;
   const trust = options.allowInlineScripts ? "full" : options.inlineOnly ? "readonly" : "none";
@@ -334,26 +362,33 @@ function isOpaqueShellCommandDepth(command, worktree, options, depth) {
   }
   joined = normalizeNumericForHeaders(joined);
   joined = maskRemoteSSHSegments(joined);
+  if (depth === 0) {
+    joined = unwrapTopLevelSingleQuotedShellC(
+      joined,
+      (inner) => !isOpaqueShellCommandDepth(inner, worktree, {}, depth + 1),
+      { wordExpansionNames, harmlessEnvVars: HARMLESS_ENV_VARS, isTempPathArg }
+    );
+  }
   const spans = findSubshellSpans(joined);
   if (!spans) return true;
-  if (spans.every(([start, end]) => !isOpaqueShellCommandDepth(joined.slice(start + 1, end), worktree, options, depth + 1))) {
+  if (subshellsClear(joined, spans, worktree, options, depth)) {
     const erased = eraseSubshells(joined);
-    if (!opaqueShellCore(erased, worktree, trust, commandSubsAreValueClass(erased))) return false;
+    if (!opaqueShellCore(erased, worktree, trust, commandSubsAreValueClass(erased), scopedDirs)) return false;
   }
   const expanded = concretizeLiterals(joined);
   if (expanded.status === "secret" || expanded.status === "reject") return true;
   if (expanded.status === "applied") {
     const expSpans = findSubshellSpans(expanded.text);
-    if (!expSpans || expSpans.some(([start, end]) => isOpaqueShellCommandDepth(expanded.text.slice(start + 1, end), worktree, options, depth + 1))) {
+    if (!expSpans || !subshellsClear(expanded.text, expSpans, worktree, options, depth)) {
       return true;
     }
     const erased = eraseSubshells(expanded.text);
-    return opaqueShellCore(erased, worktree, trust, commandSubsAreValueClass(erased));
+    return opaqueShellCore(erased, worktree, trust, commandSubsAreValueClass(erased), scopedDirs);
   }
   return true;
 }
 
-function opaqueShellCore(command, worktree, trust, valueClass) {
+function opaqueShellCore(command, worktree, trust, valueClass, scopedDirs = null) {
   command = String(command ?? "").trim();
   if (!command) return true;
   const unwrapped = extractProcessSubstitutions(command);
@@ -362,14 +397,25 @@ function opaqueShellCore(command, worktree, trust, valueClass) {
   let cwd = String(worktree || "").trim() || ".";
   if (segments.length === 0) return true;
   let outsideCWD = false;
+  let usedDynamicCD = false;
   let hasExec = false;
   const vars = loopBindings(segments, pipedIn, valueClass);
+  let activeScopedDirs = null;
+  if (scopedDirs && scopedDirs.size > 0) {
+    activeScopedDirs = new Set();
+    for (const name of scopedDirs) {
+      if (!vars.has(name)) {
+        vars.set(name, true);
+        activeScopedDirs.add(name);
+      }
+    }
+  }
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i].trim();
     if (!seg || seg.startsWith("#")) continue;
     const words = stripShellKeywords(shellWords(seg));
     if (words.length === 0) continue;
-    if (hasDollarExpansion(seg) && !isBenignPathExport(seg) && !expansionsAreBounded(seg, words, vars, valueClass)) return true;
+    if (hasDollarExpansion(seg) && !isBenignPathExport(seg) && !expansionsAreBounded(seg, words, vars, valueClass, activeScopedDirs)) return true;
     if (words[0] === "for") continue;
     hasExec = true;
     let cmdIdx = 0;
@@ -379,6 +425,7 @@ function opaqueShellCore(command, worktree, trust, valueClass) {
     if (!unwrapped) return true;
     if (unwrapped.lookupOnly) continue;
     const cmdWords = unwrapped.words;
+    if (cmdWords.length === 0 || isGlobCommandWord(cmdWords[0])) return true;
     const norm = normalizeAbsoluteTool(cmdWords[0]);
     const base = norm.includes("/") ? norm.slice(norm.lastIndexOf("/") + 1) : norm;
     const args = cmdWords.slice(1);
@@ -387,9 +434,11 @@ function opaqueShellCore(command, worktree, trust, valueClass) {
       continue;
     }
     if (base === "cd" || base === "pushd" || base === "popd") {
-      if (base !== "cd" || outsideCWD) {
+      if (base !== "cd" || outsideCWD || usedDynamicCD) {
         outsideCWD = true;
         cwd = "";
+      } else if (isScopedDirCDArg(seg, activeScopedDirs, { stripCDNullRedirects, harmlessEnvVars: HARMLESS_ENV_VARS })) {
+        usedDynamicCD = true;
       } else {
         const [nextCWD, ok] = advanceScopedCD(seg, cwd, worktree);
         if (ok) cwd = nextCWD;
@@ -402,11 +451,12 @@ function opaqueShellCore(command, worktree, trust, valueClass) {
     }
     if (outsideCWD && !isTempOnlyCleanupSegment(cmdWords)) return true;
     const prevSeg = i > 0 ? segments[i - 1] : "";
+    const scriptCWD = usedDynamicCD ? "" : cwd;
     if (
       DATA_ARG_INTERPRETERS.has(base) &&
       !(base === "xargs" && isSafeXargsSegment(args, i > 0 && pipedIn[i], prevSeg, { stripNullRedirects, normalizeAbsoluteTool, isSafeListingPipeline })) &&
       !(base === "ssh" && args.length === 1 && args[0] === "Q") &&
-      !isSafeShellScriptSegment(base, args, i > 0 && pipedIn[i], { stripNullRedirects, isSecretPath, isSensitiveExternalPath, isProtectedPath, allowFileScripts: trust === "full", allowProjectScripts: trust === "readonly", worktree, cwd })
+      !isSafeShellScriptSegment(base, args, i > 0 && pipedIn[i], { stripNullRedirects, isSecretPath, isSensitiveExternalPath, isProtectedPath, allowFileScripts: trust === "full", allowProjectScripts: trust === "readonly", worktree, cwd: scriptCWD })
     ) {
       return true;
     }
@@ -665,7 +715,7 @@ function isSafeListingPipeline(cmd) {
   return true;
 }
 
-function expansionsAreBounded(seg, words, vars, valueClass = false) {
+function expansionsAreBounded(seg, words, vars, valueClass = false, scopedDirs = null) {
   if (shellExpansionNames(seg) === null) return false;
   if (words.length === 1 && valueClass && words[0].endsWith("=$" + CMD_SUBST_VAR)) return true;
   const homeDeps = {
@@ -677,22 +727,24 @@ function expansionsAreBounded(seg, words, vars, valueClass = false) {
   };
   let j = 0;
   while (j < words.length && ENV_VAR_ASSIGNMENT_WORD_RE.test(words[j])) {
-    if (words[j].includes("$") && !isBenignPathAssignment(words[j])) return false;
+    if (words[j].includes("$") && !isBenignToolchainEnvAssignment(words[j], wordExpansionNames, HARMLESS_ENV_VARS)) return false;
     j++;
   }
   if (j >= words.length) return true;
   if (words[j].includes("$") && !isSafeHomeScriptWord(words[j], vars, homeDeps)) return false;
   const base = baseName(normalizeAbsoluteTool(words[j]));
   const args = words.slice(j + 1);
-  if (base === "export") return args.every((a) => !a.includes("$") || isBenignPathAssignment(a));
-  if (base === "cd") return args.length === 1 && isSafeHomePathWord(args[0], vars, homeDeps);
+  if (base === "export") return args.every((a) => !a.includes("$") || isBenignToolchainEnvAssignment(a, wordExpansionNames, HARMLESS_ENV_VARS));
+  if (base === "cd") {
+    return args.length === 1 && (isSafeHomePathWord(args[0], vars, homeDeps) || isScopedDirCDArg(seg, scopedDirs, { stripCDNullRedirects, harmlessEnvVars: HARMLESS_ENV_VARS }));
+  }
   const expanding = args.filter((a) => a.includes("$"));
   if (expanding.length === 0) return true;
   if (base === "git") return gitMessageExpansionsOnly(args, vars) || gitReadOnlyLoopExpansions(args, vars, homeDeps);
   if (!vars.has("HOME") && (base === "sh" || base === "bash" || base === "zsh") && isSafeShellScriptSegment(base, args, false, { stripNullRedirects, isSecretPath, isSensitiveExternalPath, isProtectedPath })) return true;
   const safeDoubleBracket = base === "[[" && isSafeDoubleBracketArgs(args);
   const readOnlyTool = READ_ONLY_DATA_TOOLS.has(base) || (base === "sed" && isReadOnlySedArgs(args, stripNullRedirects)) || safeDoubleBracket;
-  if (!readOnlyTool && !(valueClass && base === "mkdir")) return false;
+  if (!readOnlyTool && !(valueClass && acceptsValueClassArg(base))) return false;
   for (const a of args) {
     if (a.startsWith("--pre") || a.startsWith("--hostname-bin") || a.startsWith("--compress-program") || (base === "printf" && a === "-v")) {
       return false;

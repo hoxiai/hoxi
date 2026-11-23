@@ -40,7 +40,7 @@ Running two agents at once in the same repo overwrites uncommitted files and bre
 ### 2. Rate Limits, CLI Silos & Lost Context
 When Claude Code hits a usage cap mid-refactor, or an agent loops on a bug, switching tools usually means re-explaining your entire task from scratch.
 - **Multi-Runtime Unified Timeline**: Run out of the box on Hoxi's in-process **Go Native Agent Engine** (`native`, zero external CLI or sidecar required), or orchestrate **Claude Code** (`claude`), **OpenAI Codex CLI** (`codex`), **OpenCode** (`opencode`), **Google Antigravity** (`agy`), **Gemini CLI** (`gemini`), **Qoder**, and **CodeBuddy** natively inside the same 3-pane shell. Switch runtimes mid-session without losing your thread. Qoder and CodeBuddy run read-only (Plan mode) only—their CLIs have no PreToolUse approval gate.
-- **Nested Subagent Inspection**: Bounded parallel subagents spawned by the Hoxi Native Engine, Claude Code, or Antigravity render as interactive, collapsible task trees (`AgentStackPill`) instead of opaque stdout dumps.
+- **Nested Subagent Inspection**: Bounded parallel subagents spawned by the Hoxi Native Engine, Claude Code, or Antigravity render as interactive, collapsible task trees instead of opaque stdout dumps.
 - **1-Click Cross-CLI Session Handoff**: Scans local histories from **Claude Code**, **OpenAI Codex CLI**, **Grok CLI**, **Antigravity / Gemini CLI**, **OpenCode**, **Trae**, **Qoder**, and **CodeBuddy**. Imports every turn, reasoning block, and normalized tool call, and synthesizes an **8-dimension handoff memory** so the next model continues seamlessly.
 
 ### 3. Blind Auto-Approve vs. Terminal Babysitting

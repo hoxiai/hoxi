@@ -39,7 +39,6 @@ export const companion: I18nDictionary["companion"] = {
   poke4: "看似毫无用处的桌面挂件，实乃深夜改 Bug 必不可少的赛博电子布洛芬",
 
   // Welcome Stage quick actions & labels
-  welcomeSubtitle: "原生多 Agent 研发工作台 · 痛机伴侣舞台",
   actionHandoff: "接管外部 CLI 会话",
   actionSwitchWorktree: "开启 Worktree 沙盒",
   actionWorktreeActive: "Worktree 沙盒已开启",
@@ -55,7 +54,6 @@ export const companion: I18nDictionary["companion"] = {
   enableLabel: "开启工作区看板娘 / 桌宠",
   enableDesc: "实时响应会话思考、多路并行、502 故障切流与高危命令硬拦截提醒",
   personaLabel: "伴侣形象选择",
-  personaDesc: "内置矢量形象会自动跟随当前主题强调色换装，也支持导入自定义透明立绘",
   personaHoxiChan: "呼吸酱（二次元少女）",
   personaNekoBot: "Neko-01（赛博黑猫）",
   personaCustom: "自定义立绘",

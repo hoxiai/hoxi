@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/cli"
+	"github.com/hoxiai/hoxi/internal/diagnostics"
 	"github.com/hoxiai/hoxi/internal/gateway"
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/remotehost"
@@ -50,6 +51,7 @@ func RunHostDaemon(ctx context.Context, opts cli.HostStartOptions, stdout, stder
 	gw.StartStorageMaintenance(ctx)
 	gw.StartLegacySessionImport()
 	gw.StartIdleMemoryRelease(ctx)
+	gw.StartScheduler(ctx)
 	ledger := openReclaimLedger(logger)
 	gw.SetBrowserLedger(ledger)
 	defer gw.CloseBrowser()
@@ -72,8 +74,12 @@ func RunHostDaemon(ctx context.Context, opts cli.HostStartOptions, stdout, stder
 
 	hostInfo := remotehost.BuildHostInfo(cfg.HostID, cfg.Name, cfg.RootDir)
 	handler := remotehost.WrapBearerGuardWithGatewayToken(cfg.Token, gatewayToken, hostInfo, gw)
+	if !opts.AllowPublic {
+		handler = remotehost.WrapPrivateNetworkGuard(handler)
+	}
 	srv := &http.Server{
 		Handler:           gateway.GuardAppProtocolFromRemote(handler),
+		ErrorLog:          diagnostics.NewQuietHTTPServerLogger(),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}

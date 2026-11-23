@@ -64,6 +64,7 @@ export * from "./api-types";
 export * from "./skills-types";
 export { skillsAPI } from "./skills";
 export type { CliLinkStatus };
+export type { OrchestratorConfig, PromptOrchestrator } from "./provider-api";
 export {
   authAPI,
   cliLinkAPI,
@@ -462,6 +463,7 @@ export const hoxiAPI = {
     options?: {
       agent?: "build" | "plan" | string;
       model?: { providerID: string; modelID: string };
+      orchestrator?: import("./provider-api").PromptOrchestrator;
       variant?: string;
       fastMode?: boolean;
       directory?: string;
@@ -491,6 +493,7 @@ export const hoxiAPI = {
           agent: options?.agent || "build",
           clientRequestId,
           ...(options?.model ? { model: options.model } : {}),
+          ...(options?.orchestrator ? { orchestrator: options.orchestrator } : {}),
           ...(options?.imageOptions ? { imageOptions: options.imageOptions } : {}),
           ...(options?.variant ? { variant: options.variant } : {}),
           ...(options?.fastMode ? { fastMode: true } : {}),

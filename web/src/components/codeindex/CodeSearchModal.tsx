@@ -4,6 +4,7 @@ import { Presence } from "../motion/Presence";
 import { History, LoaderCircle, RefreshCw, Search, X } from "lucide-solid";
 import { t } from "../../i18n";
 import {
+  errorMessageOf,
   fetchCodeIndexStatus,
   refreshCodeIndex,
   searchCodeIndex,
@@ -55,7 +56,7 @@ export default function CodeSearchModal(props: {
       const next = await fetchCodeIndexStatus(dir);
       if (current === generation) setStatus(next);
     } catch (err) {
-      if (current === generation) setError(String(err));
+      if (current === generation) setError(errorMessageOf(err, t("common.error")));
     } finally {
       if (current === generation) setBuilding(false);
     }
@@ -111,7 +112,7 @@ export default function CodeSearchModal(props: {
           if (current === generation) setError(null);
         })
         .catch((err) => {
-          if (current === generation) setError(String(err));
+          if (current === generation) setError(errorMessageOf(err, t("common.error")));
         })
         .finally(() => {
           if (current === generation) setSearching(false);
@@ -134,7 +135,7 @@ export default function CodeSearchModal(props: {
         if (current === generation) setCodeResults(response.results);
       }
     } catch (err) {
-      if (current === generation) setError(String(err));
+      if (current === generation) setError(errorMessageOf(err, t("common.error")));
     } finally {
       if (current === generation) setBuilding(false);
     }
@@ -230,7 +231,11 @@ export default function CodeSearchModal(props: {
                 type="button"
                 onClick={() => void rebuild()}
                 disabled={building() || !directory()}
-                title={t("timeline.codeSearchRefresh")}
+                title={
+                  status()
+                    ? `${t("timeline.codeSearchRefresh")} (${status()!.files} files · ${status()!.chunks} chunks)`
+                    : t("timeline.codeSearchRefresh")
+                }
                 class="rounded-lg p-1 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-40 cursor-pointer"
               >
                 <RefreshCw size={14} class={building() ? "animate-spin" : ""} />
@@ -238,23 +243,27 @@ export default function CodeSearchModal(props: {
             </Show>
           </div>
 
-          <div class="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-[var(--text-muted)]">
-            <span>
-              <Show
-                when={mode() === "sessions" || (!building() && status())}
-                fallback={t("timeline.codeSearchIndexing")}
-              >
-                {mode() === "sessions"
-                  ? t("timeline.recallResultsCount", { count: count() })
-                  : `${t("timeline.codeSearchResultsCount", { count: count() })} · ${status()?.files ?? 0} files · ${status()?.chunks ?? 0} chunks`}
+          <Show when={building() || query().trim().length > 0}>
+            <div class="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-[var(--text-muted)]">
+              <span>
+                <Show
+                  when={mode() === "sessions" || !building()}
+                  fallback={t("timeline.codeSearchIndexing")}
+                >
+                  {mode() === "sessions"
+                    ? t("timeline.recallResultsCount", { count: count() })
+                    : t("timeline.codeSearchResultsCount", { count: count() })}
+                </Show>
+              </span>
+              <Show when={count() > 0}>
+                <span class="hidden sm:inline">
+                  {mode() === "code"
+                    ? t("timeline.codeSearchHint")
+                    : t("timeline.recallSelectHint")}
+                </span>
               </Show>
-            </span>
-            <span class="hidden sm:inline">
-              {mode() === "code"
-                ? t("timeline.codeSearchHint")
-                : t("timeline.recallSelectHint")}
-            </span>
-          </div>
+            </div>
+          </Show>
 
           <Show when={error()}>
             <p class="border-t border-[var(--border-subtle)] px-3 py-2 text-[12px] text-[var(--danger-text)] break-words">
@@ -296,7 +305,6 @@ export default function CodeSearchModal(props: {
                               {result.role}
                             </span>
                           </Show>
-                          <span class="ml-auto shrink-0 text-[11px] text-[var(--text-faint)]">{result.score}</span>
                         </div>
                         <pre class="mt-1 line-clamp-2 overflow-hidden whitespace-pre-wrap break-words font-mono text-[11px] leading-snug text-[var(--text-secondary)]">
                           {result.snippet}
@@ -325,7 +333,6 @@ export default function CodeSearchModal(props: {
                             {result.symbol}
                           </span>
                         </Show>
-                        <span class="ml-auto shrink-0 text-[11px] text-[var(--text-faint)]">{result.score}</span>
                       </div>
                       <pre class="mt-1 line-clamp-2 overflow-hidden whitespace-pre-wrap break-words font-mono text-[11px] leading-snug text-[var(--text-secondary)]">
                         {result.snippet}

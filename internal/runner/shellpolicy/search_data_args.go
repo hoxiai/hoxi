@@ -25,10 +25,12 @@ var (
 		"--directories", "--group-separator")
 )
 
-var searchSwitches = setOf("--line-number", "--ignore-case", "--case-sensitive", "--smart-case",
+var searchSwitches = setOf("--line-number", "--no-line-number", "--ignore-case", "--case-sensitive", "--smart-case",
 	"--fixed-strings", "--word-regexp", "--line-regexp", "--invert-match", "--only-matching",
 	"--with-filename", "--no-filename", "--hidden", "--no-ignore", "--no-heading",
-	"--heading", "--count", "--files-with-matches", "--files-without-match", "--multiline", "--no-messages")
+	"--heading", "--count", "--count-matches", "--files-with-matches", "--files-without-match", "--multiline",
+	"--multiline-dotall", "--no-messages", "--json", "--column", "--no-column", "--vimgrep",
+	"--stats", "--pcre2", "--trim", "--byte-offset", "--passthru", "--text", "--search-zip")
 
 var diffSearchSwitches = setOf("--cached", "--staged", "--stat", "--name-only", "--name-status", "--patch", "--pickaxe-all", "--pickaxe-regex")
 
@@ -78,7 +80,7 @@ func searchDataArguments(seg []dataToken) []dataReplacement {
 			}
 			continue
 		}
-		if !seg[i].literal || positional >= 0 {
+		if !seg[i].literal || (grep && positional >= 0) {
 			return out
 		}
 		flag, _, attached := strings.Cut(word, "=")
@@ -101,6 +103,10 @@ func searchDataArguments(seg []dataToken) []dataReplacement {
 		}
 		pattern := flag == "-e" || flag == "--regexp"
 		file := flag == "-f" || flag == "--file"
+		if positional >= 0 && (pattern || file) {
+			// A later -e/-f turns the earlier positional word into a file path.
+			return out
+		}
 		if !pattern && !file && !valueFlags[flag] {
 			return out
 		}

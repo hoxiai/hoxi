@@ -13,6 +13,7 @@ import { AUTO_PROVIDER_ID, peekAutoModelTarget } from "./auto-models";
 import { indexedSession } from "./session-index";
 import {
   AGENT_ENGINE_STORAGE_KEY,
+  ORCHESTRATOR_PROVIDER_ID,
   preferredAgentEngine,
   setPreferredAgentEngine,
   workspace,
@@ -204,6 +205,9 @@ export function resolveSessionTargetRuntime(
   sessionID?: string | null,
   providerID?: string | null
 ): SessionRuntime {
+  if (providerID === ORCHESTRATOR_PROVIDER_ID) {
+    return "native";
+  }
   const hasConfigured = Boolean(workspace.hoxiProviders?.[providerID || ""]);
   const found = sessionID ? workspace.sessions.find((s) => s.id === sessionID) : undefined;
   const stickyEngine: AgentEngineMode =
@@ -218,6 +222,9 @@ export function resolveSessionTargetRuntime(
 export function sessionRuntimeForID(sessionID?: string | null): SessionRuntime {
   if (!sessionID) {
     const rawModel = workspace.defaultAI.model;
+    if (rawModel?.providerID === ORCHESTRATOR_PROVIDER_ID) {
+      return "native";
+    }
     const resolved =
       rawModel?.providerID === AUTO_PROVIDER_ID
         ? peekAutoModelTarget(rawModel.modelID)

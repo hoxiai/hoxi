@@ -130,7 +130,7 @@ export default function TaskProgressCard() {
     <Show when={visible()}>
       <div
         ref={container}
-        class={`relative z-40 ml-auto shrink-0 transition-opacity duration-200 motion-reduce:transition-none ${
+        class={`mb-2 relative z-40 ml-auto shrink-0 transition-opacity duration-200 motion-reduce:transition-none ${
           fading() && !expanded() ? "opacity-0" : "opacity-100"
         }`}
         onPointerEnter={(event) => {

@@ -1,18 +1,22 @@
 // web/src/components/settings/SettingsSystemRuntimeTab.tsx
 import { createSignal, For, onMount, Show } from "solid-js";
 import { Activity, ArrowUpCircle, CheckCircle2, ChevronRight, Copy, Download, ExternalLink, KeyRound, RefreshCw, RotateCcw, ShieldCheck } from "lucide-solid";
-import type { SystemRuntimeInfo } from "../../services/api";
+import type { SystemRuntimeInfo, UpdateDownloadSource } from "../../services/api";
 import {
   appSettings,
   BROWSER_IDLE_MINUTE_PRESETS,
   checkDesktopUpdate,
+  desktopUpdateActiveSourceLabel,
   desktopUpdateButtonLabel,
   desktopUpdateDetailLabel,
   desktopUpdateProgressPercent,
   desktopUpdateSpeedEtaLabel,
   desktopUpdateStatusLabel,
   desktopUpdater,
+  errorMessageOf,
   fetchSystemRuntimeInfo,
+  getAcceleratedUpdateMirrorUrl,
+  getGitHubUpdateMirrorUrl,
   isDesktopUpdateInstalling,
   openExternalURL,
   openProviderModal,
@@ -20,6 +24,7 @@ import {
   reloadRuntimeCatalogs,
   resetAllAppSettings,
   resetProviderTelemetry,
+  setDesktopUpdateSource,
   startDesktopUpdate,
   updateAppSetting,
   workspace,
@@ -67,7 +72,7 @@ export function SystemRuntimeSettingsTab() {
     } catch (err) {
       showToast(
         t("settings.runtimeReloadFailed", {
-          error: err instanceof Error ? err.message : String(err),
+          error: errorMessageOf(err, t("common.error")),
         })
       );
     } finally {
@@ -235,6 +240,11 @@ export function SystemRuntimeSettingsTab() {
               <span class="inline-flex items-center gap-2 font-medium text-[var(--text-primary)]">
                 <Spinner class="h-3.5 w-3.5 text-[var(--accent-primary)] shrink-0" />
                 <span>{desktopUpdateStatusLabel()}</span>
+                <Show when={desktopUpdateActiveSourceLabel()}>
+                  <span class="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-muted)]">
+                    {desktopUpdateActiveSourceLabel()}
+                  </span>
+                </Show>
               </span>
               <Show when={desktopUpdateProgressPercent(desktopUpdater.progress) !== undefined}>
                 <span class="font-mono font-semibold text-[var(--accent-primary)]">
@@ -337,26 +347,49 @@ export function SystemRuntimeSettingsTab() {
                 </div>
 
                 <div class="flex flex-wrap items-center gap-2">
-                  <Show when={res().mirrors.global}>
-                    <a
-                      href={res().mirrors.global}
-                      target="_blank"
-                      rel="noreferrer"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        if (res().mirrors.global) openExternalURL(res().mirrors.global!);
-                      }}
-                      class={
-                        desktopUpdater.nativeAvailable
-                          ? "inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-                          : "inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] hover:opacity-90 px-3.5 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] transition-opacity cursor-pointer"
-                      }
-                    >
-                      <ExternalLink size={12} />
-                      <span>{t("settings.updaterDownloadFromGitHubBtn")}</span>
-                    </a>
+                  <Show when={getAcceleratedUpdateMirrorUrl(res())}>
+                    {(cdnUrl) => (
+                      <a
+                        href={cdnUrl()}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          openExternalURL(cdnUrl());
+                        }}
+                        class={
+                          desktopUpdater.nativeAvailable
+                            ? "inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                            : "inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] hover:opacity-90 px-3.5 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] transition-opacity cursor-pointer"
+                        }
+                      >
+                        <Download size={12} />
+                        <span>{t("settings.updaterDownloadFromCdnBtn")}</span>
+                      </a>
+                    )}
                   </Show>
-                  <Show when={!res().mirrors.global && res().downloadUrl}>
+                  <Show when={getGitHubUpdateMirrorUrl(res())}>
+                    {(ghUrl) => (
+                      <a
+                        href={ghUrl()}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          openExternalURL(ghUrl());
+                        }}
+                        class={
+                          desktopUpdater.nativeAvailable || getAcceleratedUpdateMirrorUrl(res())
+                            ? "inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                            : "inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] hover:opacity-90 px-3.5 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] transition-opacity cursor-pointer"
+                        }
+                      >
+                        <ExternalLink size={12} />
+                        <span>{t("settings.updaterDownloadFromGitHubBtn")}</span>
+                      </a>
+                    )}
+                  </Show>
+                  <Show when={!getAcceleratedUpdateMirrorUrl(res()) && !getGitHubUpdateMirrorUrl(res()) && res().downloadUrl}>
                     <a
                       href={res().downloadUrl}
                       target="_blank"
@@ -380,6 +413,38 @@ export function SystemRuntimeSettingsTab() {
             </div>
           )}
         </Show>
+
+        {/* Update Mirror Source Selector */}
+        <SettingRow
+          label={t("settings.updaterSourceTitle")}
+          tip={t("settings.updaterSourceDesc")}
+        >
+          <div class="inline-flex items-center rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5 text-[11.5px]">
+            <For
+              each={
+                [
+                  { id: "auto", label: () => t("settings.updaterSourceAuto") },
+                  { id: "cdn", label: () => t("settings.updaterSourceCdn") },
+                  { id: "global", label: () => t("settings.updaterSourceGlobal") },
+                ] as const satisfies ReadonlyArray<{ id: UpdateDownloadSource; label: () => string }>
+              }
+            >
+              {(opt) => (
+                <button
+                  type="button"
+                  onClick={() => setDesktopUpdateSource(opt.id)}
+                  class={
+                    desktopUpdater.downloadSource === opt.id
+                      ? "rounded-lg bg-[var(--bg-panel)] px-2.5 py-1 font-semibold text-[var(--text-primary)] shadow-2xs transition-colors cursor-pointer"
+                      : "rounded-lg px-2.5 py-1 font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                  }
+                >
+                  {opt.label()}
+                </button>
+              )}
+            </For>
+          </div>
+        </SettingRow>
       </SettingGroup>
 
       {/* 1b. Terminal Command-Line Tool (hoxi) */}

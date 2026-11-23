@@ -42,7 +42,7 @@ var (
 
 	readOnlyDataTools = setOf("rg", "grep", "egrep", "fgrep", "cat", "head", "tail", "wc", "ls", "stat",
 		"file", "echo", "printf", "diff", "cmp", "sort", "uniq", "jq", "test", "[", "basename",
-		"dirname", "realpath", "true", "false", ":", "exit", "return", "break", "continue",
+		"dirname", "realpath", "readlink", "which", "whereis", "true", "false", ":", "exit", "return", "break", "continue",
 		"lsof", "ps", "du", "df", "cut", "tr", "nl", "column", "shasum", "sha256sum", "md5", "xxd", "od", "sleep")
 
 	// Builtins that can rebind a variable behind the policy's back.
@@ -68,7 +68,8 @@ var (
 	// is inherited ($OPENAI_API_KEY, $KUBECONFIG, ...) stays opaque.
 	harmlessEnvVars = setOf("HOME", "PATH", "PWD", "OLDPWD", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG",
 		"TERM", "GOPATH", "GOROOT", "GOBIN", "GOCACHE", "GOMODCACHE", "CARGO_HOME", "PNPM_HOME",
-		"JAVA_HOME", "ANDROID_HOME",
+		"JAVA_HOME", "ANDROID_HOME", "ANDROID_SDK_ROOT", "PUB_CACHE", "FLUTTER_ROOT", "NODE_PATH",
+		"HOMEBREW_PREFIX", "NVM_DIR", "VOLTA_HOME", "RUSTUP_HOME", "VIRTUAL_ENV", "CONDA_PREFIX", "XDG_CACHE_HOME",
 		"?", "!", "pipestatus", "PIPESTATUS") // exit status, and $! the last background pid
 
 	// valueOnlyTools print or test their arguments without opening them as
@@ -345,6 +346,10 @@ func isSafeListingProducer(seg string) bool {
 //     environment variable not rebound by the command, or a `$(…)` result
 //     taken by a value-only tool.
 func expansionsAreBounded(seg string, words []string, vars map[string]bool, valueClass bool) bool {
+	return expansionsAreBoundedWith(seg, words, vars, valueClass, nil)
+}
+
+func expansionsAreBoundedWith(seg string, words []string, vars map[string]bool, valueClass bool, scopedDirs map[string]bool) bool {
 	if _, ok := shellExpansionNames(seg); !ok {
 		return false
 	}
@@ -353,7 +358,7 @@ func expansionsAreBounded(seg string, words []string, vars map[string]bool, valu
 	}
 	j := 0
 	for j < len(words) && envVarAssignmentWordRe.MatchString(words[j]) {
-		if strings.Contains(words[j], "$") && !isBenignPathAssignment(words[j]) {
+		if strings.Contains(words[j], "$") && !isBenignToolchainEnvAssignment(words[j]) {
 			return false
 		}
 		j++
@@ -368,14 +373,14 @@ func expansionsAreBounded(seg string, words []string, vars map[string]bool, valu
 	args := words[j+1:]
 	if base == "export" {
 		for _, a := range args {
-			if strings.Contains(a, "$") && !isBenignPathAssignment(a) {
+			if strings.Contains(a, "$") && !isBenignToolchainEnvAssignment(a) {
 				return false
 			}
 		}
 		return true
 	}
 	if base == "cd" {
-		return len(args) == 1 && isSafeHomePathWord(args[0], vars)
+		return len(args) == 1 && (isSafeHomePathWord(args[0], vars) || isScopedDirCDArg(seg, scopedDirs))
 	}
 	expanding := make([]string, 0, len(args))
 	for _, a := range args {
@@ -392,11 +397,11 @@ func expansionsAreBounded(seg string, words []string, vars map[string]bool, valu
 	if _, homeBound := vars["HOME"]; !homeBound && (base == "sh" || base == "bash" || base == "zsh") && isSafeShellScriptSegment(base, args, false) {
 		return true
 	}
-	// mkdir may take a value-class $(...) (it only creates directories) but
+	// mkdir and swiftc may take a value-class $(...) (e.g. xcrun --show-sdk-path),
 	// not an ordinary variable. Every other non-read-only command stays opaque.
 	safeDoubleBracket := base == "[[" && isSafeDoubleBracketArgs(args)
 	readOnlyTool := readOnlyDataTools[base] || (base == "sed" && isReadOnlySedArgs(args)) || safeDoubleBracket
-	if !readOnlyTool && !(valueClass && base == "mkdir") {
+	if !readOnlyTool && !(valueClass && acceptsValueClassArg(base)) {
 		return false
 	}
 	for _, a := range args {

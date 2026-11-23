@@ -115,43 +115,45 @@ export function ProviderHealthBadge(props: {
     score === null ? t("models.qualityNoData") : String(score);
 
   return (
-    <Show
-      when={!props.compact}
-      fallback={
+    <Show when={health().status !== "untested"}>
+      <Show
+        when={!props.compact}
+        fallback={
+          <span
+            class="inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] leading-none text-[var(--text-muted)]"
+            title={tooltip()}
+          >
+            <span class={`h-1.5 w-1.5 shrink-0 rounded-full ${statusColors(health().status).dot}`} />
+            <span class="font-mono">
+              {t("models.qualityStabilityShort")} {compactScore(health().stabilityScore)}
+            </span>
+          </span>
+        }
+      >
         <span
-          class="inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] leading-none text-[var(--text-muted)]"
+          class="inline-flex flex-wrap items-center gap-1 text-[11px] font-normal leading-relaxed text-[var(--text-muted)]"
           title={tooltip()}
         >
-          <span class={`h-1.5 w-1.5 shrink-0 rounded-full ${statusColors(health().status).dot}`} />
           <span class="font-mono">
-            {t("models.qualityStabilityShort")} {compactScore(health().stabilityScore)}
+            {t("models.qualityStabilityScore")}: {formatHealthScore(health().stabilityScore)}
           </span>
+          <Show
+            when={primaryRisk()}
+            fallback={
+              <Show when={health().avgTps || health().avgTtftMs}>
+                <span class="opacity-85 font-mono">
+                  ·{" "}
+                  {health().avgTps
+                    ? `${health().avgTps}t/s`
+                    : formatTtftLabel(health().avgTtftMs)}
+                </span>
+              </Show>
+            }
+          >
+            <span class="opacity-95">· {primaryRisk()}</span>
+          </Show>
         </span>
-      }
-    >
-      <span
-        class="inline-flex flex-wrap items-center gap-1 text-[11px] font-normal leading-relaxed text-[var(--text-muted)]"
-        title={tooltip()}
-      >
-        <span class="font-mono">
-          {t("models.qualityStabilityScore")}: {formatHealthScore(health().stabilityScore)}
-        </span>
-        <Show
-          when={primaryRisk()}
-          fallback={
-            <Show when={health().avgTps || health().avgTtftMs}>
-              <span class="opacity-85 font-mono">
-                ·{" "}
-                {health().avgTps
-                  ? `${health().avgTps}t/s`
-                  : formatTtftLabel(health().avgTtftMs)}
-              </span>
-            </Show>
-          }
-        >
-          <span class="opacity-95">· {primaryRisk()}</span>
-        </Show>
-      </span>
+      </Show>
     </Show>
   );
 }

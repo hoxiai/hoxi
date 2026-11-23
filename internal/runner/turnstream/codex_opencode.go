@@ -263,13 +263,19 @@ func (t *TurnTranslator) feedOpenCodeCLILine(line string) []SSEEvent {
 				inTok := intFromMap(tokMap, "input")
 				outTok := intFromMap(tokMap, "output")
 				reasTok := intFromMap(tokMap, "reasoning")
+				var cacheRead, cacheWrite int
+				if cacheMap, ok := tokMap["cache"].(map[string]interface{}); ok {
+					cacheRead = intFromMap(cacheMap, "read")
+					cacheWrite = intFromMap(cacheMap, "write")
+				}
 				t.MsgInfo.Tokens.Input += inTok
 				t.MsgInfo.Tokens.Output += outTok
 				t.MsgInfo.Tokens.Reasoning += reasTok
-				t.MsgInfo.Tokens.Total += inTok + outTok + reasTok
-				if cacheMap, ok := tokMap["cache"].(map[string]interface{}); ok {
-					t.MsgInfo.Tokens.Cache.Read += intFromMap(cacheMap, "read")
-					t.MsgInfo.Tokens.Cache.Write += intFromMap(cacheMap, "write")
+				t.MsgInfo.Tokens.Cache.Read += cacheRead
+				t.MsgInfo.Tokens.Cache.Write += cacheWrite
+				if stepCtx := inTok + outTok + reasTok + cacheRead + cacheWrite; stepCtx > 0 {
+					t.MsgInfo.Tokens.Context = stepCtx
+					t.MsgInfo.Tokens.Total = stepCtx
 				}
 			}
 			reason, _ := partMap["reason"].(string)

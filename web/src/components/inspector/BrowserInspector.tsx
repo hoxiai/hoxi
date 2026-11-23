@@ -1,5 +1,5 @@
 import { createEffect, For, onCleanup, Show } from "solid-js";
-import { ArrowLeft, ArrowRight, ExternalLink, Globe, Plus, Power, RefreshCw, X } from "lucide-solid";
+import { ArrowLeft, ArrowRight, ExternalLink, Globe, Plus, Power, RefreshCw, SlidersHorizontal, X } from "lucide-solid";
 import { createBrowserController, openExternalURL, normalizeBrowserAddress } from "../../store/workspace";
 import { t } from "../../i18n";
 import BrowserPreview from "./BrowserPreview";
@@ -74,6 +74,13 @@ export default function BrowserInspector() {
     send({ action: "key", key: [...modifiers, event.key === " " ? "Space" : event.key].join("+") });
   }
 
+  const showStatusBar = () => {
+    const active = running() || busy() || Boolean(error()) || Boolean(pollError()) || chromeLinked();
+    if (!active) return false;
+    const nav = state()?.navigation;
+    const hasNavIssue = Boolean(nav?.error) || (nav?.httpStatus ?? 0) >= 400;
+    return browser.phase() !== "ready" || browser.streamPhase() === "reconnecting" || hasNavIssue;
+  };
   return (
     <div class="relative h-full flex flex-col min-w-0 text-[var(--text-primary)] text-xs">
       <Show when={browser.clipboard.menu()}>{menu => <BrowserContextMenu menu={menu()}
@@ -84,10 +91,12 @@ export default function BrowserInspector() {
       <Show when={browser.clipboard.notice()}><p role="status" class="absolute bottom-8 left-1/2 -translate-x-1/2 z-20 rounded bg-[var(--bg-panel)] border border-[var(--border-subtle)] px-3 py-1.5 shadow-lg pointer-events-none">{browser.clipboard.notice()}</p></Show>
       <Show when={scope()} fallback={<p class="p-4 text-[var(--text-muted)]">{t("inspector.browser.noSession")}</p>}>
         <div class="flex items-center gap-1 px-2 py-1 border-b border-[var(--border-subtle)]">
-          <button class={iconBtn} disabled={!running() || busy()} title={t("inspector.browser.back")} aria-label={t("inspector.browser.back")} onClick={() => send({ action: "back" })}><ArrowLeft size={13} /></button>
-          <button class={iconBtn} disabled={!running() || busy()} title={t("inspector.browser.forward")} aria-label={t("inspector.browser.forward")} onClick={() => send({ action: "forward" })}><ArrowRight size={13} /></button>
-          <Show when={browser.canStop()} fallback={<button class={iconBtn} disabled={!running() || busy()} title={t("inspector.browser.reload")} aria-label={t("inspector.browser.reload")} onClick={() => send({ action: "reload" })}><RefreshCw size={13} class={busy() ? "animate-spin" : ""} /></button>}>
-            <button class={iconBtn} disabled={browser.stopping()} title={t("inspector.browser.stopLoading")} aria-label={t("inspector.browser.stopLoading")} onClick={() => void browser.stopLoading()}><X size={13} /></button>
+          <Show when={running() || chromeLinked() || pairing()}>
+            <button class={iconBtn} disabled={!running() || busy()} title={t("inspector.browser.back")} aria-label={t("inspector.browser.back")} onClick={() => send({ action: "back" })}><ArrowLeft size={13} /></button>
+            <button class={iconBtn} disabled={!running() || busy()} title={t("inspector.browser.forward")} aria-label={t("inspector.browser.forward")} onClick={() => send({ action: "forward" })}><ArrowRight size={13} /></button>
+            <Show when={browser.canStop()} fallback={<button class={iconBtn} disabled={!running() || busy()} title={t("inspector.browser.reload")} aria-label={t("inspector.browser.reload")} onClick={() => send({ action: "reload" })}><RefreshCw size={13} class={busy() ? "animate-spin" : ""} /></button>}>
+              <button class={iconBtn} disabled={browser.stopping()} title={t("inspector.browser.stopLoading")} aria-label={t("inspector.browser.stopLoading")} onClick={() => void browser.stopLoading()}><X size={13} /></button>
+            </Show>
           </Show>
           <form class="flex flex-1 min-w-0 items-center gap-1" onSubmit={(event) => {
             event.preventDefault();
@@ -109,23 +118,24 @@ export default function BrowserInspector() {
               }} />
             <button class="shrink-0 rounded px-1.5 py-1 text-[11px] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy() || pairing() || state()?.connected === false} type="submit">{t("inspector.browser.go")}</button>
           </form>
-          <button
-            type="button"
-            class={iconBtn}
-            disabled={!url().trim() || url().trim() === "about:blank"}
-            title={t("inspector.browser.openInExternal")}
-            aria-label={t("inspector.browser.openInExternal")}
-            onClick={() => {
-              const target = normalizeBrowserAddress(url());
-              if (!target) {
-                setError(t("inspector.browser.invalidURL"));
-              } else if (target !== "about:blank") {
-                openExternalURL(target);
-              }
-            }}
-          >
-            <ExternalLink size={13} />
-          </button>
+          <Show when={url().trim() && url().trim() !== "about:blank"}>
+            <button
+              type="button"
+              class={iconBtn}
+              title={t("inspector.browser.openInExternal")}
+              aria-label={t("inspector.browser.openInExternal")}
+              onClick={() => {
+                const target = normalizeBrowserAddress(url());
+                if (!target) {
+                  setError(t("inspector.browser.invalidURL"));
+                } else if (target !== "about:blank") {
+                  openExternalURL(target);
+                }
+              }}
+            >
+              <ExternalLink size={13} />
+            </button>
+          </Show>
           <Show when={running()}>
             <button type="button"
               class={`flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] cursor-pointer select-none transition-colors ${
@@ -140,21 +150,27 @@ export default function BrowserInspector() {
             >
               {t(state()?.manual ? "inspector.browser.giveBackAI" : "inspector.browser.takeOver")}
             </button>
+            <button
+              type="button"
+              class={`relative ${iconBtn} ${browser.developer.open() ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]" : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"}`}
+              aria-expanded={browser.developer.open()}
+              title={t("inspector.browser.developerTools")}
+              aria-label={t("inspector.browser.developerTools")}
+              onClick={() => browser.developer.setOpen((value) => !value)}
+            >
+              <SlidersHorizontal size={13} />
+              <Show when={browser.developer.diagnostics().length > 0}>
+                <span class="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-red-500" />
+              </Show>
+            </button>
           </Show>
-          <Show
-            when={running() || chromeLinked() || pairing()}
-            fallback={
-              <button class="shrink-0 rounded border border-[var(--border-subtle)] px-2 py-1 text-[11px] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy()} onClick={() => navigateAddress()}>
-                {t("inspector.browser.start")}
-              </button>
-            }
-          >
+          <Show when={running() || chromeLinked() || pairing()}>
             <button class={`${iconBtn} text-[var(--text-muted)] hover:text-red-400`} disabled={busy()} title={t(chromeLinked() || pairing() ? "inspector.browser.disconnectChrome" : "inspector.browser.close")} aria-label={t(chromeLinked() || pairing() ? "inspector.browser.disconnectChrome" : "inspector.browser.close")} onClick={() => send({ action: "close" })}>
               <Power size={13} />
             </button>
           </Show>
         </div>
-        <Show when={running() || busy() || error() || pollError() || chromeLinked()}>
+        <Show when={showStatusBar()}>
           <BrowserStatusBar phase={browser.phase()} stream={browser.streamPhase()} navigation={state()?.navigation}
             manual={state()?.manual ?? false} disabled={busy() || browser.stopping()} onRetry={browser.retry} />
         </Show>

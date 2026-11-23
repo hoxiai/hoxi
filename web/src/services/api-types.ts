@@ -540,10 +540,12 @@ export type {
   FreeTiersResponse,
   ModelPricingItem,
   ModelPricingResponse,
+  InstallUpdateOptions,
   NativeUpdateStatus,
   NativeUpdateProgress,
   StartAuthResponse,
   UpdateCheckResult,
+  UpdateDownloadSource,
   UpdateMirrors,
 } from "./platform-api";
 

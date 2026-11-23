@@ -5,6 +5,7 @@ import type { SnapshotFileDiff } from "../../services/sse-types";
 import {
   activeDirectory,
   activeWorkspaceFolders,
+  errorMessageOf,
   normalizeFolderPath,
   openEditWorkspaceModal,
   setWorkspace,
@@ -206,7 +207,7 @@ export default function FileTreeView() {
       }
     } catch (err) {
       if (request !== previewRequest) return;
-      setPreviewError(String(err));
+      setPreviewError(errorMessageOf(err, t("common.error")));
       setPreviewContent("");
       setPreviewMeta(null);
     } finally {

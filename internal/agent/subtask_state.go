@@ -11,22 +11,24 @@ import (
 const (
 	maxTrackedSubtaskSessions   = 64
 	maxSavedSubtasksPerSession  = 16
-	maxSavedSubtaskMessageCount = 96
+	maxSavedSubtaskMessageCount = 256
 )
 
 type savedSubtaskState struct {
-	ID           string
-	SubagentType string
-	ReadOnly     bool
-	ProviderID   string
-	ModelID      string
-	WorktreeDir  string
-	Messages     []Message
+	ID            string
+	SubagentType  string
+	ReadOnly      bool
+	ProviderID    string
+	ModelID       string
+	WorktreeDir   string
+	Messages      []Message
+	FileRevisions *FileRevisionTracker
 }
 
 type sessionSubtaskBucket struct {
-	order []string
-	items map[string]savedSubtaskState
+	order            []string
+	items            map[string]savedSubtaskState
+	latestExecutorID string
 }
 
 var (
@@ -84,6 +86,9 @@ func saveSessionSubtask(sessionID string, st savedSubtaskState) bool {
 	st.ID = id
 	st.WorktreeDir = filepath.Clean(strings.TrimSpace(st.WorktreeDir))
 	st.Messages = cloneMessagesForSubtask(st.Messages)
+	if st.FileRevisions != nil {
+		st.FileRevisions = st.FileRevisions.Clone()
+	}
 
 	subtaskStateMu.Lock()
 	defer subtaskStateMu.Unlock()
@@ -108,7 +113,42 @@ func saveSessionSubtask(sessionID string, st savedSubtaskState) bool {
 		bucket.order = append(bucket.order, id)
 	}
 	bucket.items[id] = st
+	if strings.EqualFold(st.SubagentType, "executor") {
+		bucket.latestExecutorID = id
+	}
 	return true
+}
+
+func loadLatestSessionExecutor(sessionID, providerID, modelID, worktreeDir string) (savedSubtaskState, bool) {
+	sid := strings.TrimSpace(sessionID)
+	if sid == "" {
+		return savedSubtaskState{}, false
+	}
+	subtaskStateMu.Lock()
+	defer subtaskStateMu.Unlock()
+	bucket := subtaskStateSessions[sid]
+	if bucket == nil || bucket.latestExecutorID == "" {
+		return savedSubtaskState{}, false
+	}
+	st, ok := bucket.items[bucket.latestExecutorID]
+	if !ok {
+		return savedSubtaskState{}, false
+	}
+	if strings.TrimSpace(providerID) != "" && st.ProviderID != strings.TrimSpace(providerID) {
+		return savedSubtaskState{}, false
+	}
+	if strings.TrimSpace(modelID) != "" && st.ModelID != strings.TrimSpace(modelID) {
+		return savedSubtaskState{}, false
+	}
+	cleanDir := filepath.Clean(strings.TrimSpace(worktreeDir))
+	if st.WorktreeDir != "" && cleanDir != "" && st.WorktreeDir != cleanDir {
+		return savedSubtaskState{}, false
+	}
+	st.Messages = cloneMessagesForSubtask(st.Messages)
+	if st.FileRevisions != nil {
+		st.FileRevisions = st.FileRevisions.Clone()
+	}
+	return st, true
 }
 
 func loadSessionSubtask(sessionID, subtaskID, worktreeDir string) (savedSubtaskState, bool) {
@@ -132,6 +172,9 @@ func loadSessionSubtask(sessionID, subtaskID, worktreeDir string) (savedSubtaskS
 		return savedSubtaskState{}, false
 	}
 	st.Messages = cloneMessagesForSubtask(st.Messages)
+	if st.FileRevisions != nil {
+		st.FileRevisions = st.FileRevisions.Clone()
+	}
 	return st, true
 }
 

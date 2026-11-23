@@ -32,8 +32,8 @@ bundle version fields use the embedded build version. The declared minimum macOS
 is at least 13.0 and is raised if the main executable (or optional bundled sidecar)
 requires a newer version. This release path verifies both arm64 and amd64 artifacts.
 
-For Windows builds (`build-windows.ps1` / `.github/workflows/release-cross-platform.yml`),
-the release pipeline builds `windows/amd64` (and `windows/arm64` when configured)
+For Windows builds (`build-windows.ps1` / `.github/workflows/release.yml`),
+the release pipeline builds `windows/amd64` and `windows/arm64`
 with the built-in Go Native Agent Engine and embedded pure-Go SQLite
 (`internal/sqlitecli`) without requiring external `opencode.exe` or `sqlite3.exe`
 sidecars by default, and packages both the NSIS installer
@@ -69,10 +69,20 @@ maintainer-account acceptance run. Local tests never perform these account actio
 
 ## GitHub tag releases
 
-Pushing a `v<major>.<minor>.<patch>` tag runs the desktop release workflow. It
-normalizes the tag version and passes it explicitly to the build. Frontend lint,
+Pushing a `v<major>.<minor>.<patch>` tag runs the unified desktop release workflow
+(`.github/workflows/release.yml`). A fast `preflight` job normalizes the tag version,
+validates all required signing/Sparkle/release-center credentials up front, pins one
+immutable extension commit SHA (preferring a matching `v*` tag or explicit `work_ref`
+input), and verifies that the target tag exists in `HOXI_RELEASE_REPO` (polling briefly
+on HTTP 404 to tolerate cross-repo push ordering, while failing immediately on 401/403).
+
+Once `preflight` succeeds, `build-macos` (arm64 + amd64), `build-windows` (amd64 + arm64),
+and `build-linux` (amd64) build and verify their artifacts in parallel. Frontend lint,
 unit tests, release/plugin regressions, the web build, Go vet, uncached race tests,
-and the desktop-tagged Go build must all pass before signing begins.
+and the desktop-tagged Go build must all pass before macOS signing begins. A final
+`publish-release` job runs only after every desktop platform succeeds, verifies all
+SHA-256 digests, uploads the full multi-platform asset set to GitHub Releases in a
+single atomic call, and only then publishes website metadata and Sparkle feed updates.
 
 Configure these GitHub Actions repository secrets before pushing a release tag:
 
@@ -86,6 +96,7 @@ When official signed desktop bundles are built in a private repository and publi
 
 - Repository variable `HOXI_RELEASE_REPO`: target `<owner>/<repo>` for GitHub Release asset uploads (defaults to the current repository when unset).
 - Repository secret `HOXI_PUBLIC_RELEASE_TOKEN`: fine-grained PAT with `Contents: write` on `HOXI_RELEASE_REPO` (required whenever `HOXI_RELEASE_REPO` differs from the build repository).
+- CDN mirror sync (S3-compatible Cloudflare R2 / OSS / COS, see [Auto-Updates](auto-updates.md)): set `HOXI_CDN_PUBLIC_URL` (e.g. `https://cdn.hoxi.dev`) plus secrets `HOXI_CDN_ENDPOINT`, `HOXI_CDN_BUCKET`, `HOXI_CDN_ACCESS_KEY_ID`, and `HOXI_CDN_SECRET_ACCESS_KEY` (or `HOXI_CDN_TOKEN`) so `publish-release` mirrors all 16 desktop release assets to `<HOXI_CDN_PUBLIC_URL>/hoxi-desktop/v<version>/` alongside GitHub Releases.
 
 Public open-source mirror exports omit desktop release jobs and only keep the `build-mobile-android` (`Hoxi Remote` APK) release job so pushing a `v*` tag to the public mirror never overwrites official signed desktop artifacts.
 

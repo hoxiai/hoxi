@@ -1,6 +1,7 @@
 // web/src/store/terminal-context.ts
 import { createSignal } from "solid-js";
 import { hoxiAPI } from "../services/api";
+import { errorMessageOf } from "../services/http";
 import type { MessagePart, SnapshotFileDiff } from "../services/sse-types";
 import { t } from "../i18n";
 import { loadSessionMessages } from "./workspace-sessions";
@@ -482,7 +483,7 @@ export async function resolveContextMentionsForSend(
   const directory = sessionDirectory(sessionID) || workspace.rootDir;
   const tasks: Promise<void>[] = [];
   const requireMention = (mention: string, read: Promise<void>) => read.catch((error) => {
-    throw new Error(t("timeline.mentionLoadFailed", { mention, error: error instanceof Error ? error.message : String(error) }));
+    throw new Error(t("timeline.mentionLoadFailed", { mention, error: errorMessageOf(error, t("common.error")) }));
   });
   if (/(?:^|[^a-zA-Z0-9_])@changes\b/.test(rawPrompt)) {
     tasks.push(requireMention("@changes", ensureWorktreeDiffsLoaded(sessionID || "__root__", true)));

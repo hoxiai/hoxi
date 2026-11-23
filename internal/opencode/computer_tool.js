@@ -2,7 +2,7 @@ import { tool } from "./plugin_tool.js";
 
 export function createComputerTool() {
   const args = {
-    action: tool.schema.enum(["status", "apps", "state", "screenshot", "focus", "move", "click", "drag", "scroll", "type", "key"]),
+    action: tool.schema.enum(["status", "apps", "state", "screenshot", "wait", "focus", "move", "click", "drag", "scroll", "type", "key"]),
     app: tool.schema.string().max(256).optional(),
     windowID: tool.schema.string().max(64).optional(),
     observationID: tool.schema.string().max(64).optional(),
@@ -13,11 +13,13 @@ export function createComputerTool() {
     button: tool.schema.enum(["left", "right", "middle"]).optional(),
     clickCount: tool.schema.number().int().min(1).max(3).optional(),
     text: tool.schema.string().max(8192).optional(), key: tool.schema.string().max(128).optional(),
+    clear: tool.schema.boolean().optional(),
+    seconds: tool.schema.number().finite().min(1).max(60).optional(),
     screenshot: tool.schema.boolean().optional(),
   };
   const schema = tool.schema.object(args);
   return tool({
-    description: "Inspect and control a running desktop app on macOS and Windows. Use the app the user authorized in Hoxi's Computer panel, or pass 'app' (app name like 'Calculator' or 'Safari', bundleID, or id from action='apps') on screenshot/state to ask for a different app: the user must confirm that app in a native dialog, and may decline. Use screenshot/state first; each element includes windowBounds (relative to the target window) and an id you can pass as elementID to click, move, scroll, or type without manual coordinate math. Manual x/y coordinates are relative to the window's bounds, not the scaled screenshot. Every input requires the returned windowID and observationID, waits for desktop approval (unless continuous input is enabled for the active grant), and automatically returns a fresh post-input observationID and element state (pass screenshot=true on an input action to also capture a fresh JPEG screenshot in the same call). For action='type', you can also pass 'key' (e.g. 'Enter' or 'Tab') to type text and press a key in one atomic step. Protected apps (Hoxi, System Settings, terminals and script editors, password managers) and password fields are blocked.",
+    description: "Inspect and control a running desktop app on macOS and Windows. Use the app the user authorized in Hoxi's Computer panel, or pass 'app' (app name like 'Calculator' or 'Safari', bundleID, or id from action='apps') on screenshot/state to ask for a different app: the user must confirm that app in a native dialog, and may decline. Use screenshot/state first; visible interactive controls are prioritized and each element includes windowBounds (relative to the target window), optional focused/disabled flags, and an id you can pass as elementID to click, move, scroll, or type without manual coordinate math. Use action='wait' (seconds: 1..60, default 5; optional screenshot=true) while waiting for an app's long-running task or confirmation dialog instead of rapid polling—wait performs no desktop input and returns a fresh observation. Manual x/y coordinates are relative to the window's bounds, not the scaled screenshot. Every input requires the returned windowID and observationID, waits for desktop approval (unless continuous input is enabled for the active grant), and automatically returns a fresh post-input observationID and element state (pass screenshot=true on an input action to also capture a fresh JPEG screenshot in the same call). For action='type', pass clear=true to replace existing field text and/or 'key' (e.g. 'Enter' or 'Tab') to type text and press a key in one atomic step; multiline '\\n' text uses Shift+Enter safely without premature submission. Protected apps (Hoxi, System Settings, terminals and script editors, password managers) and password fields are blocked.",
     args,
     async execute(input, context) {
       if (!context.sessionID || !context.directory) throw new Error("Computer use requires a Hoxi session scope");

@@ -100,11 +100,27 @@ type nativeAdmission struct {
 // until shutdown, even after cancellation or error: Sparkle may still install on
 // quit. The host UI must treat this as draining/restart-required, not idle, and
 // reject new work while its gateway admission is held. No UI wiring is done here.
+func resolveCurrentDarwinAppBundle() string {
+	exe, err := os.Executable()
+	if err != nil || strings.TrimSpace(exe) == "" {
+		return ""
+	}
+	if real, err := filepath.EvalSymlinks(exe); err == nil && real != "" {
+		exe = real
+	}
+	appBundle, err := resolveDarwinAppBundlePath(exe)
+	if err != nil {
+		return ""
+	}
+	return appBundle
+}
+
 func StartNative(canInstall func(force bool) bool, release func()) error {
 	if canInstall == nil || release == nil {
 		return errors.New("native updater requires admission and release callbacks")
 	}
 	installProgress.Store(nil)
+	appBundle := resolveCurrentDarwinAppBundle()
 	nativeCallbacks.Lock()
 	nativeCallbacks.next++
 	token := nativeCallbacks.next
@@ -115,15 +131,7 @@ func StartNative(canInstall func(force bool) bool, release func()) error {
 		C.free(unsafe.Pointer(message))
 		hoxiNativeRelease(C.ulonglong(token), 1)
 
-		exe, err := os.Executable()
-		if err != nil || strings.TrimSpace(exe) == "" {
-			return errors.New(sparkleErr)
-		}
-		if real, err := filepath.EvalSymlinks(exe); err == nil && real != "" {
-			exe = real
-		}
-		appBundle, err := resolveDarwinAppBundlePath(exe)
-		if err != nil {
+		if appBundle == "" {
 			return errors.New(sparkleErr)
 		}
 		darwinDMGMu.Lock()
@@ -136,6 +144,15 @@ func StartNative(canInstall func(force bool) bool, release func()) error {
 		nativeReady.Store(true)
 		return nil
 	}
+	// Also retain the DMG self-updater handles so Sparkle bundles can fall back
+	// to multi-mirror / resumable DMG self-update when the user switches mirror
+	// or retries after a slow/failed Sparkle download.
+	darwinDMGMu.Lock()
+	darwinCanInstall = canInstall
+	darwinRelease = release
+	darwinAppBundle = appBundle
+	darwinInstalling = false
+	darwinDMGMu.Unlock()
 	darwinSparkleReady.Store(true)
 	nativeReady.Store(true)
 	return nil
@@ -147,11 +164,29 @@ func NativeAvailable() bool { return nativeReady.Load() }
 // CheckNative opens Sparkle's standard UI when Sparkle is embedded, or runs the
 // SHA-256 verified DMG self-updater when running from a non-Sparkle .app bundle.
 func CheckNative() error {
+	return CheckNativeWithOptions(InstallOptions{})
+}
+
+// CheckNativeWithOptions runs Sparkle or the multi-mirror DMG self-updater
+// honoring an explicit mirror source preference or self-updater fallback.
+func CheckNativeWithOptions(opts InstallOptions) error {
 	if !NativeAvailable() {
 		return errors.New("native updater is unavailable")
 	}
+	source := NormalizeDownloadSource(string(opts.Source))
 	if !darwinSparkleReady.Load() {
-		return checkDarwinDMGSelfUpdate()
+		return checkDarwinDMGSelfUpdate(source)
+	}
+	if opts.UseSelfUpdater || source == DownloadSourceCDN || source == DownloadSourceGlobal {
+		darwinDMGMu.Lock()
+		hasBundle := strings.TrimSpace(darwinAppBundle) != ""
+		darwinDMGMu.Unlock()
+		if hasBundle {
+			if p := installProgress.Load(); p != nil && p.Phase != "" && p.Phase != "failed" {
+				return errors.New("update installation is already in progress")
+			}
+			return checkDarwinDMGSelfUpdate(source)
+		}
 	}
 	if message := C.hoxi_native_check(); message != nil {
 		defer C.free(unsafe.Pointer(message))
@@ -168,6 +203,12 @@ func StopNative() {
 	if nativeReady.Swap(false) {
 		installProgress.Store(nil)
 		if darwinSparkleReady.Swap(false) {
+			darwinDMGMu.Lock()
+			darwinCanInstall = nil
+			darwinRelease = nil
+			darwinAppBundle = ""
+			darwinInstalling = false
+			darwinDMGMu.Unlock()
 			C.hoxi_native_stop()
 			return
 		}
@@ -237,7 +278,7 @@ func stageDarwinAppFromDMG(ctx context.Context, dmgPath, expectedVersion, stageD
 	return stagedApp, nil
 }
 
-func checkDarwinDMGSelfUpdate() (installErr error) {
+func checkDarwinDMGSelfUpdate(source DownloadSource) (installErr error) {
 	darwinDMGMu.Lock()
 	if darwinInstalling {
 		darwinDMGMu.Unlock()
@@ -298,8 +339,8 @@ func checkDarwinDMGSelfUpdate() (installErr error) {
 		return errors.New("application is already up to date")
 	}
 
-	dmgURL := resolveDarwinDMGURL(res)
-	if dmgURL == "" {
+	candidates := resolveDarwinDMGCandidates(res, source)
+	if len(candidates) == 0 {
 		cleanupAbort()
 		return errors.New("update download URL is missing")
 	}
@@ -314,7 +355,7 @@ func checkDarwinDMGSelfUpdate() (installErr error) {
 	}
 	dmgPath := filepath.Join(stageDir, "update.dmg")
 	setInstallPhase("downloading")
-	if err := downloadAndVerifyDMG(ctx, nil, dmgURL, res.SHA256, dmgPath, func(p InstallProgress) {
+	if err := downloadAndVerifyDMGCandidates(ctx, nil, candidates, res.SHA256, dmgPath, func(p InstallProgress) {
 		installProgress.Store(&p)
 	}); err != nil {
 		_ = os.RemoveAll(stageDir)

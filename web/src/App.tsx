@@ -1,4 +1,5 @@
 import { Show, Suspense, createEffect, createSignal, lazy, onCleanup, onMount } from "solid-js";
+import PaneErrorBoundary from "./components/layout/PaneErrorBoundary";
 import ThreePaneShell from "./components/layout/ThreePaneShell";
 import WindowControls from "./components/layout/WindowControls";
 import { hoxiAPI } from "./services/api";
@@ -31,6 +32,7 @@ import {
   isDismissedProjectPath,
   isInvalidProjectPath,
   isManagedSession,
+  isScheduledTurnSession,
   isSessionBusy,
   isTesterPortalMode,
   indexSessionFromEvent,
@@ -74,6 +76,8 @@ import {
   upsertMessagePart,
   waitForSurfaceOnboarding,
   workspace,
+  handleScheduleUpdatedEvent,
+  loadSchedules,
   refreshDesktopMemberAfterTurn,
 } from "./store/workspace";
 import { isWorkSurface, surfaceExtension } from "./components/layout/surface-extension";
@@ -84,12 +88,18 @@ const TesterPortalApp = lazy(() => import("./components/tasks/TesterPortalApp"))
 export default function App() {
   if (isTesterPortalMode()) {
     return (
-      <Suspense>
-        <TesterPortalApp />
-      </Suspense>
+      <PaneErrorBoundary fullPage>
+        <Suspense>
+          <TesterPortalApp />
+        </Suspense>
+      </PaneErrorBoundary>
     );
   }
-  return <DesktopApp />;
+  return (
+    <PaneErrorBoundary fullPage>
+      <DesktopApp />
+    </PaneErrorBoundary>
+  );
 }
 
 function DesktopApp() {
@@ -112,6 +122,10 @@ function DesktopApp() {
 
   onMount(() => {
     let disconnectStream: (() => void) | undefined;
+    // Track sessions whose most recent turn was dispatched locally right before
+    // `session.status: idle` clears `lastPromptDispatchedAt`, so the subsequent
+    // `session.idle` event still notifies manual follow-ups in `[Schedule]` sessions.
+    const recentLocalTurnEnded = new Map<string, number>();
     const stopWatchingNetwork = watchNetworkStatus((isOnline) => {
       setOnline(isOnline);
       if (isOnline) retryEventStream?.();
@@ -146,6 +160,7 @@ function DesktopApp() {
       clearInterval(watchdogTimer);
       disconnectStream?.();
       stopWatchingNetwork();
+      recentLocalTurnEnded.clear();
     });
 
     void (async () => {
@@ -196,6 +211,7 @@ function DesktopApp() {
         void syncProviderBreakers();
         void loadAgents();
         void loadGitAttribution();
+        void loadSchedules().catch(() => {});
         void syncPendingPermissions(eagerBootRoot || undefined);
         void syncPendingQuestions(eagerBootRoot || undefined);
 
@@ -243,6 +259,7 @@ function DesktopApp() {
             resyncRequested = false;
             await Promise.allSettled([
               syncSessionStatuses(), syncPendingPermissions(), syncPendingQuestions(), resyncResidentTranscripts(),
+              loadSchedules(),
               workspace.rootDir
                 ? bootstrapProjectSessions(workspace.rootDir, false, workspace.activeProjectID)
                 : Promise.resolve(),
@@ -291,6 +308,7 @@ function DesktopApp() {
             case "session.deleted": {
               const delID = evt.properties.sessionID || evt.properties.info?.id;
               if (delID) {
+                recentLocalTurnEnded.delete(delID);
                 const wasActive = workspace.activeSessionID === delID;
                 const nextCandidate = removeSessionFromStore(delID);
                 if (wasActive) {
@@ -325,8 +343,18 @@ function DesktopApp() {
               setWorkspace("statusBySession", sid, evt.properties.status);
               setWorkspace("stalledSinceBySession", sid, 0);
               if (evt.properties.status.type === "busy") {
+                if (lastPromptDispatchedAt(sid) === 0) {
+                  recentLocalTurnEnded.delete(sid);
+                }
                 setWorkspace("unreadCompletedBySession", sid, false);
               } else if (evt.properties.status.type === "idle") {
+                if (lastPromptDispatchedAt(sid) > 0) {
+                  recentLocalTurnEnded.set(sid, Date.now());
+                  if (recentLocalTurnEnded.size > 256) {
+                    const oldest = recentLocalTurnEnded.keys().next().value;
+                    if (oldest !== undefined) recentLocalTurnEnded.delete(oldest);
+                  }
+                }
                 clearTurnDispatchState(sid);
                 clearActiveTurnTelemetry(sid);
                 clearSessionPendingApprovals(sid);
@@ -368,8 +396,14 @@ function DesktopApp() {
                 break;
               }
               // Native runtimes send `session.status` idle right before this
-              // event; that one may already have dispatched the next queued
-              // prompt, whose busy state must not be flipped back to idle.
+              // event; that one may already have cleared `lastPromptDispatchedAt`
+              // or dispatched the next queued prompt, whose busy state must not
+              // be flipped back to idle.
+              const localEndedAt = recentLocalTurnEnded.get(sid) ?? 0;
+              recentLocalTurnEnded.delete(sid);
+              const wasLocalDispatch =
+                lastPromptDispatchedAt(sid) > 0 ||
+                (localEndedAt > 0 && Date.now() - localEndedAt <= 15_000);
               const nextPromptRunning =
                 isSessionBusy(sid) && Date.now() - lastPromptDispatchedAt(sid) <= 3500;
               if (!nextPromptRunning) {
@@ -387,13 +421,14 @@ function DesktopApp() {
                 void loadSessionMessagesOnly(parentID);
                 scheduleRefreshWorktreeStatus(parentID, 600);
               } else {
-                if (
-                  sid !== workspace.activeSessionID &&
-                  !workspace.interruptedBySession[sid]
-                ) {
+                const interrupted = Boolean(workspace.interruptedBySession[sid]);
+                const scheduledTurn = !wasLocalDispatch && isScheduledTurnSession(sid);
+                if (sid !== workspace.activeSessionID && !interrupted) {
                   setWorkspace("unreadCompletedBySession", sid, true);
                 }
-                triggerDesktopNotification("Hoxi", t("timeline.turnCompleted"), { sessionID: sid, kind: "complete" });
+                if (!interrupted && !scheduledTurn) {
+                  triggerDesktopNotification("Hoxi", t("timeline.turnCompleted"), { sessionID: sid, kind: "complete" });
+                }
                 void refreshSettledSessionMessages(sid).then(() => {
                   refreshDesktopMemberAfterTurn(sid);
                   void drainNextQueuedPrompt(sid);
@@ -417,6 +452,9 @@ function DesktopApp() {
               if (evt.properties.sessionID === workspace.activeSessionID) {
                 scheduleRefreshWorktreeStatus(evt.properties.sessionID, 600);
               }
+              break;
+            case "hoxi.schedule.updated":
+              handleScheduleUpdatedEvent(evt.properties.scheduleID);
               break;
             case "permission.asked":
               handleIncomingPermissionRequest(evt.properties);

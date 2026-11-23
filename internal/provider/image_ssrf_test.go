@@ -193,14 +193,14 @@ func TestImageSSRFMagicBytesAndRedirectGuards(t *testing.T) {
 		APIKey:     "test-local-provider-credential",
 	}
 
-	if _, err := svc.openAIImagesGenerate(context.Background(), localConn, "spoof-json-as-png", nil, imageGenExecOptions{count: 1}, 5*time.Second); err == nil {
+	if _, err := svc.openAIImagesGenerate(context.Background(), localConn, "spoof-json-as-png", nil, nil, imageGenExecOptions{count: 1}, 5*time.Second); err == nil {
 		t.Fatal("expected spoofed JSON payload with Content-Type: image/png to be rejected")
 	}
-	if _, err := svc.openAIImagesGenerate(context.Background(), localConn, "redirect-to-private", nil, imageGenExecOptions{count: 1}, 5*time.Second); err == nil {
+	if _, err := svc.openAIImagesGenerate(context.Background(), localConn, "redirect-to-private", nil, nil, imageGenExecOptions{count: 1}, 5*time.Second); err == nil {
 		t.Fatal("expected HTTP redirect to private 10.0.0.8 address to be blocked")
 	}
 
-	redirOut, err := svc.openAIImagesGenerate(context.Background(), localConn, "redirect-cross-port", nil, imageGenExecOptions{count: 1}, 5*time.Second)
+	redirOut, err := svc.openAIImagesGenerate(context.Background(), localConn, "redirect-cross-port", nil, nil, imageGenExecOptions{count: 1}, 5*time.Second)
 	if err != nil || len(redirOut.Images) != 1 || redirOut.Images[0].Mime != "image/png" {
 		t.Fatalf("expected valid redirected PNG image, got out=%+v err=%v", redirOut, err)
 	}
@@ -208,7 +208,7 @@ func TestImageSSRFMagicBytesAndRedirectGuards(t *testing.T) {
 		t.Fatalf("expected cross-origin redirect to scrub Authorization header, leaked %q", leakedCrossOriginAuth)
 	}
 
-	webpOut, err := svc.openAIImagesGenerate(context.Background(), localConn, "valid-webp", nil, imageGenExecOptions{count: 1}, 5*time.Second)
+	webpOut, err := svc.openAIImagesGenerate(context.Background(), localConn, "valid-webp", nil, nil, imageGenExecOptions{count: 1}, 5*time.Second)
 	if err != nil || len(webpOut.Images) != 1 || webpOut.Images[0].Mime != "image/webp" || !bytes.Equal(webpOut.Images[0].Data, validWebP) {
 		t.Fatalf("expected verified image/webp output, got out=%+v err=%v", webpOut, err)
 	}

@@ -16,6 +16,7 @@ import {
 import type { WorktreeVerifyState } from "../../services/api";
 import {
   buildWorktreeVerifyFailurePrompt,
+  errorMessageOf,
   fetchWorktreeVerifyState,
   openURLInInspector,
   retryWorktreeSetupScript,
@@ -96,7 +97,7 @@ export function WorktreeVerifySection(props: {
     try {
       setState(await retryWorktreeSetupScript(effectiveSessionID(), props.directory, props.sessionID));
     } catch (err: any) {
-      setErrMsg(err?.message || String(err));
+      setErrMsg(errorMessageOf(err, t("common.error")));
     } finally {
       setActionBusy(false);
     }
@@ -117,7 +118,7 @@ export function WorktreeVerifySection(props: {
       setConfigOpen(false);
       await fetchVerifyState(false);
     } catch (err: any) {
-      setErrMsg(err?.message || String(err));
+      setErrMsg(errorMessageOf(err, t("common.error")));
     } finally {
       setActionBusy(false);
     }
@@ -143,7 +144,7 @@ export function WorktreeVerifySection(props: {
       });
       setState(res);
     } catch (err: any) {
-      setErrMsg(err?.message || String(err));
+      setErrMsg(errorMessageOf(err, t("common.error")));
     } finally {
       setActionBusy(false);
     }
@@ -157,7 +158,7 @@ export function WorktreeVerifySection(props: {
       const res = await stopWorktreeVerifyRun(effectiveSessionID(), props.directory);
       setState(res);
     } catch (err: any) {
-      setErrMsg(err?.message || String(err));
+      setErrMsg(errorMessageOf(err, t("common.error")));
     } finally {
       setActionBusy(false);
     }

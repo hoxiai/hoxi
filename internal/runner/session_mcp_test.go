@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -74,7 +75,7 @@ func TestPrepareSessionMCPForAntigravityAndGeminiAgy(t *testing.T) {
 			if err != nil {
 				t.Fatalf("stat mcp_config.json: %v", err)
 			}
-			if info.Mode().Perm() != 0o600 {
+			if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 				t.Fatalf("mcp_config.json mode = %o, want 0600", info.Mode().Perm())
 			}
 			var doc struct {

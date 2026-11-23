@@ -34,6 +34,7 @@ import {
   clearBoundInlineConvoyPlan,
   computeSubtaskPlanCardKey,
   createConvoyPlan,
+  errorMessageOf,
   fetchConvoyPlan,
   getBoundInlineConvoyPlanID,
   isConvoyPlanTerminal,
@@ -275,7 +276,7 @@ export default function InlineSubtaskPlanCard(props: {
       setEditing(false);
       if (key) bindInlineConvoyPlan(key, created.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessageOf(err, t("common.error")));
     } finally {
       setStarting(false);
     }
@@ -303,7 +304,7 @@ export default function InlineSubtaskPlanCard(props: {
       setPlan(updated);
       recordSessionConvoyPlan(sessionID(), updated);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessageOf(err, t("common.error")));
     }
   };
 
@@ -317,7 +318,7 @@ export default function InlineSubtaskPlanCard(props: {
       setPlan(updated);
       recordSessionConvoyPlan(sessionID(), updated);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessageOf(err, t("common.error")));
     } finally {
       setRetrying(false);
     }
@@ -334,7 +335,7 @@ export default function InlineSubtaskPlanCard(props: {
       setPlan(updated);
       recordSessionConvoyPlan(sid, updated);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessageOf(err, t("common.error")));
     } finally {
       setMerging(false);
     }
@@ -349,7 +350,7 @@ export default function InlineSubtaskPlanCard(props: {
       autoReportedPlans.add(current.id);
       await submitSessionPrompt(buildConvoyCompletionSummaryPrompt(current), sid);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessageOf(err, t("common.error")));
     } finally {
       setSummarizing(false);
     }

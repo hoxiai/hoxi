@@ -63,6 +63,7 @@ export default function ChangedFilesSummary(props: {
   const [expanded, setExpanded] = createSignal(false);
   const popoverID = createUniqueId();
   let containerRef: HTMLDivElement | undefined;
+  let openTimer: ReturnType<typeof setTimeout> | undefined;
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
 
   const isPill = () => props.variant === "pill";
@@ -73,7 +74,11 @@ export default function ChangedFilesSummary(props: {
     Math.max(0, props.files.length - PREVIEW_FILE_COUNT)
   );
 
-  const clearCloseTimer = () => {
+  const clearHoverTimers = () => {
+    if (openTimer !== undefined) {
+      clearTimeout(openTimer);
+      openTimer = undefined;
+    }
     if (closeTimer !== undefined) {
       clearTimeout(closeTimer);
       closeTimer = undefined;
@@ -81,22 +86,26 @@ export default function ChangedFilesSummary(props: {
   };
 
   const handleMouseEnter = () => {
-    clearCloseTimer();
-    setOpen(true);
+    clearHoverTimers();
+    openTimer = setTimeout(() => {
+      openTimer = undefined;
+      setOpen(true);
+    }, 220);
   };
 
   const handleMouseLeave = () => {
-    clearCloseTimer();
+    clearHoverTimers();
     closeTimer = setTimeout(() => {
+      closeTimer = undefined;
       setOpen(false);
     }, 140);
   };
 
-  onCleanup(clearCloseTimer);
+  onCleanup(clearHoverTimers);
 
   createEffect(() => {
     if (props.files.length === 0) {
-      clearCloseTimer();
+      clearHoverTimers();
       setOpen(false);
       setExpanded(false);
     }

@@ -242,72 +242,64 @@ export function ModelSelectorFooterBar(props: {
   fastModeActive: boolean;
 }) {
   return (
-    <div
-      ref={(el) => props.onRef?.(el)}
-      class="flex items-center justify-between gap-2 border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 px-3 py-1.5 text-[11px]"
-    >
-      <span class="text-[var(--text-muted)] truncate">
-        {t("models.reasoningEffort")}
-        <Show when={!workspace.reasoningEffort && props.defaultEffort}>
-          {(def) => (
-            <span class="ml-1 font-mono text-[11px] uppercase text-[var(--text-faint)]">
-              ({def()})
-            </span>
-          )}
-        </Show>
-      </span>
-      <div class="flex items-center gap-1.5 shrink-0">
-        <Show
-          when={props.availableOptions.length > 0}
-          fallback={
-            <span class="rounded-md bg-[var(--bg-inset)] px-2 py-0.5 text-[11px] text-[var(--text-faint)]">
-              {t("models.reasoningUnsupported")}
-            </span>
-          }
-        >
-          <div class="inline-flex items-center gap-0.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5">
-            <For each={props.availableOptions}>
-              {(opt) => (
-                <button
-                  type="button"
-                  title={opt.title}
-                  aria-pressed={props.effectiveEffort === opt.value}
-                  onClick={() => setReasoningEffort(opt.value)}
-                  class={`rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors cursor-pointer ${
-                    props.effectiveEffort === opt.value
-                      ? "bg-[var(--bg-panel)] text-[var(--accent-primary)] shadow-2xs"
-                      : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                  }`}
-                >
-                  {opt.label}
-                </button>
+    <Show when={props.availableOptions.length > 0 || props.supportsFastMode}>
+      <div
+        ref={(el) => props.onRef?.(el)}
+        class="flex items-center justify-between gap-2 border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 px-3 py-1.5 text-[11px]"
+      >
+        <Show when={props.availableOptions.length > 0} fallback={<span />}>
+          <span class="text-[var(--text-muted)] truncate">
+            {t("models.reasoningEffort")}
+            <Show when={!workspace.reasoningEffort && props.defaultEffort}>
+              {(def) => (
+                <span class="ml-1 font-mono text-[11px] uppercase text-[var(--text-faint)]">
+                  ({def()})
+                </span>
               )}
-            </For>
-          </div>
+            </Show>
+          </span>
         </Show>
+        <div class="flex items-center gap-1.5 shrink-0">
+          <Show when={props.availableOptions.length > 0}>
+            <div class="inline-flex items-center gap-0.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5">
+              <For each={props.availableOptions}>
+                {(opt) => (
+                  <button
+                    type="button"
+                    title={opt.title}
+                    aria-pressed={props.effectiveEffort === opt.value}
+                    onClick={() => setReasoningEffort(opt.value)}
+                    class={`rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors cursor-pointer ${
+                      props.effectiveEffort === opt.value
+                        ? "bg-[var(--bg-panel)] text-[var(--accent-primary)] shadow-2xs"
+                        : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                )}
+              </For>
+            </div>
+          </Show>
 
-        <button
-          type="button"
-          disabled={!props.supportsFastMode}
-          aria-pressed={props.fastModeActive}
-          title={
-            props.supportsFastMode
-              ? t("models.fastModeTooltip")
-              : t("models.fastModeUnsupportedTooltip")
-          }
-          onClick={() => toggleFastMode()}
-          class={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-medium transition-colors ${
-            !props.supportsFastMode
-              ? "border-[var(--border-subtle)] bg-[var(--bg-inset)] text-[var(--text-faint)] opacity-55 cursor-not-allowed"
-              : props.fastModeActive
-              ? "border-amber-500/40 bg-amber-500/15 text-amber-500 shadow-2xs cursor-pointer"
-              : "border-[var(--border-subtle)] bg-[var(--bg-inset)] text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
-          }`}
-        >
-          <Zap size={11} class={props.fastModeActive ? "fill-current" : ""} />
-          <span>{t("models.fastModeLabel")}</span>
-        </button>
+          <Show when={props.supportsFastMode}>
+            <button
+              type="button"
+              aria-pressed={props.fastModeActive}
+              title={t("models.fastModeTooltip")}
+              onClick={() => toggleFastMode()}
+              class={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
+                props.fastModeActive
+                  ? "border-amber-500/40 bg-amber-500/15 text-amber-500 shadow-2xs"
+                  : "border-[var(--border-subtle)] bg-[var(--bg-inset)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+              }`}
+            >
+              <Zap size={11} class={props.fastModeActive ? "fill-current" : ""} />
+              <span>{t("models.fastModeLabel")}</span>
+            </button>
+          </Show>
+        </div>
       </div>
-    </div>
+    </Show>
   );
 }

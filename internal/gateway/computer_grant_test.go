@@ -194,6 +194,41 @@ func TestComputerAutoObserveCompoundTypeAndAutoApproveBoundaries(t *testing.T) {
 	if recPause.Code != http.StatusOK || strings.Contains(recPause.Body.String(), `"autoApprove":true`) {
 		t.Fatalf("pause did not clear autoApprove: %d %s", recPause.Code, recPause.Body.String())
 	}
+
+	// 6. Resume without autoApprove and verify read-only wait works without input approval,
+	// while invalid seconds and app-switching on wait are rejected.
+	reqResume := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:5420/api/hoxi/computer/pause"+query, strings.NewReader(`{"paused":false}`))
+	reqResume.Host = "127.0.0.1:5420"
+	reqResume.Header.Set("Origin", "http://127.0.0.1:5420")
+	gw.handleComputer(httptest.NewRecorder(), reqResume)
+
+	recWait := agentCall(`{"action":"wait","seconds":0.02,"screenshot":true}`)
+	if recWait.Code != http.StatusOK {
+		t.Fatalf("read-only wait failed without autoApprove: %d %s", recWait.Code, recWait.Body.String())
+	}
+	var waitSnap computer.Snapshot
+	if err := json.Unmarshal(recWait.Body.Bytes(), &waitSnap); err != nil || waitSnap.ObservationID == "" || waitSnap.Image != "fresh-jpeg" || waitSnap.WaitedMs < 1 {
+		t.Fatalf("unexpected wait snapshot: %v %+v", err, waitSnap)
+	}
+
+	for _, badBody := range []string{
+		`{"action":"wait","seconds":0}`,
+		`{"action":"wait","seconds":-5}`,
+		`{"action":"wait","seconds":61}`,
+		`{"action":"wait","clear":true}`,
+		`{"action":"state","clear":true}`,
+		`{"action":"click","seconds":2,"observationID":"` + waitSnap.ObservationID + `","windowID":"win-1","elementID":1}`,
+	} {
+		recBad := agentCall(badBody)
+		if recBad.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for %s, got %d %s", badBody, recBad.Code, recBad.Body.String())
+		}
+	}
+	// wait must never switch apps.
+	recBadApp := agentCall(`{"action":"wait","app":"OtherApp","seconds":1}`)
+	if recBadApp.Code != http.StatusForbidden && recBadApp.Code != http.StatusConflict {
+		t.Fatalf("expected wait with different app rejected, got %d %s", recBadApp.Code, recBadApp.Body.String())
+	}
 }
 
 func mustJSON(t *testing.T, v any) []byte {

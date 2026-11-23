@@ -775,6 +775,7 @@ func (s *Service) forgetOpenCodeMappings(id string, rec SessionRecord, ap *activ
 		deletePrefixedKeys(&s.stoppedTools, prefixes)
 		deletePrefixedKeys(&s.promptReceipts, prefixes)
 		deletePrefixedKeys(&s.cliSystemDelivered, prefixes)
+		deletePrefixedKeys(&s.cliSystemDigests, prefixes)
 	}
 	projectClean := filepath.Clean(strings.TrimSpace(rec.ProjectDir))
 	rootClean := filepath.Clean(strings.TrimSpace(s.rootDir))

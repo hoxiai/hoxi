@@ -28,7 +28,6 @@ export const remoteTunnel = {
   pendingDenied: "请求已在 GoPanel 后台被拒绝",
   pendingExpired: "授权请求已过期，请重新发起",
   manualToggle: "手动输入配对码",
-  manualHide: "收起手动输入",
   pairAction: "配对",
   pairing: "配对中",
   disableAction: "解除配对",

@@ -281,11 +281,12 @@ func (s *Service) openAIImagesGenerate(
 	conn imageGenConn,
 	prompt string,
 	inputImages []llm.ImageInput,
+	maskImage *llm.ImageInput,
 	opts imageGenExecOptions,
 	timeout time.Duration,
 ) (llm.ImageResponse, error) {
 	if len(inputImages) > 0 {
-		if editResp, editErr := s.openAIImagesEditMultipart(ctx, conn, prompt, inputImages[0], opts, timeout); editErr == nil {
+		if editResp, editErr := s.openAIImagesEditMultipart(ctx, conn, prompt, inputImages[0], maskImage, opts, timeout); editErr == nil {
 			return editResp, nil
 		}
 	}
@@ -336,6 +337,7 @@ func (s *Service) openAIImagesEditMultipart(
 	conn imageGenConn,
 	prompt string,
 	input llm.ImageInput,
+	mask *llm.ImageInput,
 	opts imageGenExecOptions,
 	timeout time.Duration,
 ) (llm.ImageResponse, error) {
@@ -369,6 +371,17 @@ func (s *Service) openAIImagesEditMultipart(
 		return llm.ImageResponse{}, err
 	}
 	_, _ = fw.Write(input.Data)
+	if mask != nil && len(mask.Data) > 0 {
+		maskMime := normalizeGeneratedImageMime(mask.Mime, mask.Data)
+		mHdr := make(textproto.MIMEHeader)
+		mHdr.Set("Content-Disposition", `form-data; name="mask"; filename="mask.png"`)
+		mHdr.Set("Content-Type", maskMime)
+		mfw, mErr := mw.CreatePart(mHdr)
+		if mErr != nil {
+			return llm.ImageResponse{}, mErr
+		}
+		_, _ = mfw.Write(mask.Data)
+	}
 	_ = mw.Close()
 
 	ctx, cancel := context.WithTimeout(parentCtx, timeout)

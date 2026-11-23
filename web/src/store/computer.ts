@@ -11,6 +11,7 @@ import {
   type ComputerSnapshot,
   type ComputerWindow,
 } from "../services/computer";
+import { errorMessageOf } from "../services/http";
 import { workspace } from "./workspace-state";
 import { sessionDirectory } from "./session-query";
 import { cleanupUnusedNewSession, newIsolatedSession } from "./session-sandbox";
@@ -67,7 +68,7 @@ export function createComputerController() {
         scope()?.directory === connection.scope?.directory
     );
   function report(err: unknown) {
-    setError(err instanceof Error ? err.message : String(err));
+    setError(errorMessageOf(err, t("common.error")));
   }
 
   createEffect(() => {

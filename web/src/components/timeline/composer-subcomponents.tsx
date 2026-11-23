@@ -154,7 +154,6 @@ export function ComposerBottomToolbar(props: {
         <ComposerToolsPopover
           workspaceReady={props.workspaceReady}
           skillActive={props.skillActive}
-          sandboxMode={props.sandboxMode}
           runtime={props.runtime}
           busy={props.busy}
           canEnhance={props.canEnhance}
@@ -163,7 +162,6 @@ export function ComposerBottomToolbar(props: {
           onOpenSkills={props.onOpenSkills}
           onOpenCodeSearch={props.onOpenCodeSearch}
           onOpenConvoy={props.onOpenConvoy}
-          onSwitchSandbox={() => props.onSwitchSandbox("worktree")}
           onToggleEngine={props.onToggleEngine}
           onEnhance={props.onEnhance}
         />

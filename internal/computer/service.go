@@ -9,9 +9,15 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
+)
+
+const (
+	DefaultWaitDuration = 5 * time.Second
+	MaxWaitDuration     = 60 * time.Second
 )
 
 type Scope struct {
@@ -56,6 +62,8 @@ type Element struct {
 	Bounds       Rect   `json:"bounds"`
 	WindowBounds *Rect  `json:"windowBounds,omitempty"`
 	Secure       bool   `json:"secure,omitempty"`
+	Focused      bool   `json:"focused,omitempty"`
+	Disabled     bool   `json:"disabled,omitempty"`
 }
 type Snapshot struct {
 	App           App       `json:"app"`
@@ -66,6 +74,7 @@ type Snapshot struct {
 	Image         string    `json:"image,omitempty"`
 	Width         int       `json:"width"`
 	Height        int       `json:"height"`
+	WaitedMs      int64     `json:"waitedMs,omitempty"`
 }
 type Action struct {
 	Action        string  `json:"action"`
@@ -82,6 +91,7 @@ type Action struct {
 	ClickCount    int     `json:"clickCount,omitempty"`
 	Text          string  `json:"text,omitempty"`
 	Key           string  `json:"key,omitempty"`
+	Clear         bool    `json:"clear,omitempty"`
 }
 type Grant struct {
 	App          App    `json:"app"`
@@ -108,6 +118,7 @@ type sessionGrant struct {
 	generation   uint64
 	observations map[string]observation
 	cancel       context.CancelFunc
+	stateCh      chan struct{}
 }
 type Service struct {
 	mu             sync.Mutex
@@ -117,12 +128,27 @@ type Service struct {
 	generation     uint64
 	now            func() time.Time
 	postInputDelay time.Duration
+	stepDelay      time.Duration
 }
 
 func New() *Service {
 	s := newService(nativeBackend{})
 	s.postInputDelay = 120 * time.Millisecond
+	s.stepDelay = 60 * time.Millisecond
 	return s
+}
+
+func signalGrantStateLocked(grant *sessionGrant, reset bool) {
+	if grant == nil {
+		return
+	}
+	if grant.stateCh != nil {
+		close(grant.stateCh)
+		grant.stateCh = nil
+	}
+	if reset {
+		grant.stateCh = make(chan struct{})
+	}
 }
 
 func (s *Service) PostInputDelay() time.Duration { return s.postInputDelay }
@@ -248,11 +274,14 @@ func (s *Service) authorize(ctx context.Context, scope Scope, appID string, vers
 			return nil, errors.New("app_owned_by_another_session")
 		}
 	}
-	if previous := s.grants[scope]; previous != nil && previous.cancel != nil {
-		previous.cancel()
+	if previous := s.grants[scope]; previous != nil {
+		signalGrantStateLocked(previous, false)
+		if previous.cancel != nil {
+			previous.cancel()
+		}
 	}
 	s.generation++
-	grant := &sessionGrant{Grant: Grant{App: *target, Scope: scope, Active: true}, generation: s.generation, observations: make(map[string]observation)}
+	grant := &sessionGrant{Grant: Grant{App: *target, Scope: scope, Active: true}, generation: s.generation, observations: make(map[string]observation), stateCh: make(chan struct{})}
 	s.grants[scope] = grant
 	copy := grant.Grant
 	return &copy, nil
@@ -268,6 +297,7 @@ func (s *Service) Pause(scope Scope, paused bool) {
 			grant.AutoApprove = false
 		}
 		clear(grant.observations)
+		signalGrantStateLocked(grant, true)
 		if grant.cancel != nil {
 			grant.cancel()
 		}
@@ -284,8 +314,11 @@ func (s *Service) Revoke(scope Scope) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.generation++
-	if grant := s.grants[scope]; grant != nil && grant.cancel != nil {
-		grant.cancel()
+	if grant := s.grants[scope]; grant != nil {
+		signalGrantStateLocked(grant, false)
+		if grant.cancel != nil {
+			grant.cancel()
+		}
 	}
 	delete(s.grants, scope)
 }
@@ -301,8 +334,11 @@ func (s *Service) ForgetSession(sessionID string) {
 		if scope.SessionID != sessionID {
 			continue
 		}
-		if grant != nil && grant.cancel != nil {
-			grant.cancel()
+		if grant != nil {
+			signalGrantStateLocked(grant, false)
+			if grant.cancel != nil {
+				grant.cancel()
+			}
 		}
 		delete(s.grants, scope)
 	}
@@ -312,6 +348,7 @@ func (s *Service) Stop() {
 	defer s.mu.Unlock()
 	s.generation++
 	for scope, grant := range s.grants {
+		signalGrantStateLocked(grant, false)
 		if grant.cancel != nil {
 			grant.cancel()
 		}
@@ -412,6 +449,74 @@ func (s *Service) Observe(ctx context.Context, scope Scope, window string, image
 	snapshot.App = target
 	return snapshot, nil
 }
+
+// Wait pauses for a bounded duration without sending any desktop input or
+// blocking concurrent UI observations, cancels immediately on context cancel,
+// pause, revoke, or stop, and returns a fresh observation of the authorized app.
+func (s *Service) Wait(ctx context.Context, scope Scope, window string, duration time.Duration, image bool) (Snapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return Snapshot{}, err
+	}
+	if duration <= 0 || duration > MaxWaitDuration {
+		return Snapshot{}, errors.New("invalid_wait_seconds")
+	}
+	s.mu.Lock()
+	grant := s.grants[scope]
+	if grant == nil || grant.Paused {
+		s.mu.Unlock()
+		return Snapshot{}, errors.New("app_permission_required_or_paused")
+	}
+	generation := grant.generation
+	stateCh := grant.stateCh
+	s.mu.Unlock()
+
+	started := time.Now()
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return Snapshot{}, ctx.Err()
+	case <-stateCh:
+		return Snapshot{}, errors.New("app_permission_changed")
+	case <-timer.C:
+	}
+
+	s.mu.Lock()
+	if s.grants[scope] != grant || grant.Paused || grant.generation != generation {
+		s.mu.Unlock()
+		return Snapshot{}, errors.New("app_permission_changed")
+	}
+	s.mu.Unlock()
+
+	snapshot, err := s.Observe(ctx, scope, window, image)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	snapshot.WaitedMs = max(int64(1), time.Since(started).Milliseconds())
+	return snapshot, nil
+}
+
+func sleepContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+func selectAllChord() string {
+	if runtime.GOOS == "darwin" {
+		return "Meta+a"
+	}
+	return "Control+a"
+}
+
 func ValidateAction(a Action) error {
 	if len(a.ObservationID) != 32 || a.WindowID == "" || len(a.WindowID) > 64 {
 		return errors.New("fresh_observation_and_window_required")
@@ -423,6 +528,9 @@ func ValidateAction(a Action) error {
 	}
 	if len(a.Text) > 8192 || len(a.Key) > 128 || a.ClickCount < 0 || a.ClickCount > 3 || a.ElementID < 0 || a.ElementID > 300 {
 		return errors.New("input_exceeds_budget")
+	}
+	if a.Clear && a.Action != "type" {
+		return errors.New("clear_only_supported_on_type")
 	}
 	switch a.Action {
 	case "click":
@@ -565,12 +673,35 @@ func (s *Service) Execute(ctx context.Context, scope Scope, a Action) error {
 		if err := s.backend.Input(op, target, *window, clickAction); err != nil {
 			return fmt.Errorf("computer_input: %w", err)
 		}
+		if err := sleepContext(op, s.stepDelay); err != nil {
+			return err
+		}
+	}
+	if a.Action == "type" && a.Clear {
+		for _, chord := range []string{selectAllChord(), "Backspace"} {
+			clearAction := Action{
+				Action:        "key",
+				ObservationID: a.ObservationID,
+				WindowID:      a.WindowID,
+				Key:           chord,
+			}
+			if err := s.backend.Input(op, target, *window, clearAction); err != nil {
+				return fmt.Errorf("computer_input: %w", err)
+			}
+			if err := sleepContext(op, s.stepDelay); err != nil {
+				return err
+			}
+		}
 	}
 	if a.Action == "type" && a.Key != "" {
 		typeAction := a
 		typeAction.Key = ""
+		typeAction.Clear = false
 		if err := s.backend.Input(op, target, *window, typeAction); err != nil {
 			return fmt.Errorf("computer_input: %w", err)
+		}
+		if err := sleepContext(op, s.stepDelay); err != nil {
+			return err
 		}
 		keyAction := Action{
 			Action:        "key",
@@ -582,6 +713,9 @@ func (s *Service) Execute(ctx context.Context, scope Scope, a Action) error {
 			return fmt.Errorf("computer_input: %w", err)
 		}
 	} else {
+		if a.Action == "type" {
+			a.Clear = false
+		}
 		if err := s.backend.Input(op, target, *window, a); err != nil {
 			return fmt.Errorf("computer_input: %w", err)
 		}

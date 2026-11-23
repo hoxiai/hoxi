@@ -3,6 +3,8 @@ package agentcli
 import (
 	"errors"
 	"net"
+	"net/http"
+	"net/url"
 	"strings"
 	"syscall"
 	"testing"
@@ -193,5 +195,65 @@ func TestIsProxyEndpointReachableSkipsDeadLoopbackProxy(t *testing.T) {
 	_ = ln.Close()
 	if isProxyEndpointReachable(liveURL) {
 		t.Fatalf("expected closed loopback listener %s to be unreachable", liveURL)
+	}
+}
+
+func TestResolveSystemProxyURLForHTTPTransport(t *testing.T) {
+	t.Parallel()
+
+	osCfg := systemProxyConfig{
+		HTTPProxy:  "http://127.0.0.1:7890",
+		HTTPSProxy: "http://127.0.0.1:7891",
+		SOCKSProxy: "socks5://127.0.0.1:7892",
+		NoProxy:    []string{"*.local", "169.254.0.0/16", "corp.internal"},
+	}
+	noEnv := func(*http.Request) (*url.URL, error) { return nil, nil }
+	alwaysUp := func(string) bool { return true }
+
+	// 1. Loopback always bypasses proxy even when OS proxy is active.
+	for _, raw := range []string{"http://127.0.0.1:5410/api", "http://localhost:5400/x", "http://[::1]:5410/x"} {
+		req, _ := http.NewRequest(http.MethodGet, raw, nil)
+		got, err := resolveSystemProxyURL(req, noEnv, func() systemProxyConfig { return osCfg }, alwaysUp)
+		if err != nil || got != nil {
+			t.Fatalf("loopback %s must bypass proxy, got (%v, %v)", raw, got, err)
+		}
+	}
+
+	// 2. Explicit environment proxy takes precedence over OS proxy.
+	envHit, _ := url.Parse("http://127.0.0.1:6152")
+	reqHTTPS, _ := http.NewRequest(http.MethodGet, "https://cdn.hoxi.dev/hoxi-desktop/v0.7.3/Hoxi.dmg", nil)
+	gotEnv, err := resolveSystemProxyURL(reqHTTPS, func(*http.Request) (*url.URL, error) { return envHit, nil }, func() systemProxyConfig {
+		t.Fatal("OS lookup should not run when env proxy is set")
+		return systemProxyConfig{}
+	}, alwaysUp)
+	if err != nil || gotEnv == nil || gotEnv.String() != envHit.String() {
+		t.Fatalf("env proxy = (%v, %v), want %s", gotEnv, err, envHit)
+	}
+
+	// 3. Falls back to OS HTTPS/HTTP/SOCKS5 proxy when env is unset.
+	gotHTTPS, err := resolveSystemProxyURL(reqHTTPS, noEnv, func() systemProxyConfig { return osCfg }, alwaysUp)
+	if err != nil || gotHTTPS == nil || gotHTTPS.String() != "http://127.0.0.1:7891" {
+		t.Fatalf("OS HTTPS proxy = (%v, %v)", gotHTTPS, err)
+	}
+	gotSOCKS, err := resolveSystemProxyURL(reqHTTPS, noEnv, func() systemProxyConfig {
+		return systemProxyConfig{SOCKSProxy: "socks5://127.0.0.1:7892"}
+	}, alwaysUp)
+	if err != nil || gotSOCKS == nil || gotSOCKS.String() != "socks5://127.0.0.1:7892" {
+		t.Fatalf("OS SOCKS proxy = (%v, %v)", gotSOCKS, err)
+	}
+
+	// 4. Honors NoProxy domain suffix and CIDR rules.
+	for _, bypass := range []string{"https://printer.local/status", "https://api.corp.internal/v1", "http://169.254.1.2/meta"} {
+		req, _ := http.NewRequest(http.MethodGet, bypass, nil)
+		got, err := resolveSystemProxyURL(req, noEnv, func() systemProxyConfig { return osCfg }, alwaysUp)
+		if err != nil || got != nil {
+			t.Fatalf("NoProxy target %s should stay direct, got (%v, %v)", bypass, got, err)
+		}
+	}
+
+	// 5. Skips unreachable local OS proxy cleanly.
+	gotDead, err := resolveSystemProxyURL(reqHTTPS, noEnv, func() systemProxyConfig { return osCfg }, func(string) bool { return false })
+	if err != nil || gotDead != nil {
+		t.Fatalf("unreachable proxy must fall back to direct, got (%v, %v)", gotDead, err)
 	}
 }

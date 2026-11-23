@@ -42,9 +42,14 @@ export default function TurnTelemetryPopover(props: {
   const [open, setOpen] = createSignal(false);
   const popoverID = createUniqueId();
   let containerRef: HTMLDivElement | undefined;
+  let openTimer: ReturnType<typeof setTimeout> | undefined;
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
 
-  const clearCloseTimer = () => {
+  const clearHoverTimers = () => {
+    if (openTimer !== undefined) {
+      clearTimeout(openTimer);
+      openTimer = undefined;
+    }
     if (closeTimer !== undefined) {
       clearTimeout(closeTimer);
       closeTimer = undefined;
@@ -52,18 +57,22 @@ export default function TurnTelemetryPopover(props: {
   };
 
   const handleMouseEnter = () => {
-    clearCloseTimer();
-    setOpen(true);
+    clearHoverTimers();
+    openTimer = setTimeout(() => {
+      openTimer = undefined;
+      setOpen(true);
+    }, 220);
   };
 
   const handleMouseLeave = () => {
-    clearCloseTimer();
+    clearHoverTimers();
     closeTimer = setTimeout(() => {
+      closeTimer = undefined;
       setOpen(false);
     }, 140);
   };
 
-  onCleanup(clearCloseTimer);
+  onCleanup(clearHoverTimers);
 
   createEffect(() => {
     if (!open()) return;

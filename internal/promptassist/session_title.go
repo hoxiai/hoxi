@@ -3,6 +3,7 @@ package promptassist
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -97,9 +98,12 @@ func (s *Service) HandleSummarizeTitle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var llmErr error
 	if s.llm != nil {
 		target := s.llm.Resolve(req.ProviderID, req.ModelID, req.BaseURL, req.NPM)
-		if llmTitle, err := s.invokeTitleSummarizerLLM(r.Context(), target, rawPrompt, locale); err == nil && llmTitle != "" {
+		var llmTitle string
+		llmTitle, llmErr = s.invokeTitleSummarizerLLM(r.Context(), target, rawPrompt, locale)
+		if llmErr == nil && llmTitle != "" {
 			writeJSON(w, http.StatusOK, summarizeTitleResponse{
 				OK:    true,
 				Title: llmTitle,
@@ -109,12 +113,19 @@ func (s *Service) HandleSummarizeTitle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fallback := fallbackSummarizeTitle(rawPrompt, locale)
-	// The heuristic echoes the prompt, so a title that looks like the first
-	// message usually means the configured role model cannot serve HTTP calls.
-	slog.Warn("session title summarizer fell back to prompt",
-		"providerID", req.ProviderID,
-		"modelID", req.ModelID,
-	)
+	// Expected when no summarizer model is configured or ready for HTTP calls;
+	// only warn when an actual configured upstream call failed.
+	if s.llm == nil || errors.Is(llmErr, llm.ErrUnavailable) {
+		slog.Debug("session title summarizer fell back to prompt",
+			"providerID", req.ProviderID,
+			"modelID", req.ModelID,
+		)
+	} else {
+		slog.Warn("session title summarizer fell back to prompt",
+			"providerID", req.ProviderID,
+			"modelID", req.ModelID,
+		)
+	}
 	writeJSON(w, http.StatusOK, summarizeTitleResponse{
 		OK:    true,
 		Title: fallback,

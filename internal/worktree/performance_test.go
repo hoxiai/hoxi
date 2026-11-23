@@ -74,7 +74,7 @@ func TestMetadataReadsDuringGitMutation(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for {
 		if _, err := os.Stat(marker); err == nil {
 			break

@@ -3,8 +3,6 @@ package updater
 import (
 	"archive/zip"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/agentcli"
 )
 
 const maxUpdateArchiveBytes = 512 << 20 // 512 MiB
@@ -144,22 +144,27 @@ func (s *stallTimeoutReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func newUpdateHTTPClient() *http.Client {
+func newUpdateTransport() *http.Transport {
 	var tr *http.Transport
 	if base, ok := http.DefaultTransport.(*http.Transport); ok && base != nil {
 		tr = base.Clone()
 	} else {
-		tr = &http.Transport{Proxy: http.ProxyFromEnvironment}
+		tr = &http.Transport{}
 	}
+	tr.Proxy = agentcli.SystemProxyURL
 	tr.DialContext = (&net.Dialer{
 		Timeout:   15 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}).DialContext
 	tr.TLSHandshakeTimeout = 15 * time.Second
 	tr.ResponseHeaderTimeout = 30 * time.Second
+	return tr
+}
+
+func newUpdateHTTPClient() *http.Client {
 	return &http.Client{
 		Timeout:   10 * time.Minute,
-		Transport: tr,
+		Transport: newUpdateTransport(),
 	}
 }
 
@@ -180,28 +185,11 @@ func alignWindowsArchiveArch(rawURL, arch string) string {
 }
 
 func resolveWindowsArchiveURL(res *UpdateCheckResult) string {
-	if res == nil {
+	candidates := resolveWindowsArchiveCandidates(res, DownloadSourceAuto)
+	if len(candidates) == 0 {
 		return ""
 	}
-	arch := windowsReleaseArch()
-	for _, cand := range []string{res.DownloadURL, res.Mirrors.Global} {
-		trimmed := strings.TrimSpace(cand)
-		lower := strings.ToLower(trimmed)
-		if trimmed != "" && strings.HasSuffix(lower, ".zip") {
-			return alignWindowsArchiveArch(trimmed, arch)
-		}
-		if trimmed != "" && strings.HasSuffix(lower, "-setup.exe") {
-			return alignWindowsArchiveArch(trimmed[:len(trimmed)-len("-setup.exe")]+".zip", arch)
-		}
-	}
-	ver := strings.TrimPrefix(strings.TrimSpace(res.LatestVersion), "v")
-	if ver != "" {
-		return fmt.Sprintf("https://github.com/hoxiai/hoxi/releases/download/v%s/Hoxi-%s-windows-%s.zip", ver, ver, arch)
-	}
-	if d := strings.TrimSpace(res.DownloadURL); d != "" {
-		return d
-	}
-	return strings.TrimSpace(res.Mirrors.Global)
+	return candidates[0].URL
 }
 
 // windowsReleaseArch maps the running Go architecture to the Windows portable
@@ -239,24 +227,11 @@ func alignDarwinDMGArch(rawURL, arch string) string {
 }
 
 func resolveDarwinDMGURL(res *UpdateCheckResult) string {
-	if res == nil {
+	candidates := resolveDarwinDMGCandidates(res, DownloadSourceAuto)
+	if len(candidates) == 0 {
 		return ""
 	}
-	arch := darwinReleaseArch()
-	for _, cand := range []string{res.DownloadURL, res.Mirrors.Global} {
-		trimmed := strings.TrimSpace(cand)
-		if trimmed != "" && strings.HasSuffix(strings.ToLower(trimmed), ".dmg") {
-			return alignDarwinDMGArch(trimmed, arch)
-		}
-	}
-	ver := strings.TrimPrefix(strings.TrimSpace(res.LatestVersion), "v")
-	if ver != "" {
-		return fmt.Sprintf("https://github.com/hoxiai/hoxi/releases/download/v%s/Hoxi-%s-darwin-%s.dmg", ver, ver, arch)
-	}
-	if d := strings.TrimSpace(res.DownloadURL); d != "" {
-		return d
-	}
-	return strings.TrimSpace(res.Mirrors.Global)
+	return candidates[0].URL
 }
 
 // resolveDarwinAppBundlePath parses POSIX macOS bundle paths regardless of the
@@ -280,69 +255,14 @@ func resolveDarwinAppBundlePath(exePath string) (string, error) {
 }
 
 func downloadAndVerifyDMG(ctx context.Context, client *http.Client, dmgURL, fallbackSHA256, dstPath string, report func(InstallProgress)) error {
-	if !isAllowedUpdateURL(dmgURL) {
-		return errors.New("update download URL must use HTTPS")
-	}
-	if client == nil {
-		client = newUpdateHTTPClient()
-	}
-	expectedSHA, err := resolveArchiveSHA256(ctx, client, dmgURL, fallbackSHA256)
-	if err != nil {
-		return err
-	}
+	return downloadAndVerifyDMGCandidates(ctx, client, []downloadCandidate{{
+		URL:    dmgURL,
+		Source: classifyUpdateSource(dmgURL),
+	}}, fallbackSHA256, dstPath, report)
+}
 
-	reqCtx, reqCancel := context.WithCancelCause(ctx)
-	defer reqCancel(nil)
-
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, dmgURL, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("download update DMG: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("update download returned HTTP %d", resp.StatusCode)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(dstPath), 0o700); err != nil {
-		return err
-	}
-	outFile, err := os.OpenFile(dstPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	hasher := sha256.New()
-	bodyReader := &stallTimeoutReader{r: resp.Body, timeout: downloadStallTimeout, cancel: reqCancel}
-	written, copyErr := io.Copy(withDownloadProgress(io.MultiWriter(outFile, hasher), resp.ContentLength, report), io.LimitReader(bodyReader, maxUpdateArchiveBytes+1))
-	closeErr := outFile.Close()
-	if copyErr != nil {
-		_ = os.Remove(dstPath)
-		if cause := context.Cause(reqCtx); cause != nil && errors.Is(copyErr, context.Canceled) {
-			return cause
-		}
-		return copyErr
-	}
-	if closeErr != nil {
-		_ = os.Remove(dstPath)
-		return closeErr
-	}
-	if written > maxUpdateArchiveBytes {
-		_ = os.Remove(dstPath)
-		return errors.New("update DMG exceeds maximum allowed size")
-	}
-
-	if report != nil {
-		report(InstallProgress{Phase: "verifying", DownloadedBytes: written, TotalBytes: written})
-	}
-	actualSHA := hex.EncodeToString(hasher.Sum(nil))
-	if !strings.EqualFold(actualSHA, expectedSHA) {
-		_ = os.Remove(dstPath)
-		return fmt.Errorf("update DMG SHA-256 mismatch: got %s, want %s", actualSHA, expectedSHA)
-	}
-	return nil
+func downloadAndVerifyDMGCandidates(ctx context.Context, client *http.Client, candidates []downloadCandidate, fallbackSHA256, dstPath string, report func(InstallProgress)) error {
+	return downloadFileWithFallback(ctx, client, candidates, fallbackSHA256, dstPath, report)
 }
 
 func isAllowedUpdateURL(rawURL string) bool {
@@ -421,14 +341,20 @@ func isHexString(s string) bool {
 
 func resolveArchiveSHA256(ctx context.Context, client *http.Client, archiveURL, fallbackSHA256 string) (string, error) {
 	sidecarURL := archiveURL + ".sha256"
+	hostReachable := true
 	if isAllowedUpdateURL(sidecarURL) {
 		sidecarCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		req, err := http.NewRequestWithContext(sidecarCtx, http.MethodGet, sidecarURL, nil)
 		if err == nil {
 			resp, err := client.Do(req)
-			if err == nil {
+			if err != nil {
+				hostReachable = false
+			} else {
 				body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 				_ = resp.Body.Close()
+				if resp.StatusCode >= 500 {
+					hostReachable = false
+				}
 				if resp.StatusCode == http.StatusOK {
 					if sum := parseSHA256Text(string(body)); sum != "" {
 						cancel()
@@ -439,23 +365,25 @@ func resolveArchiveSHA256(ctx context.Context, client *http.Client, archiveURL, 
 		}
 		cancel()
 	}
-	if checksumsURL, filename := resolveChecksumsURL(archiveURL); isAllowedUpdateURL(checksumsURL) && filename != "" {
-		checksumsCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		req, err := http.NewRequestWithContext(checksumsCtx, http.MethodGet, checksumsURL, nil)
-		if err == nil {
-			resp, err := client.Do(req)
+	if hostReachable {
+		if checksumsURL, filename := resolveChecksumsURL(archiveURL); isAllowedUpdateURL(checksumsURL) && filename != "" {
+			checksumsCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			req, err := http.NewRequestWithContext(checksumsCtx, http.MethodGet, checksumsURL, nil)
 			if err == nil {
-				body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-				_ = resp.Body.Close()
-				if resp.StatusCode == http.StatusOK {
-					if sum := parseSHA256ForFilename(string(body), filename); sum != "" {
-						cancel()
-						return sum, nil
+				resp, err := client.Do(req)
+				if err == nil {
+					body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+					_ = resp.Body.Close()
+					if resp.StatusCode == http.StatusOK {
+						if sum := parseSHA256ForFilename(string(body), filename); sum != "" {
+							cancel()
+							return sum, nil
+						}
 					}
 				}
 			}
+			cancel()
 		}
-		cancel()
 	}
 	if sum := parseSHA256Text(fallbackSHA256); sum != "" {
 		return sum, nil
@@ -467,64 +395,24 @@ func resolveArchiveSHA256(ctx context.Context, client *http.Client, archiveURL, 
 // its SHA-256 against archiveURL+".sha256" (or fallbackSHA256), and extracts
 // Hoxi.exe and optional opencode.exe / sqlite3.exe into stageDir.
 func downloadAndStageWindowsZip(ctx context.Context, client *http.Client, archiveURL, fallbackSHA256, stageDir string, report func(InstallProgress)) error {
-	if !isAllowedUpdateURL(archiveURL) {
-		return errors.New("update download URL must use HTTPS")
-	}
-	if client == nil {
-		client = newUpdateHTTPClient()
-	}
-	expectedSHA, err := resolveArchiveSHA256(ctx, client, archiveURL, fallbackSHA256)
-	if err != nil {
-		return err
-	}
+	return downloadAndStageWindowsZipCandidates(ctx, client, []downloadCandidate{{
+		URL:    archiveURL,
+		Source: classifyUpdateSource(archiveURL),
+	}}, fallbackSHA256, stageDir, report)
+}
 
-	reqCtx, reqCancel := context.WithCancelCause(ctx)
-	defer reqCancel(nil)
-
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, archiveURL, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("download update archive: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("update download returned HTTP %d", resp.StatusCode)
-	}
-
+func downloadAndStageWindowsZipCandidates(ctx context.Context, client *http.Client, candidates []downloadCandidate, fallbackSHA256, stageDir string, report func(InstallProgress)) error {
 	if err := os.MkdirAll(stageDir, 0o700); err != nil {
 		return err
 	}
 	zipPath := filepath.Join(stageDir, "update.zip")
-	outFile, err := os.OpenFile(zipPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
+	if err := downloadFileWithFallback(ctx, client, candidates, fallbackSHA256, zipPath, report); err != nil {
+		_ = os.Remove(zipPath)
 		return err
 	}
-	hasher := sha256.New()
-	bodyReader := &stallTimeoutReader{r: resp.Body, timeout: downloadStallTimeout, cancel: reqCancel}
-	written, copyErr := io.Copy(withDownloadProgress(io.MultiWriter(outFile, hasher), resp.ContentLength, report), io.LimitReader(bodyReader, maxUpdateArchiveBytes+1))
-	closeErr := outFile.Close()
-	if copyErr != nil {
-		if cause := context.Cause(reqCtx); cause != nil && errors.Is(copyErr, context.Canceled) {
-			return cause
-		}
-		return copyErr
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	if written > maxUpdateArchiveBytes {
-		return errors.New("update archive exceeds maximum allowed size")
-	}
-
-	if report != nil {
-		report(InstallProgress{Phase: "verifying", DownloadedBytes: written, TotalBytes: written})
-	}
-	actualSHA := hex.EncodeToString(hasher.Sum(nil))
-	if !strings.EqualFold(actualSHA, expectedSHA) {
-		return fmt.Errorf("update archive SHA-256 mismatch: got %s, want %s", actualSHA, expectedSHA)
+	var written int64
+	if info, err := os.Stat(zipPath); err == nil {
+		written = info.Size()
 	}
 
 	if report != nil {

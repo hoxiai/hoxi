@@ -2,7 +2,7 @@ package workspace
 
 import (
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -326,7 +326,7 @@ func (s *workspaceStore) dispatchFolderRelinks(relinks []folderRelink) {
 	}
 	for _, relink := range relinks {
 		if err := handler(relink.projectID, relink.oldPath, relink.newPath); err != nil {
-			log.Printf("workspace relink %s: %v", relink.projectID, err)
+			slog.Warn("workspace relink failed", "source", "workspace", "projectID", relink.projectID, "error", err)
 		}
 	}
 }

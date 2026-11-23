@@ -1,11 +1,26 @@
 // web/src/store/updater-state.ts
 import { createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
-import { cliLinkAPI, updaterAPI, type CliLinkStatus, type NativeUpdateProgress, type UpdateCheckResult } from "../services/api";
+import {
+  cliLinkAPI,
+  updaterAPI,
+  type CliLinkStatus,
+  type NativeUpdateProgress,
+  type UpdateCheckResult,
+  type UpdateDownloadSource,
+} from "../services/api";
 import { errorMessageOf } from "../services/http";
 import { t } from "../i18n";
 import { appSettings, sendDesktopNotification } from "./settings";
 import { readStorageItem, writeStorageItem } from "./workspace-state";
+
+const UPDATE_DOWNLOAD_SOURCE_KEY = "hoxi:update-download-source";
+
+function normalizeStoredUpdateSource(raw: string | null): UpdateDownloadSource {
+  const val = (raw || "").trim().toLowerCase();
+  if (val === "cdn" || val === "global") return val;
+  return "auto";
+}
 
 export interface DesktopUpdaterState {
   isChecking: boolean;
@@ -20,6 +35,7 @@ export interface DesktopUpdaterState {
   progress: NativeUpdateProgress | null;
   downloadSpeedBps: number;
   downloadSlow: boolean;
+  downloadSource: UpdateDownloadSource;
 }
 
 export const [desktopUpdater, setDesktopUpdater] = createStore<DesktopUpdaterState>({
@@ -35,7 +51,31 @@ export const [desktopUpdater, setDesktopUpdater] = createStore<DesktopUpdaterSta
   progress: null,
   downloadSpeedBps: 0,
   downloadSlow: false,
+  downloadSource: normalizeStoredUpdateSource(readStorageItem(UPDATE_DOWNLOAD_SOURCE_KEY)),
 });
+
+export function setDesktopUpdateSource(source: UpdateDownloadSource): void {
+  const normalized = normalizeStoredUpdateSource(source);
+  setDesktopUpdater("downloadSource", normalized);
+  writeStorageItem(UPDATE_DOWNLOAD_SOURCE_KEY, normalized);
+}
+
+export function getAcceleratedUpdateMirrorUrl(res: UpdateCheckResult | null | undefined): string | undefined {
+  if (!res) return undefined;
+  return res.mirrors?.cn || res.mirrors?.cdn || undefined;
+}
+
+export function getGitHubUpdateMirrorUrl(res: UpdateCheckResult | null | undefined): string | undefined {
+  if (!res) return undefined;
+  return res.mirrors?.global || undefined;
+}
+
+export function desktopUpdateActiveSourceLabel(): string {
+  const src = (desktopUpdater.progress?.source || "").toLowerCase();
+  if (src === "cn" || src === "cdn") return t("header.updateSourceCdnTag");
+  if (src === "global") return t("header.updateSourceGitHubTag");
+  return "";
+}
 
 /** Minimum spacing between successful checks; startup, focus and timers all share it. */
 export const UPDATE_CHECK_MIN_GAP_MS = 10 * 60_000;
@@ -277,9 +317,13 @@ export async function refreshDesktopUpdateStatus(): Promise<void> {
   }
 }
 
-export async function startDesktopUpdate(): Promise<void> {
+export async function startDesktopUpdate(
+  overrideSource?: UpdateDownloadSource,
+  useSelfUpdater = false
+): Promise<void> {
   if (isDesktopUpdateInstalling() || !desktopUpdater.nativeAvailable) return;
 
+  const effectiveSource = overrideSource ?? desktopUpdater.downloadSource;
   ++statusGeneration;
   resetUpdateDownloadMetrics();
   const initialProgress: NativeUpdateProgress = {
@@ -305,7 +349,14 @@ export async function startDesktopUpdate(): Promise<void> {
     activePoll = setInterval(() => void refreshDesktopUpdateStatus(), INSTALL_ACTIVE_POLL_MS);
     (earlyPoll as { unref?: () => void }).unref?.();
     (activePoll as { unref?: () => void }).unref?.();
-    await updaterAPI.install();
+    if (effectiveSource !== "auto" || useSelfUpdater) {
+      await updaterAPI.install({
+        source: effectiveSource,
+        ...(useSelfUpdater ? { useSelfUpdater: true } : {}),
+      });
+    } else {
+      await updaterAPI.install();
+    }
   } catch (err: unknown) {
     failed = true;
     setDesktopUpdater({
@@ -353,8 +404,7 @@ async function runUpdateCheck(): Promise<UpdateCheckResult | null> {
     return res;
   } catch (err: unknown) {
     // A transient background failure must not replace a known-good result.
-    const message =
-      err instanceof Error ? err.message : t("header.updateCheckFailed");
+    const message = errorMessageOf(err, t("header.updateCheckFailed"));
     setDesktopUpdater({
       isChecking: false,
       hasChecked: true,

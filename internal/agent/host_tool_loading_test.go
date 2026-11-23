@@ -134,9 +134,13 @@ func TestDefaultCatalogWireSizeAndSmallWindowBudget(t *testing.T) {
 		if err := json.Unmarshal(req.Body, &body); err != nil {
 			t.Fatal(err)
 		}
-		budget := effectiveCompactContextLimit(8192, specs)
-		if budget != 8192-estimateToolSpecsTokens(specs) || budget <= 0 || budget >= 8192 {
-			t.Fatalf("unexpected schema budget %d", budget)
+		window := 8192
+		if mode == "eager" {
+			window = 16384
+		}
+		budget := effectiveCompactContextLimit(window, specs)
+		if budget != window-estimateToolSpecsTokens(specs) || budget <= 0 || budget >= window {
+			t.Fatalf("unexpected schema budget %d for mode=%q window=%d", budget, mode, window)
 		}
 		sizes = append(sizes, len(body["tools"]))
 		t.Logf("mode=%q tools=%d serializedBytes=%d messageBudget=%d", mode, len(specs), len(body["tools"]), budget)

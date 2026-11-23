@@ -475,6 +475,12 @@ func scanSSHSegmentWords(seg string) ([]sshSegmentWord, bool) {
 		c := seg[i]
 		if quote == '\'' {
 			if c == '\'' {
+				if i+3 < len(seg) && seg[i+1:i+4] == `\''` {
+					cur.WriteByte('\'')
+					inWord = true
+					i += 3
+					continue
+				}
 				quote = 0
 			} else {
 				cur.WriteByte(c)
@@ -488,10 +494,19 @@ func scanSSHSegmentWords(seg string) ([]sshSegmentWord, bool) {
 					return nil, false
 				}
 				next := seg[i+1]
-				if next == '$' || next == '`' || next == '\n' || next == '\r' {
+				if next == '`' || next == '\n' || next == '\r' {
 					return nil, false
 				}
-				if next != '"' && next != '\\' {
+				if next == '$' {
+					if i+2 >= len(seg) {
+						return nil, false
+					}
+					after := seg[i+2]
+					if !((after >= 'a' && after <= 'z') || (after >= 'A' && after <= 'Z') || (after >= '0' && after <= '9') || after == '_') {
+						return nil, false
+					}
+				}
+				if next != '"' && next != '\\' && next != '$' {
 					cur.WriteByte('\\')
 				}
 				cur.WriteByte(next)
@@ -665,20 +680,23 @@ func isSafeRemoteSSHSegment(seg string) bool {
 				return false
 			}
 		case a == "-o":
-			if i+1 >= len(args) || strings.ContainsAny(args[i+1], "<>") || sshUnsafeOptRe.MatchString(args[i+1]) {
+			if i+1 >= len(args) || strings.ContainsAny(args[i+1], "<>$") || sshUnsafeOptRe.MatchString(args[i+1]) {
 				return false
 			}
 			i++
 		case strings.HasPrefix(a, "-o") && len(a) > 2:
-			if sshUnsafeOptRe.MatchString(a[2:]) {
+			if strings.Contains(a, "$") || sshUnsafeOptRe.MatchString(a[2:]) {
 				return false
 			}
 		case a == "-p" || a == "-l" || a == "-J":
-			if i+1 >= len(args) || strings.ContainsAny(args[i+1], "<>") {
+			if i+1 >= len(args) || strings.ContainsAny(args[i+1], "<>$") {
 				return false
 			}
 			i++
 		case strings.HasPrefix(a, "-p") && len(a) > 2:
+			if strings.Contains(a, "$") {
+				return false
+			}
 		case sshSafeShortFlagRe.MatchString(a):
 		case strings.HasPrefix(a, "-"):
 			return false
@@ -717,23 +735,26 @@ func rewriteSafeRemoteSCPSegment(seg string) (string, bool) {
 			}
 			out = append(out, "-i", maskedDataArgument)
 		case a == "-o":
-			if i+1 >= len(args) || sshUnsafeOptRe.MatchString(args[i+1]) {
+			if i+1 >= len(args) || strings.Contains(args[i+1], "$") || sshUnsafeOptRe.MatchString(args[i+1]) {
 				return "", false
 			}
 			out = append(out, a, args[i+1])
 			i++
 		case strings.HasPrefix(a, "-o") && len(a) > 2:
-			if sshUnsafeOptRe.MatchString(a[2:]) {
+			if strings.Contains(a, "$") || sshUnsafeOptRe.MatchString(a[2:]) {
 				return "", false
 			}
 			out = append(out, a)
 		case a == "-P" || a == "-l":
-			if i+1 >= len(args) {
+			if i+1 >= len(args) || strings.Contains(args[i+1], "$") {
 				return "", false
 			}
 			out = append(out, a, args[i+1])
 			i++
 		case strings.HasPrefix(a, "-P") && len(a) > 2:
+			if strings.Contains(a, "$") {
+				return "", false
+			}
 			out = append(out, a)
 		case scpSafeShortFlagRe.MatchString(a):
 			out = append(out, a)

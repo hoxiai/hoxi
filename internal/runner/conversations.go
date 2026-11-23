@@ -110,7 +110,7 @@ func (s *Service) listConversationsWithSurface(ctx context.Context, projectID, d
 		}
 		entries = append(entries, entry{info.Time.Updated, raw})
 	}
-	if s.openCode != nil {
+	if s.openCode != nil && s.openCode.Available() {
 		engineDirs := s.conversationDirectories(projectID, directory)
 		batches := make([][]json.RawMessage, len(engineDirs))
 		runIndexedByDirs(engineDirs, func(i int, engineDir string) {
@@ -301,7 +301,7 @@ func (s *Service) handleConversationStatuses(w http.ResponseWriter, r *http.Requ
 // ID only, via the runner's own process table.
 func (s *Service) conversationStatuses(ctx context.Context, projectID, directory string) map[string]json.RawMessage {
 	out := make(map[string]json.RawMessage)
-	if s.openCode != nil {
+	if s.openCode != nil && s.openCode.Available() {
 		engineDirs := s.conversationDirectories(projectID, directory)
 		batches := make([]map[string]json.RawMessage, len(engineDirs))
 		runIndexedByDirs(engineDirs, func(i int, engineDir string) {
@@ -571,6 +571,7 @@ func (s *Service) CreateConversation(ctx context.Context, body CreateSessionRequ
 		ID:             sessionID,
 		ProjectID:      projectID,
 		ParentID:       strings.TrimSpace(body.ParentID),
+		ScheduleID:     strings.TrimSpace(body.ScheduleID),
 		Surface:        NormalizeSessionSurface(body.Surface, projDir),
 		Runtime:        "opencode",
 		ProjectDir:     projDir,

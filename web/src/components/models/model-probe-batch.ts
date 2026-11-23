@@ -1,6 +1,6 @@
 // web/src/components/models/model-probe-batch.ts
 import type { Setter } from "solid-js";
-import type { CustomProviderModelDraft } from "../../store/workspace";
+import { errorMessageOf, type CustomProviderModelDraft } from "../../store/workspace";
 
 export type ModelProbeFn = (
   modelID: string
@@ -22,7 +22,7 @@ export async function verifyBatch(
         const res = await probe(id);
         results[id] = { ok: res ? Boolean(res.ok) : true, error: res?.error };
       } catch (err: any) {
-        results[id] = { ok: false, error: err?.message || String(err) };
+        results[id] = { ok: false, error: errorMessageOf(err, "Probe failed") };
       }
     }
   });

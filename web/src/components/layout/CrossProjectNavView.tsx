@@ -25,6 +25,7 @@ import {
 } from "./left-nav-helpers";
 import {
   collectCrossProjectSessions,
+  filterCrossProjectSessions,
   groupRunningByProject,
   partitionAttentionSessions,
   selectRecentCrossProjectSessions,
@@ -75,10 +76,14 @@ function SectionHeader(props: { label: string; count: number; title?: string; co
   );
 }
 
+const sameStringArray = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && a.every((v, i) => v === b[i]);
+
 function SessionRow(props: {
   item: CrossProjectSession;
   filterQuery: string;
   showProjectBadge?: boolean;
+  defaultExpandSubagents?: boolean;
   isSelected: (id: string) => boolean;
   pendingSessions: Set<string>;
   onSelectSession: (path: string, sessionID: string) => void;
@@ -94,6 +99,7 @@ function SessionRow(props: {
       canDelete={true}
       isArchived={false}
       showBranchIcon={true}
+      defaultExpandSubagents={props.defaultExpandSubagents}
       projectName={props.showProjectBadge ? props.item.proj.name : undefined}
       projectTitle={props.showProjectBadge ? shortenPath(props.item.proj.path) : undefined}
       pendingSessions={props.pendingSessions}
@@ -112,36 +118,43 @@ export function RecentTasksNavView(props: CrossProjectNavProps) {
   const activeRootID = createMemo(() => resolveActiveRootSessionID());
   const isSelectedSession = createSelector<string | null, string>(activeRootID);
 
-  const recentSelection = createMemo(() =>
-    selectRecentCrossProjectSessions(
-      collectCrossProjectSessions({
-        allProjects: props.allProjects,
-        projectSessions: props.projectSessions,
-        filterQuery: props.filterQuery,
-      }),
-      {
-        now: now(),
-        query: props.filterQuery,
-        pendingSessions: props.pendingSessions,
-        activeRootSessionID: activeRootID(),
-      },
-    ),
+  const allItems = createMemo(() =>
+    collectCrossProjectSessions({
+      allProjects: props.allProjects,
+      projectSessions: props.projectSessions,
+      filterQuery: "",
+    }),
   );
 
-  const recentItems = createMemo(
-    () => recentSelection().items,
+  const filteredItems = createMemo(() =>
+    filterCrossProjectSessions(allItems(), props.filterQuery),
+  );
+
+  const recentSelection = createMemo(() =>
+    selectRecentCrossProjectSessions(filteredItems(), {
+      now: now(),
+      query: props.filterQuery,
+      pendingSessions: props.pendingSessions,
+      activeRootSessionID: activeRootID(),
+    }),
+  );
+
+  const recentByID = createMemo(
+    () => new Map(recentSelection().items.map((item) => [item.session.id, item])),
+  );
+
+  // Key `<For>` by stable session ID strings so inserting, reordering, or filtering
+  // never unmounts surviving SessionNavItem subtrees.
+  const recentIDs = createMemo(
+    () => recentSelection().items.map((item) => item.session.id),
     [],
-    {
-      equals: (a, b) =>
-        a.length === b.length &&
-        a.every((item, i) => item.session === b[i]?.session && item.proj.path === b[i]?.proj.path),
-    },
+    { equals: sameStringArray },
   );
 
   return (
     <div class="sidebar-scroll hoxi-view-enter flex-1 min-h-0 overflow-y-auto pl-1 pr-2 py-1 space-y-0.5">
       <Show
-        when={recentItems().length > 0}
+        when={recentIDs().length > 0}
         fallback={
           <div class="px-3 py-6 flex items-center justify-center gap-1.5 text-center text-[12px] text-[var(--text-faint)]">
             <Show when={props.isLoading} fallback={<span>{t("leftNav.noThreads")}</span>}>
@@ -151,32 +164,41 @@ export function RecentTasksNavView(props: CrossProjectNavProps) {
           </div>
         }
       >
-        <For each={recentItems()}>
-          {(item, index) => {
+        <For each={recentIDs()}>
+          {(sessionID, index) => {
+            const item = createMemo(() => recentByID().get(sessionID));
             const label = createMemo(() => {
-              const current = dayLabel(sessionActivityTime(item.session));
-              const previous = recentItems()[index() - 1];
+              const cur = item();
+              if (!cur) return "";
+              const current = dayLabel(sessionActivityTime(cur.session));
+              const prevID = recentIDs()[index() - 1];
+              const previous = prevID ? recentByID().get(prevID) : undefined;
               const prevLabel = previous ? dayLabel(sessionActivityTime(previous.session)) : "";
               return prevLabel === current ? "" : current;
             });
             return (
-              <div class={label() && index() > 0 ? "pt-1.5 space-y-0.5" : "space-y-0.5"}>
-                <Show when={label()}>
-                  <div class="px-2.5 py-0.5 text-[11px] font-medium text-[var(--text-faint)]">
-                    {label()}
+              <Show when={item()}>
+                {(current) => (
+                  <div class={label() && index() > 0 ? "pt-1.5 space-y-0.5" : "space-y-0.5"}>
+                    <Show when={label()}>
+                      <div class="px-2.5 py-0.5 text-[11px] font-medium text-[var(--text-faint)]">
+                        {label()}
+                      </div>
+                    </Show>
+                    <SessionRow
+                      item={current()}
+                      defaultExpandSubagents={false}
+                      filterQuery={props.filterQuery}
+                      showProjectBadge={true}
+                      isSelected={isSelectedSession}
+                      pendingSessions={props.pendingSessions}
+                      onSelectSession={props.onSelectSession}
+                      onArchiveSession={props.onArchiveSession}
+                      onDiscardSession={props.onDiscardSession}
+                    />
                   </div>
-                </Show>
-                <SessionRow
-                  item={item}
-                  filterQuery={props.filterQuery}
-                  showProjectBadge={true}
-                  isSelected={isSelectedSession}
-                  pendingSessions={props.pendingSessions}
-                  onSelectSession={props.onSelectSession}
-                  onArchiveSession={props.onArchiveSession}
-                  onDiscardSession={props.onDiscardSession}
-                />
-              </div>
+                )}
+              </Show>
             );
           }}
         </For>
@@ -200,7 +222,7 @@ export function RecentTasksNavView(props: CrossProjectNavProps) {
         >
           <div class="px-2.5 py-1 text-[11px] text-[var(--text-faint)]">
             {t("leftNav.searchTruncatedHint", {
-              shown: recentItems().length,
+              shown: recentIDs().length,
               total: recentSelection().totalMatches,
             })}
           </div>
@@ -214,15 +236,17 @@ export function RecentTasksNavView(props: CrossProjectNavProps) {
 
 export function RunningNavView(props: CrossProjectNavProps) {
   const isSelectedSession = createSelector<string | null, string>(() => resolveActiveRootSessionID());
-  const groups = createMemo(() =>
-    groupRunningByProject(
-      collectCrossProjectSessions({
-        allProjects: props.allProjects,
-        projectSessions: props.projectSessions,
-        filterQuery: props.filterQuery,
-      }),
-    ),
+  const allItems = createMemo(() =>
+    collectCrossProjectSessions({
+      allProjects: props.allProjects,
+      projectSessions: props.projectSessions,
+      filterQuery: "",
+    }),
   );
+  const filteredItems = createMemo(() =>
+    filterCrossProjectSessions(allItems(), props.filterQuery),
+  );
+  const groups = createMemo(() => groupRunningByProject(filteredItems()));
 
   return (
     <div class="sidebar-scroll hoxi-view-enter flex-1 min-h-0 overflow-y-auto pl-1 pr-2 py-1 space-y-2">
@@ -240,16 +264,8 @@ export function RunningNavView(props: CrossProjectNavProps) {
       <Show
         when={groups().length > 0}
         fallback={
-          <div class="px-3 py-6 text-center text-[12px] text-[var(--text-faint)] space-y-2">
-            <div>{t("leftNav.noRunningTasks")}</div>
-            <button
-              type="button"
-              onClick={() => setSidebarProjectMode("multi")}
-              class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-1 text-[11.5px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-            >
-              <Layers size={12} />
-              <span>{t("leftNav.multiProject")}</span>
-            </button>
+          <div class="px-3 py-6 text-center text-[12px] text-[var(--text-faint)]">
+            {t("leftNav.noRunningTasks")}
           </div>
         }
       >
@@ -297,15 +313,24 @@ const ATTENTION_LABELS: Record<AttentionSectionID, () => string> = {
 export function AttentionNavView(props: CrossProjectNavProps) {
   const isSelectedSession = createSelector<string | null, string>(() => resolveActiveRootSessionID());
   const [sectionLimits, setSectionLimits] = createSignal<Partial<Record<AttentionSectionID, number>>>({});
+  const allItems = createMemo(() =>
+    collectCrossProjectSessions({
+      allProjects: props.allProjects,
+      projectSessions: props.projectSessions,
+      filterQuery: "",
+    }),
+  );
+  const filteredItems = createMemo(() =>
+    filterCrossProjectSessions(allItems(), props.filterQuery),
+  );
   const sections = createMemo(() =>
-    partitionAttentionSessions(
-      collectCrossProjectSessions({
-        allProjects: props.allProjects,
-        projectSessions: props.projectSessions,
-        filterQuery: props.filterQuery,
-      }),
-      props.pendingSessions,
-    ),
+    partitionAttentionSessions(filteredItems(), props.pendingSessions),
+  );
+  const sectionsByID = createMemo(() => new Map(sections().map((s) => [s.id, s])));
+  const sectionIDs = createMemo(
+    () => sections().map((s) => s.id),
+    [] as AttentionSectionID[],
+    { equals: sameStringArray },
   );
 
   return (
@@ -322,45 +347,55 @@ export function AttentionNavView(props: CrossProjectNavProps) {
         </button>
       </div>
       <Show
-        when={sections().length > 0}
+        when={sectionIDs().length > 0}
         fallback={
-          <div class="px-3 py-6 text-center text-[12px] text-[var(--text-faint)] space-y-2">
-            <div>{t("leftNav.noAttentionTasks")}</div>
-            <button
-              type="button"
-              onClick={() => setSidebarProjectMode("multi")}
-              class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-1 text-[11.5px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-            >
-              <Layers size={12} />
-              <span>{t("leftNav.multiProject")}</span>
-            </button>
+          <div class="px-3 py-6 text-center text-[12px] text-[var(--text-faint)]">
+            {t("leftNav.noAttentionTasks")}
           </div>
         }
       >
-        <For each={sections()}>
-          {(section) => {
-            const visibleItems = () => {
-              if (section.id === "approvals") return section.items;
-              const limit = sectionLimits()[section.id] || COLLAPSED_SECTION_PAGE_SIZE;
-              return section.items.slice(0, limit);
-            };
-            const remainingCount = () => Math.max(0, section.items.length - visibleItems().length);
+        <For each={sectionIDs()}>
+          {(sectionID) => {
+            const section = createMemo(() => sectionsByID().get(sectionID));
+            const visibleItems = createMemo(() => {
+              const items = section()?.items ?? [];
+              if (sectionID === "approvals") return items;
+              const limit = sectionLimits()[sectionID] || COLLAPSED_SECTION_PAGE_SIZE;
+              return items.slice(0, limit);
+            });
+            const itemByID = createMemo(
+              () => new Map(visibleItems().map((item) => [item.session.id, item])),
+            );
+            const visibleIDs = createMemo(
+              () => visibleItems().map((item) => item.session.id),
+              [],
+              { equals: sameStringArray },
+            );
+            const totalCount = () => section()?.items.length ?? 0;
+            const remainingCount = () => Math.max(0, totalCount() - visibleIDs().length);
             return (
               <div class="space-y-0.5">
-                <SectionHeader label={ATTENTION_LABELS[section.id]()} count={section.items.length} />
-                <For each={visibleItems()}>
-                  {(item) => (
-                    <SessionRow
-                      item={item}
-                      filterQuery={props.filterQuery}
-                      showProjectBadge={true}
-                      isSelected={isSelectedSession}
-                      pendingSessions={props.pendingSessions}
-                      onSelectSession={props.onSelectSession}
-                      onArchiveSession={props.onArchiveSession}
-                      onDiscardSession={props.onDiscardSession}
-                    />
-                  )}
+                <SectionHeader label={ATTENTION_LABELS[sectionID]()} count={totalCount()} />
+                <For each={visibleIDs()}>
+                  {(sessionID) => {
+                    const item = createMemo(() => itemByID().get(sessionID));
+                    return (
+                      <Show when={item()}>
+                        {(current) => (
+                          <SessionRow
+                            item={current()}
+                            filterQuery={props.filterQuery}
+                            showProjectBadge={true}
+                            isSelected={isSelectedSession}
+                            pendingSessions={props.pendingSessions}
+                            onSelectSession={props.onSelectSession}
+                            onArchiveSession={props.onArchiveSession}
+                            onDiscardSession={props.onDiscardSession}
+                          />
+                        )}
+                      </Show>
+                    );
+                  }}
                 </For>
                 <Show when={remainingCount() > 0}>
                   <button
@@ -368,8 +403,8 @@ export function AttentionNavView(props: CrossProjectNavProps) {
                     onClick={() =>
                       setSectionLimits((prev) => ({
                         ...prev,
-                        [section.id]:
-                          (prev[section.id] || COLLAPSED_SECTION_PAGE_SIZE) +
+                        [sectionID]:
+                          (prev[sectionID] || COLLAPSED_SECTION_PAGE_SIZE) +
                           COLLAPSED_SECTION_PAGE_SIZE,
                       }))
                     }

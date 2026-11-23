@@ -1,9 +1,11 @@
 package runner
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -134,15 +136,23 @@ func TestSessionBundleResolverLifecycleValidationAndEnvScrubbing(t *testing.T) {
 		}
 	}
 
-	// Verify ApplyEnv appends ExtraPathDirs to the tail of PATH without shadowing /usr/bin.
-	mergedEnv := spec.ApplyEnv([]string{"PATH=/usr/bin:/bin", "LANG=en_US.UTF-8"})
+	// Verify ApplyEnv appends ExtraPathDirs to the tail of PATH without shadowing existing entries.
+	sysBinA := filepath.Join(home, "sysbin-a")
+	sysBinB := filepath.Join(home, "sysbin-b")
+	for _, d := range []string{sysBinA, sysBinB} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	basePath := strings.Join([]string{sysBinA, sysBinB}, string(os.PathListSeparator))
+	mergedEnv := spec.ApplyEnv([]string{"PATH=" + basePath, "LANG=en_US.UTF-8"})
 	var gotPath string
 	for _, kv := range mergedEnv {
 		if after, ok := strings.CutPrefix(kv, "PATH="); ok {
 			gotPath = after
 		}
 	}
-	wantPath := strings.Join([]string{"/usr/bin", "/bin", runtimeBin, toolchainBin}, string(os.PathListSeparator))
+	wantPath := strings.Join([]string{sysBinA, sysBinB, runtimeBin, toolchainBin}, string(os.PathListSeparator))
 	if gotPath != wantPath {
 		t.Fatalf("ApplyEnv PATH = %q, want %q", gotPath, wantPath)
 	}
@@ -321,4 +331,141 @@ func TestSessionBundleResolverConcurrentAccess(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestAppDevSessionSkipsRuntimeBundleAndMCP(t *testing.T) {
+	home := resolveExistingAncestors(t.TempDir())
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("HOXI_HOME", filepath.Join(home, ".hoxi"))
+
+	projectDir := resolveExistingAncestors(filepath.Join(home, "projects", "demo"))
+	otherDir := resolveExistingAncestors(filepath.Join(home, "projects", "other"))
+	skillDir := filepath.Join(home, ".hoxi", "work", "packages", "demo-app", "versions", "1.0.0", "skills")
+	for _, d := range []string{projectDir, otherDir, skillDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	svc := NewService(projectDir, nil, nil, filepath.Join(home, "runner-sessions.json"))
+	t.Cleanup(svc.CloseAll)
+
+	for _, rec := range []SessionRecord{
+		{ID: "ses_build", Runtime: string(RuntimeNative), ProjectDir: projectDir, WorktreePath: projectDir, Mode: "build"},
+		{ID: "ses_appdev", Runtime: string(RuntimeNative), ProjectDir: projectDir, WorktreePath: projectDir, Mode: "app-dev"},
+		{ID: "ses_appdev_sub", ParentID: "ses_appdev", Subagent: true, Runtime: string(RuntimeNative), ProjectDir: projectDir, WorktreePath: projectDir, Mode: "explore"},
+		{ID: "ses_appdev_fork", ParentID: "ses_appdev", Subagent: false, Runtime: string(RuntimeNative), ProjectDir: projectDir, WorktreePath: projectDir, Mode: "build"},
+	} {
+		if err := svc.store.Put(rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	svc.SetSessionBundleResolver(func(sessionID, _ string) (SessionBundleSpec, error) {
+		return SessionBundleSpec{
+			AppIDs:         []string{"demo-app"},
+			ExtraSkillDirs: []string{skillDir},
+		}, nil
+	})
+	svc.SetSessionMCPResolver(func(sessionID, _ string) map[string]any {
+		return map[string]any{"work-local-demo-app": map[string]any{"type": "remote", "url": "http://127.0.0.1:5400/mcp"}}
+	})
+
+	if !svc.IsAppDevSession("ses_appdev") || !svc.IsAppDevSession("ses_appdev_sub") {
+		t.Fatalf("expected app-dev session and its delegated subagent to be detected as app-dev")
+	}
+	if svc.IsAppDevSession("ses_build") || svc.IsAppDevSession("ses_appdev_fork") {
+		t.Fatalf("expected build and user-forked build session not to be detected as app-dev")
+	}
+
+	// app-dev and its subagent must skip runtime bundle and MCP injection.
+	for _, id := range []string{"ses_appdev", "ses_appdev_sub"} {
+		spec, err := svc.ResolveSessionBundle(id, projectDir)
+		if err != nil || !spec.IsEmpty() {
+			t.Fatalf("ResolveSessionBundle(%s) = (%+v, %v), want empty spec", id, spec, err)
+		}
+		if mcp := svc.resolveSessionMCPServers(id, projectDir); len(mcp) != 0 {
+			t.Fatalf("resolveSessionMCPServers(%s) = %v, want empty", id, mcp)
+		}
+	}
+	// Directory mismatch rejection must still run before app-dev early return.
+	if _, err := svc.ResolveSessionBundle("ses_appdev", otherDir); err == nil {
+		t.Fatalf("expected ResolveSessionBundle to reject foreign directory even in app-dev mode")
+	}
+
+	// Normal build and non-subagent forked build sessions keep bundle and MCP.
+	for _, id := range []string{"ses_build", "ses_appdev_fork"} {
+		spec, err := svc.ResolveSessionBundle(id, projectDir)
+		if err != nil || len(spec.AppIDs) != 1 || spec.AppIDs[0] != "demo-app" {
+			t.Fatalf("ResolveSessionBundle(%s) = (%+v, %v), want demo-app bundle", id, spec, err)
+		}
+		if mcp := svc.resolveSessionMCPServers(id, projectDir); len(mcp) != 1 {
+			t.Fatalf("resolveSessionMCPServers(%s) = %v, want 1 server", id, mcp)
+		}
+	}
+}
+
+func TestNativePermissionHookFailsClosedOnUnresolvableTildeRead(t *testing.T) {
+	home := resolveExistingAncestors(t.TempDir())
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("HOXI_HOME", filepath.Join(home, ".hoxi"))
+
+	projectDir := resolveExistingAncestors(filepath.Join(home, "projects", "demo"))
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(projectDir, nil, nil, filepath.Join(home, "runner-sessions.json"))
+	t.Cleanup(svc.CloseAll)
+
+	rec := SessionRecord{
+		ID:           "ses_tilde_gate",
+		Runtime:      string(RuntimeNative),
+		ProjectDir:   projectDir,
+		WorktreePath: projectDir,
+		Mode:         "build",
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, mode := range []string{ApprovalModeManual, ApprovalModeAuto, ApprovalModeTrusted} {
+		setTestApprovalPolicy(t, svc, ApprovalPolicy{Mode: mode})
+		hook := svc.nativePermissionHook(rec, "msg_tilde_"+string(mode))
+		for _, rawPath := range []string{`~\Documents\secret.txt`, `~otheruser/secret.txt`} {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel() // immediate cancel ensures gating fails closed instead of auto-approving
+			err := hook(ctx, NativePermissionRequest{
+				SessionID: rec.ID,
+				CallID:    "call_tilde_" + string(mode),
+				ToolName:  "read",
+				Input:     []byte(`{"filePath":` + strconv.Quote(rawPath) + `}`),
+				IsRead:    true,
+			})
+			if err == nil {
+				t.Fatalf("mode=%s: expected unresolvable tilde read %q to require approval (fail closed), but it was auto-approved", mode, rawPath)
+			}
+		}
+	}
+
+	// Valid ~/.hoxi/skills/ read auto-approves in auto mode.
+	skillRef := filepath.Join(home, ".hoxi", "skills", "work-app-builder", "references", "contract.md")
+	if err := os.MkdirAll(filepath.Dir(skillRef), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(skillRef, []byte("# Contract\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{Mode: ApprovalModeAuto})
+	hookAuto := svc.nativePermissionHook(rec, "msg_tilde_ok")
+	if err := hookAuto(context.Background(), NativePermissionRequest{
+		SessionID: rec.ID,
+		CallID:    "call_tilde_ok",
+		ToolName:  "read",
+		Input:     []byte(`{"filePath":"~/.hoxi/skills/work-app-builder/references/contract.md"}`),
+		IsRead:    true,
+	}); err != nil {
+		t.Fatalf("expected routine ~/.hoxi/skills/ read to auto-approve in auto mode, got: %v", err)
+	}
 }

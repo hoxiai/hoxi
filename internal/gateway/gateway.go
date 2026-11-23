@@ -37,6 +37,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/reclaim"
 	"github.com/hoxiai/hoxi/internal/runner"
 	"github.com/hoxiai/hoxi/internal/sandbox"
+	"github.com/hoxiai/hoxi/internal/scheduler"
 	"github.com/hoxiai/hoxi/internal/skills"
 	"github.com/hoxiai/hoxi/internal/statusbar"
 	"github.com/hoxiai/hoxi/internal/tools"
@@ -74,6 +75,7 @@ type Gateway struct {
 	recallSvc     *recall.Service
 	orchestration *orchestration.Service
 	intake        *intake.Service
+	scheduler     *scheduler.Service
 	forge         *forge.Service
 	tunnel        *tunnel.Manager
 	pairing       *pairing.Service
@@ -103,6 +105,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	proxy.Transport = ocapi.Transport()
 	// Instant flush for /event SSE streaming
 	proxy.FlushInterval = -1
+	proxy.ErrorLog = diagnostics.NewQuietHTTPServerLogger()
 
 	origDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
@@ -154,9 +157,6 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	runnerSvc = runner.NewService(rootDir, wtMgr, status, "")
 	wireHandoffNativeMaterializer(handoffSvc, runnerSvc)
 	runnerSvc.SetProjectResolver(workspaces)
-	workspaces.SetFolderRelinkHandler(func(projectID, oldPath, newPath string) error {
-		return runnerSvc.RelinkProject(projectID, oldPath, newPath)
-	})
 	runnerSvc.ConfigureOpenCode(openCode.BaseURL(), password)
 	runnerSvc.SetPermissionRulesSource(providers.PermissionRules)
 	runnerSvc.SetApprovalPolicyHook(providers.EnforceAskPermissions)
@@ -208,6 +208,9 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		}
 		if g.intake != nil {
 			g.intake.ForgetSession(sessionID)
+		}
+		if g.scheduler != nil {
+			g.scheduler.ForgetSession(sessionID)
 		}
 	})
 	if g.codeIndex != nil {
@@ -284,6 +287,14 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		return ""
 	})
 	g.intake = newGatewayIntakeService(g)
+	g.scheduler = newGatewaySchedulerService(g)
+	workspaces.SetFolderRelinkHandler(func(projectID, oldPath, newPath string) error {
+		err := runnerSvc.RelinkProject(projectID, oldPath, newPath)
+		if err == nil && g.scheduler != nil {
+			g.scheduler.RelinkProject(projectID, oldPath, newPath)
+		}
+		return err
+	})
 
 	g.registerRoutes(distFS)
 	return g
@@ -324,6 +335,9 @@ func (g *Gateway) HandleAuthCallback(ctx context.Context, rawURL string) error {
 }
 
 func (g *Gateway) CloseBrowser() {
+	if g.scheduler != nil {
+		g.scheduler.Stop()
+	}
 	g.closeExtensions()
 	g.browser.Close()
 	g.closeNativeHost()
@@ -639,6 +653,9 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	}
 	if g.intake != nil {
 		g.intake.RegisterRoutes(g.mux, isRemoteRequest)
+	}
+	if g.scheduler != nil {
+		g.scheduler.RegisterRoutes(g.mux, isRemoteRequest)
 	}
 	if g.forge != nil {
 		g.forge.RegisterRoutes(g.mux)

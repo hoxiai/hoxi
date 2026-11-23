@@ -18,6 +18,7 @@ import {
   activeDirectory,
   closeDocumentPreview,
   documentViewer,
+  errorMessageOf,
   isHtmlPreviewPath,
   isTesterPortalMode,
   openExternalFile,
@@ -84,7 +85,7 @@ export default function DocumentPreviewOverlay() {
       })
       .catch((err) => {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : String(err || t("timeline.documentLoadFailed")));
+        setError(errorMessageOf(err, t("timeline.documentLoadFailed")));
         setLoading(false);
       });
   });

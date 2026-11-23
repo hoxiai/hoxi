@@ -48,6 +48,9 @@ func (s *Service) resolveSessionMCPServers(sessionID, directory string) map[stri
 	if s == nil || strings.TrimSpace(sessionID) == "" {
 		return nil
 	}
+	if s.IsAppDevSession(sessionID) {
+		return nil
+	}
 	s.mu.Lock()
 	fn := s.sessionMCP
 	s.mu.Unlock()

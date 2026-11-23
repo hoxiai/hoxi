@@ -81,8 +81,43 @@ interface CacheEntry {
 }
 
 const CACHE_TTL_MS = 30_000;
+const MAX_CONCURRENT_LIST_REQUESTS = 2;
 const cache = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<unknown>>();
+
+interface QueuedListRequest {
+  key: string;
+  repoDir: string;
+  started: boolean;
+  waiters: number;
+  promise: Promise<ForgePullRequestListResponse>;
+  start: () => void;
+  abortBeforeStart: () => void;
+}
+
+const listInflight = new Map<string, QueuedListRequest>();
+const listQueue: QueuedListRequest[] = [];
+let activeListRequests = 0;
+
+function pumpListQueue(): void {
+  while (activeListRequests < MAX_CONCURRENT_LIST_REQUESTS && listQueue.length > 0) {
+    const next = listQueue.shift()!;
+    if (next.waiters <= 0) {
+      listInflight.delete(next.key);
+      next.abortBeforeStart();
+      continue;
+    }
+    next.started = true;
+    activeListRequests += 1;
+    next.start();
+  }
+}
+
+function makeAbortError(): Error {
+  const err = new Error("Pull request list request aborted");
+  err.name = "AbortError";
+  return err;
+}
 
 function cacheKey(directory: string, branch: string): string {
   return `${directory}\n${branch}`;
@@ -127,8 +162,12 @@ export function fetchPullRequest(
 
 export function fetchPullRequests(
   directory: string,
-  force = false
+  force = false,
+  signal?: AbortSignal
 ): Promise<ForgePullRequestListResponse> {
+  if (signal?.aborted) {
+    return Promise.reject(makeAbortError());
+  }
   const repoDir = canonicalRepoDirectory(directory);
   const key = `list:${repoDir}`;
   const now = Date.now();
@@ -137,22 +176,97 @@ export function fetchPullRequests(
     if (cached && cached.expiresAt > now) {
       return Promise.resolve(cached.response as ForgePullRequestListResponse);
     }
-    const pending = inflight.get(key);
-    if (pending) return pending as Promise<ForgePullRequestListResponse>;
+    const existing = listInflight.get(key);
+    if (existing) {
+      return attachListWaiter(existing, signal);
+    }
   }
 
-  const params = new URLSearchParams({ directory: repoDir });
-  const request = requestJSON<ForgePullRequestListResponse>(`/api/hoxi/forge/prs?${params.toString()}`)
-    .then((response) => {
-      cache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, response });
-      return response;
-    })
-    .finally(() => {
-      inflight.delete(key);
-    });
+  let resolveShared!: (value: ForgePullRequestListResponse) => void;
+  let rejectShared!: (reason?: unknown) => void;
+  const sharedPromise = new Promise<ForgePullRequestListResponse>((resolve, reject) => {
+    resolveShared = resolve;
+    rejectShared = reject;
+  });
 
-  inflight.set(key, request);
-  return request;
+  const entry: QueuedListRequest = {
+    key,
+    repoDir,
+    started: false,
+    waiters: 0,
+    promise: sharedPromise,
+    start: () => {
+      const params = new URLSearchParams({ directory: repoDir });
+      requestJSON<ForgePullRequestListResponse>(`/api/hoxi/forge/prs?${params.toString()}`)
+        .then((response) => {
+          cache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, response });
+          resolveShared(response);
+        })
+        .catch((err) => {
+          rejectShared(err);
+        })
+        .finally(() => {
+          activeListRequests = Math.max(0, activeListRequests - 1);
+          if (listInflight.get(key) === entry) {
+            listInflight.delete(key);
+          }
+          pumpListQueue();
+        });
+    },
+    abortBeforeStart: () => {
+      rejectShared(makeAbortError());
+    },
+  };
+
+  if (!force) {
+    listInflight.set(key, entry);
+  }
+  const waiterPromise = attachListWaiter(entry, signal);
+  listQueue.push(entry);
+  pumpListQueue();
+  return waiterPromise;
+}
+
+function attachListWaiter(
+  entry: QueuedListRequest,
+  signal?: AbortSignal
+): Promise<ForgePullRequestListResponse> {
+  entry.waiters += 1;
+  if (!signal) {
+    return entry.promise;
+  }
+  return new Promise<ForgePullRequestListResponse>((resolve, reject) => {
+    let settled = false;
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      entry.waiters = Math.max(0, entry.waiters - 1);
+      if (!entry.started && entry.waiters === 0) {
+        const idx = listQueue.indexOf(entry);
+        if (idx >= 0) listQueue.splice(idx, 1);
+        if (listInflight.get(entry.key) === entry) {
+          listInflight.delete(entry.key);
+        }
+        entry.abortBeforeStart();
+      }
+      reject(makeAbortError());
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    entry.promise.then(
+      (res) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        resolve(res);
+      },
+      (err) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        reject(err);
+      }
+    );
+  });
 }
 
 export function fetchPullRequestDetail(

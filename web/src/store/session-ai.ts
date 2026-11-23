@@ -25,7 +25,11 @@ export function sessionAIConfig(sessionID: string | null = workspace.activeSessi
 
 export function initializeSessionAI(sessionID: string, config = workspace.defaultAI): void {
   if (workspace.aiBySession[sessionID]) return;
-  setWorkspace("aiBySession", sessionID, { ...config, model: config.model ? { ...config.model } : null });
+  setWorkspace("aiBySession", sessionID, {
+    ...config,
+    model: config.model ? { ...config.model } : null,
+    ...(config.orchestratorOverride ? { orchestratorOverride: { ...config.orchestratorOverride } } : {}),
+  });
   persistSessionAI();
 }
 

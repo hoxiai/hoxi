@@ -32,8 +32,8 @@
    - [7.2 Go Worktree 管理器接口契约 (`internal/worktree/`)](#72-go-worktree-管理器接口契约-internalworktree)
 8. [统一安全门控与 8 维记忆沉淀体系](#8-统一安全门控与-8-维记忆沉淀体系)
    - [8.1 原生门控钩子与可选 OpenCode 插件签名](#81-原生门控钩子与可选-opencode-插件签名)
-   - [8.2 统一审批策略门控 (`approval_decision.go` & `permission-policy.js`)](#82-统一审批策略门控-approval_decisiongo--permission-policyjs)
-   - [8.3 8 维度结构化记忆沉淀 (`internal/runner/memory.go` & `.hoxi/memory/`)](#83-8-维度结构化记忆沉淀-internalrunnermemorygo--hoximemory)
+   - [8.2 统一审批策略门控 (`shellpolicy/decision.go` & `permission-policy.js`)](#82-统一审批策略门控-shellpolicydecisiongo--permission-policyjs)
+   - [8.3 8 维度结构化记忆沉淀 (`internal/runner/memstore/` & `.hoxi/memory/`)](#83-8-维度结构化记忆沉淀-internalrunnermemstore--hoximemory)
 9. [macOS & Windows 原生宿主与状态栏托盘 (`internal/app/` & `internal/statusbar/`)](#9-macos--windows-原生宿主与状态栏托盘-internalapp--internalstatusbar)
    - [9.1 Wails 窗口配置与单实例锁](#91-wails-窗口配置与单实例锁)
    - [9.2 原生状态栏 / 系统托盘状态机联动](#92-原生状态栏--系统托盘状态机联动)
@@ -508,7 +508,7 @@ Hoxi 默认 Go 原生引擎（`internal/agent`）与外部 CLI 运行时（Claud
 2. 在任何模式下（含 `trusted`），命中硬底线（读取密钥与凭据文件、工作树外敏感路径、控制执行的受保护路径、`sudo`、`git push --force`、共享 git 状态变更、发布类命令、非本会话自有进程的 `kill`/`pkill`/`killall`、磁盘与系统命令、管道执行等）一律挂起等待 `<ApprovalGateCard />` 人工确认（`unattended` 模式下直接硬拒绝并记入 `/api/hoxi/permission/deferred`）。
 3. 所有运行时执行命令与敏感读写时，统一由 Go 端 `approvalAutoApproves` 按当前策略决定直接放行或广播 `permission.asked` 给客户端。
 
-### 8.3 8 维度结构化记忆沉淀 (`internal/runner/memory.go` & `.hoxi/memory/`)
+### 8.3 8 维度结构化记忆沉淀 (`internal/runner/memstore/` & `.hoxi/memory/`)
 由 Go 端 [`internal/runner/memstore/memory.go`](internal/runner/memstore/memory.go) 与 [`internal/runner/memstore/memory_bank.go`](internal/runner/memstore/memory_bank.go)（可选 OpenCode 运行时辅以内置覆盖层 [`internal/opencode/hoxi_plugin.js`](internal/opencode/hoxi_plugin.js)）统一实现 **8 维度上下文压缩协议**：
 1. 在每轮对话构造上下文时（`runtimeMemoryContext`），自动将项目根 `<project>/.hoxi/memory/project.md` 与当前会话交接记忆 `<project>/.hoxi/memory/sessions/<sessionID>.md` 注入模型上下文（兼容只读回退旧版 `.opencode/memory/` 数据）。
 2. 在会话触发上下文压缩时（[`internal/agent/summarize.go`](internal/agent/summarize.go) / `session_summarize.go`），按模型预算分段摘要并生成标准 8 维度结构化记忆（`Goals`, `Constraints`, `Key Facts`, `Changed Files`, `Errors & Fixes`, `Todo`, `Progress`, `Next Steps`）。

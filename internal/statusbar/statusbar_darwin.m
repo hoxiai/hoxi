@@ -373,7 +373,7 @@ void hoxi_statusbar_update(
                 : @"任务运行时保持唤醒";
 
             if (!available) {
-                button.toolTip = @"Hoxi: OpenCode 引擎正在启动";
+                button.toolTip = @"Hoxi：服务正在启动";
                 hoxiStatusBarController.attentionItem.title = @"待审批任务（引擎正在连接…）";
                 hoxiStatusBarController.runningItem.title = @"运行中任务 (0)";
                 hoxi_rebuild_session_items(

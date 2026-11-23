@@ -4,6 +4,7 @@ import { ArrowLeft, Check, Eye, EyeOff, LoaderCircle, Lock, Plus, RefreshCw } fr
 import { hoxiAPI } from "../../services/api";
 import {
   disconnectProvider,
+  errorMessageOf,
   isImportedOpenCodeProvider,
   MASKED_SECRET,
   openProviderModal,
@@ -147,7 +148,7 @@ export default function CustomEndpointTab() {
       }));
       return { ok: res.ok, latencyMs: res.latencyMs, error: res.ok ? undefined : errText };
     } catch (err: any) {
-      const errMsg = err?.message || String(err);
+      const errMsg = errorMessageOf(err, t("models.connectFailed"));
       setModelProbes((prev) => ({ ...prev, [cleanId]: { status: "error", error: errMsg } }));
       return { ok: false, error: errMsg };
     }

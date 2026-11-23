@@ -79,12 +79,15 @@ jobs:
 
       - name: Check Go formatting (gofmt)
         run: |
-          UNFORMATTED="$(gofmt -l main.go cmd internal)"
+          UNFORMATTED="$(gofmt -l main.go cmd internal tools)"
           if [[ -n "$UNFORMATTED" ]]; then
             echo "The following Go files are not formatted with gofmt:" >&2
             echo "$UNFORMATTED" >&2
             exit 1
           fi
+
+      - name: Run Go architecture contractcheck
+        run: go run ./tools/contractcheck
 
       - name: Run Go vet
         run: go vet ./...

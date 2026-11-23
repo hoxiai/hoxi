@@ -1,7 +1,9 @@
+import { createMemo, createRoot } from "solid-js";
 import { reconcile, unwrap } from "solid-js/store";
 import type { SessionInfo } from "../services/sse-types";
 import {
   collectCrossProjectSessions,
+  filterCrossProjectSessions,
   groupRunningByProject,
   partitionAttentionSessions,
   RECENT_TASKS_MAX,
@@ -10,7 +12,7 @@ import {
   selectRecentCrossProjectSessions,
 } from "../components/layout/cross-project-nav";
 import { stripSubagentTitleSuffix } from "../store/session-title";
-import type { ProjectNavEntry } from "../components/layout/left-nav-helpers";
+import { sameProjectNavEntries, type ProjectNavEntry } from "../components/layout/left-nav-helpers";
 import {
   childSubagentIDsFromTurns,
   clearSessionPendingApprovals,
@@ -20,6 +22,7 @@ import {
   getSubagentVisibleLimit,
   groupSubagentsByRoot,
   healTransientSidebarProjectMode,
+  indexSessions,
   isSubagentDrawerExpanded,
   isWorkSurfacePath,
   loadMoreSubagents,
@@ -33,6 +36,7 @@ import {
   SIDEBAR_NAV_TAB_KEY,
   SIDEBAR_PROJECT_MODE_KEY,
   switchSidebarNavTab,
+  upsertMessagePart,
   workspace,
   writeStorageItem,
   type WorkspaceState,
@@ -550,6 +554,107 @@ describe("Cross-project sidebar views", () => {
         writeStorageItem(SIDEBAR_PROJECT_MODE_KEY, "recent");
         healTransientSidebarProjectMode();
         assertEqual(workspace.sidebarNavTab, "recent");
+      },
+    );
+  });
+
+  it("batches indexSessions updates into a single folder-surface flush and avoids stream-part thrash", () => {
+    withWorkspace(
+      {
+        rootDir: "/repo-a",
+        bootstrappingSessions: false,
+        sessions: [session("ses_active", 100, { directory: "/repo-a", surface: "code" })],
+        sessionIndex: {},
+        messagesBySession: {
+          ses_active: [
+            {
+              info: { id: "msg_1", sessionID: "ses_active", role: "assistant", time: { created: 1 } },
+              parts: [],
+            },
+          ],
+        },
+      },
+      () => {
+        let surfaceEvaluations = 0;
+        createRoot((dispose) => {
+          const check = createMemo(() => {
+            surfaceEvaluations += 1;
+            return isWorkSurfacePath("/repo-batch");
+          });
+          assertEqual(check(), false);
+          assertEqual(surfaceEvaluations, 1);
+
+          const batchList = Array.from({ length: 120 }, (_, i) =>
+            session(`ses_batch_${i}`, i + 1, { directory: "/repo-batch", surface: "code" }),
+          );
+          indexSessions(batchList);
+          assertEqual(check(), false);
+          // Without batching + coalesced surface revision, 120 first-seen sessions would trigger 120 flushes.
+          assertEqual(surfaceEvaluations <= 2, true);
+          dispose();
+        });
+
+        const cachedRepoB = [
+          session("ses_b_root", 200, { directory: "/repo-b", surface: "code" }),
+          session("ses_b_sub", 210, { parentID: "ses_b_root", directory: "/repo-b", surface: "code" }),
+        ];
+        let collectRuns = 0;
+        createRoot((dispose) => {
+          const collected = createMemo(() => {
+            collectRuns += 1;
+            return collectCrossProjectSessions({
+              allProjects: PROJECTS,
+              projectSessions: { "/repo-b": cachedRepoB },
+              filterQuery: "",
+            });
+          });
+          assertEqual(collected().length, 2);
+          assertEqual(collectRuns, 1);
+
+          // Streaming text or bash tool parts in the active session must not re-run cross-project partitioning.
+          upsertMessagePart({
+            id: "prt_text_1",
+            sessionID: "ses_active",
+            messageID: "msg_1",
+            type: "text",
+            text: "hello world",
+          });
+          upsertMessagePart({
+            id: "prt_bash_1",
+            sessionID: "ses_active",
+            messageID: "msg_1",
+            type: "tool",
+            callID: "call_bash_1",
+            tool: "bash",
+            state: { status: "running", input: { command: "ls" }, title: "ls", time: { start: 1 } },
+          });
+          assertEqual(collected().length, 2);
+          assertEqual(collectRuns, 1);
+
+          assertDeepEqual(
+            filterCrossProjectSessions(collected(), "repo b").map((i) => i.session.id),
+            ["ses_b_root"],
+          );
+          dispose();
+        });
+
+        // Compact Recent Tasks mode collapses idle subagent drawers by default while honoring autoExpand & manual toggle.
+        clearSubagentDrawerOverride("ses_compact");
+        assertEqual(isSubagentDrawerExpanded("ses_compact", false, false), false);
+        assertEqual(isSubagentDrawerExpanded("ses_compact", true, false), true);
+        setSubagentDrawerExpanded("ses_compact", true, false);
+        assertEqual(isSubagentDrawerExpanded("ses_compact", false, false), true);
+        clearSubagentDrawerOverride("ses_compact");
+
+        // Structural equality check on ProjectNavEntry lists prevents redundant downstream memo invalidation.
+        assertEqual(
+          sameProjectNavEntries([project("/repo-a", "Repo A")], [project("/repo-a", "Repo A")]),
+          true,
+        );
+        assertEqual(
+          sameProjectNavEntries([project("/repo-a", "Repo A")], [project("/repo-a", "Renamed")]),
+          false,
+        );
       },
     );
   });

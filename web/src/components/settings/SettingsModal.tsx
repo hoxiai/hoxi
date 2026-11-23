@@ -400,9 +400,6 @@ export default function SettingsModal() {
           </div>
 
           <div class={`flex items-center gap-2 shrink-0 ${showWinControls ? "h-full" : ""}`}>
-            <span class="hidden sm:inline-block rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)]/70 px-2.5 py-1 font-mono text-[11px] text-[var(--text-faint)]">
-              {t("settings.shortcutHint")}
-            </span>
             <button
               type="button"
               class="hoxi-press inline-flex items-center justify-center w-7 h-7 rounded-lg text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
@@ -584,7 +581,11 @@ export default function SettingsModal() {
                       <ChatComposerTab />
                     </div>
                   </Show>
-                  <Show when={activeTab() === "app-grants"}><AppGrantsTab /></Show>
+                  <Show when={activeTab() === "app-grants"}>
+                    <div class="hoxi-view-enter">
+                      <AppGrantsTab />
+                    </div>
+                  </Show>
                   <Show when={activeTab() === "extensions"}>
                     <div class="hoxi-view-enter">
                       <SettingsExtensionsTab />

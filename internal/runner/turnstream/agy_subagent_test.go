@@ -605,3 +605,34 @@ func TestAgyFlatInvokeSubagentOutputAndIdleSystemMessages(t *testing.T) {
 		t.Fatalf("expected bugPart completed with clean response, got %+v", bugPart.State)
 	}
 }
+
+func TestAgySubagentBackfillsExternalIDOnPoll(t *testing.T) {
+	flushed := false
+	tr, children := newAgyTestTranslator(func(conv string, step int) string {
+		if conv == agyParentConv && step == 2 && flushed {
+			return "Created the following subagent:\n{\n  \"conversationId\": \"" + agyBugConv + "\"\n}\n"
+		}
+		return ""
+	})
+	var updatedChildID, updatedExtID string
+	tr.UpdateChildExternalID = func(childID, externalID string) {
+		updatedChildID = childID
+		updatedExtID = externalID
+	}
+
+	// First DONE arrives before transcript.jsonl flushes the GENERIC result row.
+	tr.FeedLine(`{"event":"init","conversation_id":"` + agyParentConv + `","init":{"model":"gemini-4-neon-xhigh"}}`)
+	tr.FeedLine(`{"event":"step_update","step_update":{"conversation_id":"` + agyParentConv + `","step_index":2,"state":"ACTIVE","step_type":"tool","tool_name":"invoke_subagent","tool_info":{"name":"invoke_subagent","parameters":{"Role":"Late Flush Auditor","TypeName":"research","Prompt":"Audit repo"}}}}`)
+	tr.FeedLine(`{"event":"step_update","step_update":{"conversation_id":"` + agyParentConv + `","step_index":2,"state":"DONE","step_type":"tool","tool_name":"invoke_subagent","tool_info":{"name":"invoke_subagent"}}}`)
+
+	if len(children.specs) != 1 || children.specs[0].ExternalID != "" {
+		t.Fatalf("expected initial child opened with empty ExternalID, got %+v", children.specs)
+	}
+
+	// Once transcript flushes, PollSubagentActivity must backfill ExternalID.
+	flushed = true
+	tr.PollSubagentActivity()
+	if updatedChildID == "" || updatedExtID != agyBugConv {
+		t.Fatalf("expected UpdateChildExternalID called with %q, got child=%q ext=%q", agyBugConv, updatedChildID, updatedExtID)
+	}
+}

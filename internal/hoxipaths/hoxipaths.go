@@ -76,6 +76,8 @@ var protectedStateFiles = []string{
 	"remote-hosts.json.lock",
 	"intake.json",
 	"intake.json.lock",
+	"schedules.json",
+	"schedules.json.lock",
 	"media-roles.json",
 	"media-roles.json.lock",
 	// The reclaim ledger tells the next Hoxi start which processes to signal
@@ -297,6 +299,18 @@ func RuntimeEndpointPath() string {
 // intake links and staged QA tasks. Written 0600.
 func IntakeStorePath() string {
 	return Join("intake.json")
+}
+
+// SchedulesPath returns ~/.hoxi/schedules.json, storing desktop/host scheduled
+// conversation tasks. Written 0600 and protected from agent modification.
+func SchedulesPath() string {
+	return Join("schedules.json")
+}
+
+// ScheduleRunsDir returns ~/.hoxi/schedules, storing bounded per-schedule run
+// history records.
+func ScheduleRunsDir() string {
+	return Join("schedules")
 }
 
 // BinDir returns ~/.hoxi/bin, where Hoxi installs its managed binaries.

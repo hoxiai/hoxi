@@ -8,7 +8,7 @@ import (
 )
 
 func TestWindowsTrayTooltipAndIconRendering(t *testing.T) {
-	if got := formatTrayTooltip(Summary{Available: false}); got != "Hoxi: OpenCode 引擎正在启动" {
+	if got := formatTrayTooltip(Summary{Available: false}); got != "Hoxi：服务正在启动" {
 		t.Fatalf("unexpected offline tooltip: %q", got)
 	}
 	if got := formatTrayTooltip(Summary{Available: true, Attention: 2, Running: 3}); got != "Hoxi：待审批 2 · 运行中 3" {

@@ -129,6 +129,7 @@ func TestHostProxyStripsDesktopTokenAndInjectsInnerGatewayToken(t *testing.T) {
 	var wireSeenDesktopToken bool
 	wireCheck := roundTripInspector(func(req *http.Request) (*http.Response, error) {
 		if strings.Contains(req.Header.Get("X-Hoxi-Token"), desktopLocalToken) ||
+			strings.Contains(req.Header.Get("X-Hoxi-Host-Token"), desktopLocalToken) ||
 			strings.Contains(req.URL.RawQuery, desktopLocalToken) {
 			wireSeenDesktopToken = true
 		}
@@ -171,10 +172,109 @@ func TestHostProxyStripsDesktopTokenAndInjectsInnerGatewayToken(t *testing.T) {
 	if strings.Contains(sawQuery, "hoxiToken") || !strings.Contains(sawQuery, "directory=%2Fworkspace") {
 		t.Fatalf("unexpected upstream query %q", sawQuery)
 	}
+
+	// Malformed percent-escapes, semicolon separators, case-variant query keys,
+	// and X-Hoxi-Host-Token headers must still never leak desktop tokens over the wire.
+	for _, rawQ := range []string{
+		"bad=%ZZ&hoxiToken=" + desktopLocalToken,
+		"directory=%2Fworkspace;HOXITOKEN=" + desktopLocalToken,
+		"hoxi%54oken=" + desktopLocalToken + "&keep=1",
+	} {
+		wireSeenDesktopToken = false
+		mReq := httptest.NewRequest(http.MethodGet, "/api/hoxi/hosts/proxy/"+pub.ID+"/api/hoxi/agents?"+rawQ, nil)
+		mReq.Header.Set("X-Hoxi-Token", desktopLocalToken)
+		mReq.Header.Set("X-Hoxi-Host-Token", desktopLocalToken)
+		mRec := httptest.NewRecorder()
+		mux.ServeHTTP(mRec, mReq)
+		if wireSeenDesktopToken {
+			t.Fatalf("desktop token leaked on malformed/variant query %q", rawQ)
+		}
+	}
+}
+
+func TestHostProbeRefusesRedirects(t *testing.T) {
+	var redirectHits int
+	rt := roundTripInspector(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Host == "attacker.invalid" {
+			redirectHits++
+			rec := httptest.NewRecorder()
+			rec.WriteHeader(http.StatusOK)
+			return rec.Result(), nil
+		}
+		rec := httptest.NewRecorder()
+		rec.Header().Set("Location", "https://attacker.invalid/steal")
+		rec.WriteHeader(http.StatusFound)
+		return rec.Result(), nil
+	})
+	reg := NewService(filepath.Join(t.TempDir(), "remote-hosts.json"), rt)
+	pub, err := reg.Upsert(UpsertInput{
+		PairURI: FormatPairURI("https://devbox.invalid:5430", "devbox", "hxh_secret_token_123"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := reg.Probe(t.Context(), pub.ID)
+	if err != nil {
+		t.Fatalf("unexpected Probe error: %v", err)
+	}
+	if res.OK || !strings.Contains(res.Error, "redirects are not allowed") {
+		t.Fatalf("expected redirect refusal in ProbeResult, got %+v", res)
+	}
+	if redirectHits != 0 {
+		t.Fatalf("expected 0 requests followed to redirect target, got %d", redirectHits)
+	}
 }
 
 type roundTripInspector func(*http.Request) (*http.Response, error)
 
 func (fn roundTripInspector) RoundTrip(r *http.Request) (*http.Response, error) {
 	return fn(r)
+}
+
+func TestDefaultListenAddrIsLoopbackAndPrivateNetworkGuard(t *testing.T) {
+	if DefaultHostListenAddr != "127.0.0.1:5430" {
+		t.Fatalf("DefaultHostListenAddr = %q, want 127.0.0.1:5430", DefaultHostListenAddr)
+	}
+
+	guarded := WrapPrivateNetworkGuard(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	allowedAddrs := []string{
+		"127.0.0.1:50000",
+		"[::1]:50000",
+		"10.0.0.12:41234",
+		"192.168.1.55:41234",
+		"172.16.4.9:41234",
+		"100.64.10.2:41234",
+		"[fd12:3456::1]:41234",
+		"[fe80::1%en0]:41234",
+	}
+	for _, addr := range allowedAddrs {
+		req := httptest.NewRequest(http.MethodGet, "/api/hoxi/host-info", nil)
+		req.RemoteAddr = addr
+		rec := httptest.NewRecorder()
+		guarded.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected private/loopback addr %q allowed, got %d (%s)", addr, rec.Code, rec.Body.String())
+		}
+	}
+
+	deniedAddrs := []string{
+		"8.8.8.8:443",
+		"198.51.100.10:12345",
+		"1.1.1.1:5430",
+		"[2001:4860:4860::8888]:443",
+		"",
+		"not-an-ip",
+	}
+	for _, addr := range deniedAddrs {
+		req := httptest.NewRequest(http.MethodGet, "/api/hoxi/host-info", nil)
+		req.RemoteAddr = addr
+		rec := httptest.NewRecorder()
+		guarded.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("expected public/invalid addr %q forbidden (403), got %d", addr, rec.Code)
+		}
+	}
 }

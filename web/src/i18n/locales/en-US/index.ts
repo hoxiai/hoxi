@@ -20,6 +20,7 @@ import { pairing } from "./pairing";
 import { cloudflared } from "./cloudflared";
 import { relay } from "./relay";
 import { tasks } from "./tasks";
+import { schedules } from "./schedules";
 import { companion } from "./companion";
 
 export const enUS = {
@@ -44,6 +45,7 @@ export const enUS = {
   cloudflared,
   relay,
   tasks,
+  schedules,
   companion,
 };
 

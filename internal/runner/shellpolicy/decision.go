@@ -135,6 +135,19 @@ func (req permissionRequestView) isComputerUse() bool {
 	return req.permission == "hoxi_computer" || strings.EqualFold(firstString(req.meta["tool"]), "hoxi_computer")
 }
 
+func isMutatingHoxiSchedule(item map[string]interface{}) bool {
+	perm := permissionName(item)
+	meta := itemMetadata(item)
+	toolObj, _ := item["tool"].(map[string]interface{})
+	toolName := strings.ToLower(strings.TrimSpace(firstString(meta["tool"], toolObj["name"], firstPattern(item))))
+	if perm != "hoxi_schedule" && toolName != "hoxi_schedule" {
+		return false
+	}
+	args := parseToolArgs(meta["args"])
+	act := strings.ToLower(strings.TrimSpace(firstString(meta["action"], args["action"])))
+	return act != "list" && act != "get"
+}
+
 func (req permissionRequestView) resolveWorktree(fallback string) string {
 	if fallback != "" {
 		return fallback
@@ -156,16 +169,25 @@ func approvalAutoApproves(item map[string]interface{}, pol ApprovalPolicy, rules
 // then allows everything the hard-refuse list does not name.
 func approvalAutoApprovesIsolated(item map[string]interface{}, pol ApprovalPolicy, rules map[string]interface{}, worktree string, isolated bool) bool {
 	req := parsePermissionRequest(item)
-	if req.isComputerUse() {
+	if req.isComputerUse() || isMutatingHoxiSchedule(item) {
 		return false
 	}
 	if pol.Mode == ApprovalModeUnattended && isolated {
 		allow, _ := unattendedDecision(item, worktree)
 		return allow
 	}
-	// Auto lets read-only inline scripts through, full trust any (see isOpaqueShellCommandWith).
-	// An opaque command under the on-demand sandbox is contained instead (sandbox_on_demand.go).
-	if isOpaquePermissionRequestWith(item, worktree, scriptTrustFor(pol.Mode)) && !sandboxCoversOpacity(item, pol.Mode, worktree) {
+	// Every interactive mode enforces the explicit high-risk denylist
+	// (secrets/credential env vars, credential egress, sensitive cd/scripts,
+	// sudo/su/doas, publishing, download-and-execute, BASH_ENV, brace
+	// obfuscation, dynamic pipe/eval) so auto/smart can never be looser than
+	// full trust. Non-trusted modes additionally run static shell opacity
+	// checks (with on-demand sandbox in auto).
+	if isTrustedExplicitHighRisk(item, worktree) {
+		return false
+	}
+	if pol.Mode != ApprovalModeTrusted &&
+		isOpaquePermissionRequestWith(item, worktree, scriptTrustFor(pol.Mode)) &&
+		!sandboxCoversOpacity(item, pol.Mode, worktree) {
 		return false
 	}
 	if isDestructivePermissionRequest(item) && !modeAllowsControllableRequest(pol.Mode, item, worktree) {
@@ -548,7 +570,7 @@ func isDestructivePermissionRequest(item map[string]interface{}) bool {
 	if isHoxiTools, action := hoxiToolsAction(item); isHoxiTools {
 		return action != "discover" && action != "inspect"
 	}
-	if isMutatingHoxiData(item) {
+	if isMutatingHoxiData(item) || isMutatingHoxiSchedule(item) {
 		return true
 	}
 	if hasNonCanonicalClaudeSkillPath(item) {

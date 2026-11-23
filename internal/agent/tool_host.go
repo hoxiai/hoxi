@@ -83,7 +83,7 @@ type hoxiComputerTool struct{}
 
 func (t *hoxiComputerTool) Name() string { return "hoxi_computer" }
 func (t *hoxiComputerTool) Description() string {
-	return "Inspect and control a running desktop app on macOS and Windows. Use the app the user authorized in Hoxi's Computer panel, or pass 'app' (app name like 'Calculator' or 'Safari', bundleID, or id from action='apps') ONLY on state/screenshot to request native dialog confirmation for another app (input actions cannot switch apps). Call state or screenshot first: each readable element includes windowBounds (relative to the target window) and an integer id you can pass as elementID (1..300) to click, move, scroll, or type without coordinate math. Manual x/y/endX/endY coordinates are relative to the target window's bounds, NEVER screen coordinates or scaled screenshot pixels. Every input requires the latest windowID (string) and observationID (string), waits for desktop approval (unless continuous input is enabled for the active grant), and returns a fresh post-input observationID and element state (pass screenshot=true on an input action to also capture a fresh JPEG in one call). For action='type', you can also pass 'key' (e.g. 'Enter' or 'Tab') to type text and press a key atomically. Protected apps (Hoxi, System Settings, terminals/script editors, password managers) and password fields are blocked."
+	return "Inspect and control a running desktop app on macOS and Windows. Use the app the user authorized in Hoxi's Computer panel, or pass 'app' (app name like 'Calculator' or 'Safari', bundleID, or id from action='apps') ONLY on state/screenshot to request native dialog confirmation for another app (wait and input actions cannot switch apps). Call state or screenshot first: visible interactive controls are prioritized and each readable element includes windowBounds (relative to the target window), optional focused/disabled flags, and an integer id you can pass as elementID (1..300) to click, move, scroll, or type without coordinate math. Use action='wait' (seconds: 1..60, default 5; optional screenshot=true) when waiting for an app's long-running task or confirmation dialog instead of rapid polling—wait performs no desktop input, skips input approval, and returns a fresh observation. Manual x/y/endX/endY coordinates are relative to the target window's bounds, NEVER screen coordinates or scaled screenshot pixels. Every input requires the latest windowID (string) and observationID (string), waits for desktop approval (unless continuous input is enabled for the active grant), and returns a fresh post-input observationID and element state (pass screenshot=true on an input action to also capture a fresh JPEG in one call). For action='type', pass clear=true to replace existing input text and/or 'key' (e.g. 'Enter' or 'Tab') to type and press a key atomically; multiline '\\n' text is inserted safely with Shift+Enter without premature submission. Protected apps (Hoxi, System Settings, terminals/script editors, password managers) and password fields are blocked."
 }
 func (t *hoxiComputerTool) IsReadOnly() bool { return false }
 func (t *hoxiComputerTool) Parameters() map[string]any {
@@ -92,13 +92,13 @@ func (t *hoxiComputerTool) Parameters() map[string]any {
 		"properties": map[string]any{
 			"action": map[string]any{
 				"type":        "string",
-				"enum":        []string{"status", "apps", "state", "screenshot", "focus", "move", "click", "drag", "scroll", "type", "key"},
+				"enum":        []string{"status", "apps", "state", "screenshot", "wait", "focus", "move", "click", "drag", "scroll", "type", "key"},
 				"description": "Desktop action to execute",
 			},
 			"app":           map[string]any{"type": "string", "maxLength": 256, "description": "Target application name, bundleID, or id from action='apps' (only on state/screenshot to request user confirmation)"},
 			"windowID":      map[string]any{"type": "string", "maxLength": 64, "description": "Target window ID string returned by state/screenshot (required for all input actions)"},
-			"observationID": map[string]any{"type": "string", "maxLength": 64, "description": "Fresh 32-hex observationID from the latest state/screenshot or prior input response"},
-			"elementID":     map[string]any{"type": "integer", "minimum": 1, "maximum": 300, "description": "Accessibility element integer ID (1..300) from state/screenshot to target element center"},
+			"observationID": map[string]any{"type": "string", "maxLength": 64, "description": "Fresh 32-hex observationID from the latest state/screenshot/wait or prior input response"},
+			"elementID":     map[string]any{"type": "integer", "minimum": 1, "maximum": 300, "description": "Accessibility element integer ID (1..300) from state/screenshot/wait to target element center"},
 			"x":             map[string]any{"type": "number", "minimum": 0, "maximum": 16384, "description": "Window-relative X coordinate (relative to target window bounds, NOT screen or scaled image pixels)"},
 			"y":             map[string]any{"type": "number", "minimum": 0, "maximum": 16384, "description": "Window-relative Y coordinate (relative to target window bounds, NOT screen or scaled image pixels)"},
 			"endX":          map[string]any{"type": "number", "minimum": 0, "maximum": 16384, "description": "Drag destination window-relative X coordinate"},
@@ -107,9 +107,11 @@ func (t *hoxiComputerTool) Parameters() map[string]any {
 			"deltaY":        map[string]any{"type": "integer", "minimum": -2000, "maximum": 2000, "description": "Vertical scroll delta in integer pixels"},
 			"button":        map[string]any{"type": "string", "enum": []string{"left", "right", "middle"}},
 			"clickCount":    map[string]any{"type": "integer", "minimum": 1, "maximum": 3, "description": "Click count (1=single, 2=double, 3=triple)"},
-			"text":          map[string]any{"type": "string", "maxLength": 8192, "description": "Unicode text to type"},
+			"text":          map[string]any{"type": "string", "maxLength": 8192, "description": "Unicode text to type (newlines insert Shift+Enter safely without submitting)"},
 			"key":           map[string]any{"type": "string", "maxLength": 128, "description": "DOM key chord (e.g. Enter, Tab, Escape, Meta+c); also supported on action='type'"},
-			"screenshot":    map[string]any{"type": "boolean", "description": "Include a fresh JPEG screenshot in the post-input response"},
+			"clear":         map[string]any{"type": "boolean", "description": "Select all and clear existing field text before typing (action='type' only)"},
+			"seconds":       map[string]any{"type": "number", "minimum": 1, "maximum": 60, "description": "Bounded wait duration in seconds (1..60, default 5; action='wait' only)"},
+			"screenshot":    map[string]any{"type": "boolean", "description": "Include a fresh JPEG screenshot in the wait or post-input response"},
 		},
 		"required": []string{"action"},
 	}
@@ -320,5 +322,40 @@ func (t *hoxiDataProfileTool) Parameters() map[string]any {
 	}
 }
 func (t *hoxiDataProfileTool) Execute(ctx context.Context, tc ToolContext, input json.RawMessage) (ToolOutput, error) {
+	return execHostTool(ctx, tc, t.Name(), input)
+}
+
+type hoxiScheduleTool struct{}
+
+func (t *hoxiScheduleTool) Name() string { return "hoxi_schedule" }
+func (t *hoxiScheduleTool) Description() string {
+	return "Manage workspace scheduled tasks (mutations require desktop approval). Set bindCurrentSession=true to reuse this chat, or omit for a fresh session."
+}
+func (t *hoxiScheduleTool) IsReadOnly() bool { return false }
+func (t *hoxiScheduleTool) Parameters() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"action":             map[string]any{"type": "string", "enum": []string{"list", "get", "create", "update", "pause", "resume", "delete"}},
+			"id":                 map[string]any{"type": "string"},
+			"name":               map[string]any{"type": "string"},
+			"prompt":             map[string]any{"type": "string"},
+			"cron":               map[string]any{"type": "string"},
+			"intervalMinutes":    map[string]any{"type": "integer"},
+			"bindCurrentSession": map[string]any{"type": "boolean"},
+			"sessionID":          map[string]any{"type": "string"},
+			"mode":               map[string]any{"type": "string", "enum": []string{"build", "plan"}},
+			"sandboxMode":        map[string]any{"type": "string", "enum": []string{"local", "worktree"}},
+			"commandSandbox":     map[string]any{"type": "boolean"},
+			"skillName":          map[string]any{"type": "string"},
+			"skillKey":           map[string]any{"type": "string"},
+			"providerID":         map[string]any{"type": "string"},
+			"modelID":            map[string]any{"type": "string"},
+			"notifyOn":           map[string]any{"type": "string", "enum": []string{"alert_or_error", "always", "never"}},
+		},
+		"required": []string{"action"},
+	}
+}
+func (t *hoxiScheduleTool) Execute(ctx context.Context, tc ToolContext, input json.RawMessage) (ToolOutput, error) {
 	return execHostTool(ctx, tc, t.Name(), input)
 }

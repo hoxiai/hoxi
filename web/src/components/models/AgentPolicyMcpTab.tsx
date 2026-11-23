@@ -13,6 +13,7 @@ import {
   appSettings,
   approvalGrants,
   approvalPolicy,
+  errorMessageOf,
   fetchGlobalConfig,
   resolveEffectivePermissionSummary,
   setApprovalMode,
@@ -56,6 +57,12 @@ const PRESET_OPTIONS: PresetCardOption[] = [
     badgeKey: "approval.modeAutoBadge",
   },
   {
+    id: "trusted",
+    labelKey: "approval.modeTrustedLabel",
+    descKey: "approval.modeTrustedDesc",
+    badgeKey: "approval.modeTrustedBadge",
+  },
+  {
     id: "manual",
     labelKey: "approval.modeManualLabel",
     descKey: "approval.modeManualDesc",
@@ -70,7 +77,6 @@ const PRESET_OPTIONS: PresetCardOption[] = [
 
 function normalizePresetMode(mode: ApprovalMode): ApprovalMode {
   if (mode === "smart") return "auto";
-  if (mode === "trusted") return "unattended";
   return mode;
 }
 
@@ -160,7 +166,7 @@ export default function AgentPolicyMcpTab() {
             </span>
           </div>
 
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <For each={PRESET_OPTIONS}>
               {(opt) => {
                 const isSelected = () => normalizePresetMode(currentMode()) === opt.id;
@@ -275,7 +281,7 @@ export default function AgentPolicyMcpTab() {
               value={approvalPolicy().approvalTimeoutSeconds || 600}
               onChange={(e) => {
                 const n = Number(e.currentTarget.value);
-                if (n >= 60 && n <= 3600) void setApprovalTimeout(n).catch((err) => showSavedFeedback(false, String(err)));
+                if (n >= 60 && n <= 3600) void setApprovalTimeout(n).catch((err) => showSavedFeedback(false, errorMessageOf(err, t("common.error"))));
               }}
               class="w-24 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1 text-[12px]"
             />

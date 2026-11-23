@@ -228,7 +228,7 @@ export default function WebGLTerminal() {
                 : "bg-amber-400 animate-pulse"
           }`}
         />
-        <span class="text-[11px] text-gray-400">
+        <span class="text-[11px] text-[var(--text-muted)]">
           {status() === "ready"
             ? t("inspector.terminal.connected")
             : status() === "error"
@@ -236,7 +236,7 @@ export default function WebGLTerminal() {
               : t("inspector.terminal.connecting")}
         </span>
         <button
-          class="ml-auto text-gray-500 hover:text-gray-200 cursor-pointer"
+          class="ml-auto text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
           onClick={() => setRetry((value) => value + 1)}
           title={t("inspector.terminal.reconnect")}
         >

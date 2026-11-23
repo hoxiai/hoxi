@@ -11,6 +11,7 @@ import {
 } from "../../services/api";
 import {
   closeHandoffModal,
+  errorMessageOf,
   importExternalSession,
   shortenPath,
   workspace,
@@ -107,7 +108,7 @@ export default function ExternalHandoffModal() {
       setCliTools(cliRes.tools || []);
     } catch (err: any) {
       if (reqID !== listRequestGen) return;
-      setErrorMsg(err?.message || String(err));
+      setErrorMsg(errorMessageOf(err, t("common.error")));
     } finally {
       if (reqID === listRequestGen) {
         setLoadingList(false);
@@ -165,7 +166,7 @@ export default function ExternalHandoffModal() {
       }
       closeHandoffModal();
     } catch (err: any) {
-      setErrorMsg(err?.message || String(err));
+      setErrorMsg(errorMessageOf(err, t("common.error")));
     } finally {
       setImportingSession(false);
     }
@@ -343,13 +344,15 @@ export default function ExternalHandoffModal() {
                           </div>
 
                           <div class="mt-1 flex items-center gap-1.5 text-[11px] text-[var(--text-muted)] min-w-0">
-                            <span
-                              class={`shrink-0 rounded border px-1.5 py-0.2 text-[11px] font-medium ${handoffSourceBadgeClass(
-                                item.source
-                              )}`}
-                            >
-                              {item.sourceLabel}
-                            </span>
+                            <Show when={sourceFilter() === "all"}>
+                              <span
+                                class={`shrink-0 rounded border px-1.5 py-0.2 text-[11px] font-medium ${handoffSourceBadgeClass(
+                                  item.source
+                                )}`}
+                              >
+                                {item.sourceLabel}
+                              </span>
+                            </Show>
                             <span class="font-mono truncate">{shortenPath(item.cwd)}</span>
                             <Show when={item.matchesCwd}>
                               <span

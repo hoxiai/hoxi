@@ -4,12 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
@@ -175,5 +180,49 @@ func TestRemoteMCPStreamableHTTPSessionReinitAndOAuth(t *testing.T) {
 	_, unauthErr := callTool.Execute(context.Background(), tc, json.RawMessage(`{"server":"unauthed-srv","tool":"ping"}`))
 	if unauthErr == nil || !strings.Contains(unauthErr.Error(), "requires OAuth authorization") {
 		t.Fatalf("expected explicit 401 MCP OAuth diagnostic, got %v", unauthErr)
+	}
+}
+
+func TestRemoteMCPSSRFBlocksMetadataBehindHTTPProxyAndTrailingDot(t *testing.T) {
+	for _, raw := range []string{
+		"http://metadata.google.internal./mcp",
+		"http://metadata.goog./mcp",
+		"http://./mcp",
+	} {
+		if _, err := validateRemoteMCPURL(raw); err == nil {
+			t.Fatalf("expected validateRemoteMCPURL(%q) to block metadata/empty host", raw)
+		}
+	}
+
+	var proxyHits atomic.Int32
+	proxySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxyHits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer proxySrv.Close()
+
+	t.Setenv("HTTP_PROXY", proxySrv.URL)
+	t.Setenv("HTTPS_PROXY", proxySrv.URL)
+	t.Setenv("NO_PROXY", "")
+
+	origLookup := lookupMCPHostIPs
+	t.Cleanup(func() { lookupMCPHostIPs = origLookup })
+
+	targetURL, _ := url.Parse("http://mcp-metadata.example/mcp")
+	client := newSafeMCPHTTPClient(5*time.Second, targetURL, nil)
+	for _, blockedIP := range []string{"169.254.169.254", "0.0.0.0"} {
+		lookupMCPHostIPs = func(_ context.Context, _ string) ([]net.IPAddr, error) {
+			return []net.IPAddr{{IP: net.ParseIP(blockedIP)}}, nil
+		}
+		resp, err := client.Get(targetURL.String())
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		if err == nil || !strings.Contains(err.Error(), "blocked MCP connection to IP") {
+			t.Fatalf("expected MCP SSRF block for resolved IP %s behind proxy, got err=%v", blockedIP, err)
+		}
+	}
+	if hits := proxyHits.Load(); hits != 0 {
+		t.Fatalf("expected 0 requests forwarded to HTTP proxy for blocked MCP targets, got %d", hits)
 	}
 }

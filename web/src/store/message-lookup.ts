@@ -489,6 +489,11 @@ function indexSubagentLink(part: MessagePart): void {
   setSubagentLinkVersion((v) => v + 1);
 }
 
+/** Current version of learned parent-child subagent links (reactive read). */
+export function getSubagentLinkVersion(): number {
+  return subagentLinkVersion();
+}
+
 /** Parent of a subagent session learned from task parts; reactive to new links. */
 export function lookupSubagentParent(childID: string): string | null {
   subagentLinkVersion();

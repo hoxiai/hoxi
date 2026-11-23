@@ -14,11 +14,12 @@ import {
   isValueClassChecksum,
   isValueClassGofmt,
   isValueClassRealpath,
+  isValueClassXcrun,
   mktempPlaceholderPath,
   mktempWordSuffixIsSafe,
   parseSafeMktempTrapSegment,
 } from "./shell-idioms.js";
-import { containsFor, expandLiteralForLoops, forLoopRanges, isSafeCurlOutputTarget, isValueClassCurl, isValueClassSystem, isValueClassWc, normalizeNumericForHeaders } from "./shell-loops.js";
+import { containsFor, expandLiteralForLoops, forLoopRanges, isLoopPathTransformValueSub, isSafeCurlOutputTarget, isValueClassCurl, isValueClassSystem, isValueClassWc, normalizeNumericForHeaders } from "./shell-loops.js";
 
 export { isHarmlessSet };
 
@@ -35,7 +36,8 @@ const SHELL_KEYWORDS = new Set(["while", "until", "do", "done", "if", "then", "e
 
 export const HARMLESS_ENV_VARS = new Set(["HOME", "PATH", "PWD", "OLDPWD", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG",
   "TERM", "GOPATH", "GOROOT", "GOBIN", "GOCACHE", "GOMODCACHE", "CARGO_HOME", "PNPM_HOME",
-  "JAVA_HOME", "ANDROID_HOME", "?", "!", "pipestatus", "PIPESTATUS"]);
+  "JAVA_HOME", "ANDROID_HOME", "ANDROID_SDK_ROOT", "PUB_CACHE", "FLUTTER_ROOT", "NODE_PATH",
+  "HOMEBREW_PREFIX", "NVM_DIR", "VOLTA_HOME", "RUSTUP_HOME", "VIRTUAL_ENV", "CONDA_PREFIX", "XDG_CACHE_HOME", "?", "!", "pipestatus", "PIPESTATUS"]);
 
 export function braceVarName(body) {
   if (SHELL_VAR_NAME_RE.test(body)) return body;
@@ -56,7 +58,7 @@ export function skipSafeBraceSpan(s, i) {
 
 export const READ_ONLY_DATA_TOOLS = new Set(["rg", "grep", "egrep", "fgrep", "cat", "head", "tail", "wc", "ls", "stat",
   "file", "echo", "printf", "diff", "cmp", "sort", "uniq", "jq", "test", "[", "basename",
-  "dirname", "realpath", "true", "false", ":", "exit", "return", "break", "continue",
+  "dirname", "realpath", "readlink", "which", "whereis", "true", "false", ":", "exit", "return", "break", "continue",
   "lsof", "ps", "du", "df", "cut", "tr", "nl", "column", "shasum", "sha256sum", "md5", "xxd", "od", "sleep"]);
 
 export const VALUE_ONLY_TOOLS = new Set(["echo", "printf", "test", "[", "basename", "dirname", "true", "false", ":", "exit", "return", "break", "continue"]);
@@ -81,10 +83,10 @@ export function getLiteralJudge() {
 
 export function acceptsValueClassArg(base) {
   if (PARAM_SENSITIVE.has(base) || DATA_ARG_INTERPRETERS.has(base)) return false;
-  return READ_ONLY_DATA_TOOLS.has(base) || base === "mkdir";
+  return READ_ONLY_DATA_TOOLS.has(base) || base === "mkdir" || base === "swiftc";
 }
 
-function processSubstitutionEnd(s, start) {
+export function processSubstitutionEnd(s, start) {
   let quote = "";
   for (let i = start; i < s.length; i++) {
     const c = s[i];
@@ -241,7 +243,7 @@ export function wordExpansionNames(word) {
   return names;
 }
 
-function splitConstSegments(command) {
+export function splitConstSegments(command) {
   const segs = [];
   let quote = "";
   let segStart = 0;
@@ -445,7 +447,10 @@ function indexInside(i, ranges) {
 
 function isPathPrependExport(text) {
   const m = PATH_PREPEND_EXPORT_RE.exec(text);
-  return Boolean(m) && m[1] === m[3] && !m[2].replaceAll("${PATH}", "").replaceAll("$PATH", "").includes("$");
+  if (!m || m[1] !== m[3] || /[`;&|<>()]/.test(m[2])) return false;
+  if (!m[2].includes("$PATH") && !m[2].includes("${PATH}")) return false;
+  const names = wordExpansionNames(m[2]);
+  return names !== null && names.every((n) => HARMLESS_ENV_VARS.has(n));
 }
 
 function constBindings(command, segs) {
@@ -749,6 +754,7 @@ export function isValueClassSegment(seg) {
   if (base === "gofmt") return isValueClassGofmt(args);
   if (base === "realpath") return isValueClassRealpath(args);
   if (["md5", "shasum", "sha256sum", "md5sum"].includes(base)) return isValueClassChecksum(base, args);
+  if (base === "xcrun") return isValueClassXcrun(args);
   return false;
 }
 
@@ -777,7 +783,10 @@ export function commandSubsAreValueClass(s) {
       const end = processSubstitutionEnd(s, i + 2);
       if (end < 0) return false;
       const inner = s.slice(i + 2, end);
-      if (!isValueClassSegment(inner) || judge.opaqueCore(inner)) return false;
+      if (!isValueClassSegment(inner) || judge.opaqueCore(inner)) {
+        const bodyWords = (body) => splitConstSegments(body).map((seg) => stripShellKeywords(shellWordsOf(body.slice(seg.start, seg.end))));
+        if (!isLoopPathTransformValueSub(s, i, inner, { harmlessEnvVars: HARMLESS_ENV_VARS, bodyWords })) return false;
+      }
       found = true;
       i = end;
     }

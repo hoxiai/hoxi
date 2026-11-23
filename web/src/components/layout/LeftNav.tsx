@@ -32,7 +32,7 @@ import {
 } from "../../store/workspace";
 import type { SessionInfo } from "../../services/sse-types";
 import { Icon, Spinner } from "../icons";
-import { buildAllProjects, collectPendingApprovalRoots, collectPendingSessionIDs, findProjectDropTarget, resolveActiveRootSessionID, sameStringSet, type ProjectNavEntry } from "./left-nav-helpers";
+import { buildAllProjects, collectPendingApprovalRoots, collectPendingSessionIDs, findProjectDropTarget, resolveActiveRootSessionID, sameProjectNavEntries, sameStringSet, type ProjectNavEntry } from "./left-nav-helpers";
 import MultiProjectTreeItem from "./MultiProjectItem";
 import SingleProjectNavView from "./SingleProjectNavView";
 import { AttentionNavView, RecentTasksNavView, RunningNavView } from "./CrossProjectNavView";
@@ -138,8 +138,7 @@ export default function LeftNav() {
   });
 
   const allProjects = createMemo<ProjectNavEntry[]>((prev) =>
-    isWorkSurface() ? prev ?? [] : buildAllProjects()
-  );
+    isWorkSurface() ? prev ?? [] : buildAllProjects(), [], { equals: sameProjectNavEntries });
 
   // Ensure newly discovered projects are recorded into projectOrder so switching projects never scrambles order
   createEffect(() => {

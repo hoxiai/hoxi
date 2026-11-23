@@ -1,8 +1,8 @@
 // web/src/components/approval/QuestionDock.tsx
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { Check, HelpCircle, LoaderCircle, MessageSquarePlus, X } from "lucide-solid";
+import { Check, HelpCircle, LoaderCircle, MessageSquarePlus } from "lucide-solid";
 import type { QuestionInfo, QuestionRequest } from "../../services/sse-types";
-import { rejectQuestionRequest, replyQuestionRequest } from "../../store/workspace";
+import { errorMessageOf, rejectQuestionRequest, replyQuestionRequest } from "../../store/workspace";
 import { extractPlanPreview, PlanConsentPreviewCard } from "./plan-consent-preview";
 import { t } from "../../i18n";
 
@@ -67,7 +67,7 @@ export default function QuestionDock(props: { request: QuestionRequest }) {
       await replyQuestionRequest(props.request, buildAnswers());
     } catch (err) {
       console.error("replyQuestion failed:", err);
-      setError(String(err));
+      setError(errorMessageOf(err, t("common.error")));
       setSending(false);
     }
   };
@@ -80,7 +80,7 @@ export default function QuestionDock(props: { request: QuestionRequest }) {
       await rejectQuestionRequest(props.request);
     } catch (err) {
       console.error("rejectQuestion failed:", err);
-      setError(String(err));
+      setError(errorMessageOf(err, t("common.error")));
       setRejecting(false);
     }
   };
@@ -130,16 +130,6 @@ export default function QuestionDock(props: { request: QuestionRequest }) {
             </For>
           </div>
         </Show>
-
-        <button
-          type="button"
-          onClick={() => void onDismiss()}
-          disabled={sending() || rejecting()}
-          class="text-[var(--text-muted)] hover:text-[var(--text-primary)] p-0.5 rounded cursor-pointer"
-          title={t("approval.skipQuestionTooltip")}
-        >
-          <X size={13} />
-        </button>
       </div>
 
       {/* Optional Structured Plan Consent Preview */}
@@ -263,13 +253,13 @@ export default function QuestionDock(props: { request: QuestionRequest }) {
 
       {/* Footer Actions */}
       <div class="flex items-center justify-between gap-2 px-3.5 py-2 border-t border-[var(--border-subtle)] bg-[var(--bg-panel)]/60">
-        <span class="text-[11px] text-[var(--text-muted)]">
-          {questions().length > 1
-            ? `${activeTab() + 1} / ${questions().length}`
-            : t("approval.confirmHint")}
-        </span>
+        <Show when={questions().length > 1}>
+          <span class="text-[11px] text-[var(--text-muted)]">
+            {`${activeTab() + 1} / ${questions().length}`}
+          </span>
+        </Show>
 
-        <div class="flex items-center gap-2">
+        <div class="ml-auto flex items-center gap-2">
           <button
             type="button"
             onClick={() => void onDismiss()}

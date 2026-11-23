@@ -2,6 +2,7 @@
 // Cross-project session metadata. `workspace.sessions` only holds the active
 // project, but status and approval reconciliation must still know where a
 // session lives; this index survives project switches and transcript eviction.
+import { batch } from "solid-js";
 import type { SessionInfo } from "../services/sse-types";
 import {
   setSessionIndexQuiet,
@@ -31,31 +32,32 @@ function entryFrom(info: SessionInfo, previous?: SessionIndexEntry): SessionInde
   return { directory: directory || undefined, projectID: projectID || undefined, parentID, surface, managed, runtime, updated };
 }
 
-/** Records metadata from a session list or stream event; never drops known fields. */
-export function indexSession(info: SessionInfo | undefined | null): void {
-  if (!info?.id) return;
-  const entry = entryFrom(info, workspace.sessionIndex[info.id]);
-  if (!entry) return;
+function indexSessionInternal(info: SessionInfo | undefined | null): boolean {
+  if (!info?.id) return false;
   const prev = workspace.sessionIndex[info.id];
-  if (prev &&
+  const entry = entryFrom(info, prev);
+  if (!entry) return false;
+  if (
+    prev &&
     prev.directory === entry.directory &&
     prev.projectID === entry.projectID &&
     prev.parentID === entry.parentID &&
     prev.surface === entry.surface &&
     prev.managed === entry.managed &&
     prev.runtime === entry.runtime &&
-    prev.updated === entry.updated) {
-    return;
+    prev.updated === entry.updated
+  ) {
+    return false;
   }
+  const prevDir = stripWorktreePath(prev?.directory);
+  const nextDir = stripWorktreePath(entry.directory);
+  const prevClassified = Boolean(prevDir && (prev?.surface === "work" || prev?.surface === "code"));
+  const nextClassified = Boolean(nextDir && (entry.surface === "work" || entry.surface === "code"));
   const surfaceChanged =
-    prev?.surface !== entry.surface ||
-    Boolean(
-      (entry.surface || prev?.surface) &&
-        stripWorktreePath(prev?.directory) !== stripWorktreePath(entry.directory)
-    );
+    (prevClassified || nextClassified) &&
+    (prev?.surface !== entry.surface || prevDir !== nextDir);
   if (surfaceChanged) {
     setWorkspace("sessionIndex", info.id, entry);
-    bumpSessionSurfaceRevision();
   } else {
     setSessionIndexQuiet(info.id, entry);
   }
@@ -65,11 +67,29 @@ export function indexSession(info: SessionInfo | undefined | null): void {
       recordWorkWorkspaceDir(entry.directory);
     }
   }
+  return surfaceChanged;
+}
+
+/** Records metadata from a session list or stream event; never drops known fields. */
+export function indexSession(info: SessionInfo | undefined | null): void {
+  if (indexSessionInternal(info)) {
+    bumpSessionSurfaceRevision();
+  }
 }
 
 export function indexSessions(list: SessionInfo[] | undefined | null): void {
-  if (!Array.isArray(list)) return;
-  for (const info of list) indexSession(info);
+  if (!Array.isArray(list) || list.length === 0) return;
+  batch(() => {
+    let anySurfaceChanged = false;
+    for (const info of list) {
+      if (indexSessionInternal(info)) {
+        anySurfaceChanged = true;
+      }
+    }
+    if (anySurfaceChanged) {
+      bumpSessionSurfaceRevision();
+    }
+  });
 }
 
 export function indexedSession(sessionID: string | null | undefined): SessionIndexEntry | undefined {

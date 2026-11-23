@@ -12,4 +12,8 @@ func NativeAvailable() bool { return false }
 
 func CheckNative() error { return errors.New("native updater is unavailable") }
 
+func CheckNativeWithOptions(InstallOptions) error {
+	return errors.New("native updater is unavailable")
+}
+
 func StopNative() {}

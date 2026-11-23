@@ -1,8 +1,12 @@
 package turnstream
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -32,6 +36,7 @@ type agySubagentSpec struct {
 
 type agySubagentTrack struct {
 	partID         string
+	stepIndex      int
 	role           string
 	typeName       string
 	model          string
@@ -148,9 +153,11 @@ func (t *TurnTranslator) handleAgySubagentStep(su *agyStepUpdate, now int64) []S
 		partID := fmt.Sprintf("prt_%s_tool_%d_%d", t.messageID, su.StepIndex, i)
 		tr := t.subagentByPart[partID]
 		if tr == nil {
-			tr = &agySubagentTrack{partID: partID, lastActivityMs: now}
+			tr = &agySubagentTrack{partID: partID, stepIndex: su.StepIndex, lastActivityMs: now}
 			t.subagentByPart[partID] = tr
 			t.subagentOrder = append(t.subagentOrder, partID)
+		} else if tr.stepIndex == 0 && su.StepIndex > 0 {
+			tr.stepIndex = su.StepIndex
 		}
 		tr.role = firstNonEmptyStr(spec.Role, tr.role, spec.TypeName, "subagent")
 		tr.typeName = firstNonEmptyStr(spec.TypeName, tr.typeName)
@@ -206,6 +213,9 @@ func (t *TurnTranslator) handleAgySubagentStep(su *agyStepUpdate, now int64) []S
 				ModelID:    tr.model,
 				ExternalID: tr.conversationID,
 			}, now)...)
+			if tr.conversationID != "" {
+				t.bindChildExternalID(partID, tr.conversationID)
+			}
 		}
 		t.refreshSubagentMeta(tr)
 		evts = append(evts, partUpdated(*part))
@@ -362,6 +372,7 @@ func (t *TurnTranslator) PollSubagentActivity() []SSEEvent {
 		if tr.reported {
 			continue
 		}
+		t.backfillAgySubagentIdentity(tr)
 		if childEvts := t.pollAgySubagent(tr); len(childEvts) > 0 {
 			t.refreshSubagentMeta(tr)
 			evts = append(evts, childEvts...)
@@ -369,6 +380,127 @@ func (t *TurnTranslator) PollSubagentActivity() []SSEEvent {
 		}
 	}
 	return evts
+}
+
+func (t *TurnTranslator) bindChildExternalID(partID, convID string) {
+	convID = strings.TrimSpace(convID)
+	if convID == "" {
+		return
+	}
+	c := t.children[partID]
+	if c == nil || c.info.ExternalID == convID {
+		return
+	}
+	c.info.ExternalID = convID
+	if t.UpdateChildExternalID != nil && c.info.ID != "" {
+		t.UpdateChildExternalID(c.info.ID, convID)
+	}
+}
+
+func (t *TurnTranslator) backfillAgySubagentIdentity(tr *agySubagentTrack) {
+	if tr == nil || tr.conversationID != "" || tr.stepIndex <= 0 || t.LookupStep == nil || t.externalID == "" {
+		return
+	}
+	outConvID, outLogURI := parseAgyInvokeSubagentOutput(t.LookupStep(t.externalID, tr.stepIndex))
+	if outConvID == "" {
+		return
+	}
+	tr.conversationID = outConvID
+	t.subagentByConv[outConvID] = tr
+	if tr.logPath == "" {
+		tr.logPath = resolveAgySubagentLog(outLogURI, tr.conversationID)
+	}
+	t.bindChildExternalID(tr.partID, outConvID)
+}
+
+// agyInvokeSubagentOutputHasConvID reports whether an invoke_subagent tool
+// result payload names targetConvID in either flat JSON or a subagents array.
+func agyInvokeSubagentOutputHasConvID(raw, targetConvID string) bool {
+	targetConvID = strings.TrimSpace(targetConvID)
+	if targetConvID == "" {
+		return false
+	}
+	text := stripAgyResultHeader(raw)
+	for search := text; ; {
+		idx := strings.IndexByte(search, '{')
+		if idx < 0 {
+			return false
+		}
+		search = search[idx:]
+		var obj map[string]interface{}
+		dec := json.NewDecoder(strings.NewReader(search))
+		if err := dec.Decode(&obj); err == nil && obj != nil {
+			if cid := strings.TrimSpace(firstString(obj["conversationId"], obj["conversation_id"])); cid == targetConvID {
+				return true
+			}
+			if list, ok := obj["subagents"].([]interface{}); ok {
+				for _, item := range list {
+					if m, ok := item.(map[string]interface{}); ok {
+						if cid := strings.TrimSpace(firstString(m["conversationId"], m["conversation_id"])); cid == targetConvID {
+							return true
+						}
+					}
+				}
+			}
+		}
+		search = search[1:]
+	}
+}
+
+// IsAgySubagentConversation verifies from the parent conversation's own
+// Antigravity transcript that childConvID was returned by a planned
+// invoke_subagent tool call in the active trajectory segment. Arbitrary tool
+// outputs (such as read_file or run_command) are ignored so untrusted content
+// cannot authorize an unrelated conversation.
+func IsAgySubagentConversation(parentConvID, childConvID string) bool {
+	parentConvID = strings.TrimSpace(parentConvID)
+	childConvID = strings.TrimSpace(childConvID)
+	if parentConvID == "" || childConvID == "" || parentConvID == childConvID {
+		return false
+	}
+	if !validStoreID(parentConvID) || !validStoreID(childConvID) {
+		return false
+	}
+	for _, root := range agyBrainRoots() {
+		dir := agyTranscriptLogDir(root, parentConvID)
+		for _, name := range []string{"transcript_full.jsonl", "transcript.jsonl"} {
+			f, err := os.Open(filepath.Join(dir, name))
+			if err != nil {
+				continue
+			}
+			invokeSteps := make(map[int]bool)
+			matched := false
+			scanner := bufio.NewScanner(f)
+			scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
+			for scanner.Scan() {
+				var row agyTranscriptRow
+				if json.Unmarshal(bytes.TrimSpace(scanner.Bytes()), &row) != nil {
+					continue
+				}
+				if row.StepIndex == 0 && row.Type == "USER_INPUT" {
+					clear(invokeSteps)
+					matched = false
+				}
+				switch row.Type {
+				case "PLANNER_RESPONSE":
+					for i, call := range row.ToolCalls {
+						if strings.EqualFold(strings.TrimSpace(call.Name), "invoke_subagent") {
+							invokeSteps[row.StepIndex+1+i] = true
+						}
+					}
+				case "GENERIC":
+					if invokeSteps[row.StepIndex] && agyInvokeSubagentOutputHasConvID(row.Content, childConvID) {
+						matched = true
+					}
+				}
+			}
+			_ = f.Close()
+			if matched {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (t *TurnTranslator) pollAgySubagent(tr *agySubagentTrack) []SSEEvent {

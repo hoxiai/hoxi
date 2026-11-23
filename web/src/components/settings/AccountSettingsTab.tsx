@@ -154,11 +154,13 @@ export function AccountSettingsTab() {
             </button>
           </SettingRow>
 
-          <SettingRow icon={CreditCard} label={t("settings.accountPendingPointsLabel")}>
-            <span class="font-mono text-[13px] font-semibold tabular-nums text-[var(--text-secondary)]">
-              {formatMemberPoints(desktopAuth.member.pendingPoints)}
-            </span>
-          </SettingRow>
+          <Show when={(desktopAuth.member.pendingPoints ?? 0) > 0}>
+            <SettingRow icon={CreditCard} label={t("settings.accountPendingPointsLabel")}>
+              <span class="font-mono text-[13px] font-semibold tabular-nums text-[var(--text-secondary)]">
+                {formatMemberPoints(desktopAuth.member.pendingPoints)}
+              </span>
+            </SettingRow>
+          </Show>
 
           <SettingRow
             icon={Flame}

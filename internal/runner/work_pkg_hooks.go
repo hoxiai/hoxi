@@ -133,6 +133,38 @@ func (s *Service) SetSessionBundleResolver(fn SessionBundleResolver) {
 	}
 }
 
+// IsAppDevSession reports whether sessionID (or its owning parent when it is a
+// delegated subagent) is currently running in Work App Dev mode ("app-dev").
+// User-forked non-subagent sessions only match when their own mode is "app-dev".
+func (s *Service) IsAppDevSession(sessionID string) bool {
+	if s == nil || s.store == nil {
+		return false
+	}
+	cur := strings.TrimSpace(sessionID)
+	if cur == "" {
+		return false
+	}
+	seen := make(map[string]bool, 4)
+	for depth := 0; depth < 8 && cur != ""; depth++ {
+		if seen[cur] {
+			return false
+		}
+		seen[cur] = true
+		rec, exists := s.lookupSessionMeta(cur)
+		if !exists {
+			return false
+		}
+		if isAppDevPromptMode(rec.Mode, "") {
+			return true
+		}
+		if !rec.Subagent {
+			return false
+		}
+		cur = strings.TrimSpace(rec.ParentID)
+	}
+	return false
+}
+
 // ResolveSessionBundle resolves, validates, and sanitizes the optional
 // SessionBundleSpec for (sessionID, directory). If no resolver is registered,
 // it returns an empty SessionBundleSpec and nil error.
@@ -158,6 +190,11 @@ func (s *Service) ResolveSessionBundle(sessionID, directory string) (SessionBund
 		}
 		if matched && effectiveDir == "" {
 			effectiveDir = resolvedDir
+		}
+		// App-dev sessions author/debug app source code rather than running the
+		// installed runtime package, so do not inject installed bundle skills/PATH/env.
+		if s.IsAppDevSession(trimmedSessionID) {
+			return SessionBundleSpec{}, nil
 		}
 	}
 

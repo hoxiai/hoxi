@@ -131,7 +131,7 @@ func IsMutatingToolCall(toolName string, input map[string]any) bool {
 		if act == "status" || act == "apps" {
 			return false
 		}
-		if (act == "state" || act == "screenshot") && firstMapString(input["app"]) == "" {
+		if (act == "state" || act == "screenshot" || act == "wait") && firstMapString(input["app"]) == "" {
 			return false
 		}
 		return true

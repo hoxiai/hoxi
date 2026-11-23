@@ -6,6 +6,7 @@ import {
   cancelQueuedEditInComposer,
   defaultWorkspaceDir,
   drainNextQueuedPrompt,
+  errorMessageOf,
   expandContextMentions,
   forkFromMessage,
   getComposerSkill,
@@ -90,7 +91,7 @@ export default function Composer() {
         requestAnimationFrame(() => textareaRef?.focus());
       }
     } catch (error) {
-      setWorkspace("sessionSetupError", String(error));
+      setWorkspace("sessionSetupError", errorMessageOf(error, t("common.error")));
     } finally {
       setChoosingFolder(false);
     }
@@ -425,7 +426,7 @@ export default function Composer() {
       ) {
         draftSync.clearCurrentDraft(restoreID, draftDirectory);
       }
-      const errMsg = err instanceof Error ? err.message : String(err || "");
+      const errMsg = errorMessageOf(err, t("common.error"));
       if (draft.skill && !getComposerSkill(restoreID, draftDirectory)) {
         selectComposerSkill(restoreID, draft.skill, undefined, draftDirectory);
       }
@@ -472,7 +473,7 @@ export default function Composer() {
         setEnhanceError(result?.error || t("timeline.enhanceFailed"));
       }
     } catch (err) {
-      if (generation === enhanceGeneration) setEnhanceError(err instanceof Error ? err.message : t("timeline.enhanceFailed"));
+      if (generation === enhanceGeneration) setEnhanceError(errorMessageOf(err, t("timeline.enhanceFailed")));
     } finally {
       if (generation === enhanceGeneration) setEnhancing(false);
     }
@@ -524,7 +525,7 @@ export default function Composer() {
         { text: prevText, images: [], pastes: prevPastes },
         draftSessionID,
         draftDirectory,
-        err instanceof Error ? err.message : String(err)
+        errorMessageOf(err, t("common.error"))
       );
     } finally {
       setSpawningSubtask(false);

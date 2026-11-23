@@ -209,6 +209,14 @@ func normalizeComputerAgentInput(raw json.RawMessage) json.RawMessage {
 			}
 		}
 	}
+	if v, ok := obj["seconds"]; ok {
+		if s, isStr := v.(string); isStr {
+			if f, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err == nil && !math.IsNaN(f) && !math.IsInf(f, 0) {
+				obj["seconds"] = f
+				changed = true
+			}
+		}
+	}
 	if !changed {
 		return raw
 	}
@@ -294,6 +302,9 @@ func (g *Gateway) invokeNativeHostTool(
 		}
 		cleanRaw, _ := json.Marshal(res)
 		return agent.HostToolResult{Title: toolName, Output: string(cleanRaw), Metadata: res}, nil
+
+	case "hoxi_schedule":
+		return g.invokeNativeScheduleTool(ctx, tc, input)
 
 	case "skill":
 		return g.invokeNativeSkillTool(ctx, tc, input)
@@ -438,14 +449,16 @@ func (g *Gateway) buildNativeSkillCatalogPrompt(ctx context.Context, sessionID, 
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("Skills provide specialized instructions and workflows for specific tasks.\n<available_skills>\n")
 	if len(autoEntries) > 0 {
+		b.WriteString("Skills provide specialized instructions and workflows for specific tasks.\n<available_skills>\n")
 		b.WriteString(strings.Join(autoEntries, "\n"))
-		b.WriteByte('\n')
+		b.WriteString("\n</available_skills>")
 	}
-	b.WriteString("</available_skills>")
 	if len(onDemand) > 0 {
-		b.WriteString("\nOn-demand skills, listed by name only: ")
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString("On-demand skills, listed by name only: ")
 		b.WriteString(strings.Join(onDemand, ", "))
 		b.WriteString(". Load one with the skill tool only when the user names it or asks for its specific workflow.")
 	}

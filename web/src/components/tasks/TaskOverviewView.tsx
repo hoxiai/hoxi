@@ -15,6 +15,7 @@ import { createStore, reconcile } from "solid-js/store";
 import { Portal } from "solid-js/web";
 import {
   Bot,
+  CalendarClock,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -39,13 +40,17 @@ import {
   intakeTasks,
   isTaskNodeExpanded,
   loadIntakeTasks,
+  loadSchedules,
   loadTaskOverviewPlans,
+  openScheduleModal,
   resetIntakeState,
   resetTaskOverviewPlans,
   restoreTaskOverviewNode,
+  schedulesForWorkspace,
   selectSession,
   setIntakeLinksModalOpen,
   startIntakeTasksPolling,
+  startSchedulesPolling,
   startTaskOverviewPolling,
   taskOverviewFailed,
   taskOverviewLoading,
@@ -58,6 +63,7 @@ import {
   type TaskOverviewNode,
 } from "../../store/workspace";
 import { useAnchoredPopover } from "../layout/anchored-popover";
+import ScheduledTasksSection from "../schedules/ScheduledTasksSection";
 import IntakeLinksModal from "./IntakeLinksModal";
 import IntakeTasksSection from "./IntakeTasksSection";
 
@@ -314,9 +320,12 @@ export default function TaskOverviewView() {
     if (!visible()) return;
     const dir = directory();
     const sessionIDs = relatedSessionIDs();
+    void loadSchedules().catch(() => {});
+    const stopSchedules = startSchedulesPolling();
     if (!dir && sessionIDs.length === 0) {
       resetTaskOverviewPlans();
       resetIntakeState();
+      onCleanup(stopSchedules);
       return;
     }
     void loadTaskOverviewPlans(dir, sessionIDs);
@@ -329,6 +338,7 @@ export default function TaskOverviewView() {
       resetIntakeState();
     }
     onCleanup(() => {
+      stopSchedules();
       stopPlans();
       stopIntake?.();
     });
@@ -361,6 +371,19 @@ export default function TaskOverviewView() {
               </button>
             )}
           </Show>
+          <button
+            type="button"
+            onClick={() =>
+              openScheduleModal({
+                directory: directory() || workspace.rootDir || undefined,
+                projectID: workspace.activeProjectID || undefined,
+              })
+            }
+            class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+          >
+            <CalendarClock size={11} class="text-[var(--accent-primary)]" />
+            <span>{t("schedules.manageBtn")}</span>
+          </button>
           <Show when={directory()}>
             <button
               type="button"
@@ -375,11 +398,17 @@ export default function TaskOverviewView() {
       </Show>
 
       <div class="min-h-0 flex-1 overflow-y-auto px-2.5 py-2">
+        <ScheduledTasksSection />
         <IntakeTasksSection />
         <Show
           when={workspace.activeSessionID}
           fallback={
-            <Show when={intakeTasks().length === 0}>
+            <Show
+              when={
+                intakeTasks().length === 0 &&
+                schedulesForWorkspace(directory(), workspace.activeProjectID || undefined).length === 0
+              }
+            >
               <p class="px-2 py-4 text-center text-[12px] text-[var(--text-faint)]">
                 {t("tasks.noSession")}
               </p>
@@ -389,7 +418,12 @@ export default function TaskOverviewView() {
           <Show
             when={total() > 0}
             fallback={
-              <Show when={intakeTasks().length === 0}>
+              <Show
+                when={
+                  intakeTasks().length === 0 &&
+                  schedulesForWorkspace(directory(), workspace.activeProjectID || undefined).length === 0
+                }
+              >
                 <div class="flex items-center justify-center gap-2 px-2 py-8 text-[12px] text-[var(--text-faint)]">
                   <Show when={taskOverviewLoading()}>
                     <TaskLoadingIcon class="text-[var(--text-muted)]" />

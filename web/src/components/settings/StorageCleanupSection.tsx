@@ -2,7 +2,7 @@
 import { createSignal, For, onMount, Show } from "solid-js";
 import { Database, FileText, FolderArchive, Globe, HardDrive, RefreshCw, Sparkles } from "lucide-solid";
 import type { SystemStorageStats } from "../../services/api";
-import { cleanSystemStorage, fetchSystemStorage } from "../../store/workspace";
+import { cleanSystemStorage, errorMessageOf, fetchSystemStorage } from "../../store/workspace";
 import { Spinner } from "../icons";
 import { t } from "../../i18n";
 import { HelpTip, SettingGroup } from "./setting-controls";
@@ -43,7 +43,7 @@ export function StorageCleanupSection(props: { onToast: (msg: string) => void })
     } catch (err) {
       props.onToast(
         t("settings.storageCleanFailed", {
-          error: err instanceof Error ? err.message : String(err),
+          error: errorMessageOf(err, t("common.error")),
         })
       );
     } finally {
@@ -130,10 +130,6 @@ export function StorageCleanupSection(props: { onToast: (msg: string) => void })
             <span class="font-mono text-[18px] font-semibold tracking-tight text-[var(--text-primary)]">
               {storage() ? formatBytes(totalBytes()) : "—"}
             </span>
-            <span class="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-medium text-emerald-500">
-              <span class="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              {t("settings.storageAutoCleanBadge")}
-            </span>
           </div>
           <Show when={storage()?.dataDir}>
             <div
@@ -183,32 +179,37 @@ export function StorageCleanupSection(props: { onToast: (msg: string) => void })
       </Show>
 
       {/* Category Rows */}
-      <div class="divide-y divide-[var(--border-subtle)]/55 border-t border-[var(--border-subtle)]/55">
-        <For each={categories()}>
-          {(cat) => {
-            const Icon = cat.icon;
-            return (
-              <div class="flex items-center justify-between gap-4 px-5 py-3">
-                <div class="flex items-center gap-3 min-w-0">
-                  <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-secondary)]">
-                    <Icon size={15} />
+      <details class="border-t border-[var(--border-subtle)]/55">
+        <summary class="cursor-pointer select-none px-5 py-2.5 text-[12px] font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]/40 hover:text-[var(--text-primary)]">
+          {t("settings.storageBreakdownDetails")}
+        </summary>
+        <div class="divide-y divide-[var(--border-subtle)]/55 border-t border-[var(--border-subtle)]/55">
+          <For each={categories()}>
+            {(cat) => {
+              const Icon = cat.icon;
+              return (
+                <div class="flex items-center justify-between gap-4 px-5 py-3">
+                  <div class="flex items-center gap-3 min-w-0">
+                    <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-secondary)]">
+                      <Icon size={15} />
+                    </div>
+                    <div class="flex items-center gap-2 min-w-0">
+                      <span class={`h-2 w-2 rounded-full shrink-0 ${cat.dotColor}`} />
+                      <span class="text-[13px] font-medium text-[var(--text-primary)] truncate">
+                        {cat.label}
+                      </span>
+                      <HelpTip text={cat.desc} />
+                    </div>
                   </div>
-                  <div class="flex items-center gap-2 min-w-0">
-                    <span class={`h-2 w-2 rounded-full shrink-0 ${cat.dotColor}`} />
-                    <span class="text-[13px] font-medium text-[var(--text-primary)] truncate">
-                      {cat.label}
-                    </span>
-                    <HelpTip text={cat.desc} />
-                  </div>
+                  <span class="font-mono text-[13px] font-medium text-[var(--text-secondary)] shrink-0">
+                    {storage() ? formatBytes(cat.bytes) : "—"}
+                  </span>
                 </div>
-                <span class="font-mono text-[13px] font-medium text-[var(--text-secondary)] shrink-0">
-                  {storage() ? formatBytes(cat.bytes) : "—"}
-                </span>
-              </div>
-            );
-          }}
-        </For>
-      </div>
+              );
+            }}
+          </For>
+        </div>
+      </details>
 
       <OldSessionsCleanup onToast={props.onToast} onStorage={setStorage} />
     </SettingGroup>

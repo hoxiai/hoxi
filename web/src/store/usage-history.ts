@@ -8,6 +8,8 @@ import {
   type DevPulseHistoryDay,
   type DevPulseHistoryResponse,
 } from "../services/api";
+import { errorMessageOf } from "../services/http";
+import { t } from "../i18n";
 import { syncOfficialModelPricing } from "./leaderboard-state";
 import { estimateTokenCostUsd } from "./model-pricing";
 
@@ -115,7 +117,7 @@ export async function loadUsageHistory(
   } catch (err: any) {
     if (gen !== historyGeneration) return;
     setUsageHistory([]);
-    setUsageHistoryError(String(err?.message || err || ""));
+    setUsageHistoryError(errorMessageOf(err, t("common.error")));
   } finally {
     if (gen === historyGeneration) {
       inFlight = false;

@@ -162,6 +162,16 @@ func (s *Service) startTurnProcessWithMode(
 		tr.MsgInfo.ServiceTier = "fast"
 	}
 	tr.CreateChild = s.childSessionFactory(rec, modelID, mode)
+	tr.UpdateChildExternalID = func(childID, externalID string) {
+		if strings.TrimSpace(childID) == "" || strings.TrimSpace(externalID) == "" {
+			return
+		}
+		_, _, _ = s.store.UpdateMetadata(childID, func(meta *SessionMetadata) {
+			if strings.TrimSpace(meta.ExternalID) == "" {
+				meta.ExternalID = strings.TrimSpace(externalID)
+			}
+		})
+	}
 	if emitUserTurn {
 		s.broadcast(rec.ID, tr.InitialEvents(userInfo, storedParts)...)
 	} else {
@@ -409,6 +419,9 @@ func (s *Service) startTurnProcessWithMode(
 					mcpArgs,
 				)
 				if started, retryWaitErr := s.runRetrySubprocess(rec, rawBinPath, retryArgs, procEnv, retryInput, ap, &stderrBuf, false, feedStdout); started {
+					if caller, ok := s.cliSystemDelivered.Load(rec.ID + "\x00" + rec.Runtime); ok {
+						s.recordCLISystemDeliveredWithReset(rec.ID, rec.Runtime, caller, true)
+					}
 					waitErr = retryWaitErr
 					continue
 				}

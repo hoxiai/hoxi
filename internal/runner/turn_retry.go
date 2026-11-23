@@ -284,6 +284,19 @@ func resolveSlashCommandAndAgentOverrides(
 	callerSystem string,
 	runtimeName string,
 ) (renderedPrompt, outMode, outProviderID, outModelID, outCallerSystem string) {
+	return resolveSlashCommandAndAgentOverridesForRuntime(rawPrompt, worktreeDir, mode, providerID, modelID, callerSystem, runtimeName, false)
+}
+
+func resolveSlashCommandAndAgentOverridesForRuntime(
+	rawPrompt string,
+	worktreeDir string,
+	mode string,
+	providerID string,
+	modelID string,
+	callerSystem string,
+	runtimeName string,
+	openCodeDaemonUp bool,
+) (renderedPrompt, outMode, outProviderID, outModelID, outCallerSystem string) {
 	renderedPrompt = rawPrompt
 	outMode = mode
 	outProviderID = providerID
@@ -307,7 +320,11 @@ func resolveSlashCommandAndAgentOverrides(
 	}
 
 	_, agentMap := llm.LoadAgents(worktreeDir, nil)
-	if spec, ok := agentMap[strings.ToLower(strings.TrimSpace(outMode))]; ok {
+	spec, hasSpec := agentMap[strings.ToLower(strings.TrimSpace(outMode))]
+	if isAppDevPromptMode(outMode, spec.Prompt) {
+		outCallerSystem = stripTaggedPromptSection(outCallerSystem, "<hoxi_work_app>", "</hoxi_work_app>")
+	}
+	if hasSpec {
 		if strings.TrimSpace(outModelID) == "" && strings.TrimSpace(spec.Model) != "" {
 			if p, m := llm.SplitModelRef(spec.Model); m != "" {
 				if p != "" {
@@ -316,8 +333,13 @@ func resolveSlashCommandAndAgentOverrides(
 				outModelID = m
 			}
 		}
-		// Inject custom agent prompt for non-native CLI runtimes too (native injects inside Engine.RunTurn).
-		if runtimeName != string(RuntimeNative) {
+		// Native injects spec.Prompt inside Engine.RunTurn; OpenCode daemon already
+		// mounts built-in primary/all agents (ask, debug, app-dev, ...) via
+		// OPENCODE_CONFIG_CONTENT and receives payload["agent"]=mode, so repeating
+		// spec.Prompt in payload["system"] would double-inject it every turn.
+		handledByRuntimeAgentConfig := runtimeName == string(RuntimeNative) ||
+			(openCodeDaemonUp && runtimeName == string(RuntimeOpenCode) && spec.BuiltIn && (spec.Mode == "primary" || spec.Mode == "all"))
+		if !handledByRuntimeAgentConfig {
 			if p := strings.TrimSpace(spec.Prompt); p != "" && !strings.Contains(outCallerSystem, p) {
 				if outCallerSystem == "" {
 					outCallerSystem = p

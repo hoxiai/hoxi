@@ -40,6 +40,7 @@ export interface SessionNavItemProps {
   canDelete: boolean;
   isArchived?: boolean;
   showBranchIcon?: boolean;
+  defaultExpandSubagents?: boolean;
   projectName?: string;
   projectTitle?: string;
   pendingSessions: Set<string>;
@@ -66,7 +67,12 @@ export function SessionNavItem(props: SessionNavItemProps) {
     shouldAutoExpandSubagents(subagents(), props.pendingSessions, props.filterQuery)
   );
   const expanded = () =>
-    hasSubagents() && isSubagentDrawerExpanded(props.session.id, autoExpand());
+    hasSubagents() &&
+    isSubagentDrawerExpanded(
+      props.session.id,
+      autoExpand(),
+      props.defaultExpandSubagents ?? true,
+    );
   const subagentsMounted = useCollapsibleDrawerMount(expanded);
   const subagentSlice = createMemo(() =>
     subagentsMounted()
@@ -105,7 +111,11 @@ export function SessionNavItem(props: SessionNavItemProps) {
   const [pullRequest, setPullRequest] = createSignal<ForgePullRequest | null>(null);
   let pullRequestGeneration = 0;
   const pullRequestDirectory = createMemo(() => {
-    const raw = wt()?.directory || sessionDirectory(props.session.id) || workspace.rootDir;
+    const raw =
+      wt()?.directory ||
+      props.session.directory ||
+      sessionDirectory(props.session.id) ||
+      workspace.rootDir;
     return stripWorktreePath(raw) || raw;
   });
   const pullRequestBranch = createMemo(() => wt()?.branch || props.session.branch || "");
@@ -118,7 +128,8 @@ export function SessionNavItem(props: SessionNavItemProps) {
     if (!directory || !branch || props.isArchived) return;
 
     let disposed = false;
-    fetchPullRequests(directory)
+    const controller = new AbortController();
+    fetchPullRequests(directory, false, controller.signal)
       .then((response) => {
         if (disposed || current !== pullRequestGeneration) return;
         setPullRequest(response.available ? response.pullRequests[branch] ?? null : null);
@@ -128,6 +139,7 @@ export function SessionNavItem(props: SessionNavItemProps) {
       });
     onCleanup(() => {
       disposed = true;
+      controller.abort();
     });
   });
 
@@ -502,6 +514,7 @@ export function SessionNavItem(props: SessionNavItemProps) {
                 {(sub) => (
                   <SubagentNavRow
                     parentSessionID={props.session.id}
+                    parentTitle={props.session.title}
                     session={sub}
                     active={workspace.activeSessionID === sub.id}
                     pendingSessions={props.pendingSessions}

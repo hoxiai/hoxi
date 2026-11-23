@@ -123,3 +123,4 @@
 - 使用 manifest 的 `id` 作为 `appId`。外部 CLI/本机后端通过 §2 的发现与 PKCE 流程请求声明范围内的最小授权；不要把 Bearer 送入沙箱 iframe、渲染模板、静态包或上传日志。`Origin:null` 的 Work 沙箱页面不能直接访问该协议。
 - 声明 `host:<scope>` 的包在本地服务进程中可读 `HOXI_CAP_URL`（已含 `/api/hoxi/cap/v1`）、`HOXI_MCP_URL`、`HOXI_CAP_APP_ID`。HTTP 和 stdio 均**不注入 `HOXI_CAP_TOKEN`**，不因安装、升级或同名应用曾获批而签票。外部自报 `appId` 不是受管包身份，宿主不按它查询或继承授权。
 - 用户主动连接时，服务按 §2.2 发起 `poll-init`，桌面设置 → 应用授权可勾选 Scope、同意或拒绝；仅服务端以 verifier 轮询 `poll-token`，**仅在进程内存持票**。向 iframe 仅返回操作结果/连接状态；绝不返回轮询响应、verifier 或 Bearer。进程重启、要求新增 Scope 或撤销后，须重新主动连接。§2.4 的收窄、撤销对下一次能力请求生效，不自动重授权。`host:approval:request` 不替代 PreToolUse、浏览器/电脑或文件访问门控。
+- **与 Work 沙箱宿主桥接（`window.hoxiWork`）的分层**：本协议（`hoxi-app/v1`）用于外部应用与本地服务后端向 Hoxi 申请受控宿主能力（`browser:control` 仍为 B 级保留项，未对外开放）；受管 Work 应用包沙箱页面的 `window.hoxiWork.browser`（`state`/`open`/`evaluate`）走桌面内建 RPC 网关，严格限定于当前已安装包的 `browser:store-isolated` 权限、`browserPolicy.allowedHosts` 域白名单与对应店铺隔离窗口，不暴露域外页面、宿主凭据或通用浏览器控制权。

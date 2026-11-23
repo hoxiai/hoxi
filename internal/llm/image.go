@@ -36,6 +36,7 @@ type ImageRequest struct {
 	ImageSize   string
 	Count       int
 	InputImages []ImageInput
+	MaskImage   *ImageInput
 	Timeout     time.Duration
 }
 

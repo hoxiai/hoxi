@@ -1,4 +1,4 @@
-import { createEffect, createSignal, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import { Bot, Square } from "lucide-solid";
 import {
   resolveSubagentTitle,
@@ -18,6 +18,7 @@ import {
 
 export interface SubagentNavRowProps {
   parentSessionID: string;
+  parentTitle?: string;
   session: SessionInfo;
   active: boolean;
   pendingSessions: Set<string>;
@@ -62,11 +63,18 @@ export function SubagentNavRow(props: SubagentNavRowProps) {
   const timeText = () => formatCompactRelativeTime(finishedTimestamp(), props.nowTick);
   const fullDateTooltip = () => formatExactTime(finishedTimestamp());
 
-  const displayTitle = () =>
-    resolveSubagentTitle(props.parentSessionID, props.session.id, props.session.title).label ||
-    stripSubagentTitleSuffix(props.session.title) ||
-    props.session.title ||
-    t("leftNav.untitled");
+  const displayTitle = createMemo(
+    () =>
+      resolveSubagentTitle(
+        props.parentSessionID,
+        props.session.id,
+        props.session.title,
+        props.parentTitle,
+      ).label ||
+      stripSubagentTitleSuffix(props.session.title) ||
+      props.session.title ||
+      t("leftNav.untitled"),
+  );
 
   const handleStop = async (ev: MouseEvent) => {
     ev.stopPropagation();

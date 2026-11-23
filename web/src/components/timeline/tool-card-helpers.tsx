@@ -294,6 +294,10 @@ export function extractDescription(part: ToolPart): string {
     }
     if (action === "key" && typeof input.key === "string") return `key ${input.key}`;
     if (action === "scroll") return `scroll Δ(${input.deltaX ?? 0}, ${input.deltaY ?? 0})`;
+    if (action === "wait") {
+      const sec = typeof input.seconds === "number" ? `${input.seconds}s` : "5s";
+      return `wait ${sec}${input.screenshot ? " + screenshot" : ""}`;
+    }
     if (action) return action;
   }
   if (isBrowserTool(part.tool)) {
@@ -538,6 +542,7 @@ export function ToolCardExpandedBody(props: {
   part: ToolPart;
   isShell: boolean;
   isRunning?: boolean;
+  awaitingFirstOutput?: boolean;
   stoppingCmd?: boolean;
   onStopCommand?: (e: MouseEvent) => void;
   isEdit: boolean;
@@ -613,10 +618,12 @@ export function ToolCardExpandedBody(props: {
           <Show
             when={props.shellOut.trim().length > 0}
             fallback={
-              <div class="px-3.5 py-2.5 text-[12px] text-[#8b949e] italic">
-                {status() === "running"
-                  ? t("toolCard.waitingForOutput")
-                  : t("toolCard.noOutput")}
+              <div class="px-3.5 py-2.5 text-[12px] text-[#8b949e] italic" role="status">
+                {props.awaitingFirstOutput
+                  ? t("toolCard.outputPendingHint")
+                  : status() === "running"
+                    ? t("toolCard.waitingForOutput")
+                    : t("toolCard.noOutput")}
               </div>
             }
           >

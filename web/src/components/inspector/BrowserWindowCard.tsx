@@ -1,5 +1,5 @@
 import { Show } from "solid-js";
-import { AppWindow, CircleHelp, Copy, Check, Eye, EyeOff, Hand, Sparkles } from "lucide-solid";
+import { AppWindow, CircleHelp, Copy, Check, Eye, EyeOff } from "lucide-solid";
 import { appSettings, type createBrowserController } from "../../store/workspace";
 import { t } from "../../i18n";
 
@@ -24,9 +24,10 @@ export default function BrowserWindowCard(props: Props) {
 
   const currentModeTip = () => {
     if (b().chromeLinked() || b().pairing()) {
-      const status = state()?.connected === false
-        ? t("inspector.browser.chromeDisconnected")
-        : t("inspector.browser.chromeConnected");
+      const status =
+        state()?.connected === false
+          ? t("inspector.browser.chromeDisconnected")
+          : t("inspector.browser.chromeConnected");
       return `${status} · ${t("inspector.browser.chromeNativeFiles")}`;
     }
     if (b().windowMode()) {
@@ -85,7 +86,9 @@ export default function BrowserWindowCard(props: Props) {
             class="pointer-events-none invisible opacity-0 group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100 transition-opacity duration-150 absolute right-0 top-full mt-1 z-30 w-64 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-2.5 text-[11px] leading-relaxed text-[var(--text-secondary)] shadow-lg"
           >
             <Show when={b().windowMode() && !b().pairing()}>
-              <p class="font-medium text-[var(--text-primary)]">{t("inspector.browser.persistentLoginHint")}</p>
+              <p class="font-medium text-[var(--text-primary)]">
+                {t("inspector.browser.persistentLoginHint")}
+              </p>
               <p class="mt-1 text-[var(--text-muted)]">{t("inspector.browser.windowModeHint")}</p>
             </Show>
             <Show when={b().headlessMode() && !b().pairing()}>
@@ -93,9 +96,15 @@ export default function BrowserWindowCard(props: Props) {
             </Show>
             <Show when={b().chromeLinked() || b().pairing()}>
               <p class="font-medium text-[var(--text-primary)]">
-                {t(state()?.connected === false ? "inspector.browser.chromeDisconnected" : "inspector.browser.chromeConnected")}
+                {t(
+                  state()?.connected === false
+                    ? "inspector.browser.chromeDisconnected"
+                    : "inspector.browser.chromeConnected"
+                )}
               </p>
-              <p class="mt-1 text-[var(--text-muted)]">{t("inspector.browser.chromeNativeFiles")}</p>
+              <p class="mt-1 text-[var(--text-muted)]">
+                {t("inspector.browser.chromeNativeFiles")}
+              </p>
             </Show>
           </div>
         </div>
@@ -120,8 +129,12 @@ export default function BrowserWindowCard(props: Props) {
                 role="tooltip"
                 class="pointer-events-none invisible opacity-0 group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100 transition-opacity duration-150 absolute right-0 top-full mt-1 z-30 w-64 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-2.5 text-[11px] leading-relaxed text-[var(--text-secondary)] shadow-lg"
               >
-                <p class="font-medium text-[var(--text-primary)]">{t("inspector.browser.chromeQuickConnectHint")}</p>
-                <p class="mt-1 text-[var(--text-muted)]">{t("inspector.browser.chromeInstallHint")}</p>
+                <p class="font-medium text-[var(--text-primary)]">
+                  {t("inspector.browser.chromeQuickConnectHint")}
+                </p>
+                <p class="mt-1 text-[var(--text-muted)]">
+                  {t("inspector.browser.chromeInstallHint")}
+                </p>
               </div>
             </div>
           </div>
@@ -131,7 +144,7 @@ export default function BrowserWindowCard(props: Props) {
               readOnly
               value={b().pairCode()}
               aria-label={t("inspector.browser.chromeCode")}
-              onFocus={event => event.currentTarget.select()}
+              onFocus={(event) => event.currentTarget.select()}
             />
             <button
               type="button"
@@ -153,59 +166,43 @@ export default function BrowserWindowCard(props: Props) {
         </div>
       </Show>
 
+      {/* Compact single-row window bar (control status and Take over live in toolbar/status bar) */}
       <Show when={b().running() && (b().windowMode() || b().chromeLinked())}>
-        <div class="mx-2 mb-1.5 flex flex-col gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-hover)] px-2.5 py-2">
-          <div class="flex items-center justify-between gap-2">
-            <div class="min-w-0 flex-1" title={t("inspector.browser.windowModeHint")}>
-              <p class="truncate text-[11px] font-medium text-[var(--text-primary)]">
-                {state()?.title || t("inspector.browser.windowModeTitle")}
-              </p>
-              <p class="truncate text-[10px] text-[var(--text-muted)]">
-                {state()?.url && state()?.url !== "about:blank" ? state()?.url : t("inspector.browser.windowModeHint")}
-              </p>
-            </div>
-            <span
-              class={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${
-                state()?.manual
-                  ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
-                  : "bg-[var(--bg-panel)] text-[var(--text-secondary)]"
-              }`}
-              title={t(state()?.manual ? "inspector.browser.manualHint" : "inspector.browser.agentHint")}
-            >
-              {t(state()?.manual ? "inspector.browser.youControl" : "inspector.browser.aiCanControl")}
+        <div class="mx-2 mb-1.5 flex items-center justify-between gap-2 rounded-lg bg-[var(--bg-inset)]/60 px-2 py-1">
+          <div
+            class="flex min-w-0 flex-1 items-center gap-1.5"
+            title={
+              state()?.url && state()?.url !== "about:blank"
+                ? state()?.url
+                : t("inspector.browser.windowModeHint")
+            }
+          >
+            <AppWindow size={12} class="shrink-0 text-[var(--accent-primary)]" />
+            <span class="truncate text-[11px] font-medium text-[var(--text-secondary)]">
+              {state()?.title || t("inspector.browser.windowModeTitle")}
             </span>
           </div>
-          <div class="flex flex-wrap items-center gap-1.5">
+          <div class="flex shrink-0 items-center gap-1">
             <button
               type="button"
-              class="inline-flex items-center gap-1 rounded bg-[var(--accent-primary)] px-2 py-1 text-[11px] font-medium text-white hover:opacity-90 disabled:opacity-40 cursor-pointer"
+              class="inline-flex items-center gap-1 rounded bg-[var(--accent-surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-40 cursor-pointer"
               disabled={b().busy()}
               onClick={() => b().focusWindow()}
             >
-              <AppWindow size={12} />
               {t("inspector.browser.focusWindow")}
             </button>
             <button
               type="button"
-              class="inline-flex items-center gap-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1 text-[11px] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer"
-              disabled={b().busy() || b().stopping()}
-              onClick={() => b().send({ action: "control", manual: !state()?.manual })}
-            >
-              <Show when={state()?.manual} fallback={<Hand size={12} />}>
-                <Sparkles size={12} />
-              </Show>
-              {t(state()?.manual ? "inspector.browser.giveBackAI" : "inspector.browser.takeOver")}
-            </button>
-            <button
-              type="button"
-              class="inline-flex items-center gap-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+              class="inline-flex items-center gap-1 rounded bg-[var(--bg-panel)] px-2 py-0.5 text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
               aria-pressed={b().previewEnabled()}
               onClick={() => b().togglePreview()}
             >
-              <Show when={b().previewEnabled()} fallback={<Eye size={12} />}>
-                <EyeOff size={12} />
+              <Show when={b().previewEnabled()} fallback={<Eye size={11} />}>
+                <EyeOff size={11} />
               </Show>
-              {t(b().previewEnabled() ? "inspector.browser.hidePreview" : "inspector.browser.showPreview")}
+              <span>
+                {t(b().previewEnabled() ? "inspector.browser.hidePreview" : "inspector.browser.showPreview")}
+              </span>
             </button>
           </div>
         </div>

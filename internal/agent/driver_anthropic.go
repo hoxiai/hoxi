@@ -20,7 +20,7 @@ func newAnthropicDriver() ModelDriver { return &anthropicDriver{} }
 func (d *anthropicDriver) Protocol() llm.StreamProtocol { return llm.ProtocolAnthropic }
 
 func (d *anthropicDriver) SystemPromptPatch() string {
-	return "Prefer parallel read/glob/grep calls when gathering context. Keep edits minimal and verify with targeted checks."
+	return ""
 }
 
 func (d *anthropicDriver) BuildRequest(req ModelRequest) (llm.StreamHTTPRequest, error) {
