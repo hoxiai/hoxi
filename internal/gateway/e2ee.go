@@ -105,6 +105,21 @@ func (g *Gateway) unwrapRemoteE2EERequest(w http.ResponseWriter, r *http.Request
 	rawHeader := strings.TrimSpace(r.Header.Get(pairing.E2EEHeader))
 	r.Header.Del(pairing.E2EEHeader)
 	if rawHeader == "" {
+		if r.Body != nil && r.Body != http.NoBody &&
+			(r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch) {
+			ct := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
+			if ct == "" || strings.HasPrefix(ct, "application/json") {
+				raw, ok := readTunnelRequestBody(r)
+				if !ok {
+					writeJSONError(w, http.StatusRequestEntityTooLarge, "request body too large")
+					return w, func() {}, false
+				}
+				if looksLikeE2EEEnvelope(raw) {
+					writeJSONError(w, http.StatusBadRequest, "encrypted E2EE request received without X-Hoxi-E2EE header; upgrade the GoPanel relay proxy")
+					return w, func() {}, false
+				}
+			}
+		}
 		return w, func() {}, true
 	}
 	if g.pairing == nil {
@@ -318,6 +333,22 @@ func (w *e2eeResponseWriter) finalize() {
 	w.dst.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.dst.WriteHeader(status)
 	_, _ = w.dst.Write(encoded)
+}
+
+func looksLikeE2EEEnvelope(raw []byte) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) < 2 || trimmed[0] != '{' {
+		return false
+	}
+	var probe struct {
+		Version    int    `json:"_hoxi_e2ee"`
+		Nonce      string `json:"n"`
+		Ciphertext string `json:"c"`
+	}
+	if json.Unmarshal(trimmed, &probe) != nil {
+		return false
+	}
+	return probe.Version == 1 && strings.TrimSpace(probe.Nonce) != "" && strings.TrimSpace(probe.Ciphertext) != ""
 }
 
 func copyHeaders(dst, src http.Header) {

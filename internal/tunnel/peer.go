@@ -27,18 +27,72 @@ type peer struct {
 	closeOnce sync.Once
 }
 
+const maxStreamBufferedBytes = 24 << 20
+
 type chunk struct {
 	payload []byte
 	end     bool
 }
 
 type stream struct {
-	bodyReader *io.PipeReader
-	bodyWriter *io.PipeWriter
-	incoming   chan chunk
-	cancel     context.CancelFunc
-	closed     chan struct{}
-	closeOnce  sync.Once
+	bodyReader    *io.PipeReader
+	bodyWriter    *io.PipeWriter
+	mu            sync.Mutex
+	queue         []chunk
+	bufferedBytes int
+	notify        chan struct{}
+	cancel        context.CancelFunc
+	closed        chan struct{}
+	closeOnce     sync.Once
+}
+
+func newStream(cancel context.CancelFunc) *stream {
+	s := &stream{
+		notify: make(chan struct{}, 1),
+		cancel: cancel,
+		closed: make(chan struct{}),
+	}
+	s.bodyReader, s.bodyWriter = io.Pipe()
+	return s
+}
+
+func (s *stream) enqueue(c chunk) bool {
+	if s.isClosed() {
+		return true
+	}
+	cost := len(c.payload) + 64
+	s.mu.Lock()
+	if s.bufferedBytes+cost > maxStreamBufferedBytes {
+		s.mu.Unlock()
+		return false
+	}
+	s.queue = append(s.queue, c)
+	s.bufferedBytes += cost
+	s.mu.Unlock()
+	select {
+	case s.notify <- struct{}{}:
+	default:
+	}
+	return true
+}
+
+func (s *stream) dequeue() (chunk, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.queue) == 0 {
+		return chunk{}, false
+	}
+	c := s.queue[0]
+	s.queue[0] = chunk{}
+	s.queue = s.queue[1:]
+	if len(s.queue) == 0 {
+		s.queue = nil
+	}
+	s.bufferedBytes -= len(c.payload) + 64
+	if s.bufferedBytes < 0 {
+		s.bufferedBytes = 0
+	}
+	return c, true
 }
 
 func newPeer(conn *websocket.Conn, handler http.Handler) *peer {
@@ -141,8 +195,7 @@ func (p *peer) handleOpen(ctx context.Context, f frame) {
 		return
 	}
 	streamCtx, cancel := context.WithCancel(ctx)
-	s := &stream{incoming: make(chan chunk, 16), cancel: cancel, closed: make(chan struct{})}
-	s.bodyReader, s.bodyWriter = io.Pipe()
+	s := newStream(cancel)
 	// GoPanel only reuses an id after it considers the old stream gone; close
 	// ours locally (a Reset frame would also kill the new stream upstream).
 	if old, loaded := p.streams.Swap(f.StreamID, s); loaded {
@@ -166,9 +219,7 @@ func (p *peer) push(streamID uint64, c chunk) {
 	if !ok {
 		return
 	}
-	select {
-	case value.(*stream).incoming <- c:
-	default:
+	if !value.(*stream).enqueue(c) {
 		p.closeStream(streamID)
 		p.reset(streamID, "hoxi tunnel stream buffer exceeded")
 	}
@@ -190,10 +241,11 @@ func (s *stream) close() {
 
 func (s *stream) pumpBody() {
 	for {
-		select {
-		case <-s.closed:
-			return
-		case c := <-s.incoming:
+		for {
+			c, ok := s.dequeue()
+			if !ok {
+				break
+			}
 			if c.end {
 				_ = s.bodyWriter.Close()
 				return
@@ -201,6 +253,11 @@ func (s *stream) pumpBody() {
 			if _, err := s.bodyWriter.Write(c.payload); err != nil {
 				return
 			}
+		}
+		select {
+		case <-s.closed:
+			return
+		case <-s.notify:
 		}
 	}
 }

@@ -696,3 +696,57 @@ func TestStartAutoRegistersWithDefaultRelayController(t *testing.T) {
 		t.Fatalf("RelayProxyURL() = %q, want %q", got, wantProxy)
 	}
 }
+
+func TestTunnelHandlesLargeBurstRequestBody(t *testing.T) {
+	payload := strings.Repeat("B", 2*1024*1024) // 64 chunks > old 16-chunk cap
+	var receivedLen int
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(30 * time.Millisecond)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		receivedLen = len(body)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	_, conn, _ := pairedManager(t, handler)
+	_ = readFrame(t, conn) // service sync
+
+	open, err := jsonFrame(frameOpen, 42, openFrame{
+		ServiceID:  ServicePublicID,
+		Method:     http.MethodPost,
+		RequestURI: "/api/hoxi/attachments",
+		Headers:    map[string][]string{"Content-Type": {"application/json"}},
+		HasBody:    true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendFrame(t, conn, open)
+	for off := 0; off < len(payload); off += chunkSize {
+		end := min(off+chunkSize, len(payload))
+		sendFrame(t, conn, frame{
+			Type:     frameData,
+			StreamID: 42,
+			Payload:  encodeData(dataHTTP, []byte(payload[off:end])),
+		})
+	}
+	sendFrame(t, conn, frame{Type: frameEnd, StreamID: 42})
+
+	respFrame := readFrame(t, conn)
+	if respFrame.Type != frameResponse {
+		t.Fatalf("expected frameResponse, got type=%d payload=%q", respFrame.Type, string(respFrame.Payload))
+	}
+	var resp responseFrame
+	if err := json.Unmarshal(respFrame.Payload, &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.Status)
+	}
+	if receivedLen != len(payload) {
+		t.Fatalf("receivedLen = %d, want %d", receivedLen, len(payload))
+	}
+}

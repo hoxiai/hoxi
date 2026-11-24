@@ -261,3 +261,44 @@ func ioWriteStringHelper(w http.ResponseWriter, s string) {
 		f.Flush()
 	}
 }
+
+func TestRemoteE2EERejectsEnvelopeWhenRelayStripsHeader(t *testing.T) {
+	g, _, relayToken := ingressGateway(t)
+	e2eeKey, err := g.pairing.E2EEKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientCipher, err := pairing.NewE2EECipher(e2eeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Unix()
+	reqID := "e2ee_stripped_hdr_01"
+	sealed, err := clientCipher.SealRequest(
+		pairing.E2EERequestMeta{ID: reqID, TS: fmt.Sprintf("%d", now), HasBody: true},
+		http.MethodPost,
+		"/api/hoxi/sessions/ses_1/prompt_async",
+		"application/json",
+		[]byte(`{"text":"hello world"}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate an older GoPanel relay that forwards the encrypted JSON body
+	// while stripping the X-Hoxi-E2EE request header.
+	req := httptest.NewRequest(http.MethodPost, "/api/hoxi/sessions/ses_1/prompt_async", bytes.NewReader(sealed))
+	req.Host = "abc123.node.hoxi.ai"
+	req.RemoteAddr = "203.0.113.9:51000"
+	req.Header.Set("X-Auth", relayToken)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	g.ServeIngressRequest(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "X-Hoxi-E2EE") {
+		t.Fatalf("expected error mentioning X-Hoxi-E2EE, got: %s", rec.Body.String())
+	}
+}
