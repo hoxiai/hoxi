@@ -267,7 +267,7 @@ func TestNativeRustDiagnosticPrioritizesEditedFile(t *testing.T) {
 	if err := os.WriteFile(cargoStub, []byte(stubScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	isolateFakeBinPath(t, root, binDir)
 
 	svc := NewService(ws, nil, nil, filepath.Join(root, "sessions.json"))
 	defer svc.CloseAll()

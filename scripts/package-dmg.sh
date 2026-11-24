@@ -61,12 +61,34 @@ if [[ ! -f "${DMG_PATH}" ]]; then
     fi
   fi
 
-  hdiutil create \
-    -volname "${VOLUME_NAME}" \
-    -srcfolder "${STAGE_DIR}" \
-    -ov \
-    -format UDZO \
-    "${DMG_PATH}"
+  STAGE_KB="$(du -sk "${STAGE_DIR}" | awk '{print $1}')"
+  DMG_SIZE_MB="$(( (STAGE_KB / 1024) + 128 ))"
+  if (( DMG_SIZE_MB < 256 )); then
+    DMG_SIZE_MB=256
+  fi
+
+  HDIUTIL_OK=0
+  for attempt in 1 2 3; do
+    rm -f "${DMG_PATH}"
+    if hdiutil create \
+      -volname "${VOLUME_NAME}" \
+      -srcfolder "${STAGE_DIR}" \
+      -fs HFS+ \
+      -size "${DMG_SIZE_MB}m" \
+      -ov \
+      -format UDZO \
+      "${DMG_PATH}"; then
+      HDIUTIL_OK=1
+      break
+    fi
+    echo "⚠️ hdiutil create attempt ${attempt}/3 failed; retrying..." >&2
+    hdiutil detach "/Volumes/${VOLUME_NAME}" -force >/dev/null 2>&1 || true
+    sleep 3
+  done
+  if [[ "${HDIUTIL_OK}" -ne 1 ]]; then
+    echo "❌ Error: hdiutil failed to create DMG after 3 attempts" >&2
+    exit 1
+  fi
 fi
 
 # Sign the DMG container if a real Developer ID is provided

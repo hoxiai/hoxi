@@ -7,11 +7,13 @@ import {
   isSessionBusy,
   openAttachmentInInspector,
   openImagePreview,
+  parseHoxiContextPrompt,
   type QueuedPromptItem,
   removeQueuedPrompt,
   sendQueuedPromptNow,
   workspace,
 } from "../../store/workspace";
+import { UserContextBlocks } from "./UserContextBlocks";
 import { FileIcon } from "../icons";
 import { t } from "../../i18n";
 import {
@@ -139,12 +141,27 @@ export default function QueuedPromptsList(props: {
                   </Show>
 
                   <Show when={item.text}>
-                    <div
-                      class="whitespace-pre-wrap break-words leading-[1.65] text-[var(--text-primary)] selectable-text"
-                      style={{ "font-size": "var(--app-chat-text-size)" }}
-                    >
-                      {item.text}
-                    </div>
+                    {(() => {
+                      const parsed = parseHoxiContextPrompt(item.text);
+                      return (
+                        <>
+                          <Show when={parsed.hasContext}>
+                            <UserContextBlocks
+                              envelopes={parsed.envelopes}
+                              partId={`queued_${item.id}`}
+                            />
+                          </Show>
+                          <Show when={Boolean(parsed.bodyText)}>
+                            <div
+                              class="whitespace-pre-wrap break-words leading-[1.65] text-[var(--text-primary)] selectable-text"
+                              style={{ "font-size": "var(--app-chat-text-size)" }}
+                            >
+                              {parsed.bodyText}
+                            </div>
+                          </Show>
+                        </>
+                      );
+                    })()}
                   </Show>
                 </div>
 

@@ -33,6 +33,14 @@ type SessionMCPExtension interface {
 	SessionMCPServers(sessionID, directory string) map[string]any
 }
 
+// DesktopIframeRoutesExtension may be implemented by an Extension to declare
+// exact read-only, zero-secret loopback HTML paths (protected by CSP
+// frame-ancestors) that a native desktop WebView (e.g. macOS wails://wails)
+// may navigate inside a cross-site iframe.
+type DesktopIframeRoutesExtension interface {
+	DesktopIframeRoutes() []string
+}
+
 // ExtensionFactory constructs an Extension bound to a Gateway instance.
 type ExtensionFactory func(g *Gateway) Extension
 
@@ -114,6 +122,24 @@ func (g *Gateway) LoopbackBaseURL() string {
 		return ""
 	}
 	return strings.Replace(strings.Replace(ws, "wss://", "https://", 1), "ws://", "http://", 1)
+}
+
+func (g *Gateway) isDesktopIframeRoute(requestPath string) bool {
+	if g == nil || requestPath == "" {
+		return false
+	}
+	for _, ext := range g.extensions {
+		provider, ok := ext.(DesktopIframeRoutesExtension)
+		if !ok {
+			continue
+		}
+		for _, route := range provider.DesktopIframeRoutes() {
+			if route != "" && route == requestPath {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (g *Gateway) registerExtensionRoutes() {

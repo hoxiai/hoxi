@@ -201,13 +201,13 @@ const GEMINI_IMAGE_GEN_MODEL_RE =
 const MEDIA_IMAGE_GEN_MODEL_RE =
   /dall-e|gpt-image|chatgpt-image|gpt-4o-image|imagen|flux-|flux\.|flux\/|midjourney|stable-diffusion|sdxl|ideogram|recraft|cogview|seedream|kolors|hunyuan-image|qwen-image|wanx-v1/i;
 const MULTIMODAL_IMAGE_EDIT_MODEL_RE =
-  /nano-banana|gemini[\w./-]*(?:-image|_image|\/image|image-generation|image-preview)|gpt-image|chatgpt-image|gpt-4o-image|flux-kontext|seedream|qwen-image-edit/i;
+  /nano-banana|gemini[\w./-]*(?:-image|_image|\/image|image-generation|image-preview)|gpt-image|dall-e-2|imagen|qwen-image|kontext|inpaint|flux-fill|seedream|-edit|chatgpt-image|gpt-4o-image/i;
 const MEDIA_VIDEO_GEN_MODEL_RE =
   /seedance|kling|veo-|veo2|veo3|sora|wanx|wan2|cogvideo|hailuo|luma-|runway|vidu/i;
 const MEDIA_AUDIO_GEN_MODEL_RE =
   /tts|speech|elevenlabs|fishaudio|cosyvoice|suno|udio/i;
 const NON_CHAT_UTILITY_MODEL_RE =
-  /embedding|embed|rerank|bge-|whisper|tts|speech|moderation/i;
+  /embedding|embed|rerank|bge-|whisper|tts|speech|moderation|alimt-image-translate|image-translate|mt-image|collector-|codex-auto-review/i;
 
 export type DedicatedMediaModality = "image" | "video" | "audio" | null;
 
@@ -224,7 +224,12 @@ export function inferDedicatedMediaModality(modelID?: string | null): DedicatedM
 
 export function supportsMultimodalImageEditModelID(modelID?: string | null): boolean {
   if (!modelID) return false;
-  return MULTIMODAL_IMAGE_EDIT_MODEL_RE.test(modelID.trim());
+  const trimmed = modelID.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower.includes("imagen") && lower.includes("-generate") && !lower.includes("edit") && !lower.includes("inpaint")) {
+    return false;
+  }
+  return MULTIMODAL_IMAGE_EDIT_MODEL_RE.test(trimmed);
 }
 
 export function isImageGenerationModel(
@@ -236,7 +241,9 @@ export function isImageGenerationModel(
   if (inferDedicatedMediaModality(mid) === "image") return true;
   const pid = (providerID || "").trim();
   if (!pid) return false;
-  const hoxiModel = workspace.hoxiProviders?.[pid]?.models?.[mid];
+  const hoxiModel =
+    workspace.hoxiProviders?.[pid]?.models?.[mid] ??
+    workspace.hoxiProviders?.[pid]?.mediaModels?.[mid];
   if (hoxiModel && typeof hoxiModel === "object") {
     if (hoxiModel.category === "image") return true;
     if (Array.isArray(hoxiModel.modalities?.output) && hoxiModel.modalities.output.includes("image")) {
@@ -263,7 +270,9 @@ export function isVideoGenerationModel(
   if (inferDedicatedMediaModality(mid) === "video") return true;
   const pid = (providerID || "").trim();
   if (!pid) return false;
-  const hoxiModel = workspace.hoxiProviders?.[pid]?.models?.[mid];
+  const hoxiModel =
+    workspace.hoxiProviders?.[pid]?.models?.[mid] ??
+    workspace.hoxiProviders?.[pid]?.mediaModels?.[mid];
   if (hoxiModel && typeof hoxiModel === "object") {
     if (hoxiModel.category === "video") return true;
     if (Array.isArray(hoxiModel.modalities?.output) && hoxiModel.modalities.output.includes("video")) {
@@ -290,7 +299,10 @@ export function hasConfiguredImageGenerationModel(): boolean {
   }
   for (const [pid, pVal] of Object.entries(workspace.hoxiProviders || {})) {
     if (!pid || pid === AUTO_PROVIDER_ID || !pVal) continue;
-    for (const mid of Object.keys(pVal.models || {})) {
+    for (const mid of [
+      ...Object.keys(pVal.models || {}),
+      ...Object.keys((pVal as Record<string, any>).mediaModels || {}),
+    ]) {
       if (isImageGenerationModel(pid, mid)) return true;
     }
   }
@@ -306,7 +318,10 @@ export function hasConfiguredVideoGenerationModel(): boolean {
   }
   for (const [pid, pVal] of Object.entries(workspace.hoxiProviders || {})) {
     if (!pid || pid === AUTO_PROVIDER_ID || !pVal) continue;
-    for (const mid of Object.keys(pVal.models || {})) {
+    for (const mid of [
+      ...Object.keys(pVal.models || {}),
+      ...Object.keys((pVal as Record<string, any>).mediaModels || {}),
+    ]) {
       if (isVideoGenerationModel(pid, mid)) return true;
     }
   }
@@ -322,7 +337,9 @@ export function isSpeechSynthesisModel(
   if (inferDedicatedMediaModality(mid) === "audio") return true;
   const pid = (providerID || "").trim();
   if (!pid) return false;
-  const hoxiModel = workspace.hoxiProviders?.[pid]?.models?.[mid];
+  const hoxiModel =
+    workspace.hoxiProviders?.[pid]?.models?.[mid] ??
+    workspace.hoxiProviders?.[pid]?.mediaModels?.[mid];
   if (hoxiModel && typeof mCategory(hoxiModel) === "string") {
     if (mCategory(hoxiModel) === "tts") return true;
     if (Array.isArray(hoxiModel.modalities?.output) && hoxiModel.modalities.output.includes("audio")) {
@@ -353,7 +370,10 @@ export function hasConfiguredSpeechModel(): boolean {
   }
   for (const [pid, pVal] of Object.entries(workspace.hoxiProviders || {})) {
     if (!pid || pid === AUTO_PROVIDER_ID || !pVal) continue;
-    for (const mid of Object.keys(pVal.models || {})) {
+    for (const mid of [
+      ...Object.keys(pVal.models || {}),
+      ...Object.keys((pVal as Record<string, any>).mediaModels || {}),
+    ]) {
       if (isSpeechSynthesisModel(pid, mid)) return true;
     }
   }

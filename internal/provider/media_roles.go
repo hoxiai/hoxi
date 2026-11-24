@@ -92,9 +92,16 @@ func (s *Service) loadMediaRolePrefsLocked() llm.MediaRolePrefs {
 		return llm.MediaRolePrefs{}
 	}
 	prefs.ImageModel = normalizeMediaRoleSpec(prefs.ImageModel)
+	prefs.ImageEditModel = normalizeMediaRoleSpec(prefs.ImageEditModel)
+	prefs.ImageTranslateRasterModel = normalizeMediaRoleSpec(prefs.ImageTranslateRasterModel)
+	prefs.ImageTranslateEditorModel = normalizeMediaRoleSpec(prefs.ImageTranslateEditorModel)
 	prefs.VideoModel = normalizeMediaRoleSpec(prefs.VideoModel)
 	prefs.SpeechModel = normalizeMediaRoleSpec(prefs.SpeechModel)
 	prefs.TranscribeModel = normalizeMediaRoleSpec(prefs.TranscribeModel)
+	prefs.VisionModel = normalizeMediaRoleSpec(prefs.VisionModel)
+	prefs.TextTranslateModel = normalizeMediaRoleSpec(prefs.TextTranslateModel)
+	prefs.EmbeddingModel = normalizeMediaRoleSpec(prefs.EmbeddingModel)
+	prefs.RerankModel = normalizeMediaRoleSpec(prefs.RerankModel)
 	return prefs
 }
 
@@ -105,7 +112,17 @@ func (s *Service) UpdateMediaRolePrefs(patch map[string]*string) (llm.MediaRoleP
 	normalizedPatch := make(map[string]string, len(patch))
 	for k, v := range patch {
 		switch k {
-		case "imageModel", "videoModel", "speechModel", "transcribeModel":
+		case "imageModel",
+			"imageEditModel",
+			"imageTranslateRasterModel",
+			"imageTranslateEditorModel",
+			"videoModel",
+			"speechModel",
+			"transcribeModel",
+			"visionModel",
+			"textTranslateModel",
+			"embeddingModel",
+			"rerankModel":
 		default:
 			return llm.MediaRolePrefs{}, fmt.Errorf("%w: unknown role field %q", ErrInvalidMediaRole, k)
 		}
@@ -126,6 +143,15 @@ func (s *Service) UpdateMediaRolePrefs(patch map[string]*string) (llm.MediaRoleP
 	if v, ok := normalizedPatch["imageModel"]; ok {
 		cur.ImageModel = v
 	}
+	if v, ok := normalizedPatch["imageEditModel"]; ok {
+		cur.ImageEditModel = v
+	}
+	if v, ok := normalizedPatch["imageTranslateRasterModel"]; ok {
+		cur.ImageTranslateRasterModel = v
+	}
+	if v, ok := normalizedPatch["imageTranslateEditorModel"]; ok {
+		cur.ImageTranslateEditorModel = v
+	}
 	if v, ok := normalizedPatch["videoModel"]; ok {
 		cur.VideoModel = v
 	}
@@ -134,6 +160,18 @@ func (s *Service) UpdateMediaRolePrefs(patch map[string]*string) (llm.MediaRoleP
 	}
 	if v, ok := normalizedPatch["transcribeModel"]; ok {
 		cur.TranscribeModel = v
+	}
+	if v, ok := normalizedPatch["visionModel"]; ok {
+		cur.VisionModel = v
+	}
+	if v, ok := normalizedPatch["textTranslateModel"]; ok {
+		cur.TextTranslateModel = v
+	}
+	if v, ok := normalizedPatch["embeddingModel"]; ok {
+		cur.EmbeddingModel = v
+	}
+	if v, ok := normalizedPatch["rerankModel"]; ok {
+		cur.RerankModel = v
 	}
 
 	path := s.mediaRolesFilePath()

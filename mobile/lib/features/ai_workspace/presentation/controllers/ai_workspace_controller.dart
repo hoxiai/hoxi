@@ -33,6 +33,7 @@ export 'ai_workspace_state.dart';
 part 'ai_workspace_convoy_queue.dart';
 part 'ai_workspace_delivery.dart';
 part 'ai_workspace_stream.dart';
+part 'ai_workspace_turn_actions.dart';
 
 final hoxiWorkspaceAdapterProvider = Provider<HoxiWorkspaceAdapter>((ref) {
   return HoxiWorkspaceAdapter(ref.watch(nodeApiClientProvider));
@@ -51,15 +52,28 @@ final aiWorkspaceControllerProvider =
     );
 
 class AiWorkspaceController extends Notifier<AiWorkspaceState>
-    with _AiWorkspaceDelivery, _AiWorkspaceStream, _AiWorkspaceConvoyAndQueue {
+    with
+        _AiWorkspaceDelivery,
+        _AiWorkspaceStream,
+        _AiWorkspaceConvoyAndQueue,
+        _AiWorkspaceTurnActions {
   AiWorkspaceRepository? _boundRepo;
   @override
   AiWorkspaceRepository get _repo =>
       _boundRepo ?? ref.read(aiWorkspaceRepositoryProvider);
   int? _refreshingSessionId;
   int? _pendingRefreshSessionId;
+  bool _pendingRefreshTrustServerState = false;
   int _refreshSeq = 0;
   int _projectRequest = 0;
+
+  @override
+  void _resetRefreshTracking() {
+    _refreshSeq++;
+    _refreshingSessionId = null;
+    _pendingRefreshSessionId = null;
+    _pendingRefreshTrustServerState = false;
+  }
 
   @override
   AiWorkspaceState build() {
@@ -73,6 +87,7 @@ class AiWorkspaceController extends Notifier<AiWorkspaceState>
     ref.onDispose(() {
       _projectRequest++;
       _stopDeliveryPolling();
+      _cancelStreamQuietWatchdog();
       _streamReconnectTimer?.cancel();
       _streamCancelToken?.cancel();
       _streamSubscription?.cancel();
@@ -195,6 +210,8 @@ class AiWorkspaceController extends Notifier<AiWorkspaceState>
     if (projectId <= 0 || projectId == state.selectedProjectId) return;
     final request = ++_projectRequest;
     _stopDeliveryPolling();
+    _cancelStreamQuietWatchdog();
+    _clearLiveSseRunning();
     if (!ref.mounted || !nodeRequest.isCurrent(_repo)) return;
     state = _clearedWorkspaceState(isLoading: true, selectedProjectId: projectId);
     try {
@@ -266,6 +283,10 @@ class AiWorkspaceController extends Notifier<AiWorkspaceState>
     final nodeRequest = NodeRequestGuard(_repo);
     _projectRequest++;
     _stopDeliveryPolling();
+    if (_pendingRefreshSessionId != session.id) {
+      _pendingRefreshSessionId = null;
+      _pendingRefreshTrustServerState = false;
+    }
     if (!ref.mounted || !nodeRequest.isCurrent(_repo)) return;
     state = state.copyWith(
       isLoading: true,
@@ -301,23 +322,33 @@ class AiWorkspaceController extends Notifier<AiWorkspaceState>
   }
 
   @override
-  Future<void> refreshCurrentSession({bool showLoading = false}) async {
+  Future<void> refreshCurrentSession({
+    bool showLoading = false,
+    bool trustServerState = false,
+  }) async {
     if (_boundRepo == null) return;
     final nodeRequest = NodeRequestGuard(_repo);
     final sessionId = state.currentSession?.id;
     if (sessionId == null) return;
+    final effectiveTrustServer = trustServerState || showLoading;
     if (_refreshingSessionId == sessionId) {
       _pendingRefreshSessionId = sessionId;
+      _pendingRefreshTrustServerState =
+          _pendingRefreshTrustServerState || effectiveTrustServer;
       return;
     }
     _refreshingSessionId = sessionId;
     final refreshSeq = ++_refreshSeq;
+    if (effectiveTrustServer) {
+      nodeRequest.repository.clearSessionBusyGrace(sessionId);
+    }
     if (showLoading) {
       if (!ref.mounted || !nodeRequest.isCurrent(_repo)) return;
       state = state.copyWith(isLoading: true, clearError: true);
     }
     final titleBeforeRefresh = state.currentSession?.title ?? '';
     final wasStreamingBeforeRefresh = state.isStreaming;
+    final refreshTerminalSeq = _streamTerminalSeq;
     try {
       final results = await Future.wait<Object>([
         nodeRequest.repository.getSessionState(sessionId),
@@ -325,8 +356,18 @@ class AiWorkspaceController extends Notifier<AiWorkspaceState>
         _loadDelivery(sessionId),
       ]);
       if (state.currentSession?.id != sessionId || refreshSeq != _refreshSeq) return;
-      final streamEndedInFlight = wasStreamingBeforeRefresh && !state.isStreaming;
-      final stillActivelyStreaming = state.isStreaming && _pendingRefreshSessionId != sessionId;
+      final streamEndedInFlight =
+          _streamTerminalSeq != refreshTerminalSeq ||
+          (wasStreamingBeforeRefresh && !state.isStreaming);
+      final activeSendStillPending =
+          state.isSending &&
+          _activeSendSessionId == sessionId &&
+          _streamTerminalSeq == _activeSendTerminalSeq;
+      final stillActivelyStreaming =
+          !effectiveTrustServer &&
+          state.isStreaming &&
+          _hasRecentLiveSseRunning(sessionId) &&
+          _pendingRefreshSessionId != sessionId;
       final sessionState = results[0] as AiSessionStateInfo;
       final history = results[1] as CodeSessionHistory;
       final (delivery, deliveryError) = results[2] as (CodeDeliveryJob?, String?);
@@ -335,14 +376,14 @@ class AiWorkspaceController extends Notifier<AiWorkspaceState>
       final persistedUsers = state.chatHistory.where((m) => m.isUser && !m.id.startsWith('local-')).length;
       final hasUnpersistedLocalTurn = state.chatHistory.any((m) => m.isUser && m.id.startsWith('local-')) &&
           baseMessages.where((m) => m.isUser).length <= persistedUsers;
+      final serverRunning =
+          sessionState.currentStage == 'running' ||
+          sessionState.currentStage == 'executing' ||
+          sessionState.currentStage == 'instruction_queued' ||
+          sessionState.session.status == 'running' ||
+          sessionState.session.status == 'busy';
       final isSessionRunning = !streamEndedInFlight &&
-          (state.isSending ||
-              stillActivelyStreaming ||
-              sessionState.currentStage == 'running' ||
-              sessionState.currentStage == 'executing' ||
-              sessionState.currentStage == 'instruction_queued' ||
-              sessionState.session.status == 'running' ||
-              sessionState.session.status == 'busy');
+          (activeSendStillPending || stillActivelyStreaming || serverRunning);
       final isTurnActive = isSessionRunning || sessionState.currentStage == 'awaiting_approval';
       final keepTurnShelf = isTurnActive && !hasUnpersistedLocalTurn;
       final rawStage = streamEndedInFlight ? state.currentStage : sessionState.currentStage;
@@ -373,9 +414,23 @@ class AiWorkspaceController extends Notifier<AiWorkspaceState>
         state.tasks, syncedSession, currentTask: syncedTask, stageOverride: effectiveStage,
       );
       if (!ref.mounted || !nodeRequest.isCurrent(_repo)) return;
+      if (!isSessionRunning &&
+          (effectiveStage == 'idle' ||
+              effectiveStage == 'completed' ||
+              effectiveStage == 'failed')) {
+        _clearLiveSseRunning(sessionId);
+        if (effectiveTrustServer && !serverRunning) {
+          if (wasStreamingBeforeRefresh ||
+              (activeWorkspaceStages.contains(state.currentStage) &&
+                  state.currentStage != 'awaiting_approval')) {
+            _markRecentlyTerminal(sessionId);
+          }
+          nodeRequest.repository.markSessionStage(sessionId, effectiveStage);
+        }
+      }
       state = state.copyWith(
         isLoading: false,
-        isStreaming: isSessionRunning || state.isSending,
+        isStreaming: isSessionRunning,
         clearError: true,
         sessions: sessions, tasks: tasks, chatHistory: messages,
         currentSession: syncedSession, currentTask: syncedTask,
@@ -403,22 +458,31 @@ class AiWorkspaceController extends Notifier<AiWorkspaceState>
         clearInstruction: sessionState.latestInstruction == null,
         clearApproval: sessionState.pendingApproval == null,
       );
+      _syncStreamQuietWatchdog();
       _notifyTaskCenterSession(syncedSession, currentStage: effectiveStage, stateInfo: sessionState);
       _syncDeliveryPolling();
-      drainNextQueuedPromptIfIdle();
     } catch (error) {
       if (state.currentSession?.id != sessionId || !ref.mounted || !nodeRequest.isCurrent(_repo)) {
         return;
       }
       state = state.copyWith(isLoading: false, errorMessage: '会话状态刷新失败：$error');
+      _syncStreamQuietWatchdog();
     } finally {
       if (refreshSeq == _refreshSeq) {
         if (_refreshingSessionId == sessionId) _refreshingSessionId = null;
         if (_pendingRefreshSessionId == sessionId) {
+          final nextTrustServer = _pendingRefreshTrustServerState;
           _pendingRefreshSessionId = null;
+          _pendingRefreshTrustServerState = false;
           if (ref.mounted && nodeRequest.isCurrent(_repo) && state.currentSession?.id == sessionId) {
-            unawaited(refreshCurrentSession());
+            unawaited(
+              refreshCurrentSession(trustServerState: nextTrustServer),
+            );
           }
+        } else if (ref.mounted &&
+            nodeRequest.isCurrent(_repo) &&
+            state.currentSession?.id == sessionId) {
+          drainNextQueuedPromptIfIdle();
         }
       }
     }
@@ -478,271 +542,6 @@ class AiWorkspaceController extends Notifier<AiWorkspaceState>
       return state.executors;
     } catch (_) {
       return state.executors;
-    }
-  }
-
-  @override
-  Future<bool> sendMessage(
-    String text, {
-    CodeInstructionOptions options = const CodeInstructionOptions(),
-    String? imageDataUrl,
-    List<String> attachedFiles = const [],
-    List<LocalPickedDocument> localDocuments = const [],
-    NodeSkillSelection? skillSelection,
-    bool bypassQueue = false,
-  }) async {
-    final nodeRequest = NodeRequestGuard(_repo);
-    final rawText = text.trim();
-    final hasImage = imageDataUrl != null && imageDataUrl.trim().isNotEmpty;
-    final hasDocuments = localDocuments.isNotEmpty;
-    final effectiveSkill = skillSelection ?? state.selectedSkill;
-    final fileRefs = attachedFiles
-        .map((f) => f.trim())
-        .where((f) => f.isNotEmpty && !rawText.contains('@$f'))
-        .map((f) => '@$f')
-        .join(' ');
-    final content = [if (fileRefs.isNotEmpty) fileRefs, if (rawText.isNotEmpty) rawText].join('\n');
-    final session = state.currentSession;
-    if (session == null) {
-      if (!ref.mounted || !nodeRequest.isCurrent(_repo)) return false;
-      state = state.copyWith(errorMessage: '请先创建或选择一个开发会话');
-      return false;
-    }
-    if (content.isEmpty && !hasImage && !hasDocuments && effectiveSkill == null) return false;
-    if (!bypassQueue && (state.isSending || state.isAiThinking)) {
-      enqueueFollowUpPrompt(
-        sessionId: session.id,
-        text: rawText,
-        imageDataUrl: hasImage ? imageDataUrl.trim() : null,
-        attachedFiles: attachedFiles,
-        localDocuments: localDocuments,
-        skillSelection: effectiveSkill,
-        options: options,
-      );
-      return true;
-    }
-    if (state.isSending) return false;
-    final now = DateTime.now();
-    final docTags = localDocuments.map((d) => '[Attachment: ${d.name}]').join('\n');
-    final bubbleText = [
-      if (content.isNotEmpty) content,
-      if (docTags.isNotEmpty) docTags,
-    ].join('\n');
-    final userMessage = ChatMessage(
-      id: 'local-${now.microsecondsSinceEpoch}',
-      text: bubbleText.isNotEmpty ? bubbleText : '[@Skill: ${effectiveSkill?.name ?? ""}]',
-      isUser: true, timestamp: now,
-      imageDataUrl: hasImage ? imageDataUrl.trim() : null,
-    );
-    final agentLabel = [
-      if (session.agentName.trim().isNotEmpty) session.agentName.trim(),
-      if (session.providerModel.trim().isNotEmpty) session.providerModel.trim(),
-    ].join(' · ');
-    final streamPlaceholder = ChatMessage(
-      id: 'stream-current', text: '', isUser: false, timestamp: now,
-      activity: '正在下发指令...', isStreaming: true, agentLabel: agentLabel,
-    );
-    if (!ref.mounted || !nodeRequest.isCurrent(_repo)) return false;
-    _clearSessionStopped(session.id);
-    final runningSession = applyPromptAutoTitle(session, content, hasImage: hasImage, now: now)
-        .copyWith(status: 'running', currentStage: 'running', updatedAt: now);
-    state = state.copyWith(
-      isSending: true, isStreaming: true, currentStage: 'running',
-      currentSession: runningSession,
-      sessions: upsertWorkspaceSession(state.sessions, runningSession),
-      tasks: syncWorkspaceTasksWithSession(state.tasks, runningSession, stageOverride: 'running'),
-      turnChangedFiles: const [], turnChangedFileStats: const [],
-      turnDiffAdditions: 0, turnDiffDeletions: 0, todos: const [],
-      clearError: true, clearSelectedSkill: true,
-      chatHistory: [
-        ...state.chatHistory.where((m) => !m.id.startsWith('stream-')),
-        userMessage, streamPlaceholder,
-      ],
-    );
-    _notifyTaskCenterSession(runningSession, currentStage: 'running');
-    _connectConversationStream(session.id);
-    try {
-      final attachments = <Map<String, dynamic>>[];
-      if (hasImage) {
-        final commaIdx = imageDataUrl.indexOf(',');
-        final header = commaIdx > 5 ? imageDataUrl.substring(5, commaIdx) : 'image/jpeg;base64';
-        final mime = header.split(';').first;
-        final ext = mime.endsWith('png') ? 'png' : (mime.endsWith('webp') ? 'webp' : 'jpg');
-        final uploaded = await nodeRequest.repository.uploadAttachment(
-          sessionId: session.id,
-          filename: 'image_${now.millisecondsSinceEpoch}.$ext',
-          mime: mime, dataUrl: imageDataUrl,
-        );
-        attachments.add(uploaded);
-      }
-      final useJsonEnvelope = (nodeRequest.node.e2eeKey ?? '').trim().isNotEmpty;
-      for (final doc in localDocuments) {
-        final uploaded = await nodeRequest.repository.uploadDocumentAttachment(
-          sessionId: session.id,
-          filename: doc.name,
-          mime: doc.mime,
-          bytes: doc.bytes,
-          useJsonEnvelope: useJsonEnvelope,
-        );
-        attachments.add(uploaded);
-      }
-      final result = await nodeRequest.repository.sendAiCommand(
-        sessionId: session.id, command: content,
-        autoPreview: options.autoPreview, requireApproval: options.requireApproval,
-        attachments: attachments.isEmpty ? null : attachments,
-        skillSelection: effectiveSkill,
-      );
-      if (!ref.mounted || !nodeRequest.isCurrent(_repo)) return false;
-      final postStage = result.approval == null ? 'instruction_queued' : 'awaiting_approval';
-      final postSession = applyPromptAutoTitle(result.session, content, hasImage: hasImage, now: now)
-          .copyWith(currentStage: postStage);
-      final postTask = syncTaskSummaryTitle(result.task, postSession);
-      if (isPlaceholderSessionTitle(result.session.title) &&
-          !isPlaceholderSessionTitle(postSession.title)) {
-        unawaited(
-          nodeRequest.repository
-              .updateSessionTitle(session.id, postSession.title)
-              .catchError((_) => postSession),
-        );
-      }
-      state = state.copyWith(
-        currentSession: postSession,
-        sessions: upsertWorkspaceSession(state.sessions, postSession),
-        tasks: syncWorkspaceTasksWithSession(
-          state.tasks, postSession, currentTask: postTask, stageOverride: postStage,
-        ),
-        currentTask: postTask,
-        latestInstruction: result.instruction,
-        pendingApproval: result.approval,
-        currentStage: postStage,
-        clearApproval: result.approval == null,
-      );
-      _notifyTaskCenterSession(postSession, currentStage: postStage);
-      if (result.approval != null) {
-        unawaited(ref.read(codeAttentionControllerProvider.notifier).reloadSilently());
-      }
-      await refreshCurrentSession();
-      return true;
-    } catch (error) {
-      if (!ref.mounted || !nodeRequest.isCurrent(_repo)) return false;
-      state = state.copyWith(
-        isStreaming: false,
-        chatHistory: state.chatHistory
-            .where((m) => m.id != 'stream-current' || m.text.trim().isNotEmpty)
-            .toList(),
-        errorMessage: '指令发送失败：$error',
-      );
-      return false;
-    } finally {
-      if (ref.mounted && nodeRequest.isCurrent(_repo)) {
-        state = state.copyWith(isSending: false);
-      }
-    }
-  }
-
-  Future<bool> retryLatestInstruction() async {
-    final nodeRequest = NodeRequestGuard(_repo);
-    final session = state.currentSession;
-    if (session == null || state.isSending || state.isActionLoading) return false;
-    final instruction = state.latestInstruction;
-    if (instruction != null && instruction.id > 0) {
-      if (!ref.mounted || !nodeRequest.isCurrent(_repo)) return false;
-      _clearSessionStopped(session.id);
-      state = state.copyWith(
-        isActionLoading: true, isStreaming: true, currentStage: 'running',
-        turnChangedFiles: const [], turnChangedFileStats: const [],
-        turnDiffAdditions: 0, turnDiffDeletions: 0, todos: const [],
-        clearError: true,
-      );
-      _connectConversationStream(session.id);
-      try {
-        final retried = await nodeRequest.repository.retryInstruction(instruction.id);
-        if (!ref.mounted || !nodeRequest.isCurrent(_repo)) return false;
-        state = state.copyWith(
-          isActionLoading: false, latestInstruction: retried,
-          currentStage: 'instruction_queued',
-        );
-        await refreshCurrentSession();
-        return true;
-      } catch (error) {
-        if (!ref.mounted || !nodeRequest.isCurrent(_repo)) return false;
-        state = state.copyWith(
-          isActionLoading: false, isStreaming: false,
-          errorMessage: '重试指令失败：$error',
-        );
-        return false;
-      }
-    }
-    final lastUser = state.chatHistory.lastWhere(
-      (m) => m.isUser && m.text.trim().isNotEmpty,
-      orElse: () => ChatMessage(
-        id: '', text: '', isUser: true,
-        timestamp: DateTime.fromMillisecondsSinceEpoch(0),
-      ),
-    );
-    if (lastUser.text.trim().isEmpty) return false;
-    return sendMessage(lastUser.text, options: const CodeInstructionOptions(), bypassQueue: true);
-  }
-
-  Future<void> decideApproval({required bool approved, String reason = ''}) async {
-    final nodeRequest = NodeRequestGuard(_repo);
-    final approval = state.pendingApproval;
-    if (approval == null || state.isActionLoading) return;
-    if (!ref.mounted || !nodeRequest.isCurrent(_repo)) return;
-    state = state.copyWith(isActionLoading: true, clearError: true);
-    try {
-      if (approved) {
-        await nodeRequest.repository.approveApproval(approval.id, reason: reason);
-      } else {
-        await nodeRequest.repository.rejectApproval(approval.id, reason: reason);
-      }
-      if (!ref.mounted || !nodeRequest.isCurrent(_repo)) return;
-      state = state.copyWith(isActionLoading: false, clearApproval: true);
-      await refreshCurrentSession();
-      unawaited(ref.read(codeAttentionControllerProvider.notifier).reloadSilently());
-      unawaited(ref.read(aiWorkspaceTaskSyncBusProvider).refreshSilently());
-    } catch (error) {
-      if (!ref.mounted || !nodeRequest.isCurrent(_repo)) return;
-      state = state.copyWith(isActionLoading: false, errorMessage: '审批处理失败：$error');
-    }
-  }
-
-  Future<bool> stopCurrentSession() async {
-    final nodeRequest = NodeRequestGuard(_repo);
-    final sessionId = state.currentSession?.id;
-    if (sessionId == null || state.isActionLoading) return false;
-    if (!ref.mounted || !nodeRequest.isCurrent(_repo)) return false;
-    state = state.copyWith(isActionLoading: true, clearError: true);
-    try {
-      await nodeRequest.repository.stopSession(sessionId);
-      if (!ref.mounted || !nodeRequest.isCurrent(_repo)) return false;
-      _markSessionStopped(sessionId);
-      _refreshSeq++;
-      _refreshingSessionId = null;
-      _pendingRefreshSessionId = null;
-      final stoppedSession = state.currentSession?.copyWith(
-        status: 'active', currentStage: 'idle', updatedAt: DateTime.now(),
-      );
-      state = state.copyWith(
-        isActionLoading: false, isStreaming: false, currentStage: 'idle',
-        streamActivityKind: '', streamActivity: '',
-        currentSession: stoppedSession,
-        sessions: stoppedSession == null ? null : upsertWorkspaceSession(state.sessions, stoppedSession),
-        tasks: stoppedSession == null
-            ? null
-            : syncWorkspaceTasksWithSession(state.tasks, stoppedSession, currentTask: state.currentTask, stageOverride: 'idle'),
-        chatHistory: finalizeStoppedChatHistory(state.chatHistory),
-        turnChangedFiles: const [], turnChangedFileStats: const [],
-        turnDiffAdditions: 0, turnDiffDeletions: 0, todos: const [],
-      );
-      await refreshCurrentSession();
-      if (!_streamSuspended) _connectConversationStream(sessionId);
-      unawaited(ref.read(aiWorkspaceTaskSyncBusProvider).refreshSilently());
-      return true;
-    } catch (error) {
-      if (!ref.mounted || !nodeRequest.isCurrent(_repo)) return false;
-      state = state.copyWith(isActionLoading: false, errorMessage: error.toString());
-      return false;
     }
   }
 

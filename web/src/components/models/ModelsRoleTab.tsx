@@ -7,6 +7,7 @@ import {
   mediaRolePrefs,
   openProviderModal,
   refreshMediaCapabilities,
+  resolveLegacyImageEditFallbackSpec,
   setCommitModelSpec,
   updateGlobalModelConfig,
   updateMediaRolePrefs,
@@ -50,9 +51,112 @@ export default function ModelsRoleTab() {
 
   const connectedGroups = createMemo(() => getInternalLLMProviderModelGroups());
   const imageRoleGroups = createMemo(() => getMediaRoleModelGroups("image"));
+  const imageEditRoleGroups = createMemo(() => getMediaRoleModelGroups("image_edit"));
+  const imageTranslateEditorRoleGroups = createMemo(() =>
+    getMediaRoleModelGroups("image_translate_editor")
+  );
+  const imageTranslateRasterRoleGroups = createMemo(() =>
+    getMediaRoleModelGroups("image_translate_raster")
+  );
   const videoRoleGroups = createMemo(() => getMediaRoleModelGroups("video"));
   const speechRoleGroups = createMemo(() => getMediaRoleModelGroups("speech"));
   const transcribeRoleGroups = createMemo(() => getMediaRoleModelGroups("transcribe"));
+  const visionRoleGroups = createMemo(() => getMediaRoleModelGroups("vision"));
+  const textTranslateRoleGroups = createMemo(() => getMediaRoleModelGroups("text_translate"));
+  const embeddingRoleGroups = createMemo(() => getMediaRoleModelGroups("embedding"));
+  const rerankRoleGroups = createMemo(() => getMediaRoleModelGroups("rerank"));
+  const legacyImageEditFallback = createMemo(() => resolveLegacyImageEditFallbackSpec());
+
+  const capabilitySlotRows = [
+    {
+      field: "imageModel" as const,
+      title: () => t("models.imageRoleModelTitle"),
+      desc: () => t("models.imageRoleModelDesc"),
+      groups: imageRoleGroups,
+      emptyLabel: () => t("models.mediaRoleAutoBestOption"),
+    },
+    {
+      field: "imageEditModel" as const,
+      title: () => t("models.imageEditRoleModelTitle"),
+      desc: () => t("models.imageEditRoleModelDesc"),
+      groups: imageEditRoleGroups,
+      emptyLabel: () => {
+        const inherited = legacyImageEditFallback();
+        return inherited
+          ? t("models.imageEditLegacyFallbackOption", { model: inherited })
+          : t("models.mediaRoleAutoBestOption");
+      },
+    },
+    {
+      field: "imageTranslateEditorModel" as const,
+      title: () => t("models.imageTranslateEditorRoleModelTitle"),
+      desc: () => t("models.imageTranslateEditorRoleModelDesc"),
+      groups: imageTranslateEditorRoleGroups,
+      emptyLabel: () => t("models.mediaRoleAutoBestOption"),
+    },
+    {
+      field: "imageTranslateRasterModel" as const,
+      title: () => t("models.imageTranslateRasterRoleModelTitle"),
+      desc: () => t("models.imageTranslateRasterRoleModelDesc"),
+      groups: imageTranslateRasterRoleGroups,
+      emptyLabel: () => t("models.mediaRoleAutoBestOption"),
+    },
+    {
+      field: "videoModel" as const,
+      title: () => t("models.videoRoleModelTitle"),
+      desc: () => t("models.videoRoleModelDesc"),
+      groups: videoRoleGroups,
+      emptyLabel: () => t("models.mediaRoleAutoBestOption"),
+    },
+    {
+      field: "speechModel" as const,
+      title: () => t("models.speechRoleModelTitle"),
+      desc: () => t("models.speechRoleModelDesc"),
+      groups: speechRoleGroups,
+      emptyLabel: () => t("models.mediaRoleAutoBestOption"),
+    },
+    {
+      field: "transcribeModel" as const,
+      title: () => t("models.transcribeRoleModelTitle"),
+      desc: () => t("models.transcribeRoleModelDesc"),
+      groups: transcribeRoleGroups,
+      emptyLabel: () => t("models.mediaRoleAutoBestOption"),
+    },
+    {
+      field: "visionModel" as const,
+      title: () => t("models.visionRoleModelTitle"),
+      desc: () => t("models.visionRoleModelDesc"),
+      groups: visionRoleGroups,
+      emptyLabel: () => t("models.mediaRoleAutoBestOption"),
+    },
+    {
+      field: "textTranslateModel" as const,
+      title: () => t("models.textTranslateRoleModelTitle"),
+      desc: () => t("models.textTranslateRoleModelDesc"),
+      groups: textTranslateRoleGroups,
+      emptyLabel: () => t("models.mediaRoleAutoBestOption"),
+    },
+    {
+      field: "embeddingModel" as const,
+      title: () => t("models.embeddingRoleModelTitle"),
+      desc: () => t("models.embeddingRoleModelDesc"),
+      groups: embeddingRoleGroups,
+      emptyLabel: () => t("models.mediaRoleAutoBestOption"),
+    },
+    {
+      field: "rerankModel" as const,
+      title: () => t("models.rerankRoleModelTitle"),
+      desc: () => t("models.rerankRoleModelDesc"),
+      groups: rerankRoleGroups,
+      emptyLabel: () => t("models.mediaRoleAutoBestOption"),
+    },
+  ] as const;
+
+  const hasMissingCapabilitySlot = createMemo(() =>
+    capabilitySlotRows.some(
+      (row) => row.groups().length === 0 && !mediaRolePrefs()[row.field]
+    )
+  );
 
   const applyMediaRole = async (field: keyof MediaRolePrefs, val: string) => {
     const key = `media:${field}`;
@@ -102,42 +206,46 @@ export default function ModelsRoleTab() {
     roleKey: string;
     value: () => string;
     allowEmpty: boolean;
-    emptyLabel?: string;
+    emptyLabel?: string | (() => string);
     groups?: () => ConnectedProviderGroup[];
     extraOptions?: ModelRoleExtraOption[];
     onChange: (val: string) => void;
-  }) => (
-    <div class="flex items-center gap-2 shrink-0">
-      <ModelRolePicker
-        value={opts.value()}
-        groups={(opts.groups ?? connectedGroups)()}
-        allowEmpty={opts.allowEmpty}
-        emptyLabel={opts.emptyLabel}
-        extraOptions={opts.extraOptions}
-        onChange={opts.onChange}
-      />
+  }) => {
+    const resolvedEmptyLabel = () =>
+      typeof opts.emptyLabel === "function" ? opts.emptyLabel() : opts.emptyLabel;
+    return (
+      <div class="flex items-center gap-2 shrink-0">
+        <ModelRolePicker
+          value={opts.value()}
+          groups={(opts.groups ?? connectedGroups)()}
+          allowEmpty={opts.allowEmpty}
+          emptyLabel={resolvedEmptyLabel()}
+          extraOptions={opts.extraOptions}
+          onChange={opts.onChange}
+        />
 
-      <Show when={opts.allowEmpty && opts.value()}>
-        <button
-          type="button"
-          onClick={() => opts.onChange("")}
-          class="rounded-lg p-1.5 text-[var(--text-faint)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-          title={opts.emptyLabel || t("models.useGlobalDefault")}
-        >
-          <RotateCcw size={13} />
-        </button>
-      </Show>
+        <Show when={opts.allowEmpty && opts.value()}>
+          <button
+            type="button"
+            onClick={() => opts.onChange("")}
+            class="rounded-lg p-1.5 text-[var(--text-faint)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            title={resolvedEmptyLabel() || t("models.useGlobalDefault")}
+          >
+            <RotateCcw size={13} />
+          </button>
+        </Show>
 
-      <div class="w-4 flex items-center justify-center">
-        <Show when={savingKey() === opts.roleKey}>
-          <LoaderCircle size={13} class="animate-spin text-[var(--accent-primary)]" />
-        </Show>
-        <Show when={savedKey() === opts.roleKey}>
-          <Check size={13} class="text-[var(--ok)]" />
-        </Show>
+        <div class="w-4 flex items-center justify-center">
+          <Show when={savingKey() === opts.roleKey}>
+            <LoaderCircle size={13} class="animate-spin text-[var(--accent-primary)]" />
+          </Show>
+          <Show when={savedKey() === opts.roleKey}>
+            <Check size={13} class="text-[var(--ok)]" />
+          </Show>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div class="flex-1 overflow-y-auto p-6 sm:p-8">
@@ -253,14 +361,7 @@ export default function ModelsRoleTab() {
             </h4>
             <HelpTip text={t("models.mediaRolesSectionDesc")} />
           </div>
-          <Show
-            when={
-              (imageRoleGroups().length === 0 && !mediaRolePrefs().imageModel) ||
-              (videoRoleGroups().length === 0 && !mediaRolePrefs().videoModel) ||
-              (speechRoleGroups().length === 0 && !mediaRolePrefs().speechModel) ||
-              (transcribeRoleGroups().length === 0 && !mediaRolePrefs().transcribeModel)
-            }
-          >
+          <Show when={hasMissingCapabilitySlot()}>
             <button
               type="button"
               onClick={() => openProviderModal("providers")}
@@ -273,34 +374,7 @@ export default function ModelsRoleTab() {
         </div>
 
         <div class="divide-y divide-[var(--border-subtle)] rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40">
-          {(
-            [
-              {
-                field: "imageModel" as const,
-                title: () => t("models.imageRoleModelTitle"),
-                desc: () => t("models.imageRoleModelDesc"),
-                groups: imageRoleGroups,
-              },
-              {
-                field: "videoModel" as const,
-                title: () => t("models.videoRoleModelTitle"),
-                desc: () => t("models.videoRoleModelDesc"),
-                groups: videoRoleGroups,
-              },
-              {
-                field: "speechModel" as const,
-                title: () => t("models.speechRoleModelTitle"),
-                desc: () => t("models.speechRoleModelDesc"),
-                groups: speechRoleGroups,
-              },
-              {
-                field: "transcribeModel" as const,
-                title: () => t("models.transcribeRoleModelTitle"),
-                desc: () => t("models.transcribeRoleModelDesc"),
-                groups: transcribeRoleGroups,
-              },
-            ] as const
-          ).map((row) => (
+          {capabilitySlotRows.map((row) => (
             <div class="flex items-center justify-between gap-4 px-4 py-3.5">
               <div class="flex items-center gap-2 min-w-0">
                 <span class="text-[13px] font-semibold text-[var(--text-primary)] truncate">
@@ -312,7 +386,7 @@ export default function ModelsRoleTab() {
                 when={row.groups().length > 0 || Boolean(mediaRolePrefs()[row.field])}
                 fallback={
                   <span class="shrink-0 text-[12px] text-[var(--text-muted)]">
-                    {t("models.mediaRoleUnconfiguredBadge")}
+                    {t("models.slotMissingCapabilityBadge")}
                   </span>
                 }
               >
@@ -320,7 +394,7 @@ export default function ModelsRoleTab() {
                   roleKey: `media:${row.field}`,
                   value: () => mediaRolePrefs()[row.field] || "",
                   allowEmpty: true,
-                  emptyLabel: t("models.mediaRoleAutoBestOption"),
+                  emptyLabel: row.emptyLabel,
                   groups: row.groups,
                   onChange: (val) => void applyMediaRole(row.field, val),
                 })}

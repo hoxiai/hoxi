@@ -286,9 +286,10 @@ func (s *Service) openAIImagesGenerate(
 	timeout time.Duration,
 ) (llm.ImageResponse, error) {
 	if len(inputImages) > 0 {
-		if editResp, editErr := s.openAIImagesEditMultipart(ctx, conn, prompt, inputImages[0], maskImage, opts, timeout); editErr == nil {
-			return editResp, nil
-		}
+		// Never silently drop reference images into text-only /images/generations on failure;
+		// return editErr so executeImageRequest can fall back to multimodal /chat/completions
+		// (which preserves inputImages + maskImage) or surface unsupported-model errors cleanly.
+		return s.openAIImagesEditMultipart(ctx, conn, prompt, inputImages[0], maskImage, opts, timeout)
 	}
 	trimmedBase := strings.TrimRight(strings.TrimSpace(conn.BaseURL), "/")
 	targetURL := trimmedBase + "/images/generations"
@@ -344,7 +345,7 @@ func (s *Service) openAIImagesEditMultipart(
 	if len(input.Data) == 0 {
 		return llm.ImageResponse{}, errors.New("empty edit image")
 	}
-	targetURL := strings.TrimRight(strings.TrimSpace(conn.BaseURL), "/") + "/images/edits"
+	targetURL := normalizeGatewayAPIBaseURL(conn.BaseURL) + "/images/edits"
 	if err := isBlockedMediaTargetURL(targetURL, conn.BaseURL); err != nil {
 		return llm.ImageResponse{}, err
 	}
@@ -393,6 +394,12 @@ func (s *Service) openAIImagesEditMultipart(
 	outReq.Header.Set("Accept", "application/json")
 	outReq.Header.Set("Content-Type", mw.FormDataContentType())
 	applyImageAuthHeaders(outReq, conn, false, false)
+	if opts.idempotencyKey != "" {
+		outReq.Header.Set("Idempotency-Key", opts.idempotencyKey)
+	}
+	if opts.promptKind != "" {
+		outReq.Header.Set("X-Prompt-Kind", opts.promptKind)
+	}
 
 	client := newSafeVideoHTTPClient(timeout, targetURL, conn)
 	resp, err := client.Do(outReq)
@@ -439,6 +446,14 @@ func (e *imageHTTPStatusError) Error() string { return e.msg }
 func shouldFallbackImageEndpoint(err error) bool {
 	var stErr *imageHTTPStatusError
 	if errors.As(err, &stErr) {
+		lower := strings.ToLower(stErr.msg)
+		if strings.Contains(lower, "unsupported model") ||
+			strings.Contains(lower, "model_not_found") ||
+			strings.Contains(lower, "model not found") ||
+			strings.Contains(lower, "no available channel") ||
+			strings.Contains(lower, "no eligible channel") {
+			return false
+		}
 		switch stErr.status {
 		case http.StatusBadRequest, http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusUnprocessableEntity, http.StatusNotImplemented:
 			return true

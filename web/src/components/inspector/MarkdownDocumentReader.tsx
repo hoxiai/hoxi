@@ -6,6 +6,7 @@ import MarkdownView, {
   extractMarkdownHeadings,
   type MarkdownHeadingItem,
 } from "../timeline/MarkdownView";
+import SelectionQuoteBar from "../timeline/SelectionQuoteBar";
 
 export interface MarkdownDocumentReaderProps {
   content: string;
@@ -242,6 +243,7 @@ export default function MarkdownDocumentReader(props: MarkdownDocumentReaderProp
           </nav>
         </div>
       </Show>
+      <SelectionQuoteBar container={() => rootRef} sourceTitle={props.baseFilePath} />
     </div>
   );
 }

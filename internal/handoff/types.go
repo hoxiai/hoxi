@@ -530,6 +530,22 @@ func ImportedSessionTitlePrefixes() []string {
 	}
 }
 
+// IsImportedSessionTitle reports whether title carries one of Hoxi's external
+// handoff session title prefixes (for example "[Claude Code] ...").
+func IsImportedSessionTitle(title string) bool {
+	trimmed := strings.TrimSpace(title)
+	if trimmed == "" {
+		return false
+	}
+	for _, pattern := range ImportedSessionTitlePrefixes() {
+		prefix := strings.TrimSuffix(pattern, "%")
+		if prefix != "" && strings.HasPrefix(trimmed, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // SQLNotImportedTitleClause builds a conjunction of `<column> NOT LIKE '<prefix>'` clauses.
 func SQLNotImportedTitleClause(column string) string {
 	prefixes := ImportedSessionTitlePrefixes()

@@ -35,6 +35,8 @@ import type {
   ContextMentionChipInfo,
   ImageItem,
 } from "./composer-hooks";
+import type { ComposerContextAttachment } from "../../store/workspace";
+import { ComposerContextChips } from "./ComposerContextChips";
 
 export function ComposerAutocompletePopover(props: {
   triggerMode: "file" | "command" | null;
@@ -129,6 +131,9 @@ export function ComposerAutocompletePopover(props: {
 export function ComposerAttachmentChips(props: {
   images: ImageItem[];
   pastes: CollapsedPasteItem[];
+  contexts?: ComposerContextAttachment[];
+  onRemoveContext?: (id: string) => void;
+  onRemoveContextItem?: (attachmentId: string, itemIndex: number) => void;
   activeCommand?: ActiveSlashCommandInfo | null;
   onRemoveCommand?: () => void;
   contextMentions?: ContextMentionChipInfo[];
@@ -255,6 +260,7 @@ export function ComposerAttachmentChips(props: {
           (props.contextMentions?.length ?? 0) > 0 ||
           props.images.length > 0 ||
           props.pastes.length > 0 ||
+          (props.contexts?.length ?? 0) > 0 ||
           (props.pendingCount ?? 0) > 0
         }
       >
@@ -478,6 +484,13 @@ export function ComposerAttachmentChips(props: {
               </div>
             )}
           </For>
+          <Show when={(props.contexts?.length ?? 0) > 0 && props.onRemoveContext}>
+            <ComposerContextChips
+              contexts={props.contexts ?? []}
+              onRemoveContext={(id) => props.onRemoveContext?.(id)}
+              onRemoveContextItem={props.onRemoveContextItem}
+            />
+          </Show>
         </div>
       </Show>
       <Show when={previewVideo()}>

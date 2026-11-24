@@ -261,19 +261,42 @@ export const models = {
     "Active models with native capability are checked first; otherwise these defaults (or auto-best) are used",
   mediaRoleAutoBestOption: "Auto-select best configured model",
   mediaRoleUnconfiguredBadge: "No local model configured",
+  slotMissingCapabilityBadge: "No compatible model",
+  imageEditLegacyFallbackOption: "Auto · inherit Image Gen ({model})",
   mediaRoleConfigureBtn: "Configure Provider",
   imageRoleModelTitle: "Default Image Generation Model",
   imageRoleModelDesc:
-    "Used by hoxi_image when the active session model has no native image output",
+    "Used by hoxi_image when the active session model has no native image output (requires image_generate)",
+  imageEditRoleModelTitle: "Image Editing & Inpainting Model",
+  imageEditRoleModelDesc:
+    "Dedicated model for masked inpainting and image editing tasks (requires image_edit; falls back to Default Image Generation when compatible)",
+  imageTranslateEditorRoleModelTitle: "Image Translation (Editable Scene)",
+  imageTranslateEditorRoleModelDesc:
+    "Translates text on images into editable layers (requires image_translate + editable_scene)",
+  imageTranslateRasterRoleModelTitle: "Image Translation (Batch Raster)",
+  imageTranslateRasterRoleModelDesc:
+    "Generates flattened translated images directly (requires image_translate + raster)",
   videoRoleModelTitle: "Default Video Generation Model",
   videoRoleModelDesc:
-    "Used by hoxi_video when the active session model has no native video output",
+    "Used by hoxi_video when the active session model has no native video output (requires video)",
   speechRoleModelTitle: "Default Speech Synthesis (TTS) Model",
   speechRoleModelDesc:
-    "Used by hoxi_speech when generating spoken audio or voiceovers",
+    "Used by hoxi_speech when generating spoken audio or voiceovers (requires tts)",
   transcribeRoleModelTitle: "Default Voice Transcription (ASR) Model",
   transcribeRoleModelDesc:
-    "Used for microphone dictation and audio attachment transcription",
+    "Used for microphone dictation and audio attachment transcription (requires asr)",
+  visionRoleModelTitle: "Vision Understanding Model",
+  visionRoleModelDesc:
+    "Image analysis and multimodal inspection slot (requires vision; text-only models are excluded)",
+  textTranslateRoleModelTitle: "Text Translation Model",
+  textTranslateRoleModelDesc:
+    "Dedicated slot for structured text and copy translation (requires text_translate)",
+  embeddingRoleModelTitle: "Embedding Model",
+  embeddingRoleModelDesc:
+    "Vector embedding slot for semantic search and memory retrieval (requires embedding)",
+  rerankRoleModelTitle: "Rerank Model",
+  rerankRoleModelDesc:
+    "Candidate relevance reranking slot for retrieval pipelines (requires rerank)",
   modeModelsTitle: "Per-Mode Models",
   modeModelsDesc:
     "Assign dedicated default models for Build or Plan modes",
@@ -489,8 +512,16 @@ export const models = {
   mediaCap: "Audio/Video",
   categoryChat: "Chat / Code",
   categoryImageGen: "Image Gen",
+  categoryImageTranslate: "Image Translate",
+  categoryVideoGen: "Video Gen",
   categoryAudioAsr: "Voice / ASR",
   categoryEmbedding: "Embedding",
+  capBadgeImageGen: "Image Gen",
+  capBadgeImageEdit: "Image Edit",
+  capBadgeImageTranslateEditor: "Translate · Editable",
+  capBadgeImageTranslateRaster: "Translate · Raster",
+  capBadgeVideo: "Video",
+  capBadgeUtilityExcluded: "Utility (Excluded)",
   subagentsBindEconomyBtn: "Bind Economy Model to Read-Only ({model})",
   subagentsBindEconomyDone: "Bound {model} to read-only exploration subagents",
   fastModeLabel: "Fast",

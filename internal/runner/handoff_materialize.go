@@ -131,6 +131,7 @@ func (s *Service) MaterializeNativeHandoff(req NativeHandoffRequest) (map[string
 			ProviderID: firstNonEmptyStr(ht.ProviderID, provID),
 			Mode:       firstNonEmptyStr(ht.Mode, "build"),
 			Agent:      firstNonEmptyStr(ht.Mode, "build"),
+			Imported:   true,
 			Cost:       ht.Cost,
 			Tokens:     tok,
 			Finish:     ht.Finish,

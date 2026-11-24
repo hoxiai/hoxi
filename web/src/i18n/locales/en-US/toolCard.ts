@@ -79,4 +79,12 @@ export const toolCard = {
   stoppedByUser: "Stopped by user",
   actionPlanConsent: "Plan consent",
   planPromotedBadge: "Promoted to Build",
+  jsonTreeView: "Tree",
+  jsonRawView: "Raw",
+  jsonExpandAll: "Expand all",
+  jsonCollapseAll: "Collapse all",
+  jsonCopyValue: "Copy JSON value",
+  jsonItemsCount: "{count} items",
+  jsonKeysCount: "{count} keys",
+  openFileLineTooltip: "Open {file} at line {line}",
 };

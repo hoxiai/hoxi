@@ -47,6 +47,7 @@ const ConvoyModal = lazy(() => import("../orchestration/ConvoyModal"));
 import { isWorkSurface } from "../layout/surface-extension";
 import {
   createComposerAutocomplete,
+  createContextAttachments,
   createImageAttachments,
   createPasteCollapse,
   createPromptHistory,
@@ -54,6 +55,7 @@ import {
   inspectPromptContextMentions,
   resolveContextMentionsForSend,
 } from "./composer-hooks";
+import type { ContextEnvelope } from "../../store/workspace";
 import { locale, t } from "../../i18n";
 import { isComposerIMEEvent } from "./composer-keyboard";
 import { hoxiAPI } from "../../services/api";
@@ -184,51 +186,29 @@ export default function Composer() {
     if (workspace.selectedModel && imgAttach.notice() === t("timeline.selectModelToSend")) imgAttach.clearNotice();
   });
   const pasteCollapse = createPasteCollapse();
+  const contextAttach = createContextAttachments();
   const promptHistory = createPromptHistory(sessionID);
+  const expandComposerInput = () => contextAttach.serializeIntoPrompt(pasteCollapse.expandIntoPrompt(text()));
   const draftSync = createSessionDraftSync({
-    sessionID,
-    directory: () => workspace.rootDir,
-    enabled: () => !isWorkSurface(),
-    resetRequest: () => workspace.newThreadRequest,
-    text,
-    setText,
-    imgAttach,
-    pasteCollapse,
+    sessionID, directory: () => workspace.rootDir, enabled: () => !isWorkSurface(), resetRequest: () => workspace.newThreadRequest,
+    text, setText, imgAttach, pasteCollapse, contextAttach,
     onAfterRestore: () => {
       ac.reset();
       if (isWorkSurface()) return;
-      requestAnimationFrame(() => {
-        if (isWorkSurface()) return;
-        adjustHeight();
-        if (!sessionID()) textareaRef?.focus();
-      });
+      requestAnimationFrame(() => { if (!isWorkSurface()) { adjustHeight(); if (!sessionID()) textareaRef?.focus(); } });
     },
   });
 
   const queuedEditBridge = bindComposerQueuedEditBridge({
-    sessionID,
-    getText: text,
-    setText,
-    setCursorOffset,
-    getExpandedText: () => pasteCollapse.expandIntoPrompt(text()),
-    getPromptAttachments: () => imgAttach.toPromptAttachments(),
-    getImages: () => imgAttach.images(),
-    replaceImages: (items) => imgAttach.replaceImages(items),
-    restoreFromAttachments: (atts) => imgAttach.restoreFromAttachments(atts),
-    getPastes: () => pasteCollapse.pastes(),
-    replacePastes: (items) => pasteCollapse.replacePastes(items),
-    getSelectedSkill: () => selectedSkill() ?? null,
-    selectSkill: (id, skill, dir) => selectComposerSkill(id, skill, undefined, dir),
+    sessionID, getText: text, setText, setCursorOffset, getExpandedText: expandComposerInput,
+    getPromptAttachments: () => imgAttach.toPromptAttachments(), getImages: () => imgAttach.images(),
+    replaceImages: (items) => imgAttach.replaceImages(items), restoreFromAttachments: (atts) => imgAttach.restoreFromAttachments(atts),
+    getPastes: () => pasteCollapse.pastes(), replacePastes: (items) => pasteCollapse.replacePastes(items),
+    getContexts: () => contextAttach.contexts(), replaceContexts: (items) => contextAttach.replaceContexts(items),
+    extractContextsFromText: (raw, append) => contextAttach.extractFromPromptText(raw, append),
+    getSelectedSkill: () => selectedSkill() ?? null, selectSkill: (id, skill, dir) => selectComposerSkill(id, skill, undefined, dir),
     resetHistoryCursor: () => promptHistory.resetHistoryCursor(),
-    focusEnd: (len) => {
-      requestAnimationFrame(() => {
-        adjustHeight();
-        if (textareaRef) {
-          textareaRef.focus();
-          textareaRef.setSelectionRange(len, len);
-        }
-      });
-    },
+    focusEnd: (len) => requestAnimationFrame(() => { adjustHeight(); textareaRef?.focus(); textareaRef?.setSelectionRange(len, len); }),
     onDrain: (sid) => void drainNextQueuedPrompt(sid),
   });
   onCleanup(() => queuedEditBridge.dispose());
@@ -241,28 +221,24 @@ export default function Composer() {
   createEffect(() => {
     const onComposerFill = (ev: Event) => {
       if (isWorkSurface()) return;
-      const detail = (
-        ev as CustomEvent<{
-          text?: string;
-          skill?: { key: string; name: string } | null;
-          send?: boolean;
-        }>
-      ).detail;
+      const detail = (ev as CustomEvent<{
+        text?: string; contexts?: ContextEnvelope[]; appendContexts?: boolean;
+        skill?: { key: string; name: string } | null; send?: boolean;
+      }>).detail;
       if (!detail) return;
-      if (detail.skill !== undefined) {
-        selectComposerSkill(sessionID(), detail.skill);
+      if (detail.skill !== undefined) selectComposerSkill(sessionID(), detail.skill);
+      const hasExplicitContexts = Boolean(detail.contexts && detail.contexts.length > 0);
+      if (hasExplicitContexts && detail.contexts) contextAttach.addContexts(detail.contexts, detail.appendContexts !== false);
+      const keepExistingDraft = hasExplicitContexts && detail.appendContexts !== false && text().trim().length > 0;
+      if (typeof detail.text === "string" && !keepExistingDraft && (detail.text.length > 0 || !hasExplicitContexts)) {
+        const nextText = hasExplicitContexts ? detail.text : contextAttach.extractFromPromptText(detail.text, detail.appendContexts === true);
+        setText(nextText);
+        setCursorOffset(nextText.length);
+        requestAnimationFrame(() => { adjustHeight(); textareaRef?.focus(); });
+      } else if (hasExplicitContexts) {
+        requestAnimationFrame(() => { adjustHeight(); textareaRef?.focus(); });
       }
-      if (typeof detail.text === "string") {
-        setText(detail.text);
-        setCursorOffset(detail.text.length);
-        requestAnimationFrame(() => {
-          adjustHeight();
-          textareaRef?.focus();
-        });
-      }
-      if (detail.send) {
-        queueMicrotask(() => void onSend());
-      }
+      if (detail.send) queueMicrotask(() => void onSend());
     };
     window.addEventListener("hoxi:composer-fill", onComposerFill);
     onCleanup(() => window.removeEventListener("hoxi:composer-fill", onComposerFill));
@@ -294,7 +270,8 @@ export default function Composer() {
       Boolean(selectedSkill()) ||
       reviewComments().length > 0 ||
       imgAttach.images().length > 0 ||
-      pasteCollapse.pastes().length > 0) &&
+      pasteCollapse.pastes().length > 0 ||
+      contextAttach.contexts().length > 0) &&
     imgAttach.pendingCount() === 0 &&
     !sending() &&
     !switchingSandbox() &&
@@ -316,8 +293,8 @@ export default function Composer() {
 
   const onSend = async () => {
     if (choosingFolder()) return;
-    const initialWithPastes = pasteCollapse.expandIntoPrompt(text());
-    if (!sending() && isPureLocalSlashCommand(initialWithPastes, workspace.rootDir)) {
+    const initialWithPastes = expandComposerInput();
+    if (!sending() && contextAttach.contexts().length === 0 && isPureLocalSlashCommand(initialWithPastes, workspace.rootDir)) {
       if (text().trim()) promptHistory.recordPrompt(text().trim());
       setEnhanceState(null);
       setEnhanceError(null);
@@ -342,7 +319,7 @@ export default function Composer() {
       setModelPickerRequest((n) => n + 1);
       return;
     }
-    const withPastes = pasteCollapse.expandIntoPrompt(text());
+    const withPastes = expandComposerInput();
     const hasReviews = reviewComments().length > 0;
     const attachments = imgAttach.toPromptAttachments();
     const currentSkill = selectedSkill() ? { ...selectedSkill()! } : undefined;
@@ -356,6 +333,7 @@ export default function Composer() {
       text: text(),
       images: imgAttach.images(),
       pastes: pasteCollapse.pastes(),
+      contexts: contextAttach.contexts(),
       skill: currentSkill,
     };
 
@@ -505,15 +483,17 @@ export default function Composer() {
   };
 
   const onSpawnSubtask = async () => {
-    const raw = pasteCollapse.expandIntoPrompt(text()).trim();
+    const raw = expandComposerInput().trim();
     if (!raw || spawningSubtask() || sending()) return;
     const draftSessionID = sessionID();
     const draftDirectory = (draftSessionID ? sessionDirectory(draftSessionID) : "") || workspace.rootDir;
     const prevText = text();
     const prevPastes = pasteCollapse.pastes();
+    const prevContexts = contextAttach.contexts();
     setSpawningSubtask(true);
     setText("");
     pasteCollapse.clearPastes();
+    contextAttach.clearContexts();
     draftSync.clearCurrentDraft(draftSessionID, draftDirectory);
     ac.reset();
     if (textareaRef) textareaRef.style.height = "48px";
@@ -522,7 +502,7 @@ export default function Composer() {
       await spawnBackgroundSubtask(payload, draftSessionID, draftDirectory);
     } catch (err) {
       draftSync.restoreFailedDraft(
-        { text: prevText, images: [], pastes: prevPastes },
+        { text: prevText, images: [], pastes: prevPastes, contexts: prevContexts },
         draftSessionID,
         draftDirectory,
         errorMessageOf(err, t("common.error"))
@@ -647,6 +627,9 @@ export default function Composer() {
           <ComposerAttachmentChips
             images={imgAttach.images()}
             pastes={pasteCollapse.pastes()}
+            contexts={contextAttach.contexts()}
+            onRemoveContext={contextAttach.removeContext}
+            onRemoveContextItem={contextAttach.removeContextItem}
             activeCommand={ac.activeCommand()}
             onRemoveCommand={ac.clearActiveCommand}
             contextMentions={contextMentions()}
@@ -748,7 +731,7 @@ export default function Composer() {
             forking={forking()}
             modelPickerRequest={modelPickerRequest()}
             canSend={canSend()}
-            canSpawnSubtask={Boolean(text().trim() || pasteCollapse.pastes().length > 0)}
+            canSpawnSubtask={Boolean(text().trim() || pasteCollapse.pastes().length > 0 || contextAttach.contexts().length > 0)}
             sending={sending()}
             spawningSubtask={spawningSubtask()}
             stopping={stopping()}

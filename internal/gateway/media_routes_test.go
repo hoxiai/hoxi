@@ -241,3 +241,125 @@ func TestMediaImageInputDataURLsValidation(t *testing.T) {
 		t.Fatalf("expected HTTP 200 structured response for valid inputDataUrls, got %d (%s)", okRec.Code, okRec.Body.String())
 	}
 }
+
+func TestMediaImageAutoFallbackOnUnsupportedModelAndNoDropInputImages(t *testing.T) {
+	wsDir := t.TempDir()
+	hoxiHome := filepath.Join(wsDir, ".hoxi-home")
+	t.Setenv("HOME", wsDir)
+	t.Setenv("HOXI_HOME", hoxiHome)
+
+	tinyPNGB64 := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+	var seenCalls []string
+	mockUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var model string
+		if r.URL.Path == "/v1/images/edits" {
+			_ = r.ParseMultipartForm(4 << 20)
+			model = r.FormValue("model")
+		} else {
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			model, _ = body["model"].(string)
+		}
+		seenCalls = append(seenCalls, r.URL.Path+":"+model)
+		if model == "gpt-image-1" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"Unsupported model: gpt-image-1","type":"invalid_request_error","code":"unsupported_model"}}`))
+			return
+		}
+		if model == "gpt-image-2.6" && r.URL.Path == "/v1/images/edits" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"b64_json":"` + tinyPNGB64 + `"}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"message":"Unsupported model: ` + model + `"}}`))
+	}))
+	defer mockUpstream.Close()
+
+	// Configure a stale model (gpt-image-1, higher alphabetical/order) alongside a working model (gpt-image-2.6).
+	if err := os.MkdirAll(hoxiHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	modelsDoc := map[string]any{
+		"provider": map[string]any{
+			"mock-gw": map[string]any{
+				"name": "Mock GW",
+				"npm":  "@ai-sdk/openai-compatible",
+				"options": map[string]any{
+					"baseURL": mockUpstream.URL + "/v1",
+					"apiKey":  "test-key",
+				},
+				"mediaModels": map[string]any{
+					"gpt-image-1":   map[string]any{"name": "Stale GPT Image 1", "category": "image"},
+					"gpt-image-2.6": map[string]any{"name": "Real GPT Image 2.6", "category": "image"},
+				},
+			},
+		},
+	}
+	rawDoc, _ := json.Marshal(modelsDoc)
+	if err := os.WriteFile(filepath.Join(hoxiHome, "models.json"), rawDoc, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	g := &Gateway{
+		rootDir:   wsDir,
+		mux:       http.NewServeMux(),
+		providers: provider.NewService(0, "", wsDir, nil),
+	}
+	g.registerMediaRoutes()
+
+	reqBody := `{"prompt":"pure white background","aspectRatio":"1:1","returnDataUrl":true,"inputDataUrls":["data:image/png;base64,` + tinyPNGB64 + `"]}`
+	rec := httptest.NewRecorder()
+	g.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/hoxi/media/image", bytes.NewReader([]byte(reqBody))))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var res struct {
+		OK         bool   `json:"ok"`
+		ModelID    string `json:"modelID"`
+		Resolution string `json:"resolution"`
+		Images     []struct {
+			DataURL string `json:"dataUrl"`
+		} `json:"images"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !res.OK || res.ModelID != "gpt-image-2.6" || len(res.Images) != 1 || res.Images[0].DataURL == "" {
+		t.Fatalf("expected auto-fallback success on gpt-image-2.6, got %+v (calls=%v)", res, seenCalls)
+	}
+	for _, c := range seenCalls {
+		if c == "/v1/images/generations:gpt-image-1" || c == "/v1/images/generations:gpt-image-2.6" {
+			t.Fatalf("must NOT drop inputDataUrls into text-only /v1/images/generations, calls=%v", seenCalls)
+		}
+	}
+
+	// If all configured models are rejected as unsupported, report missingCapability="image" cleanly.
+	staleOnlyDoc := map[string]any{
+		"provider": map[string]any{
+			"mock-gw": map[string]any{
+				"name": "Mock GW",
+				"npm":  "@ai-sdk/openai-compatible",
+				"options": map[string]any{
+					"baseURL": mockUpstream.URL + "/v1",
+					"apiKey":  "test-key",
+				},
+				"mediaModels": map[string]any{
+					"gpt-image-1": map[string]any{"name": "Stale GPT Image 1", "category": "image"},
+				},
+			},
+		},
+	}
+	rawStale, _ := json.Marshal(staleOnlyDoc)
+	if err := os.WriteFile(filepath.Join(hoxiHome, "models.json"), rawStale, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec2 := httptest.NewRecorder()
+	g.mux.ServeHTTP(rec2, httptest.NewRequest(http.MethodPost, "/api/hoxi/media/image", bytes.NewReader([]byte(reqBody))))
+	var res2 map[string]any
+	_ = json.Unmarshal(rec2.Body.Bytes(), &res2)
+	if res2["ok"] != false || res2["missingCapability"] != "image" {
+		t.Fatalf("expected missingCapability=image when all auto candidates are unsupported, got %+v", res2)
+	}
+}

@@ -141,9 +141,16 @@ func (g *Service) handleTestProviderModel(w http.ResponseWriter, r *http.Request
 		apiKey = g.resolveStoredProviderKey(pid, baseURL)
 	}
 
+	var explicitCat, explicitMod string
+	if mObj := g.lookupConfiguredModelObject(pid, modelID); mObj != nil {
+		explicitCat, _ = mObj["category"].(string)
+		explicitMod, _ = mObj["modality"].(string)
+	}
+	inferredCat := inferModelCategory(modelID, explicitCat, explicitMod)
+
 	start := time.Now()
 	var err error
-	if g.IsImageModel(pid, modelID) || IsImageGenerationModel(modelID, "", "") {
+	if g.IsImageModel(pid, modelID) || inferredCat == "image" {
 		err = g.probeImageModel(r.Context(), imageGenConn{
 			ProviderID: pid,
 			ModelID:    modelID,
@@ -152,8 +159,10 @@ func (g *Service) handleTestProviderModel(w http.ResponseWriter, r *http.Request
 			NPM:        npm,
 			Headers:    headers,
 		})
-	} else if g.IsVideoModel(pid, modelID) || IsVideoGenerationModel(modelID, "", "") ||
-		g.IsSpeechModel(pid, modelID) || inferModelCategory(modelID, "", "") == "asr" {
+	} else if g.IsVideoModel(pid, modelID) || g.IsSpeechModel(pid, modelID) ||
+		inferredCat == "video" || inferredCat == "tts" || inferredCat == "asr" ||
+		inferredCat == "image_translate" || inferredCat == "embedding" ||
+		inferredCat == "rerank" || inferredCat == "moderation" {
 		err = g.probeVideoModel(r.Context(), imageGenConn{
 			ProviderID: pid,
 			ModelID:    modelID,

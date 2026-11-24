@@ -610,5 +610,17 @@
   "chatActionPickGallery": "Choose from Photo Library",
   "commonCopied": "Copied",
   "chatReportAction": "Report",
-  "chatReportedBadge": "Reported"
+  "chatReportedBadge": "Reported",
+  "contextQuoteLabel": "Quote",
+  "contextReferencedSingle": "Attached context",
+  "contextAttachedCount": "{count} items attached",
+  "@contextAttachedCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "contextResolveHint": "On-demand",
+  "contextCopyItem": "Copy item"
 }

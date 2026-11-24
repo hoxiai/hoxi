@@ -21,23 +21,26 @@ type GeneratedImage struct {
 
 // ImageModelOption describes one configured local/custom image generation model.
 type ImageModelOption struct {
-	ProviderID string `json:"providerID"`
-	ModelID    string `json:"modelID"`
-	Name       string `json:"name,omitempty"`
-	SupportsIn bool   `json:"supportsImageInput"`
+	ProviderID   string            `json:"providerID"`
+	ModelID      string            `json:"modelID"`
+	Name         string            `json:"name,omitempty"`
+	SupportsIn   bool              `json:"supportsImageInput"`
+	Capabilities []ModelCapability `json:"capabilities,omitempty"`
 }
 
 // ImageRequest describes one image generation or image-editing turn.
 type ImageRequest struct {
-	ProviderID  string
-	ModelID     string
-	Prompt      string
-	AspectRatio string
-	ImageSize   string
-	Count       int
-	InputImages []ImageInput
-	MaskImage   *ImageInput
-	Timeout     time.Duration
+	ProviderID     string
+	ModelID        string
+	Prompt         string
+	AspectRatio    string
+	ImageSize      string
+	Count          int
+	InputImages    []ImageInput
+	MaskImage      *ImageInput
+	IdempotencyKey string
+	PromptKind     string
+	Timeout        time.Duration
 }
 
 // ImageResponse carries the text commentary and generated image blobs.

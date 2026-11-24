@@ -175,6 +175,8 @@ func (s *Store) trimCache() {
 		bytes -= ss.bodyBytes
 		count--
 		ss.summaryTurns = compactSummaryTurns(ss.rec.Turns)
+		ss.usageTurns = summarizeTurnsUsage(ss.rec.Turns)
+		ss.usageCached = true
 		ss.rec.Turns, ss.rec.RevertedTurns = nil, nil
 		ss.turnsLoaded, ss.bodyBytes = false, 0
 		ss.deltas = nil

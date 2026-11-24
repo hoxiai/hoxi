@@ -1,24 +1,29 @@
 import { createMemo, For, Index, Match, Show, Switch } from "solid-js";
+import { ChevronRight } from "lucide-solid";
 import {
   type AlertKind,
   type BlockToken,
   computeHeadingSlugList,
+  parseMarkdownBlocks,
   parseNestedBlockquote,
-  type TableAlign,
 } from "./markdown-parser";
+import { t } from "../../i18n";
 import { Icon } from "../icons";
-import { isMermaidCodeBlockLang, isSubtaskPlanCodeBlockLang, isTesterPortalMode } from "../../store/workspace";
+import {
+  isChartCodeBlockLang,
+  isMermaidCodeBlockLang,
+  isSubtaskPlanCodeBlockLang,
+  isSvgCodeBlockLang,
+  isTesterPortalMode,
+} from "../../store/workspace";
+import ChartBlockCard from "./ChartBlockCard";
 import CodeBlockCard from "./CodeBlockCard";
 import InlineSubtaskPlanCard from "./InlineSubtaskPlanCard";
 import MarkdownInline from "./MarkdownInline";
+import MarkdownTableCard from "./MarkdownTableCard";
 import MermaidBlockCard from "./MermaidBlockCard";
+import SvgBlockCard from "./SvgBlockCard";
 import { createRevealBirths, revealBlock } from "./stream-reveal";
-
-function alignClass(align?: TableAlign): string {
-  if (align === "center") return "text-center";
-  if (align === "right") return "text-right";
-  return "text-left";
-}
 
 function alertStyle(alert?: AlertKind): { border: string; badgeBg: string; label: string } {
   switch (alert) {
@@ -99,6 +104,28 @@ export default function MarkdownBlocks(props: {
             }
           >
             <MermaidBlockCard
+              ref={(el) => revealBlock(el, blockBirth(blockIdx))}
+              code={(block() as Extract<BlockToken, { type: "code" }>).code}
+            />
+          </Match>
+          <Match
+            when={
+              block().type === "code" &&
+              isChartCodeBlockLang((block() as Extract<BlockToken, { type: "code" }>).lang)
+            }
+          >
+            <ChartBlockCard
+              ref={(el) => revealBlock(el, blockBirth(blockIdx))}
+              code={(block() as Extract<BlockToken, { type: "code" }>).code}
+            />
+          </Match>
+          <Match
+            when={
+              block().type === "code" &&
+              isSvgCodeBlockLang((block() as Extract<BlockToken, { type: "code" }>).lang)
+            }
+          >
+            <SvgBlockCard
               ref={(el) => revealBlock(el, blockBirth(blockIdx))}
               code={(block() as Extract<BlockToken, { type: "code" }>).code}
             />
@@ -318,61 +345,65 @@ export default function MarkdownBlocks(props: {
               );
             }}
           </Match>
+          <Match when={block().type === "details"}>
+            {(_) => {
+              const det = () => block() as Extract<BlockToken, { type: "details" }>;
+              const nestedBlocks = createMemo(() =>
+                depth() < 2 && det().body ? parseMarkdownBlocks(det().body) : null
+              );
+              return (
+                <details
+                  open={Boolean(det().open)}
+                  ref={(el) => revealBlock(el, blockBirth(blockIdx))}
+                  class="group/details my-1 overflow-hidden rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/55"
+                >
+                  <summary class="flex items-center gap-1.5 px-3 py-2 text-[0.94em] font-medium text-[var(--text-primary)] cursor-pointer select-none list-none hover:bg-[var(--bg-hover)]/50 transition-colors [&::-webkit-details-marker]:hidden">
+                    <ChevronRight
+                      size={13}
+                      class="shrink-0 text-[var(--text-muted)] transition-transform duration-150 group-open/details:rotate-90"
+                    />
+                    <span class="min-w-0 flex-1">
+                      <MarkdownInline text={det().summary || t("timeline.detailsDefaultSummary")} />
+                    </span>
+                  </summary>
+                  <Show when={det().body}>
+                    <div class="border-t border-[var(--border-subtle)]/75 px-3.5 py-2.5">
+                      <Show
+                        when={nestedBlocks()}
+                        fallback={
+                          <div class="whitespace-pre-wrap break-words text-[0.94em] leading-[1.68] text-[var(--text-secondary)]">
+                            <MarkdownInline text={det().body} />
+                          </div>
+                        }
+                      >
+                        {(inner) => (
+                          <div class={`flex flex-col ${compact() ? "gap-y-2" : "gap-y-2.5"}`}>
+                            <MarkdownBlocks
+                              blocks={inner()}
+                              density="compact"
+                              depth={depth() + 1}
+                            />
+                          </div>
+                        )}
+                      </Show>
+                    </div>
+                  </Show>
+                </details>
+              );
+            }}
+          </Match>
           <Match when={block().type === "table"}>
             {(_) => {
               const tb = () => block() as Extract<BlockToken, { type: "table" }>;
               const tableAt = () => blockBirth(blockIdx);
-              const rowBirth = createRevealBirths();
               return (
-                <div
+                <MarkdownTableCard
                   ref={(el) => revealBlock(el, tableAt())}
-                  class="my-1 overflow-x-auto rounded-xl border border-[var(--border-subtle)]"
-                >
-                  <table class="w-full border-collapse text-left text-[0.92em]">
-                    <thead>
-                      <tr class="border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)]">
-                        <Index each={tb().headers}>
-                          {(h, colIdx) => (
-                            <th
-                              class={`px-3 py-2 font-semibold text-[var(--text-primary)] ${alignClass(
-                                tb().aligns[colIdx]
-                              )}`}
-                            >
-                              <MarkdownInline text={h()} />
-                            </th>
-                          )}
-                        </Index>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <Index each={tb().rows}>
-                        {(row, rowIdx) => (
-                          <tr
-                            ref={(el) => {
-                              const at = rowBirth(rowIdx);
-                              if (at - tableAt() >= 8) {
-                                revealBlock(el, at, { startOpacity: 0, translateY: 2 });
-                              }
-                            }}
-                            class="border-b last:border-b-0 border-[var(--border-subtle)]"
-                          >
-                            <Index each={row()}>
-                              {(cell, colIdx) => (
-                                <td
-                                  class={`px-3 py-2 align-top text-[var(--text-secondary)] ${alignClass(
-                                    tb().aligns[colIdx]
-                                  )}`}
-                                >
-                                  <MarkdownInline text={cell()} />
-                                </td>
-                              )}
-                            </Index>
-                          </tr>
-                        )}
-                      </Index>
-                    </tbody>
-                  </table>
-                </div>
+                  headers={tb().headers}
+                  aligns={tb().aligns}
+                  rows={tb().rows}
+                  tableBirth={tableAt()}
+                />
               );
             }}
           </Match>

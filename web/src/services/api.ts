@@ -281,7 +281,14 @@ export const hoxiAPI = {
   getDevPulseHistory(
     days = 30,
     directory?: string,
-    window?: { startDate?: string; endDate?: string; sessionID?: string }
+    window?: {
+      startDate?: string;
+      endDate?: string;
+      sessionID?: string;
+      includeTools?: boolean;
+      refresh?: boolean;
+      signal?: AbortSignal;
+    }
   ): Promise<import("./api-types").DevPulseHistoryResponse> {
     const params = new URLSearchParams();
     params.set("days", String(days));
@@ -289,7 +296,12 @@ export const hoxiAPI = {
     if (window?.endDate) params.set("end", window.endDate);
     if (directory) params.set("directory", directory);
     if (window?.sessionID) params.set("sessionID", window.sessionID);
-    return requestJSON(`/api/hoxi/dev-pulse/history?${params.toString()}`);
+    if (window?.includeTools === false) params.set("tools", "0");
+    if (window?.refresh) params.set("refresh", "1");
+    return requestJSON(
+      `/api/hoxi/dev-pulse/history?${params.toString()}`,
+      window?.signal ? { signal: window.signal } : undefined
+    );
   },
 
   // Sessions: one Hoxi endpoint. The gateway routes each session to its owner

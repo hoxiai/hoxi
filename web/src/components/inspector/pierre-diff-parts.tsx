@@ -175,6 +175,7 @@ export function FileDiffBlock(props: {
   fillHeight?: boolean;
   defaultExpanded?: boolean;
   compact?: boolean;
+  onLineNumberClick?: (lineNumber: number) => void;
 }) {
   let host!: HTMLDivElement;
   let instance: FileDiff<undefined, undefined> | undefined;
@@ -221,6 +222,7 @@ export function FileDiffBlock(props: {
       (before?.length ?? 0) + (after?.length ?? 0) > LARGE_DIFF_BYTE_THRESHOLD;
 
     const pool = getPierreWorkerPool(isLarge ? "unified" : diffStyle);
+    const lineClickCb = props.onLineNumberClick;
     const opts: FileDiffOptions<undefined, undefined> = {
       theme: { dark: "pierre-dark", light: "pierre-light" },
       themeType,
@@ -229,6 +231,16 @@ export function FileDiffBlock(props: {
       overflow: "scroll",
       hunkSeparators: "simple",
       unsafeCSS: SELECTABLE_LINE_CSS,
+      ...(lineClickCb
+        ? {
+            lineHoverHighlight: "number" as const,
+            onLineNumberClick: ({ lineNumber }) => {
+              if (typeof lineNumber === "number" && lineNumber > 0) {
+                lineClickCb(lineNumber);
+              }
+            },
+          }
+        : {}),
       ...(isLarge
         ? {
             lineDiffType: "none" as const,
@@ -298,6 +310,22 @@ export function SelectedDiffDetail(props: {
   const [commentBody, setCommentBody] = createSignal("");
   const [loadedDiff, setLoadedDiff] = createSignal<SnapshotFileDiff | null>(null);
   const [loadingFull, setLoadingFull] = createSignal(false);
+  let commentInputRef: HTMLTextAreaElement | undefined;
+  let focusRafId = 0;
+
+  onCleanup(() => {
+    if (focusRafId) cancelAnimationFrame(focusRafId);
+  });
+
+  const handleDiffLineNumberClick = (lineNumber: number) => {
+    setLineNum(String(lineNumber));
+    setCommenting(true);
+    if (focusRafId) cancelAnimationFrame(focusRafId);
+    focusRafId = requestAnimationFrame(() => {
+      focusRafId = 0;
+      commentInputRef?.focus();
+    });
+  };
 
   const effectiveDiff = () => loadedDiff() || props.diff;
   const isMarkdownDiff = createMemo(
@@ -348,6 +376,18 @@ export function SelectedDiffDetail(props: {
       setLoadingFull(false);
     }
   };
+
+  createEffect(
+    on(
+      () => props.diff.file,
+      () => {
+        setCommenting(false);
+        setLineNum("");
+        setCommentBody("");
+      },
+      { defer: true }
+    )
+  );
 
   createEffect(
     on(
@@ -616,6 +656,7 @@ export function SelectedDiffDetail(props: {
               />
             </div>
             <textarea
+              ref={commentInputRef}
               rows={2}
               value={commentBody()}
               tabIndex={commenting() ? 0 : -1}
@@ -625,6 +666,8 @@ export function SelectedDiffDetail(props: {
                   ev.preventDefault();
                   onSaveComment();
                 } else if (ev.key === "Escape") {
+                  ev.preventDefault();
+                  ev.stopPropagation();
                   setCommenting(false);
                 }
               }}
@@ -680,6 +723,7 @@ export function SelectedDiffDetail(props: {
           patch={effectiveDiff().patch}
           diffStyle={props.diffStyle}
           fillHeight={true}
+          onLineNumberClick={handleDiffLineNumberClick}
         />
       </Show>
     </div>

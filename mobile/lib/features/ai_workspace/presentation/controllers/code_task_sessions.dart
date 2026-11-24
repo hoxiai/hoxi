@@ -216,6 +216,7 @@ applyTaskEntitiesToWorkspace({
   required AiDevSession? currentSession,
   required List<TaskEntity> taskEntities,
   int? activeStreamingSessionId,
+  int? protectedIdleSessionId,
 }) {
   if (sessions.isEmpty && tasks.isEmpty) {
     return (sessions: sessions, tasks: tasks, current: currentSession);
@@ -239,6 +240,14 @@ applyTaskEntitiesToWorkspace({
     if (sid == activeStreamingSessionId) continue;
     final entity = entry.value;
     final stageFromMeta = (entity.meta['currentStage'] ?? '').trim();
+    if (sid == protectedIdleSessionId &&
+        !entity.requiresAttention &&
+        (entity.status == TaskStatus.running ||
+            stageFromMeta == 'running' ||
+            stageFromMeta == 'executing' ||
+            stageFromMeta == 'instruction_queued')) {
+      continue;
+    }
     final nextStage = entity.requiresAttention
         ? 'awaiting_approval'
         : (stageFromMeta.isNotEmpty

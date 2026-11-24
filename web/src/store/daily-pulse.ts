@@ -3,7 +3,7 @@ import { createSignal } from "solid-js";
 import { hoxiAPI, type GitDailyPulseResponse } from "../services/api";
 import { syncOfficialModelPricing } from "./leaderboard-state";
 import { estimateTokenCostUsd, resolveUsdPriceSpec } from "./model-pricing";
-import { workspace } from "./workspace-state";
+import { isImportedSessionTitle, workspace } from "./workspace-state";
 
 export interface DailyModelUsageItem {
   providerID: string;
@@ -162,64 +162,127 @@ export function computeDailyDevPulseStats(): DailyDevPulseStats {
   }
   if (dbModels.length === 0) totalCost = pulse.dbTotalCost || 0;
 
-  // Merge any live in-memory turns from the active session newer than the last SQLite snapshot
+  // Merge live in-memory token deltas across loaded top-level sessions (excluding
+  // subagent child sessions whose usage is already folded into the parent turn,
+  // and excluding historical turns from imported external sessions).
+  const subagentSessionIDs = new Set<string>();
+  const importedSessionIDs = new Set<string>();
+  for (const [sid, meta] of Object.entries(workspace.sessionIndex)) {
+    if (meta?.parentID) subagentSessionIDs.add(sid);
+    if (meta?.imported) importedSessionIDs.add(sid);
+  }
+  for (const sess of workspace.sessions) {
+    if (sess.parentID) subagentSessionIDs.add(sess.id);
+    if (isImportedSessionTitle(sess.title)) importedSessionIDs.add(sess.id);
+  }
+
+  const activeTurnsSnapshot = pulse.dbActiveTurns;
   const seenLiveTurnKeys = new Set<string>();
   const activeSid = workspace.activeSessionID;
-  const recentActiveTurns = activeSid ? (workspace.messagesBySession[activeSid] ?? []).slice(-4) : [];
-  for (const turn of recentActiveTurns) {
-    const info = turn.info;
-    if (info.role !== "assistant") continue;
-    const createdTs = normalizeTs(info.time?.created);
-    if (createdTs < startOfToday || (latestDbTs > 0 && createdTs <= latestDbTs)) continue;
+  for (const [sid, turns] of Object.entries(workspace.messagesBySession)) {
+    if (!turns || turns.length === 0 || subagentSessionIDs.has(sid)) continue;
+    const isImportedSession = importedSessionIDs.has(sid);
+    for (let i = turns.length - 1; i >= 0; i--) {
+      const turn = turns[i];
+      const info = turn.info;
+      if (info.role !== "assistant" || info.imported) continue;
+      if (isImportedSession && !info.id?.startsWith("msg_a_")) continue;
+      if (
+        !info.id?.startsWith("msg_a_") &&
+        turn.parts?.some(
+          (p) =>
+            p.type === "tool" &&
+            "metadata" in p.state &&
+            Boolean(p.state.metadata?.imported)
+        )
+      ) {
+        continue;
+      }
+      const createdTs = normalizeTs(info.time?.created);
+      if (createdTs > 0 && createdTs < startOfToday) break;
+      if (createdTs < startOfToday) continue;
 
-    const tk = info.tokens;
-    if (!tk || ((tk.input || 0) === 0 && (tk.output || 0) === 0 && (tk.cache?.read || 0) === 0)) {
-      continue;
+      const tk = info.tokens;
+      const inTok = tk?.input || 0;
+      const outTok = tk?.output || 0;
+      const reasonTok = tk?.reasoning || 0;
+      const cRead = tk?.cache?.read || 0;
+      const cWrite = tk?.cache?.write || 0;
+      if (inTok + outTok + reasonTok + cRead + cWrite <= 0) continue;
+
+      const dedupKey = info.id || `${sid}:${createdTs}:${info.modelID || ""}:${inTok}:${outTok}`;
+      if (seenLiveTurnKeys.has(dedupKey)) continue;
+      seenLiveTurnKeys.add(dedupKey);
+
+      const activeBase = info.id ? activeTurnsSnapshot?.[info.id] : undefined;
+      let dIn = inTok;
+      let dOut = outTok;
+      let dReason = reasonTok;
+      let dRead = cRead;
+      let dWrite = cWrite;
+      let turnCountDelta = 1;
+      if (activeBase !== undefined) {
+        dIn = Math.max(0, inTok - (activeBase.input || 0));
+        dOut = Math.max(0, outTok - (activeBase.output || 0));
+        dReason = Math.max(0, reasonTok - (activeBase.reasoning || 0));
+        dRead = Math.max(0, cRead - (activeBase.cacheRead || 0));
+        dWrite = Math.max(0, cWrite - (activeBase.cacheWrite || 0));
+        if (dIn + dOut + dReason + dRead + dWrite <= 0) continue;
+        const baseHadTokens =
+          (activeBase.input || 0) +
+            (activeBase.output || 0) +
+            (activeBase.reasoning || 0) +
+            (activeBase.cacheRead || 0) +
+            (activeBase.cacheWrite || 0) >
+          0;
+        turnCountDelta = baseHadTokens ? 0 : 1;
+      } else {
+        if (latestDbTs > 0 && createdTs <= latestDbTs) continue;
+        if (latestDbTs === 0 && (pulse.dbTurnsCount || 0) > 0) continue;
+      }
+
+      const turnTotal = dIn + dOut + dReason + dRead + dWrite;
+      const pid =
+        info.providerID ||
+        (sid === activeSid ? workspace.selectedModel?.providerID : "") ||
+        "unknown";
+      const mid =
+        info.modelID ||
+        (sid === activeSid ? workspace.selectedModel?.modelID : "") ||
+        "auto";
+      const mKey = `${pid}/${mid}`;
+      const estimatedTurn = estimateModelMarketCostUsd(mid, {
+        input: dIn,
+        output: dOut,
+        reasoning: dReason,
+        cacheRead: dRead,
+        cacheWrite: dWrite,
+      });
+      if (estimatedTurn === null) unpricedModels.add(mid);
+      const turnCost =
+        estimatedTurn ??
+        (turnCountDelta > 0 && typeof info.cost === "number" && info.cost > 0 ? info.cost : 0);
+
+      inputTokens += dIn;
+      outputTokens += dOut;
+      reasoningTokens += dReason;
+      cacheReadTokens += dRead;
+      cacheWriteTokens += dWrite;
+      totalCost += turnCost;
+      todayTurnsCount += turnCountDelta;
+
+      const existing = byModel.get(mKey) || {
+        providerID: pid,
+        modelID: mid,
+        turns: 0,
+        totalTokens: 0,
+        cost: 0,
+      };
+      existing.turns += turnCountDelta;
+      existing.totalTokens += turnTotal;
+      existing.cost += turnCost;
+      byModel.set(mKey, existing);
     }
-    const dedupKey = `${createdTs}:${info.modelID || ""}:${tk.input || 0}:${tk.output || 0}`;
-    if (seenLiveTurnKeys.has(dedupKey)) continue;
-    seenLiveTurnKeys.add(dedupKey);
-
-    const inTok = tk.input || 0;
-    const outTok = tk.output || 0;
-    const reasonTok = tk.reasoning || 0;
-    const cRead = tk.cache?.read || 0;
-    const cWrite = tk.cache?.write || 0;
-    const turnTotal = inTok + outTok + reasonTok + cRead + cWrite;
-
-    const pid = info.providerID || workspace.selectedModel?.providerID || "unknown";
-    const mid = info.modelID || workspace.selectedModel?.modelID || "auto";
-    const mKey = `${pid}/${mid}`;
-    const estimatedTurn = estimateModelMarketCostUsd(mid, {
-      input: inTok,
-      output: outTok,
-      reasoning: reasonTok,
-      cacheRead: cRead,
-      cacheWrite: cWrite,
-    });
-    if (estimatedTurn === null) unpricedModels.add(mid);
-    const turnCost =
-      estimatedTurn ?? (typeof info.cost === "number" && info.cost > 0 ? info.cost : 0);
-
-    inputTokens += inTok;
-    outputTokens += outTok;
-    reasoningTokens += reasonTok;
-    cacheReadTokens += cRead;
-    cacheWriteTokens += cWrite;
-    totalCost += turnCost;
-    todayTurnsCount += 1;
-
-    const existing = byModel.get(mKey) || {
-      providerID: pid,
-      modelID: mid,
-      turns: 0,
-      totalTokens: 0,
-      cost: 0,
-    };
-    existing.turns += 1;
-    existing.totalTokens += turnTotal;
-    existing.cost += turnCost;
-    byModel.set(mKey, existing);
   }
 
   const totalTokens = inputTokens + outputTokens + reasoningTokens + cacheReadTokens + cacheWriteTokens;

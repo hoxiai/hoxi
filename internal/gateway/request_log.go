@@ -212,6 +212,9 @@ func (g *Gateway) collectRequestLog() []requestLogEntry {
 			}
 			for i := range full.Turns {
 				turn := full.Turns[i]
+				if isImportedRunnerTurn(turn.Info.ID, turn.Info.Imported, full) {
+					continue
+				}
 				providerID, isNative := nativeTurnProvider(turn, full)
 				if !isNative {
 					continue

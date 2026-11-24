@@ -369,7 +369,9 @@ func (g *Service) filterProviderProxyPayload(payload map[string]interface{}) {
 					continue
 				}
 				if hProv, ok := hoxiMap[pid].(map[string]interface{}); ok {
-					if hModels, ok := hProv["models"].(map[string]interface{}); ok && len(hModels) > 0 {
+					hModels, _ := hProv["models"].(map[string]interface{})
+					hMedia, _ := hProv["mediaModels"].(map[string]interface{})
+					if len(hModels) > 0 || len(hMedia) > 0 {
 						if pModels, ok := pObj["models"].(map[string]interface{}); ok {
 							for mid := range pModels {
 								if _, keep := hModels[mid]; !keep {
@@ -421,7 +423,8 @@ func (g *Service) buildOfflineProviderListPayload() map[string]interface{} {
 			npmPkg, _ = tplMap["npm"].(string)
 		}
 		modelsRaw, _ := pMap["models"].(map[string]interface{})
-		if len(modelsRaw) == 0 && hasTpl {
+		mediaRaw, _ := pMap["mediaModels"].(map[string]interface{})
+		if len(modelsRaw) == 0 && len(mediaRaw) == 0 && hasTpl {
 			modelsRaw, _ = tplMap["models"].(map[string]interface{})
 		}
 		opts, _ := pMap["options"].(map[string]interface{})

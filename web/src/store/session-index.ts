@@ -5,6 +5,7 @@
 import { batch } from "solid-js";
 import type { SessionInfo } from "../services/sse-types";
 import {
+  isImportedSessionTitle,
   setSessionIndexQuiet,
   setWorkspace,
   workspace,
@@ -24,12 +25,13 @@ function entryFrom(info: SessionInfo, previous?: SessionIndexEntry): SessionInde
   const directory = (info.directory || "").trim() || previous?.directory;
   const projectID = (info.projectID || "").trim() || previous?.projectID;
   const parentID = info.parentID ?? previous?.parentID;
+  const imported = previous?.imported || isImportedSessionTitle(info.title) ? true : undefined;
   const surface = info.surface ?? previous?.surface;
   const managed = info.managed ?? previous?.managed;
   const runtime = info.runtime ?? previous?.runtime;
   const updated = info.time?.updated || info.time?.created || previous?.updated || 0;
-  if (!directory && !projectID && !parentID && !surface && managed === undefined && !runtime) return null;
-  return { directory: directory || undefined, projectID: projectID || undefined, parentID, surface, managed, runtime, updated };
+  if (!directory && !projectID && !parentID && !imported && !surface && managed === undefined && !runtime) return null;
+  return { directory: directory || undefined, projectID: projectID || undefined, parentID, imported, surface, managed, runtime, updated };
 }
 
 function indexSessionInternal(info: SessionInfo | undefined | null): boolean {
@@ -42,6 +44,7 @@ function indexSessionInternal(info: SessionInfo | undefined | null): boolean {
     prev.directory === entry.directory &&
     prev.projectID === entry.projectID &&
     prev.parentID === entry.parentID &&
+    prev.imported === entry.imported &&
     prev.surface === entry.surface &&
     prev.managed === entry.managed &&
     prev.runtime === entry.runtime &&

@@ -7,6 +7,7 @@ import { peekOrchestratorConcreteModel } from "./orchestrator-mode";
 import { ORCHESTRATOR_PROVIDER_ID } from "./workspace-state";
 import { resolveInternalLLMModel } from "./provider-catalog";
 import { readStorageRecord, workspace, writeStorageJSON, type SelectedModel } from "./workspace-state";
+import { extractContextTitleFallback } from "./context-protocol";
 
 export const MANUAL_TITLES_KEY = "hoxi-session-manual-titles:v1";
 
@@ -207,8 +208,9 @@ export function subagentDisplayTitle(
 }
 
 export function extractLocalFallbackTitle(promptText: string, currentLocale = locale()): string {
-  const withoutCode = promptText.replace(/```[\s\S]*?```/g, " ").trim();
-  const source = withoutCode || promptText.trim();
+  const effectivePrompt = extractContextTitleFallback(promptText);
+  const withoutCode = effectivePrompt.replace(/```[\s\S]*?```/g, " ").trim();
+  const source = withoutCode || effectivePrompt.trim();
   const firstLine =
     source
       .split("\n")

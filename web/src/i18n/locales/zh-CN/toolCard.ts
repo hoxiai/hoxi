@@ -80,4 +80,12 @@ export const toolCard: ToolCardI18n = {
   stoppedByUser: "已手动终止",
   actionPlanConsent: "规划审批",
   planPromotedBadge: "已切换至构建模式",
+  jsonTreeView: "树形",
+  jsonRawView: "原文",
+  jsonExpandAll: "全部展开",
+  jsonCollapseAll: "全部折叠",
+  jsonCopyValue: "复制 JSON 值",
+  jsonItemsCount: "{count} 项",
+  jsonKeysCount: "{count} 个字段",
+  openFileLineTooltip: "跳转到 {file} 第 {line} 行",
 };

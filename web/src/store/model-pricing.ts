@@ -200,6 +200,8 @@ interface PricingIndex {
   vendorTierMedian: Map<string, UsdPriceSpec>;
   /** Family key → the name tokens a partial id must cover (see `matchByTraits`). */
   traitIndex: Array<{ key: string; traits: string[]; spec: UsdPriceSpec }>;
+  /** Memoized lookup results per raw modelID for this catalog snapshot. */
+  resolvedCache: Map<string, UsdPriceSpec | undefined>;
 }
 
 let cachedIndex: PricingIndex | null = null;
@@ -309,7 +311,15 @@ function buildIndex(source: ModelPricingItem[]): PricingIndex {
       cacheWrite: median(band.cacheWrite),
     });
   }
-  return { source, exact, family, tierMedian, vendorTierMedian, traitIndex: traitRows };
+  return {
+    source,
+    exact,
+    family,
+    tierMedian,
+    vendorTierMedian,
+    traitIndex: traitRows,
+    resolvedCache: new Map(),
+  };
 }
 
 function getIndex(): PricingIndex {
@@ -370,11 +380,21 @@ function matchByTraits(
 export function resolveUsdPriceSpec(modelID: string): UsdPriceSpec | undefined {
   // A `-free` variant is free regardless of what its paid sibling costs. This
   // must run first: family matching strips `-free` and would otherwise bill it.
+  const index = getIndex();
+  if (index.resolvedCache.has(modelID)) {
+    return index.resolvedCache.get(modelID);
+  }
+  const resolved = resolveUsdPriceSpecUncached(index, modelID);
+  if (index.resolvedCache.size < 2048) {
+    index.resolvedCache.set(modelID, resolved);
+  }
+  return resolved;
+}
+
+function resolveUsdPriceSpecUncached(index: PricingIndex, modelID: string): UsdPriceSpec | undefined {
   if (tokens(canonicalModelKey(modelID)).includes("free")) {
     return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   }
-
-  const index = getIndex();
   if (index.exact.size === 0) return undefined;
 
   const direct =

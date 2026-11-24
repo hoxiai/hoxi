@@ -11,7 +11,7 @@ import {
   Sparkles,
   X,
 } from "lucide-solid";
-import type { CustomProviderModelDraft } from "../../store/workspace";
+import type { CustomProviderModelDraft, FetchedCustomModelItem } from "../../store/workspace";
 import { t } from "../../i18n";
 import { HelpTip } from "../settings/setting-controls";
 import { guessFetchedModelDraft, type ModelProbeResult } from "./custom-endpoint-helpers";
@@ -20,8 +20,8 @@ import { appendModels, verifyBatch, type ModelProbeFn } from "./model-probe-batc
 export function FetchedModelsModal(props: {
   models: Accessor<CustomProviderModelDraft[]>;
   setModels: Setter<CustomProviderModelDraft[]>;
-  fetchedModels: Accessor<Array<{ id: string; name: string }>>;
-  setFetchedModels: Setter<Array<{ id: string; name: string }>>;
+  fetchedModels: Accessor<FetchedCustomModelItem[]>;
+  setFetchedModels: Setter<FetchedCustomModelItem[]>;
   modelProbes?: Accessor<Record<string, ModelProbeResult>>;
   onProbeModel?: ModelProbeFn;
 }) {
@@ -50,8 +50,15 @@ export function FetchedModelsModal(props: {
     () => new Set(props.models().map((m) => m.id.trim()).filter(Boolean))
   );
 
+  const isExcludedFetchedModel = (m: FetchedCustomModelItem) => {
+    const caps = guessFetchedModelDraft(m).capabilityTags;
+    return Array.isArray(caps) && caps.length === 0;
+  };
+
   const selectableModels = createMemo(() =>
-    filteredFetchedModels().filter((m) => m.id.trim() && !addedIdSet().has(m.id.trim()))
+    filteredFetchedModels().filter(
+      (m) => m.id.trim() && !addedIdSet().has(m.id.trim()) && !isExcludedFetchedModel(m)
+    )
   );
 
   const selectedModels = createMemo(() => {
@@ -106,7 +113,7 @@ export function FetchedModelsModal(props: {
         chosen.map((m) => m.id.trim()),
         props.onProbeModel
       );
-      const ok: Array<{ id: string; name: string }> = [];
+      const ok: FetchedCustomModelItem[] = [];
       const errors: Record<string, string> = {};
       for (const m of chosen) {
         const id = m.id.trim();
@@ -129,7 +136,7 @@ export function FetchedModelsModal(props: {
     }
   };
 
-  const handleAddWithoutVerify = (rm: { id: string; name: string }) => {
+  const handleAddWithoutVerify = (rm: FetchedCustomModelItem) => {
     appendModels(props.setModels, [guessFetchedModelDraft(rm)]);
     setSelected((prev) => {
       const next = { ...prev };
@@ -227,13 +234,16 @@ export function FetchedModelsModal(props: {
                   const guessed = () => guessFetchedModelDraft(rm);
                   const isTesting = () => probe()?.status === "testing";
 
+                  const isExcluded = () =>
+                    Array.isArray(guessed().capabilityTags) && guessed().capabilityTags!.length === 0;
+
                   return (
                     <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/50 px-3.5 py-2.5 space-y-1.5 hover:border-[var(--border-strong)] transition-colors">
                       <div class="flex items-start gap-2.5">
                         <input
                           type="checkbox"
                           checked={Boolean(selected()[cleanId()])}
-                          disabled={isAdded() || isTesting()}
+                          disabled={isAdded() || isTesting() || isExcluded()}
                           onChange={() => toggleSelect(cleanId())}
                           class="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-pointer accent-[var(--accent-primary)] disabled:opacity-40"
                         />
@@ -248,10 +258,37 @@ export function FetchedModelsModal(props: {
                                 {t("models.reasoningCap")}
                               </span>
                             </Show>
-                            <Show when={guessed().image}>
+                            <Show when={guessed().capabilityTags?.includes("vision")}>
                               <span class="inline-flex items-center gap-0.5 rounded-md bg-[var(--bg-inset)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--text-secondary)]">
                                 <Image size={10} />
                                 {t("models.imageCap")}
+                              </span>
+                            </Show>
+                            <Show when={guessed().capabilityTags?.includes("image_generate")}>
+                              <span class="inline-flex items-center gap-0.5 rounded-md bg-[var(--bg-inset)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--text-secondary)]">
+                                {t("models.capBadgeImageGen")}
+                              </span>
+                            </Show>
+                            <Show when={guessed().capabilityTags?.includes("image_edit")}>
+                              <span class="inline-flex items-center gap-0.5 rounded-md bg-[var(--accent-surface)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--accent-primary)]">
+                                {t("models.capBadgeImageEdit")}
+                              </span>
+                            </Show>
+                            <Show when={guessed().capabilityTags?.includes("image_translate")}>
+                              <span class="inline-flex items-center gap-0.5 rounded-md bg-[var(--accent-surface)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--accent-primary)]">
+                                {guessed().imageTranslateOutputModes?.includes("editable_scene")
+                                  ? t("models.capBadgeImageTranslateEditor")
+                                  : t("models.capBadgeImageTranslateRaster")}
+                              </span>
+                            </Show>
+                            <Show when={guessed().capabilityTags?.includes("video")}>
+                              <span class="inline-flex items-center gap-0.5 rounded-md bg-[var(--bg-inset)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--text-secondary)]">
+                                {t("models.capBadgeVideo")}
+                              </span>
+                            </Show>
+                            <Show when={Array.isArray(guessed().capabilityTags) && guessed().capabilityTags!.length === 0}>
+                              <span class="inline-flex items-center gap-0.5 rounded-md bg-[var(--bg-inset)] px-1.5 py-0.5 text-[11px] text-[var(--text-faint)]">
+                                {t("models.capBadgeUtilityExcluded")}
                               </span>
                             </Show>
                             <Show when={probe()?.status === "ok"}>

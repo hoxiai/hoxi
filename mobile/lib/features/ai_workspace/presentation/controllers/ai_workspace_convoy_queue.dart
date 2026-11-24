@@ -9,7 +9,10 @@ mixin _AiWorkspaceConvoyAndQueue on Notifier<AiWorkspaceState> {
     AiSessionStateInfo? stateInfo,
   });
   Future<void> selectSession(AiDevSession session);
-  Future<void> refreshCurrentSession({bool showLoading = false});
+  Future<void> refreshCurrentSession({
+    bool showLoading = false,
+    bool trustServerState = false,
+  });
   Future<bool> sendMessage(
     String text, {
     CodeInstructionOptions options,
@@ -250,9 +253,10 @@ mixin _AiWorkspaceConvoyAndQueue on Notifier<AiWorkspaceState> {
       queuedPrompts: state.queuedPrompts.where((q) => q.id != next.id).toList(),
     );
     Future.microtask(() async {
+      var sent = false;
       try {
         if (!ref.mounted || state.currentSession?.id != sid) return;
-        await sendMessage(
+        sent = await sendMessage(
           next.text,
           options: next.options,
           imageDataUrl: next.imageDataUrl,
@@ -263,6 +267,9 @@ mixin _AiWorkspaceConvoyAndQueue on Notifier<AiWorkspaceState> {
         );
       } finally {
         _drainingQueue = false;
+        if (sent && ref.mounted && !state.isAiThinking && !state.isSending) {
+          drainNextQueuedPromptIfIdle();
+        }
       }
     });
   }

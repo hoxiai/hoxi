@@ -113,6 +113,7 @@ func (s *Store) rewriteTurns(id string, turns []MessageTurn) (int, error) {
 	}
 	if info, err := os.Stat(filepath.Join(s.sessionDir(id), sessionTurnsFile)); err == nil {
 		recordPersistenceError(s.saveHistoryIndex(id, idx, info))
+		recordPersistenceError(s.saveUsageSummary(id, summarizeTurnsUsage(turns), info))
 	} else {
 		recordPersistenceError(err)
 	}

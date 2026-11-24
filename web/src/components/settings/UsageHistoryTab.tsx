@@ -166,26 +166,15 @@ function DayRow(props: { day: UsageHistoryDay; onViewModels: () => void }) {
   );
 }
 
-function Skeleton(props: { class?: string }) {
-  return <div class={`animate-pulse bg-[var(--bg-inset)] ${props.class ?? ""}`} />;
+function SkeletonBlock(props: { class?: string }) {
+  return <div class={`bg-[var(--bg-inset)] ${props.class ?? ""}`} />;
 }
-
-const HEATMAP_SKELETON_CELLS = Array.from({ length: 7 * 53 }, (_, index) => index);
 
 function HeatmapSkeleton() {
   return (
     <div class="flex flex-col items-center gap-2">
-      <div class="w-full overflow-hidden pb-1">
-        <div
-          class="mx-auto grid w-max grid-flow-col grid-rows-7 gap-[3px]"
-          style={{ "grid-auto-columns": "11px" }}
-        >
-          <For each={HEATMAP_SKELETON_CELLS}>
-            {() => <Skeleton class="h-[11px] w-[11px] rounded-[2px]" />}
-          </For>
-        </div>
-      </div>
-      <Skeleton class="h-3 w-28 rounded" />
+      <div class="h-[115px] w-full max-w-[740px] rounded-xl bg-[var(--bg-inset)]/70" />
+      <SkeletonBlock class="h-3 w-28 rounded" />
     </div>
   );
 }
@@ -196,8 +185,8 @@ function MetricSkeleton() {
       <For each={[0, 1, 2, 3]}>
         {() => (
           <div class="rounded-xl bg-[var(--bg-inset)]/60 px-3 py-2">
-            <Skeleton class="h-3 w-16 rounded" />
-            <Skeleton class="mt-2 h-4 w-20 rounded" />
+            <SkeletonBlock class="h-3 w-16 rounded" />
+            <SkeletonBlock class="mt-2 h-4 w-20 rounded" />
           </div>
         )}
       </For>
@@ -209,7 +198,7 @@ function ListSkeleton(props: { rows?: number }) {
   return (
     <div class="space-y-2 rounded-xl border border-[var(--border-subtle)] p-2">
       <For each={Array.from({ length: props.rows ?? 6 }, (_, index) => index)}>
-        {() => <Skeleton class="h-7 w-full rounded-md" />}
+        {() => <SkeletonBlock class="h-7 w-full rounded-md" />}
       </For>
     </div>
   );
@@ -277,11 +266,28 @@ export default function UsageHistoryTab() {
     return sel.kind === "days" && sel.days === range;
   };
 
-  const applyCustom = () => {
-    const start = customStart();
-    const end = customEnd();
-    if (!start || !end || start > end) return;
-    void selectUsageCustomRange(start, end);
+  let customTimer: number | undefined;
+  const clearCustomTimer = () => {
+    if (customTimer !== undefined) {
+      window.clearTimeout(customTimer);
+      customTimer = undefined;
+    }
+  };
+  onCleanup(clearCustomTimer);
+
+  const applyCustom = (immediate = false) => {
+    clearCustomTimer();
+    const run = () => {
+      const start = customStart();
+      const end = customEnd();
+      if (!start || !end || start > end) return;
+      void selectUsageCustomRange(start, end);
+    };
+    if (immediate) {
+      run();
+    } else {
+      customTimer = window.setTimeout(run, 250);
+    }
   };
 
   return (
@@ -299,6 +305,7 @@ export default function UsageHistoryTab() {
               type="button"
               class={pill(isOverview())}
               onClick={() => {
+                clearCustomTimer();
                 setCustomOpen(false);
                 selectUsageOverview();
               }}
@@ -311,6 +318,7 @@ export default function UsageHistoryTab() {
                   type="button"
                   class={pill(isPresetActive(range))}
                   onClick={() => {
+                    clearCustomTimer();
                     setCustomOpen(false);
                     selectUsageDays(range);
                   }}
@@ -324,7 +332,7 @@ export default function UsageHistoryTab() {
               class={pill(usageSelection().kind === "custom")}
               onClick={() => {
                 setCustomOpen(true);
-                applyCustom();
+                applyCustom(true);
               }}
             >
               {t("settings.usageRangeCustom")}
@@ -363,7 +371,10 @@ export default function UsageHistoryTab() {
             disabled={usageHistoryLoading()}
             title={t("settings.usageRefresh")}
             aria-label={t("settings.usageRefresh")}
-            onClick={() => void loadUsageHistory(usageSelection(), true)}
+            onClick={() => {
+              clearCustomTimer();
+              void loadUsageHistory(usageSelection(), true);
+            }}
           >
             <RefreshCw size={13} class={usageHistoryLoading() ? "animate-spin" : ""} />
           </button>
@@ -377,18 +388,18 @@ export default function UsageHistoryTab() {
       </Show>
 
       <Show
-        when={!usageHistoryLoading()}
+        when={!usageHistoryLoading() || usageHistory().length > 0}
         fallback={
           <Show
             when={isOverview()}
             fallback={
-              <div class="space-y-5">
+              <div class="animate-pulse space-y-5">
                 <MetricSkeleton />
                 <ListSkeleton rows={8} />
               </div>
             }
           >
-            <div class="space-y-5">
+            <div class="animate-pulse space-y-5">
               <HeatmapSkeleton />
               <MetricSkeleton />
               <ListSkeleton rows={4} />

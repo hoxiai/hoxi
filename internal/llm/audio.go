@@ -10,13 +10,21 @@ import (
 var ErrInvalidMediaRole = errors.New("invalid media role specification")
 
 // MediaRolePrefs stores optional user-selected default models for media
-// generation and voice transcription when multiple local providers are configured.
+// generation, image translation, vision/utility slots, and voice transcription
+// when multiple local providers are configured.
 // Empty strings mean "auto-select best configured model".
 type MediaRolePrefs struct {
-	ImageModel      string `json:"imageModel,omitempty"`
-	VideoModel      string `json:"videoModel,omitempty"`
-	SpeechModel     string `json:"speechModel,omitempty"`
-	TranscribeModel string `json:"transcribeModel,omitempty"`
+	ImageModel                string `json:"imageModel,omitempty"`
+	ImageEditModel            string `json:"imageEditModel,omitempty"`
+	ImageTranslateRasterModel string `json:"imageTranslateRasterModel,omitempty"`
+	ImageTranslateEditorModel string `json:"imageTranslateEditorModel,omitempty"`
+	VideoModel                string `json:"videoModel,omitempty"`
+	SpeechModel               string `json:"speechModel,omitempty"`
+	TranscribeModel           string `json:"transcribeModel,omitempty"`
+	VisionModel               string `json:"visionModel,omitempty"`
+	TextTranslateModel        string `json:"textTranslateModel,omitempty"`
+	EmbeddingModel            string `json:"embeddingModel,omitempty"`
+	RerankModel               string `json:"rerankModel,omitempty"`
 }
 
 // AudioModelOption describes one configured speech synthesis (TTS) or ASR model.

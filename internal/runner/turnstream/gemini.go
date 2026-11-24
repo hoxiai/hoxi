@@ -351,41 +351,91 @@ func (t *TurnTranslator) feedGeminiLine(line string) []SSEEvent {
 	return nil
 }
 
+// normalizeGeminiTokenBucket converts one Gemini CLI token bucket into Hoxi's
+// disjoint Input/Output/Reasoning/CacheRead buckets. Gemini reports prompt/input
+// inclusive of cached tokens and top-level output_tokens inclusive of thoughts,
+// whereas candidates already excludes thoughts.
+func normalizeGeminiTokenBucket(rawIn, candOut, rawOut, reasonTok, cacheRead, totalTok int) (inTok, outTok, reasoning, cache, total int) {
+	rawIn = max(0, rawIn)
+	candOut = max(0, candOut)
+	rawOut = max(0, rawOut)
+	reasoning = max(0, reasonTok)
+	cache = max(0, cacheRead)
+	totalTok = max(0, totalTok)
+
+	if candOut > 0 {
+		outTok = candOut
+	} else {
+		outTok = rawOut
+		alreadyDisjointOut := totalTok > 0 && (totalTok == rawIn+outTok+reasoning || totalTok == rawIn+cache+outTok+reasoning)
+		if reasoning > 0 && outTok >= reasoning && !alreadyDisjointOut {
+			outTok -= reasoning
+		}
+	}
+
+	inTok = rawIn
+	// outTok is already disjoint from reasoning, so an already-disjoint total
+	// always equals inTok + cache + outTok + reasoning (never omitting reasoning).
+	alreadyDisjointIn := totalTok > 0 && totalTok == inTok+cache+outTok+reasoning
+	if cache > 0 && inTok >= cache && !alreadyDisjointIn {
+		inTok -= cache
+	}
+
+	disjointTotal := inTok + outTok + reasoning + cache
+	total = max(totalTok, disjointTotal)
+	return inTok, outTok, reasoning, cache, total
+}
+
 func (t *TurnTranslator) applyGeminiStats(stats *geminiStreamStats) {
 	if stats == nil {
 		return
 	}
-	inTok := firstNonZeroInt(stats.InputTokens, stats.Input)
-	outTok := stats.OutputTokens
-	reasonTok := stats.Thoughts
-	cacheRead := stats.Cached
-	totalTok := stats.TotalTokens
+	var tokIn, tokCand, tokOut, tokReason, tokCache, tokTotal int
 	if stats.Tokens != nil {
-		inTok = firstNonZeroInt(inTok, stats.Tokens.Prompt, stats.Tokens.Input)
-		outTok = firstNonZeroInt(outTok, stats.Tokens.Candidates, stats.Tokens.Output)
-		reasonTok = firstNonZeroInt(reasonTok, stats.Tokens.Thoughts)
-		cacheRead = firstNonZeroInt(cacheRead, stats.Tokens.Cached)
-		totalTok = firstNonZeroInt(totalTok, stats.Tokens.Total)
+		tokIn = firstNonZeroInt(stats.Tokens.Prompt, stats.Tokens.Input)
+		tokCand = stats.Tokens.Candidates
+		tokOut = stats.Tokens.Output
+		tokReason = stats.Tokens.Thoughts
+		tokCache = stats.Tokens.Cached
+		tokTotal = stats.Tokens.Total
 	}
-	if len(stats.Models) > 0 {
-		var mIn, mOut, mReason, mCache, mTotal int
-		for _, m := range stats.Models {
-			mIn += firstNonZeroInt(m.Tokens.Prompt, m.Tokens.Input)
-			mOut += firstNonZeroInt(m.Tokens.Candidates, m.Tokens.Output)
-			mReason += m.Tokens.Thoughts
-			mCache += m.Tokens.Cached
-			mTotal += m.Tokens.Total
-		}
-		inTok = firstNonZeroInt(inTok, mIn)
-		outTok = firstNonZeroInt(outTok, mOut)
-		reasonTok = firstNonZeroInt(reasonTok, mReason)
-		cacheRead = firstNonZeroInt(cacheRead, mCache)
-		totalTok = firstNonZeroInt(totalTok, mTotal)
+	var mIn, mOut, mReason, mCache, mTotal int
+	for _, m := range stats.Models {
+		in, out, reas, cache, tot := normalizeGeminiTokenBucket(
+			firstNonZeroInt(m.Tokens.Prompt, m.Tokens.Input),
+			m.Tokens.Candidates,
+			m.Tokens.Output,
+			m.Tokens.Thoughts,
+			m.Tokens.Cached,
+			m.Tokens.Total,
+		)
+		mIn += in
+		mOut += out
+		mReason += reas
+		mCache += cache
+		mTotal += tot
 	}
+
+	var inTok, outTok, reasonTok, cacheRead, totalTok int
+	topHasOutput := stats.OutputTokens > 0 || tokCand > 0 || tokOut > 0
+	if mIn+mCache > 0 && (mOut+mReason > 0 || !topHasOutput) {
+		inTok = mIn
+		outTok = mOut
+		reasonTok = max(mReason, max(0, firstNonZeroInt(stats.Thoughts, tokReason)))
+		cacheRead = mCache
+		totalTok = max(firstNonZeroInt(stats.TotalTokens, tokTotal, mTotal), inTok+outTok+reasonTok+cacheRead)
+	} else {
+		inTok, outTok, reasonTok, cacheRead, totalTok = normalizeGeminiTokenBucket(
+			firstNonZeroInt(stats.InputTokens, stats.Input, tokIn),
+			firstNonZeroInt(tokCand, mOut),
+			firstNonZeroInt(stats.OutputTokens, tokOut),
+			firstNonZeroInt(stats.Thoughts, tokReason, mReason),
+			firstNonZeroInt(stats.Cached, tokCache, mCache),
+			firstNonZeroInt(stats.TotalTokens, tokTotal, mTotal),
+		)
+	}
+
 	if totalTok == 0 {
-		totalTok = inTok + outTok + reasonTok + cacheRead
-	}
-	if totalTok == 0 && inTok == 0 && outTok == 0 {
 		return
 	}
 	tokens := &MessageTokens{

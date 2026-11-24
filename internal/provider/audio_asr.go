@@ -80,26 +80,25 @@ func (s *Service) resolveAudioTranscriber(preferredProviderID, preferredModelID 
 		}
 	}
 
-	// Pass 1: Dedicated ASR models (Whisper / SenseVoice / Paraformer) on OpenAI-compatible providers.
+	// Pass 1: Dedicated ASR models (Whisper / SenseVoice / Paraformer or explicit asr capability) on OpenAI-compatible providers.
 	for _, pid := range sortedKeys(merged) {
 		if !s.isProviderUsableForLocalMedia(pid) {
 			continue
 		}
 		pObj, _ := merged[pid].(map[string]interface{})
-		mMap, _ := pObj["models"].(map[string]interface{})
 		baseURL, _, npm, _ := s.resolveEffectiveProviderConnection(pid, "", "")
 		if effectiveProviderProtocol(pid, npm, baseURL) != "openai" {
 			continue
 		}
-		for _, mid := range sortedKeys(mMap) {
-			mObj, _ := mMap[mid].(map[string]interface{})
-			cat := ""
-			if mObj != nil {
-				cat, _ = mObj["category"].(string)
-			}
-			if inferModelCategory(mid, cat, "") == "asr" {
-				if t, ok := buildTarget(pid, mid, "openai_asr"); ok {
-					return t, true
+		for _, mapKey := range []string{"models", "mediaModels"} {
+			mMap, _ := pObj[mapKey].(map[string]interface{})
+			for _, mid := range sortedKeys(mMap) {
+				mObj, _ := mMap[mid].(map[string]interface{})
+				caps := extractModelCapabilitiesFromConfig(mid, mObj)
+				if caps.Has(llm.CapabilityASR) {
+					if t, ok := buildTarget(pid, mid, "openai_asr"); ok {
+						return t, true
+					}
 				}
 			}
 		}
@@ -112,30 +111,29 @@ func (s *Service) resolveAudioTranscriber(preferredProviderID, preferredModelID 
 			continue
 		}
 		pObj, _ := merged[pid].(map[string]interface{})
-		mMap, _ := pObj["models"].(map[string]interface{})
 		baseURL, _, npm, _ := s.resolveEffectiveProviderConnection(pid, "", "")
 		if effectiveProviderProtocol(pid, npm, baseURL) != "google" {
 			continue
 		}
-		for _, mid := range sortedKeys(mMap) {
-			mObj, _ := mMap[mid].(map[string]interface{})
-			cat := ""
-			if mObj != nil {
-				cat, _ = mObj["category"].(string)
-			}
-			if !isConversationalCategory(inferModelCategory(mid, cat, "")) {
-				continue
-			}
-			t, ok := buildTarget(pid, mid, "google_gemini")
-			if !ok {
-				continue
-			}
-			if strings.Contains(strings.ToLower(mid), "flash") {
-				return t, true
-			}
-			if geminiFallback == nil {
-				cp := t
-				geminiFallback = &cp
+		for _, mapKey := range []string{"models", "mediaModels"} {
+			mMap, _ := pObj[mapKey].(map[string]interface{})
+			for _, mid := range sortedKeys(mMap) {
+				mObj, _ := mMap[mid].(map[string]interface{})
+				caps := extractModelCapabilitiesFromConfig(mid, mObj)
+				if !caps.Has(llm.CapabilityChat) && !caps.Has(llm.CapabilityASR) {
+					continue
+				}
+				t, ok := buildTarget(pid, mid, "google_gemini")
+				if !ok {
+					continue
+				}
+				if strings.Contains(strings.ToLower(mid), "flash") {
+					return t, true
+				}
+				if geminiFallback == nil {
+					cp := t
+					geminiFallback = &cp
+				}
 			}
 		}
 	}
@@ -178,17 +176,15 @@ func (s *Service) ListAudioTranscriberModels() []llm.AudioModelOption {
 			}
 			for _, mid := range sortedKeys(mMap) {
 				mObj, _ := mMap[mid].(map[string]interface{})
-				cat := ""
 				name := mid
 				if mObj != nil {
-					cat, _ = mObj["category"].(string)
 					if n, _ := mObj["name"].(string); strings.TrimSpace(n) != "" {
 						name = strings.TrimSpace(n)
 					}
 				}
-				resolvedCat := inferModelCategory(mid, cat, "")
-				isASR := (proto == "openai" && resolvedCat == "asr") ||
-					(proto == "google" && isConversationalCategory(resolvedCat))
+				caps := extractModelCapabilitiesFromConfig(mid, mObj)
+				isASR := (proto == "openai" && caps.Has(llm.CapabilityASR)) ||
+					(proto == "google" && (caps.Has(llm.CapabilityChat) || caps.Has(llm.CapabilityASR)))
 				if !isASR {
 					continue
 				}

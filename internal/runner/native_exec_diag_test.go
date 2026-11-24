@@ -21,6 +21,24 @@ func writeFakeExecutable(t *testing.T, dir, name, scriptBody string) string {
 	return p
 }
 
+// isolateFakeBinPath pins fakebin ahead of any host toolchain directories,
+// including directories that agentcli.WithUserBinPath prepends when missing
+// from PATH (e.g. ~/.cargo/bin or /opt/homebrew/bin in non-login shells).
+func isolateFakeBinPath(t *testing.T, root, binDir string) {
+	t.Helper()
+	t.Setenv("HOME", root)
+	t.Setenv("HOXI_HOME", filepath.Join(root, ".hoxi"))
+	sep := string(os.PathListSeparator)
+	pathVal := binDir
+	if cur := os.Getenv("PATH"); cur != "" {
+		pathVal += sep + cur
+	}
+	if runtime.GOOS != "windows" {
+		pathVal += sep + "/opt/homebrew/bin" + sep + "/usr/local/bin"
+	}
+	t.Setenv("PATH", pathVal)
+}
+
 func TestNativePostEditDiagnosticsVuePHPDart(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX shell shims used in test")
@@ -56,7 +74,7 @@ exit 0`)
 fi
 exit 0`)
 
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	isolateFakeBinPath(t, root, binDir)
 
 	vueFile := filepath.Join(root, "src", "App.vue")
 	phpFile := filepath.Join(root, "app", "OrderService.php")
@@ -187,7 +205,7 @@ if [ "$mode" = "offline_miss" ]; then
 fi
 echo "src/lib.rs:4:12: error[E0308]: mismatched types"
 exit 101`)
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	isolateFakeBinPath(t, root, binDir)
 
 	rsFile := filepath.Join(root, "src", "lib.rs")
 	if err := os.MkdirAll(filepath.Dir(rsFile), 0o755); err != nil {
@@ -464,7 +482,7 @@ exit 0`)
   exit 1
 fi
 exit 0`)
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	isolateFakeBinPath(t, root, binDir)
 
 	goodMJS := filepath.Join(root, "script.mjs")
 	badJS := filepath.Join(root, "bad.js")

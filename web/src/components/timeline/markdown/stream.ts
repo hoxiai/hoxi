@@ -52,6 +52,10 @@ export function isSameBlockToken(a: BlockToken | undefined, b: BlockToken): bool
       return (a as typeof b).text === b.text;
     case "blockquote":
       return (a as typeof b).alert === b.alert && (a as typeof b).text === b.text;
+    case "details": {
+      const prev = a as typeof b;
+      return prev.summary === b.summary && prev.body === b.body && Boolean(prev.open) === Boolean(b.open);
+    }
     case "heading":
       return (a as typeof b).level === b.level && (a as typeof b).text === b.text;
     case "code":

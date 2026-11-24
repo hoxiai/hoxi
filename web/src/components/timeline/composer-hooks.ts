@@ -27,6 +27,8 @@ import {
 import {
   bumpDraftEpoch,
   composerDraftKey,
+  createContextAttachment,
+  createContextAttachments,
   createPasteCollapse,
   createSessionDraftSync,
   getDraftEpoch,
@@ -44,6 +46,8 @@ export {
   bumpDraftEpoch,
   composerDraftKey,
   createComposerAutocomplete,
+  createContextAttachment,
+  createContextAttachments,
   createPasteCollapse,
   createPromptHistory,
   createSessionDraftSync,

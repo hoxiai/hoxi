@@ -1,7 +1,6 @@
 package devpulse
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"os"
@@ -179,8 +178,17 @@ func (s *Service) ResolveGitTargets(rawDir, sessionID string) []GitTarget {
 			roots = append(roots, t)
 		}
 	}
+	seenRaw := make(map[string]struct{})
 	addCandidate := func(raw string) string {
-		wtTop := findGitWorkingTreeRoot(raw)
+		trimmed := filepath.Clean(strings.TrimSpace(raw))
+		if trimmed == "" || trimmed == "." {
+			return ""
+		}
+		if _, dup := seenRaw[trimmed]; dup {
+			return ""
+		}
+		seenRaw[trimmed] = struct{}{}
+		wtTop := findGitWorkingTreeRoot(trimmed)
 		if wtTop == "" {
 			return ""
 		}
@@ -214,7 +222,7 @@ func (s *Service) ResolveGitTargets(rawDir, sessionID string) []GitTarget {
 				addCandidate(candidate)
 			}
 		}
-		for _, dir := range queryOpenCodeSessionDirs() {
+		for _, dir := range s.cachedOpenCodeSessionDirs() {
 			addCandidate(dir)
 		}
 		addCandidate(sessProj)
@@ -236,318 +244,109 @@ func (s *Service) ResolveGitTargets(rawDir, sessionID string) []GitTarget {
 	return append(roots, worktrees...)
 }
 
-func (s *Service) CollectGitDailyStats(targets []GitTarget, startOfToday time.Time, res *DailyPulseResponse) {
-	if s.source == nil {
-		return
-	}
-	committedFileSet := make(map[string]struct{})
-	seenCommits := make(map[string]struct{})
-	sinceArg := "--since=" + startOfToday.Format(time.RFC3339)
+type worktreeHeadKind int
 
-	for _, t := range targets {
-		args := []string{"log", sinceArg, "--no-merges", "--no-renames", "--numstat", "--pretty=format:COMMIT:%H\t%s"}
-		if !t.IsWorktree {
-			args = append(args, "--branches", "HEAD")
-		}
-		logOut, err := s.source.RunGitRaw(t.Dir, args...)
-		if err != nil {
-			continue
-		}
-		skipCurrent := false
-		for _, rawLine := range strings.Split(logOut, "\n") {
-			line := strings.TrimSpace(rawLine)
-			if line == "" {
-				continue
-			}
-			if strings.HasPrefix(line, "COMMIT:") {
-				rest := strings.TrimPrefix(line, "COMMIT:")
-				parts := strings.SplitN(rest, "\t", 2)
-				sha := strings.TrimSpace(parts[0])
-				var subject string
-				if len(parts) > 1 {
-					subject = strings.TrimSpace(parts[1])
-				}
-				if sha != "" {
-					if _, exists := seenCommits[sha]; exists {
-						skipCurrent = true
-						continue
-					}
-					seenCommits[sha] = struct{}{}
-				}
-				if isInternalSnapshotCommitSubject(subject) {
-					skipCurrent = true
-					continue
-				}
-				skipCurrent = false
-				res.TodayCommits++
-				continue
-			}
-			if skipCurrent {
-				continue
-			}
-			add, del, file, ok := parseGitNumstatLine(rawLine)
-			if !ok {
-				continue
-			}
-			res.CommittedAdditions += add
-			res.CommittedDeletions += del
-			committedFileSet[t.RepoRoot+"\x00"+file] = struct{}{}
-		}
-	}
-	res.CommittedFiles = len(committedFileSet)
+const (
+	worktreeNotShared worktreeHeadKind = iota
+	worktreeSharedBranch
+	worktreeSharedDetached
+)
 
-	uncommittedFileSet := make(map[string]struct{})
-	var budget untrackedBudget
-	for _, t := range targets {
-		add, del, branch := s.collectGitUncommittedInto(t.Dir, t.RepoRoot, uncommittedFileSet, &budget)
-		res.UncommittedAdditions += add
-		res.UncommittedDeletions += del
-		if res.Branch == "" && branch != "" {
-			res.Branch = branch
-		}
+// classifyWorktreeHead checks whether workDir is a linked Git worktree sharing
+// its common gitdir with repoRoot, and whether its HEAD points to a local
+// branch (ref: refs/heads/*) or is detached.
+func classifyWorktreeHead(workDir, repoRoot string) worktreeHeadKind {
+	dotGit := filepath.Join(workDir, ".git")
+	info, err := os.Stat(dotGit)
+	if err != nil || info.IsDir() || info.Size() > 16*1024 {
+		return worktreeNotShared
 	}
-	res.UncommittedFiles = len(uncommittedFileSet)
-	res.UncommittedTruncated = budget.truncated
-
-	changed := make(map[string]struct{}, len(committedFileSet)+len(uncommittedFileSet))
-	for file := range committedFileSet {
-		changed[file] = struct{}{}
+	raw, err := os.ReadFile(dotGit)
+	if err != nil {
+		return worktreeNotShared
 	}
-	for file := range uncommittedFileSet {
-		changed[file] = struct{}{}
+	line := strings.TrimSpace(string(raw))
+	if !strings.HasPrefix(line, "gitdir:") {
+		return worktreeNotShared
 	}
-	res.ChangedFiles = len(changed)
+	gitDir := strings.TrimSpace(strings.TrimPrefix(line, "gitdir:"))
+	if gitDir == "" {
+		return worktreeNotShared
+	}
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(workDir, gitDir)
+	}
+	commonRaw, err := os.ReadFile(filepath.Join(gitDir, "commondir"))
+	if err != nil {
+		return worktreeNotShared
+	}
+	commonRel := strings.TrimSpace(string(commonRaw))
+	if commonRel == "" {
+		return worktreeNotShared
+	}
+	commonDir := commonRel
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(gitDir, commonDir)
+	}
+	if !samePulseDir(commonDir, filepath.Join(repoRoot, ".git")) {
+		return worktreeNotShared
+	}
+	headRaw, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
+	if err != nil {
+		return worktreeNotShared
+	}
+	if strings.HasPrefix(strings.TrimSpace(string(headRaw)), "ref: refs/heads/") {
+		return worktreeSharedBranch
+	}
+	return worktreeSharedDetached
 }
 
-func (s *Service) CollectGitHistory(targets []GitTarget, start, end, todayStart time.Time, day func(string) *HistoryDay) {
-	if s.source == nil {
-		return
+func fileStampPair(path string) (size, mod int64) {
+	if path == "" {
+		return 0, 0
 	}
-	sinceArg := "--since=" + start.Format(time.RFC3339)
-	untilArg := "--until=" + end.Format(time.RFC3339)
-	startKey := start.Format("2006-01-02")
-	endInclusiveKey := end.AddDate(0, 0, -1).Format("2006-01-02")
-
-	loc := start.Location()
-	fileSets := make(map[string]map[string]struct{})
-	seenCommits := make(map[string]struct{})
-
-	for _, t := range targets {
-		args := []string{
-			"log", sinceArg, untilArg, "--no-merges", "--no-renames", "--numstat",
-			"--pretty=format:COMMIT:%H\t%ct\t%s",
-		}
-		if !t.IsWorktree {
-			args = append(args, "--branches", "HEAD")
-		}
-		logOut, err := s.source.RunGitRaw(t.Dir, args...)
-		if err != nil {
-			continue
-		}
-		var current string
-		for _, rawLine := range strings.Split(logOut, "\n") {
-			line := strings.TrimSpace(rawLine)
-			if line == "" {
-				continue
-			}
-			if strings.HasPrefix(line, "COMMIT:") {
-				rest := strings.TrimPrefix(line, "COMMIT:")
-				parts := strings.SplitN(rest, "\t", 3)
-				var sha, tsStr, subject string
-				if len(parts) == 1 {
-					tsStr = strings.TrimSpace(parts[0])
-				} else {
-					sha = strings.TrimSpace(parts[0])
-					tsStr = strings.TrimSpace(parts[1])
-					if len(parts) > 2 {
-						subject = strings.TrimSpace(parts[2])
-					}
-				}
-				if sha != "" {
-					if _, exists := seenCommits[sha]; exists {
-						current = ""
-						continue
-					}
-					seenCommits[sha] = struct{}{}
-				}
-				if isInternalSnapshotCommitSubject(subject) {
-					current = ""
-					continue
-				}
-				sec, convErr := strconv.ParseInt(tsStr, 10, 64)
-				if convErr != nil {
-					current = ""
-					continue
-				}
-				key := historyDayKey(sec*1000, loc)
-				if key < startKey || key > endInclusiveKey {
-					current = ""
-					continue
-				}
-				current = key
-				target := day(current)
-				target.Commits++
-				if fileSets[current] == nil {
-					fileSets[current] = make(map[string]struct{})
-				}
-				continue
-			}
-			if current == "" {
-				continue
-			}
-			add, del, file, ok := parseGitNumstatLine(rawLine)
-			if !ok {
-				continue
-			}
-			target := day(current)
-			target.Additions += add
-			target.Deletions += del
-			fileSets[current][t.RepoRoot+"\x00"+file] = struct{}{}
-		}
+	info, err := os.Stat(path)
+	if err != nil {
+		return -1, 0
 	}
-
-	if !todayStart.Before(start) && todayStart.Before(end) {
-		todayKey := todayStart.Format("2006-01-02")
-		uncommittedFileSet := make(map[string]struct{})
-		var budget untrackedBudget
-		var uncommAdd, uncommDel int
-		for _, t := range targets {
-			a, d, _ := s.collectGitUncommittedInto(t.Dir, t.RepoRoot, uncommittedFileSet, &budget)
-			uncommAdd += a
-			uncommDel += d
-		}
-		if uncommAdd > 0 || uncommDel > 0 || len(uncommittedFileSet) > 0 {
-			target := day(todayKey)
-			target.Additions += uncommAdd
-			target.Deletions += uncommDel
-			if fileSets[todayKey] == nil {
-				fileSets[todayKey] = make(map[string]struct{}, len(uncommittedFileSet))
-			}
-			for f := range uncommittedFileSet {
-				fileSets[todayKey][f] = struct{}{}
-			}
-		}
-	}
-
-	for key, set := range fileSets {
-		day(key).Files = len(set)
-	}
+	return info.Size(), info.ModTime().UnixNano()
 }
 
-type untrackedBudget struct {
-	readCount int
-	readBytes int64
-	truncated bool
-}
-
-func (s *Service) collectGitUncommittedInto(workDir, repoRoot string, uncommittedFileSet map[string]struct{}, budget *untrackedBudget) (additions, deletions int, branch string) {
-	if repoRoot == "" {
-		repoRoot = workDir
-	}
-	seenInWorktree := make(map[string]struct{})
-	if numstat, err := s.source.RunGit(workDir, "diff", "--no-renames", "--numstat", "HEAD"); err == nil {
-		for _, line := range strings.Split(strings.TrimSpace(numstat), "\n") {
-			add, del, file, ok := parseGitNumstatLine(line)
-			if !ok {
-				continue
-			}
-			if _, seen := seenInWorktree[file]; seen {
-				continue
-			}
-			seenInWorktree[file] = struct{}{}
-			additions += add
-			deletions += del
-			uncommittedFileSet[repoRoot+"\x00"+file] = struct{}{}
-		}
-	}
-
-	countUntrackedFile := func(rel string) {
-		rel = unquoteGitPath(rel)
-		if rel == "" || strings.HasSuffix(rel, "/") || isGeneratedOrLockFile(rel) {
-			return
-		}
-		if _, seen := seenInWorktree[rel]; seen {
-			return
-		}
-		seenInWorktree[rel] = struct{}{}
-		uncommittedFileSet[repoRoot+"\x00"+rel] = struct{}{}
-		if budget.truncated || budget.readCount >= maxUntrackedFilesToCount {
-			budget.truncated = true
-			return
-		}
-		full := filepath.Join(workDir, filepath.FromSlash(rel))
-		info, err := os.Stat(full)
-		if err != nil || info.IsDir() || info.Size() > maxUntrackedFileSize {
-			return
-		}
-		if budget.readBytes+info.Size() > maxUntrackedTotalBytes {
-			budget.truncated = true
-			return
-		}
-		data, err := os.ReadFile(full)
-		if err != nil || len(data) == 0 || bytes.IndexByte(data, 0) != -1 {
-			return
-		}
-		budget.readCount++
-		budget.readBytes += int64(len(data))
-		additions += bytes.Count(data, []byte{'\n'})
-		if data[len(data)-1] != '\n' {
-			additions++
-		}
-	}
-
-	if porcelain, err := s.source.RunGitRaw(workDir, "status", "--porcelain", "-b", "-z"); err == nil {
-		var expandDirs []string
-		sep := "\n"
-		if strings.Contains(porcelain, "\x00") {
-			sep = "\x00"
-		}
-		entries := strings.Split(porcelain, sep)
-		for i := 0; i < len(entries); i++ {
-			rawLine := entries[i]
-			if strings.HasPrefix(rawLine, "## ") {
-				if br := s.source.ParseBranchFromPorcelainHeader(rawLine); br != "" {
-					branch = br
-				}
-				continue
-			}
-			if len(rawLine) < 4 {
-				continue
-			}
-			if sep == "\x00" {
-				x, y := rawLine[0], rawLine[1]
-				if (x == 'R' || x == 'C' || y == 'R' || y == 'C') && i+1 < len(entries) {
-					i++
-					continue
-				}
-			}
-			if !strings.HasPrefix(rawLine, "?? ") {
-				continue
-			}
-			rel := unquoteGitPath(rawLine[3:])
-			if isGeneratedOrLockFile(rel) {
-				continue
-			}
-			if strings.HasSuffix(rel, "/") {
-				expandDirs = append(expandDirs, rel)
-				continue
-			}
-			countUntrackedFile(rel)
-		}
-		if len(expandDirs) > 0 && !budget.truncated {
-			args := append([]string{"ls-files", "--others", "--exclude-standard", "-z", "--"}, expandDirs...)
-			if untrackedOut, err := s.source.RunGitRaw(workDir, args...); err == nil && untrackedOut != "" {
-				for _, rel := range strings.Split(untrackedOut, "\x00") {
-					countUntrackedFile(rel)
-				}
-			}
-		}
-	}
-	return additions, deletions, branch
-}
-
-func queryOpenCodeSessionDirs() []string {
+func (s *Service) cachedOpenCodeSessionDirs() []string {
 	dbPath := hoxipaths.DBPath()
+	if dbPath == "" {
+		return nil
+	}
+	dbSize, dbMod := fileStampPair(dbPath)
+	if dbSize < 0 {
+		return nil
+	}
+	walSize, walMod := fileStampPair(dbPath + "-wal")
+	key := ocDirsCacheKey{
+		dbPath:  dbPath,
+		dbSize:  dbSize,
+		dbMod:   dbMod,
+		walSize: walSize,
+		walMod:  walMod,
+	}
+	s.mu.Lock()
+	if s.ocDirsLoaded && s.ocDirsKey == key {
+		dirs := append([]string(nil), s.ocDirs...)
+		s.mu.Unlock()
+		return dirs
+	}
+	s.mu.Unlock()
+
+	dirs := queryOpenCodeSessionDirs(dbPath)
+	s.mu.Lock()
+	s.ocDirsKey = key
+	s.ocDirsLoaded = true
+	s.ocDirs = append([]string(nil), dirs...)
+	s.mu.Unlock()
+	return dirs
+}
+
+func queryOpenCodeSessionDirs(dbPath string) []string {
 	if dbPath == "" {
 		return nil
 	}

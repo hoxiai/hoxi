@@ -13,7 +13,11 @@ import {
   Trash2,
   Wrench,
 } from "lucide-solid";
-import type { CustomModelCategory, CustomProviderModelDraft } from "../../store/workspace";
+import type {
+  CustomModelCategory,
+  CustomProviderModelDraft,
+  FetchedCustomModelItem,
+} from "../../store/workspace";
 import { t } from "../../i18n";
 import { AddCustomModelModal } from "./AddCustomModelModal";
 import { FetchedModelsModal } from "./FetchedModelsModal";
@@ -22,8 +26,8 @@ import type { ModelProbeResult } from "./custom-endpoint-helpers";
 interface CustomProviderModelSectionProps {
   models: Accessor<CustomProviderModelDraft[]>;
   setModels: Setter<CustomProviderModelDraft[]>;
-  fetchedModels: Accessor<Array<{ id: string; name: string }>>;
-  setFetchedModels: Setter<Array<{ id: string; name: string }>>;
+  fetchedModels: Accessor<FetchedCustomModelItem[]>;
+  setFetchedModels: Setter<FetchedCustomModelItem[]>;
   headers: Accessor<Array<{ key: string; value: string }>>;
   setHeaders: Setter<Array<{ key: string; value: string }>>;
   modelProbes?: Accessor<Record<string, ModelProbeResult>>;
@@ -44,9 +48,32 @@ export default function CustomProviderModelSection(props: CustomProviderModelSec
     props.setModels((prev) => prev.filter((_, i) => i !== idx));
   };
 
+  const toggleImageTagForRow = (
+    row: CustomProviderModelDraft,
+    nextImage: boolean
+  ): Partial<CustomProviderModelDraft> => {
+    if (!Array.isArray(row.capabilityTags)) {
+      return { image: nextImage };
+    }
+    const cat = row.category || "chat";
+    const targetTag = cat === "image" ? "image_edit" : "vision";
+    const filtered = row.capabilityTags.filter((c) => c !== targetTag);
+    return {
+      image: nextImage,
+      capabilityTags: nextImage ? [...filtered, targetTag] : filtered,
+    };
+  };
+
   const toggleAllCapability = (field: "reasoning" | "image") => {
     const allEnabled = props.models().every((m) => m[field]);
-    props.setModels((prev) => prev.map((m) => ({ ...m, [field]: !allEnabled })));
+    const nextVal = !allEnabled;
+    props.setModels((prev) =>
+      prev.map((m) =>
+        field === "image"
+          ? { ...m, ...toggleImageTagForRow(m, nextVal) }
+          : { ...m, reasoning: nextVal }
+      )
+    );
   };
 
   return (
@@ -163,6 +190,9 @@ export default function CustomProviderModelSection(props: CustomProviderModelSec
                           const nextCat = e.currentTarget.value as CustomModelCategory;
                           updateModelRow(idx, {
                             category: nextCat,
+                            modality: undefined,
+                            capabilityTags: undefined,
+                            ...(nextCat !== "image_translate" ? { imageTranslateOutputModes: undefined } : {}),
                             ...(nextCat !== "chat"
                               ? { reasoning: false, toolCall: false, pdf: false, media: false }
                               : { toolCall: row().toolCall ?? true }),
@@ -172,6 +202,8 @@ export default function CustomProviderModelSection(props: CustomProviderModelSec
                       >
                         <option value="chat">{t("models.categoryChat")}</option>
                         <option value="image">{t("models.categoryImageGen")}</option>
+                        <option value="image_translate">{t("models.categoryImageTranslate")}</option>
+                        <option value="video">{t("models.categoryVideoGen")}</option>
                         <option value="audio">{t("models.categoryAudioAsr")}</option>
                         <option value="embedding">{t("models.categoryEmbedding")}</option>
                       </select>
@@ -253,7 +285,7 @@ export default function CustomProviderModelSection(props: CustomProviderModelSec
                         <button
                           type="button"
                           disabled={props.readOnly?.()}
-                          onClick={() => updateModelRow(idx, { image: !row().image })}
+                          onClick={() => updateModelRow(idx, toggleImageTagForRow(row(), !row().image))}
                           class={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] font-medium transition-colors cursor-pointer disabled:opacity-60 ${
                             row().image
                               ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"

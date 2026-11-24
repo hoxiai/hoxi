@@ -3,6 +3,8 @@ package provider
 import (
 	"net/url"
 	"strings"
+
+	"github.com/hoxiai/hoxi/internal/llm"
 )
 
 // parseModelVersion extracts the first (major, minor) version pair from a lowercased model ID.
@@ -250,9 +252,14 @@ func supportsMultimodalImageEditInput(modelID string) bool {
 	id := strings.ToLower(strings.TrimSpace(modelID))
 	return isConversationalImageModelID(id) ||
 		strings.Contains(id, "gpt-image") ||
-		strings.Contains(id, "flux-kontext") ||
+		strings.Contains(id, "dall-e-2") ||
+		strings.Contains(id, "imagen") ||
+		strings.Contains(id, "qwen-image") ||
+		strings.Contains(id, "kontext") ||
+		strings.Contains(id, "inpaint") ||
+		strings.Contains(id, "flux-fill") ||
 		strings.Contains(id, "seedream") ||
-		strings.Contains(id, "qwen-image-edit")
+		strings.Contains(id, "-edit")
 }
 
 // IsImageGenerationModel reports whether modelID (or explicit metadata) is a
@@ -277,11 +284,11 @@ func supportsVideoImageInput(modelID string) bool {
 	return IsVideoGenerationModel(id, "", "") || strings.Contains(id, "i2v")
 }
 
-// normalizeModelCategory normalizes an explicit model category from hoxi.ai or AINode.
-// Supported categories: chat | coding | tts | realtime | asr | image | video | embedding.
+// normalizeModelCategory normalizes an explicit model category from hoxi.ai or gateways.
+// Supported categories: chat | coding | tts | realtime | asr | image | image_translate | video | embedding | rerank | moderation | utility.
 func normalizeModelCategory(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "chat", "coding", "tts", "realtime", "asr", "image", "video", "embedding":
+	case "chat", "coding", "tts", "realtime", "asr", "image", "image_translate", "video", "embedding", "rerank", "moderation", "utility":
 		return strings.ToLower(strings.TrimSpace(raw))
 	default:
 		return ""
@@ -302,6 +309,17 @@ func inferModelCategory(modelID, explicitCategory, modality string) string {
 	id := strings.ToLower(strings.TrimSpace(modelID))
 	mod := strings.ToLower(strings.TrimSpace(modality))
 
+	if llm.IsExcludedUtilityModel(id, mod) {
+		return "utility"
+	}
+	if mod == "translate_image" || mod == "translate_image_task" ||
+		strings.Contains(id, "alimt-image-translate") ||
+		strings.Contains(id, "image-translate-editor") ||
+		strings.Contains(id, "mt-image") ||
+		strings.Contains(id, "image-translate") ||
+		strings.Contains(id, "image_translate") {
+		return "image_translate"
+	}
 	for _, tok := range []string{"realtime", "qwen-omni"} {
 		if strings.Contains(id, tok) {
 			return "realtime"
@@ -317,14 +335,26 @@ func inferModelCategory(modelID, explicitCategory, modality string) string {
 			return "asr"
 		}
 	}
-	if mod == "audio" {
+	if mod == "audio" || mod == "tts" {
 		return "tts"
+	}
+	if mod == "asr" {
+		return "asr"
 	}
 	if mod == "video" {
 		return "video"
 	}
 	if mod == "image" || isGeminiImageModelID(id) {
 		return "image"
+	}
+	if mod == "rerank" || strings.Contains(id, "rerank") {
+		return "rerank"
+	}
+	if mod == "moderation" || strings.Contains(id, "moderation") {
+		return "moderation"
+	}
+	if mod == "embedding" {
+		return "embedding"
 	}
 	for _, tok := range []string{
 		"dall-e", "gpt-image", "chatgpt-image", "gpt-4o-image", "imagen",
@@ -341,7 +371,7 @@ func inferModelCategory(modelID, explicitCategory, modality string) string {
 			return "video"
 		}
 	}
-	for _, tok := range []string{"embedding", "embed", "rerank", "bge-", "moderation"} {
+	for _, tok := range []string{"embedding", "embed", "bge-"} {
 		if strings.Contains(id, tok) {
 			return "embedding"
 		}
@@ -585,9 +615,10 @@ func normalizeDocModelVariants(doc map[string]interface{}) {
 				continue
 			}
 			explicitCat, _ := mObj["category"].(string)
+			explicitMod, _ := mObj["modality"].(string)
 			normExplicitCat := normalizeModelCategory(explicitCat)
 			explicitConversational := normExplicitCat == "chat" || normExplicitCat == "coding"
-			cat := inferModelCategory(mid, explicitCat, "")
+			cat := inferModelCategory(mid, explicitCat, explicitMod)
 			isImageGen := !explicitConversational && (cat == "image" || hasImageOutputModality(mObj))
 			isVideoGen := !explicitConversational && !isImageGen && (cat == "video" || hasVideoOutputModality(mObj))
 			isChat := !isImageGen && !isVideoGen && isConversationalCategory(cat)
@@ -629,8 +660,16 @@ func normalizeDocModelVariants(doc map[string]interface{}) {
 				continue
 			}
 
+			normCaps := extractModelCapabilitiesFromConfig(mid, mObj)
+			_, hasExplicitCapTags := stringSliceFromAny(mObj["capabilityTags"])
+			if !hasExplicitCapTags {
+				_, hasExplicitCapTags = stringSliceFromAny(mObj["capabilities"])
+			}
+			isPureTextModality := strings.EqualFold(strings.TrimSpace(explicitMod), "text") ||
+				(hasExplicitCapTags && !normCaps.Has(llm.CapabilityVision) && !normCaps.Has(llm.CapabilityImageEdit)) ||
+				llm.IsExcludedUtilityModel(mid, explicitMod)
 			if !hasExplicitAttachment {
-				if hasImageInputModality(mObj) || isChat {
+				if hasImageInputModality(mObj) || (isChat && !isPureTextModality) {
 					attachBool = true
 				}
 				mObj["attachment"] = attachBool

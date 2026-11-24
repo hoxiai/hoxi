@@ -19,7 +19,13 @@ import {
   supportsMultimodalImageEditModelID,
   type FreeTierGuideItem,
 } from "./auto-models";
+import {
+  normalizeModelCapabilities,
+  type ImageTranslateOutputMode,
+  type ModelCapability,
+} from "./model-capabilities";
 import { ensureLocalCLIStatusLoaded, localCLIStatusItems, setLocalCLIStatusItems } from "./handoff";
+import { refreshMediaCapabilities } from "./media-options";
 import { parseModelString, updateSessionAI } from "./session-ai";
 import {
   loadAgents,
@@ -39,7 +45,13 @@ import {
   type SelectedModel,
 } from "./workspace-state";
 
-export type CustomModelCategory = "chat" | "image" | "audio" | "embedding";
+export type CustomModelCategory =
+  | "chat"
+  | "image"
+  | "image_translate"
+  | "video"
+  | "audio"
+  | "embedding";
 
 export interface CustomProviderModelDraft {
   id: string;
@@ -50,6 +62,9 @@ export interface CustomProviderModelDraft {
   pdf?: boolean;
   media?: boolean;
   category?: CustomModelCategory;
+  modality?: string;
+  capabilityTags?: ModelCapability[];
+  imageTranslateOutputModes?: ImageTranslateOutputMode[];
   free?: boolean;
 }
 
@@ -135,6 +150,7 @@ export async function connectProviderWithKey(opts: {
     loadProviders(),
     ensureLocalCLIStatusLoaded(true),
   ]);
+  void refreshMediaCapabilities();
 
   if (normalizedCustomModelID) {
     selectProviderModelPreservingBusySession({ providerID: pid, modelID: normalizedCustomModelID });
@@ -150,22 +166,42 @@ export async function saveCustomProvider(input: SaveCustomProviderInput): Promis
   const previous = workspace.hoxiProviders?.[pid] ?? workspace.globalConfig?.provider?.[pid] ?? {};
   const effectiveNpm = input.npm || inferProviderNpmFromEndpoint(pid, input.baseURL) || "@ai-sdk/openai-compatible";
 
+  const previousMediaModels =
+    previous?.mediaModels && typeof previous.mediaModels === "object"
+      ? (previous.mediaModels as Record<string, unknown>)
+      : {};
   const nextModels: Record<string, any> = {};
-  let firstModelID: string | undefined;
+  const nextMediaModels: Record<string, any> = {};
+  let firstChatModelID: string | undefined;
+  let firstSessionModelID: string | undefined;
   for (const m of input.models) {
     const mid = normalizeModelIDForProtocol(m.id, effectiveNpm);
     if (!mid) continue;
-    if (!firstModelID) firstModelID = mid;
+    const normalizedCaps = normalizeModelCapabilities({
+      modelID: mid,
+      modality: m.modality,
+      category: m.category,
+      capabilities: m.capabilityTags,
+      imageTranslateOutputModes: m.imageTranslateOutputModes,
+      attachment: m.image,
+      supportsImageInput: m.image,
+    });
     const inferredCat: CustomModelCategory =
       m.category ||
-      (inferDedicatedMediaModality(mid) === "image"
+      (normalizedCaps.capabilities.includes("image_translate")
+        ? "image_translate"
+        : normalizedCaps.capabilities.includes("image_generate") ||
+          normalizedCaps.capabilities.includes("image_edit")
         ? "image"
-        : /(whisper|sensevoice|paraformer|transcribe|tts|speech)/i.test(mid)
+        : normalizedCaps.capabilities.includes("video")
+        ? "video"
+        : normalizedCaps.capabilities.includes("tts") || normalizedCaps.capabilities.includes("asr")
         ? "audio"
-        : /(embedding|embed|bge-)/i.test(mid)
+        : normalizedCaps.capabilities.includes("embedding") || normalizedCaps.capabilities.includes("rerank")
         ? "embedding"
         : "chat");
     const isImgGen = inferredCat === "image";
+    const isVideoGen = inferredCat === "video";
     const isUtility = inferredCat !== "chat";
     const allowTools = isUtility ? false : m.toolCall !== false;
     const allowReasoning = isUtility ? false : Boolean(m.reasoning);
@@ -176,9 +212,15 @@ export async function saveCustomProvider(input: SaveCustomProviderInput): Promis
     if (allowImg) inputMods.push("image");
     if (allowPdf) inputMods.push("pdf");
     if (allowMedia) inputMods.push("audio", "video");
-    nextModels[mid] = {
+    const outputMods = isImgGen ? ["text", "image"] : isVideoGen ? ["video"] : ["text"];
+    const modelEntry = {
       name: (m.name || mid).trim(),
       category: inferredCat,
+      ...(m.modality ? { modality: m.modality } : {}),
+      capabilityTags: normalizedCaps.capabilities,
+      ...(normalizedCaps.imageTranslate?.outputModes?.length
+        ? { imageTranslate: { outputModes: normalizedCaps.imageTranslate.outputModes } }
+        : {}),
       tool_call: allowTools,
       attachment: Boolean(allowImg || allowPdf || allowMedia),
       reasoning: allowReasoning,
@@ -196,9 +238,25 @@ export async function saveCustomProvider(input: SaveCustomProviderInput): Promis
       },
       modalities: {
         input: inputMods,
-        output: isImgGen ? ["text", "image"] : ["text"],
+        output: outputMods,
       },
     };
+    const isPureMediaOrUtility =
+      inferredCat === "image_translate" ||
+      inferredCat === "embedding" ||
+      inferredCat === "audio" ||
+      normalizedCaps.capabilities.length === 0 ||
+      (inferredCat !== "chat" && mid in previousMediaModels);
+    if (isPureMediaOrUtility) {
+      nextMediaModels[mid] = modelEntry;
+    } else {
+      nextModels[mid] = modelEntry;
+      if (!firstChatModelID && normalizedCaps.capabilities.includes("chat")) {
+        firstChatModelID = mid;
+      } else if (!firstSessionModelID && (isImgGen || isVideoGen)) {
+        firstSessionModelID = mid;
+      }
+    }
   }
 
   const nextHeaders: Record<string, string> = {};
@@ -235,20 +293,26 @@ export async function saveCustomProvider(input: SaveCustomProviderInput): Promis
     npm: effectiveNpm,
     options: nextOptions,
     models: nextModels,
+    ...(Object.keys(nextMediaModels).length > 0 ? { mediaModels: nextMediaModels } : {}),
   });
   await Promise.all([
     loadProviders(),
     ensureLocalCLIStatusLoaded(true),
   ]);
+  void refreshMediaCapabilities();
 
+  const primarySelectableID = firstChatModelID || firstSessionModelID;
   const cur = workspace.selectedModel;
-  if (firstModelID) {
+  if (primarySelectableID) {
     if (!cur || cur.providerID === pid) {
-      const targetModelID = cur?.providerID === pid && nextModels[cur.modelID] ? cur.modelID : firstModelID;
+      const targetModelID =
+        cur?.providerID === pid && nextModels[cur.modelID] ? cur.modelID : primarySelectableID;
       selectProviderModelPreservingBusySession({ providerID: pid, modelID: targetModelID });
     } else {
-      pushRecentModel({ providerID: pid, modelID: firstModelID });
+      pushRecentModel({ providerID: pid, modelID: primarySelectableID });
     }
+  } else if (cur?.providerID === pid && !nextModels[cur.modelID]) {
+    reconcileSelectionAfterProviderDisconnect([pid]);
   }
 }
 
@@ -314,6 +378,7 @@ export async function disconnectProvider(providerID: string): Promise<void> {
     loadProviders(true),
     ensureLocalCLIStatusLoaded(true),
   ]);
+  void refreshMediaCapabilities();
   reconcileSelectionAfterProviderDisconnect([pid]);
 }
 
@@ -327,6 +392,7 @@ export async function toggleDisabledProvider(providerID: string, disabled: boole
   await hoxiAPI.updateGlobalConfig({ disabled_providers: nextList });
   await hoxiAPI.disposeGlobal().catch(() => {});
   await loadProviders();
+  void refreshMediaCapabilities();
 }
 
 /** Installs the pinned engine when missing, or restarts the supervised daemon. */
@@ -514,10 +580,27 @@ export async function connectProviderWithMcpOAuth(opts: {
 
       if (pollRes.status === "authorized") {
         await loadProviders(true);
+        void refreshMediaCapabilities();
+        const chatSyncedID = (pollRes.models || []).find((m) => {
+          const mid = m?.id?.trim();
+          if (!mid) return false;
+          return normalizeModelCapabilities({
+            modelID: mid,
+            modality: m.modality,
+            category: m.category,
+            capabilities: m.capabilities,
+            imageTranslate: m.image_translate,
+          }).capabilities.includes("chat");
+        })?.id?.trim();
+        const fallbackStoredID = Object.keys(workspace.hoxiProviders?.[pid]?.models || {}).find(
+          (mid) =>
+            normalizeModelCapabilities({
+              modelID: mid,
+              ...(workspace.hoxiProviders?.[pid]?.models?.[mid] || {}),
+            }).capabilities.includes("chat")
+        );
         const firstModelID =
-          pollRes.models?.[0]?.id?.trim() ||
-          Object.keys(workspace.hoxiProviders?.[pid]?.models || {})[0] ||
-          opts.recommendedModels?.[0]?.trim();
+          chatSyncedID || fallbackStoredID || opts.recommendedModels?.[0]?.trim();
         if (firstModelID) {
           if (shouldAutoSelectProvisionedModel(pid)) {
             selectProviderModelPreservingBusySession({ providerID: pid, modelID: firstModelID });

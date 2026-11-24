@@ -2,19 +2,118 @@ part of 'ai_workspace_controller.dart';
 
 /// Conversation SSE stream lifecycle, reconnection backoff, and event application.
 mixin _AiWorkspaceStream on Notifier<AiWorkspaceState> {
+  static const Duration _liveSseGraceWindow = Duration(seconds: 6);
+  static const Duration _recentTerminalGuardWindow = Duration(seconds: 6);
+  static const Duration _quietStreamInitialCheckDelay = Duration(seconds: 5);
+  static const Duration _quietStreamActiveCheckDelay = Duration(seconds: 10);
+
   Timer? _streamReconnectTimer;
+  Timer? _streamQuietCheckTimer;
   StreamSubscription<String>? _streamSubscription;
   CancelToken? _streamCancelToken;
   int? _streamSessionId;
   bool _streamConnecting = false;
   bool _streamSuspended = false;
   int _streamReconnectAttempts = 0;
+  int _streamTerminalSeq = 0;
+  int? _lastSseRunningSessionId;
+  DateTime? _lastSseRunningAt;
+  final Map<int, DateTime> _recentTerminalAtBySessionId = <int, DateTime>{};
   final Map<int, int> _lastSseSeqBySessionId = <int, int>{};
   int? _stoppedSessionId;
   DateTime? _stoppedUntil;
 
   AiWorkspaceRepository get _repo;
-  Future<void> refreshCurrentSession({bool showLoading = false});
+  Future<void> refreshCurrentSession({
+    bool showLoading = false,
+    bool trustServerState = false,
+  });
+  void drainNextQueuedPromptIfIdle();
+
+  void _clearLiveSseRunning([int? sessionId]) {
+    if (sessionId == null || _lastSseRunningSessionId == sessionId) {
+      _lastSseRunningSessionId = null;
+      _lastSseRunningAt = null;
+    }
+  }
+
+  bool _hasRecentLiveSseRunning(int sessionId) {
+    if (_streamSubscription == null || state.isStreamReconnecting) return false;
+    final lastAt = _lastSseRunningAt;
+    if (_lastSseRunningSessionId != sessionId || lastAt == null) return false;
+    return DateTime.now().difference(lastAt) < _liveSseGraceWindow;
+  }
+
+  void _markRecentlyTerminal(int sessionId) {
+    _recentTerminalAtBySessionId[sessionId] = DateTime.now();
+  }
+
+  void _recordTerminalTransition(int sessionId) {
+    _streamTerminalSeq++;
+    _clearLiveSseRunning(sessionId);
+    _markRecentlyTerminal(sessionId);
+    _cancelStreamQuietWatchdog();
+  }
+
+  void _clearRecentTerminal(int sessionId) {
+    _recentTerminalAtBySessionId.remove(sessionId);
+  }
+
+  bool _isRecentlyTerminal(int sessionId) {
+    final ts = _recentTerminalAtBySessionId[sessionId];
+    if (ts == null) return false;
+    if (DateTime.now().difference(ts) < _recentTerminalGuardWindow) {
+      return true;
+    }
+    _recentTerminalAtBySessionId.remove(sessionId);
+    return false;
+  }
+
+  void _cancelStreamQuietWatchdog() {
+    _streamQuietCheckTimer?.cancel();
+    _streamQuietCheckTimer = null;
+  }
+
+  void _syncStreamQuietWatchdog() {
+    final sessionId = state.currentSession?.id;
+    final isPotentiallyRunning =
+        state.isStreaming ||
+        state.currentStage == 'running' ||
+        state.currentStage == 'executing' ||
+        state.currentStage == 'instruction_queued';
+    if (sessionId == null ||
+        !isPotentiallyRunning ||
+        state.isSending ||
+        state.currentStage == 'awaiting_approval' ||
+        _streamSuspended ||
+        state.isStreamReconnecting) {
+      _cancelStreamQuietWatchdog();
+      return;
+    }
+    _streamQuietCheckTimer?.cancel();
+    final hasLiveActivity =
+        _lastSseRunningSessionId == sessionId && _lastSseRunningAt != null;
+    final delay = hasLiveActivity
+        ? _quietStreamActiveCheckDelay
+        : _quietStreamInitialCheckDelay;
+    _streamQuietCheckTimer = Timer(delay, () {
+      _streamQuietCheckTimer = null;
+      if (!ref.mounted ||
+          _streamSuspended ||
+          state.isSending ||
+          state.currentSession?.id != sessionId ||
+          state.currentStage == 'awaiting_approval') {
+        return;
+      }
+      final stillPotentiallyRunning =
+          state.isStreaming ||
+          state.currentStage == 'running' ||
+          state.currentStage == 'executing' ||
+          state.currentStage == 'instruction_queued';
+      if (!stillPotentiallyRunning) return;
+      unawaited(refreshCurrentSession(trustServerState: true));
+    });
+  }
 
   void _markSessionStopped(int sessionId) {
     _stoppedSessionId = sessionId;
@@ -107,12 +206,14 @@ mixin _AiWorkspaceStream on Notifier<AiWorkspaceState> {
       return;
     }
     _streamSubscription = null;
+    _clearLiveSseRunning(sessionId);
+    _cancelStreamQuietWatchdog();
     final delay = codeStreamReconnectDelay(_streamReconnectAttempts++);
     state = state.copyWith(isStreamReconnecting: true);
     _streamReconnectTimer = Timer(delay, () {
       _streamReconnectTimer = null;
       if (!ref.mounted || _streamSessionId != sessionId) return;
-      refreshCurrentSession().whenComplete(() {
+      refreshCurrentSession(trustServerState: true).whenComplete(() {
         if (!ref.mounted) return;
         _connectConversationStream(sessionId);
       });
@@ -124,6 +225,8 @@ mixin _AiWorkspaceStream on Notifier<AiWorkspaceState> {
     _streamSessionId = null;
     _streamReconnectTimer?.cancel();
     _streamReconnectTimer = null;
+    _cancelStreamQuietWatchdog();
+    _clearLiveSseRunning();
     _streamCancelToken?.cancel();
     _streamCancelToken = null;
     await _streamSubscription?.cancel();
@@ -178,8 +281,16 @@ mixin _AiWorkspaceStream on Notifier<AiWorkspaceState> {
 
   void syncFromTaskEntities(List<TaskEntity> taskEntities) {
     if (!ref.mounted) return;
-    final activeId = (state.isStreaming || state.isSending)
-        ? state.currentSession?.id
+    final currentId = state.currentSession?.id;
+    final activeId = (state.isStreaming || state.isSending) ? currentId : null;
+    final protectIdleId =
+        currentId != null &&
+            !state.isAiThinking &&
+            (_isRecentlyTerminal(currentId) ||
+                (_streamSessionId == currentId &&
+                    _streamSubscription != null &&
+                    !state.isStreamReconnecting))
+        ? currentId
         : null;
     final synced = applyTaskEntitiesToWorkspace(
       sessions: state.sessions,
@@ -187,28 +298,35 @@ mixin _AiWorkspaceStream on Notifier<AiWorkspaceState> {
       currentSession: state.currentSession,
       taskEntities: taskEntities,
       activeStreamingSessionId: activeId,
+      protectedIdleSessionId: protectIdleId,
     );
     if (identical(synced.sessions, state.sessions) &&
         identical(synced.tasks, state.tasks) &&
         identical(synced.current, state.currentSession)) {
       return;
     }
+    final nextStage =
+        synced.current != null && synced.current!.id == state.currentSession?.id
+        ? synced.current!.currentStage
+        : state.currentStage;
     state = state.copyWith(
       sessions: synced.sessions,
       tasks: synced.tasks,
       currentSession: synced.current,
-      currentStage:
-          synced.current != null && synced.current!.id == state.currentSession?.id
-          ? synced.current!.currentStage
-          : state.currentStage,
+      currentStage: nextStage,
     );
+    _syncStreamQuietWatchdog();
+    if (!state.isAiThinking && !state.isSending) {
+      drainNextQueuedPromptIfIdle();
+    }
   }
 
   Future<void> resumeConversationStream() async {
+    final wasSuspended = _streamSuspended;
     _streamSuspended = false;
     final sessionId = state.currentSession?.id;
     if (sessionId == null) return;
-    await refreshCurrentSession();
+    await refreshCurrentSession(trustServerState: wasSuspended);
     if (!_streamSuspended && state.currentSession?.id == sessionId) {
       _connectConversationStream(sessionId);
     }
@@ -227,7 +345,9 @@ mixin _AiWorkspaceStream on Notifier<AiWorkspaceState> {
       }
     }
     if (event.type == 'resync') {
-      unawaited(refreshCurrentSession());
+      _clearLiveSseRunning(sessionId);
+      _cancelStreamQuietWatchdog();
+      unawaited(refreshCurrentSession(trustServerState: true));
       return;
     }
     if (event.type == 'session_updated') {
@@ -279,13 +399,20 @@ mixin _AiWorkspaceStream on Notifier<AiWorkspaceState> {
         (previous != null && previous.agentLabel.isNotEmpty)
             ? previous.agentLabel
             : defaultAgentLabel;
-    final isDone = event.type == 'done';
-    final isError = event.type == 'error';
-    final isRunning =
-        !isDone &&
-        !isError &&
-        event.status != 'completed' &&
-        event.status != 'failed';
+    final isToolOrSkillTerminal =
+        (event.activityKind == 'tool' || event.activityKind == 'skill') &&
+        (event.status == 'completed' || event.status == 'failed');
+    final isStatusTerminalIdle =
+        !isToolOrSkillTerminal &&
+        (event.status == 'idle' ||
+            event.status == 'completed' ||
+            event.status == 'stopped' ||
+            event.status == 'cancelled');
+    final isDone = event.type == 'done' || isStatusTerminalIdle;
+    final isError =
+        event.type == 'error' ||
+        (!isToolOrSkillTerminal && event.status == 'failed');
+    final isRunning = !isDone && !isError;
     final isToolOrSkillEvent =
         (event.activityKind == 'tool' || event.activityKind == 'skill') &&
         event.activity.trim().isNotEmpty;
@@ -442,15 +569,31 @@ mixin _AiWorkspaceStream on Notifier<AiWorkspaceState> {
         event.activityKind != state.streamActivityKind;
     final nextStage = isDone
         ? 'idle'
-        : (isError || event.status == 'failed'
+        : (isError
               ? 'failed'
               : (event.status == 'awaiting_approval' ||
                         event.activityKind == 'approval_waiting' ||
                         event.activityKind == 'question_waiting'
                     ? 'awaiting_approval'
-                    : (event.status == 'running'
+                    : (event.status == 'running' || isToolOrSkillTerminal
                           ? 'running'
                           : state.currentStage)));
+    final nextStreaming =
+        !isDone &&
+        !isError &&
+        nextStage != 'awaiting_approval' &&
+        (event.status == 'running' ||
+            (isToolOrSkillTerminal && state.isStreaming));
+    if (isDone || isError) {
+      _recordTerminalTransition(sessionId);
+    } else if (nextStage == 'awaiting_approval') {
+      _clearLiveSseRunning(sessionId);
+      _cancelStreamQuietWatchdog();
+    } else if (nextStreaming) {
+      _clearRecentTerminal(sessionId);
+      _lastSseRunningSessionId = sessionId;
+      _lastSseRunningAt = DateTime.now();
+    }
     final nextSessionStatus = nextStage == 'running'
         ? 'running'
         : (nextStage == 'failed' ? 'failed' : 'active');
@@ -463,7 +606,7 @@ mixin _AiWorkspaceStream on Notifier<AiWorkspaceState> {
     final stageChanged = nextStage != state.currentStage;
     state = state.copyWith(
       chatHistory: messages,
-      isStreaming: !isDone && !isError && event.status == 'running',
+      isStreaming: nextStreaming,
       currentStage: nextStage,
       currentSession: updatedSession,
       sessions: updatedSession == null
@@ -488,6 +631,7 @@ mixin _AiWorkspaceStream on Notifier<AiWorkspaceState> {
           ? event.message
           : state.errorMessage,
     );
+    _syncStreamQuietWatchdog();
     if (updatedSession != null &&
         (stageChanged ||
             isDone ||
@@ -498,11 +642,9 @@ mixin _AiWorkspaceStream on Notifier<AiWorkspaceState> {
     }
     final toolCompleted =
         event.activityKind == 'tool' && event.status == 'completed';
-    if (isDone ||
-        isError ||
-        approvalChanged ||
-        startedExternalRun ||
-        toolCompleted) {
+    if (isDone || isError) {
+      unawaited(refreshCurrentSession(trustServerState: true));
+    } else if (approvalChanged || startedExternalRun || toolCompleted) {
       unawaited(refreshCurrentSession());
     }
     if (approvalChanged || isDone || isError) {

@@ -3,6 +3,7 @@ import { hoxiAPI, type DevPulseHistoryDay, type DevPulseHistoryResponse, type Mo
 import { leaderboardState, setLeaderboardState } from "../store/leaderboard-state";
 import { setWorkspace, workspace } from "../store/workspace-state";
 import {
+  clearUsageHistoryCache,
   loadUsageHistory,
   priceHistoryDay,
   usageHistory,
@@ -312,6 +313,122 @@ describe("usage history pricing", () => {
     } finally {
       hoxiAPI.getDevPulseHistory = origHistory;
       setWorkspace({ rootDir: savedRoot, activeSessionID: savedSid });
+    }
+  });
+
+  it("slices 7d/14d/30d and covered custom windows from fresh cached overview without refetching", async () => {
+    const origHistory = hoxiAPI.getDevPulseHistory;
+    let fetchCalls = 0;
+    let sawIncludeTools: boolean | undefined = true;
+    const now = new Date();
+    const fmt = (offset: number) => {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    };
+    const days30: DevPulseHistoryDay[] = [];
+    for (let i = -29; i <= 0; i++) {
+      days30.push(historyDay({ date: fmt(i), turns: i + 30 }));
+    }
+    clearUsageHistoryCache();
+    try {
+      hoxiAPI.getDevPulseHistory = async (_days, _dir, window) => {
+        fetchCalls++;
+        sawIncludeTools = window?.includeTools;
+        return {
+          days: days30,
+          startDate: days30[0].date,
+          endDate: days30[days30.length - 1].date,
+          timezone: "UTC",
+        };
+      };
+
+      await loadUsageHistory({ kind: "overview" }, false);
+      assertEqual(fetchCalls, 1, "initial overview fetches once");
+      assertEqual(sawIncludeTools, false, "usage history skips unused SQLite tool scans");
+      assertEqual(usageHistory().length, 30);
+
+      // Re-entering overview within TTL reuses cached overview with zero backend calls.
+      await loadUsageHistory({ kind: "overview" }, false);
+      assertEqual(fetchCalls, 1, "fresh overview remount hits cache");
+
+      // Switching to 7d slices locally from cached overview.
+      await loadUsageHistory({ kind: "days", days: 7 }, false);
+      assertEqual(fetchCalls, 1, "7d slices locally from cached overview");
+      assertEqual(usageHistory().length, 7);
+      assertEqual(usageHistory()[6].date, fmt(0));
+
+      // Covered custom range slices locally too.
+      await loadUsageHistory({ kind: "custom", range: { start: fmt(-4), end: fmt(-2) } }, false);
+      assertEqual(fetchCalls, 1, "covered custom range slices locally");
+      assertEqual(usageHistory().length, 3);
+      assertEqual(usageHistory()[0].date, fmt(-4));
+      assertEqual(usageHistory()[2].date, fmt(-2));
+
+      // Manual refresh bypasses cache.
+      await loadUsageHistory({ kind: "overview" }, true);
+      assertEqual(fetchCalls, 2, "manual refresh hits backend");
+    } finally {
+      clearUsageHistoryCache();
+      hoxiAPI.getDevPulseHistory = origHistory;
+    }
+  });
+
+  it("clears stale data when switching to an uncovered selection and preserves it on same-selection refresh", async () => {
+    const origHistory = hoxiAPI.getDevPulseHistory;
+    const now = new Date();
+    const fmt = (offset: number) => {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    };
+    const overviewDays = [historyDay({ date: fmt(-1), turns: 2 }), historyDay({ date: fmt(0), turns: 5 })];
+    let rejectCustom!: (err: Error) => void;
+    let resolveRefresh!: (res: DevPulseHistoryResponse) => void;
+    clearUsageHistoryCache();
+    try {
+      hoxiAPI.getDevPulseHistory = (_days, _dir, window) => {
+        if (window?.startDate === "2024-01-01") {
+          return new Promise<DevPulseHistoryResponse>((_, reject) => {
+            rejectCustom = reject;
+          });
+        }
+        if (window?.refresh) {
+          return new Promise<DevPulseHistoryResponse>((resolve) => {
+            resolveRefresh = resolve;
+          });
+        }
+        return Promise.resolve({
+          days: overviewDays,
+          startDate: overviewDays[0].date,
+          endDate: overviewDays[1].date,
+          timezone: "UTC",
+        });
+      };
+
+      await loadUsageHistory({ kind: "overview" }, false);
+      assertEqual(usageHistory().length, 2);
+
+      // Manual refresh of the same selection keeps existing rows visible while loading.
+      const pRefresh = loadUsageHistory({ kind: "overview" }, true);
+      assertEqual(usageHistoryLoading(), true);
+      assertEqual(usageHistory().length, 2, "same-selection refresh preserves existing data");
+      resolveRefresh({
+        days: overviewDays,
+        startDate: overviewDays[0].date,
+        endDate: overviewDays[1].date,
+        timezone: "UTC",
+      });
+      await pRefresh;
+
+      // Switching to an uncovered older custom range clears stale overview data immediately and stays empty on error.
+      const pCustom = loadUsageHistory({ kind: "custom", range: { start: "2024-01-01", end: "2024-01-07" } }, false);
+      assertEqual(usageHistoryLoading(), true);
+      assertEqual(usageHistory().length, 0, "uncovered selection must not render previous selection rows while loading");
+      rejectCustom(new Error("boom"));
+      await pCustom;
+      assertEqual(usageHistory().length, 0, "failed uncovered selection must remain empty");
+    } finally {
+      clearUsageHistoryCache();
+      hoxiAPI.getDevPulseHistory = origHistory;
     }
   });
 });

@@ -103,8 +103,8 @@ func TestGeminiStreamJSONTranslation(t *testing.T) {
 	if tr.MsgInfo.Tokens == nil {
 		t.Fatal("expected token usage on tr.MsgInfo")
 	}
-	if tr.MsgInfo.Tokens.Input != 1200 || tr.MsgInfo.Tokens.Output != 300 || tr.MsgInfo.Tokens.Reasoning != 50 || tr.MsgInfo.Tokens.Cache.Read != 400 {
-		t.Fatalf("unexpected tokens: %+v", tr.MsgInfo.Tokens)
+	if tr.MsgInfo.Tokens.Input != 800 || tr.MsgInfo.Tokens.Output != 250 || tr.MsgInfo.Tokens.Reasoning != 50 || tr.MsgInfo.Tokens.Cache.Read != 400 || tr.MsgInfo.Tokens.Total != 1500 {
+		t.Fatalf("expected disjoint gemini tokens (in=800 out=250 reasoning=50 cacheRead=400 total=1500), got %+v", tr.MsgInfo.Tokens)
 	}
 
 	var sawBash, sawEdit, sawText, sawReasoning bool
@@ -258,6 +258,95 @@ func TestGeminiCLIAgyFallbackAndTranslation(t *testing.T) {
 	}
 	if tr.MsgInfo.ModelID != "gemini-4-argon" {
 		t.Fatalf("MsgInfo.ModelID = %q, want gemini-4-argon", tr.MsgInfo.ModelID)
+	}
+	if tok := tr.MsgInfo.Tokens; tok == nil || tok.Input != 500 || tok.Output != 40 || tok.Reasoning != 20 || tok.Cache.Read != 100 || tok.Total != 660 {
+		t.Fatalf("disjoint agy total_tokens fixture should preserve output=40 reasoning=20, got %+v", tok)
+	}
+}
+
+func TestGeminiStatsDisjointNormalization(t *testing.T) {
+	cases := []struct {
+		name  string
+		line  string
+		in    int
+		out   int
+		reas  int
+		cache int
+		total int
+	}{
+		{
+			name:  "top-level inclusive without models",
+			line:  `{"type":"result","status":"success","stats":{"total_tokens":1500,"input_tokens":1200,"output_tokens":300,"thoughts":50,"cached":400}}`,
+			in:    800,
+			out:   250,
+			reas:  50,
+			cache: 400,
+			total: 1500,
+		},
+		{
+			name:  "models only with candidates",
+			line:  `{"type":"result","status":"success","stats":{"models":{"gemini-2.5-pro":{"tokens":{"prompt":1200,"candidates":250,"thoughts":50,"cached":400}}}}}`,
+			in:    800,
+			out:   250,
+			reas:  50,
+			cache: 400,
+			total: 1500,
+		},
+		{
+			name:  "already disjoint stats",
+			line:  `{"type":"result","status":"success","stats":{"total_tokens":1500,"input_tokens":800,"output_tokens":250,"thoughts":50,"cached":400}}`,
+			in:    800,
+			out:   250,
+			reas:  50,
+			cache: 400,
+			total: 1500,
+		},
+		{
+			name:  "inclusive cache equal to thoughts must still subtract cache",
+			line:  `{"type":"result","status":"success","stats":{"total_tokens":1700,"input_tokens":1000,"output_tokens":700,"thoughts":500,"cached":500}}`,
+			in:    500,
+			out:   200,
+			reas:  500,
+			cache: 500,
+			total: 1700,
+		},
+		{
+			name:  "inclusive cache equal to thoughts with models candidates",
+			line:  `{"type":"result","status":"success","stats":{"total_tokens":1700,"input_tokens":1000,"output_tokens":700,"cached":500,"models":{"gemini-2.5-pro":{"tokens":{"prompt":1000,"candidates":200,"thoughts":500,"cached":500}}}}}`,
+			in:    500,
+			out:   200,
+			reas:  500,
+			cache: 500,
+			total: 1700,
+		},
+		{
+			name:  "multi-model mixed candidates and inclusive output",
+			line:  `{"type":"result","status":"success","stats":{"models":{"gemini-2.5-pro":{"tokens":{"prompt":1000,"candidates":200,"thoughts":50,"cached":400}},"gemini-2.5-flash":{"tokens":{"prompt":200,"output":80,"thoughts":30,"cached":0}}}}}`,
+			in:    800,
+			out:   250,
+			reas:  80,
+			cache: 400,
+			total: 1530,
+		},
+		{
+			name:  "partial models with thoughts only supplements top-level stats",
+			line:  `{"type":"result","status":"success","stats":{"total_tokens":1500,"input_tokens":1200,"output_tokens":300,"cached":400,"models":{"gemini-2.5-pro":{"tokens":{"thoughts":50}}}}}`,
+			in:    800,
+			out:   250,
+			reas:  50,
+			cache: 400,
+			total: 1500,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tr := NewTurnTranslator("ses_gem_norm", string(RuntimeGeminiCLI), "msg_a_1", "msg_u_1", "gemini-cli", "gemini-2.5-pro", "build", "")
+			tr.FeedLine(tc.line)
+			tok := tr.MsgInfo.Tokens
+			if tok == nil || tok.Input != tc.in || tok.Output != tc.out || tok.Reasoning != tc.reas || tok.Cache.Read != tc.cache || tok.Total != tc.total {
+				t.Fatalf("got %+v, want in=%d out=%d reasoning=%d cacheRead=%d total=%d", tok, tc.in, tc.out, tc.reas, tc.cache, tc.total)
+			}
+		})
 	}
 }
 

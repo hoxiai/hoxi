@@ -318,6 +318,87 @@ function parseYamlFrontmatter(
   return { entries, nextIndex: closeIdx + 1 };
 }
 
+function matchDetailsOpenLine(line: string): { open: boolean; rest: string } | null {
+  const m = line.match(/^\s*<details(\s+[^>]*)?>\s*(.*)$/i);
+  if (!m) return null;
+  const attrs = m[1] || "";
+  const open = /\bopen(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?/i.test(attrs);
+  return { open, rest: m[2] || "" };
+}
+
+function parseDetailsBlock(
+  lines: string[],
+  startIdx: number
+): { summary: string; body: string; open: boolean; nextIndex: number } | null {
+  const head = matchDetailsOpenLine(lines[startIdx]);
+  if (!head) return null;
+
+  const collected: string[] = [];
+  let closed = false;
+  let idx = startIdx;
+
+  // Handle single-line `<details><summary>Title</summary>Body</details>`
+  if (head.rest) {
+    const closeInHead = head.rest.match(/([\s\S]*?)<\/details\s*>\s*$/i);
+    if (closeInHead) {
+      collected.push(closeInHead[1]);
+      closed = true;
+      idx = startIdx + 1;
+    } else {
+      collected.push(head.rest);
+      idx = startIdx + 1;
+    }
+  } else {
+    idx = startIdx + 1;
+  }
+
+  let depth = 1;
+  let inFence: { marker: "`" | "~"; count: number } | null = null;
+  while (!closed && idx < lines.length) {
+    const cur = lines[idx];
+    if (inFence) {
+      if (new RegExp(`^\\s*${inFence.marker}{${inFence.count},}\\s*$`).test(cur)) {
+        inFence = null;
+      }
+      collected.push(cur);
+      idx++;
+      continue;
+    }
+    const fence = matchCodeFenceOpen(cur);
+    if (fence) {
+      inFence = { marker: fence.marker, count: fence.count };
+      collected.push(cur);
+      idx++;
+      continue;
+    }
+    const tagRe = /<(\/)?details(?:\s+[^>]*)?>/gi;
+    let tagMatch: RegExpExecArray | null;
+    while ((tagMatch = tagRe.exec(cur)) !== null) {
+      depth += tagMatch[1] ? -1 : 1;
+      if (depth === 0) {
+        const beforeClose = cur.slice(0, tagMatch.index);
+        if (beforeClose.trim()) collected.push(beforeClose);
+        idx++;
+        closed = true;
+        break;
+      }
+    }
+    if (closed) break;
+    collected.push(cur);
+    idx++;
+  }
+
+  const rawInner = collected.join("\n").trim();
+  let summary = "";
+  let body = rawInner;
+  const summaryMatch = rawInner.match(/^<summary(?:\s+[^>]*)?>([\s\S]*?)<\/summary\s*>\s*/i);
+  if (summaryMatch) {
+    summary = summaryMatch[1].replace(/<[^>]+>/g, "").trim();
+    body = rawInner.slice(summaryMatch[0].length).trim();
+  }
+  return { summary, body, open: head.open, nextIndex: idx };
+}
+
 export function parseMarkdownBlocks(src: string): BlockToken[] {
   const blocks: BlockToken[] = [];
   const lines = src.replace(/\r\n/g, "\n").split("\n");
@@ -396,6 +477,19 @@ export function parseMarkdownBlocks(src: string): BlockToken[] {
     if (isHorizontalRule(line)) {
       blocks.push({ type: "hr" });
       i++;
+      continue;
+    }
+
+    // Collapsible `<details><summary>...</summary>...</details>` block
+    const detailsBlock = parseDetailsBlock(lines, i);
+    if (detailsBlock) {
+      blocks.push({
+        type: "details",
+        summary: detailsBlock.summary,
+        body: detailsBlock.body,
+        ...(detailsBlock.open ? { open: true } : {}),
+      });
+      i = detailsBlock.nextIndex;
       continue;
     }
 
@@ -532,6 +626,7 @@ export function parseMarkdownBlocks(src: string): BlockToken[] {
       ) &&
       !matchHeadingLine(lines[i], i === lines.length - 1) &&
       !isHorizontalRule(lines[i]) &&
+      !matchDetailsOpenLine(lines[i]) &&
       !isTableStart(lines, i) &&
       !matchListMarker(lines[i], i === lines.length - 1, false) &&
       !/^>\s?/.test(lines[i])

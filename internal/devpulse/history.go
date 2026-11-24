@@ -120,36 +120,32 @@ func (s *Service) HandleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	endExclusive := end.AddDate(0, 0, 1)
 
-	res := HistoryResponse{
-		StartDate: start.Format("2006-01-02"),
-		EndDate:   end.Format("2006-01-02"),
-		Timezone:  now.Location().String(),
+	includeTools := true
+	if rawTools := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("tools"))); rawTools == "0" || rawTools == "false" {
+		includeTools = false
+	}
+	forced := false
+	if rawRefresh := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("refresh"))); rawRefresh != "" && rawRefresh != "0" && rawRefresh != "false" {
+		forced = true
 	}
 
-	byDate := make(map[string]*HistoryDay, days)
-	day := func(key string) *HistoryDay {
-		if d, ok := byDate[key]; ok {
-			return d
+	res, err := s.getOrComputeHistory(r.Context(), historyQuery{
+		start:        start,
+		end:          end,
+		endExclusive: endExclusive,
+		todayStart:   todayStart,
+		days:         days,
+		dir:          strings.TrimSpace(r.URL.Query().Get("directory")),
+		sessionID:    strings.TrimSpace(r.URL.Query().Get("sessionID")),
+		includeTools: includeTools,
+		forced:       forced,
+	})
+	if err != nil {
+		if r.Context().Err() != nil {
+			return
 		}
-		d := &HistoryDay{Date: key, Models: []HistoryModelStat{}}
-		byDate[key] = d
-		return d
-	}
-
-	s.queryHistoryFromDB(start.UnixMilli(), endExclusive.UnixMilli(), day)
-	s.CollectRunnerHistory(start.UnixMilli(), endExclusive.UnixMilli(), day)
-
-	dir := strings.TrimSpace(r.URL.Query().Get("directory"))
-	sessionID := strings.TrimSpace(r.URL.Query().Get("sessionID"))
-	if targets := s.ResolveGitTargets(dir, sessionID); len(targets) > 0 {
-		s.CollectGitHistory(targets, start, endExclusive, todayStart, day)
-	}
-
-	sortHistoryModels(byDate)
-	res.Days = make([]HistoryDay, 0, days)
-	for i := 0; i < days; i++ {
-		key := start.AddDate(0, 0, i).Format("2006-01-02")
-		res.Days = append(res.Days, *day(key))
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 	writeJSON(w, http.StatusOK, res)
 }
@@ -159,44 +155,61 @@ func historyDayKey(ms int64, loc *time.Location) string {
 }
 
 func (s *Service) queryHistoryFromDB(startMs, endMs int64, day func(string) *HistoryDay) {
+	_ = s.queryHistoryFromDBCtx(context.Background(), startMs, endMs, true, day)
+}
+
+// queryHistoryFromDBCtx returns false when SQLite fails or times out so
+// callers can avoid caching degraded results. Missing DB files return true.
+func (s *Service) queryHistoryFromDBCtx(parentCtx context.Context, startMs, endMs int64, includeTools bool, day func(string) *HistoryDay) bool {
 	dbPath := hoxipaths.DBPath()
 	if dbPath == "" {
-		return
+		return true
 	}
 	if _, err := os.Stat(dbPath); err != nil {
-		return
+		return os.IsNotExist(err)
+	}
+	if parentCtx == nil {
+		parentCtx = context.Background()
 	}
 
 	msgClause := s.notImportedClause("s.title", "m.data", "m.time_created", "s.time_created")
 	partClause := s.notImportedClause("s.title", "p.data", "p.time_created", "s.time_created")
 	sqlQuery := fmt.Sprintf(`
 SELECT
-  COALESCE(date(m.time_created / 1000, 'unixepoch', 'localtime'), '') AS day,
-  COALESCE(m.session_id, ''),
-  COALESCE(json_extract(m.data, '$.providerID'), 'unknown') AS provider_id,
-  COALESCE(json_extract(m.data, '$.modelID'), 'unknown') AS model_id,
+  day,
+  session_id,
+  provider_id,
+  model_id,
   COUNT(*) AS turns,
-  COALESCE(SUM(CAST(COALESCE(json_extract(m.data, '$.tokens.input'), 0) AS INTEGER)), 0) AS input,
-  COALESCE(SUM(CAST(COALESCE(json_extract(m.data, '$.tokens.output'), 0) AS INTEGER)), 0) AS output,
-  COALESCE(SUM(CAST(COALESCE(json_extract(m.data, '$.tokens.reasoning'), 0) AS INTEGER)), 0) AS reasoning,
-  COALESCE(SUM(CAST(COALESCE(json_extract(m.data, '$.tokens.cache.read'), 0) AS INTEGER)), 0) AS cache_read,
-  COALESCE(SUM(CAST(COALESCE(json_extract(m.data, '$.tokens.cache.write'), 0) AS INTEGER)), 0) AS cache_write,
-  COALESCE(SUM(CASE WHEN CAST(COALESCE(json_extract(m.data, '$.time.completed'), 0) AS INTEGER) > m.time_created
-        THEN CAST(COALESCE(json_extract(m.data, '$.time.completed'), 0) AS INTEGER) - m.time_created ELSE 0 END), 0) AS dur_sum,
-  COALESCE(SUM(CASE WHEN CAST(COALESCE(json_extract(m.data, '$.time.completed'), 0) AS INTEGER) > m.time_created
-        THEN 1 ELSE 0 END), 0) AS dur_n
-FROM session s
-CROSS JOIN message m ON m.session_id = s.id
-WHERE m.time_created >= ?
-  AND m.time_created < ?
-  AND json_extract(m.data, '$.role') = 'assistant'
-  AND %s
-  AND (
-    CAST(COALESCE(json_extract(m.data, '$.tokens.input'), 0) AS INTEGER) > 0
-    OR CAST(COALESCE(json_extract(m.data, '$.tokens.output'), 0) AS INTEGER) > 0
-    OR CAST(COALESCE(json_extract(m.data, '$.tokens.cache.read'), 0) AS INTEGER) > 0
-  )
-GROUP BY day, m.session_id, provider_id, model_id
+  COALESCE(SUM(tok_in), 0) AS input,
+  COALESCE(SUM(tok_out), 0) AS output,
+  COALESCE(SUM(tok_reason), 0) AS reasoning,
+  COALESCE(SUM(cache_read), 0) AS cache_read,
+  COALESCE(SUM(cache_write), 0) AS cache_write,
+  COALESCE(SUM(CASE WHEN completed > created THEN completed - created ELSE 0 END), 0) AS dur_sum,
+  COALESCE(SUM(CASE WHEN completed > created THEN 1 ELSE 0 END), 0) AS dur_n
+FROM (
+  SELECT
+    COALESCE(date(m.time_created / 1000, 'unixepoch', 'localtime'), '') AS day,
+    COALESCE(m.session_id, '') AS session_id,
+    COALESCE(json_extract(m.data, '$.providerID'), 'unknown') AS provider_id,
+    COALESCE(json_extract(m.data, '$.modelID'), 'unknown') AS model_id,
+    m.time_created AS created,
+    CAST(COALESCE(json_extract(m.data, '$.time.completed'), 0) AS INTEGER) AS completed,
+    CAST(COALESCE(json_extract(m.data, '$.tokens.input'), 0) AS INTEGER) AS tok_in,
+    CAST(COALESCE(json_extract(m.data, '$.tokens.output'), 0) AS INTEGER) AS tok_out,
+    CAST(COALESCE(json_extract(m.data, '$.tokens.reasoning'), 0) AS INTEGER) AS tok_reason,
+    CAST(COALESCE(json_extract(m.data, '$.tokens.cache.read'), 0) AS INTEGER) AS cache_read,
+    CAST(COALESCE(json_extract(m.data, '$.tokens.cache.write'), 0) AS INTEGER) AS cache_write
+  FROM session s
+  CROSS JOIN message m ON m.session_id = s.id
+  WHERE m.time_created >= ?
+    AND m.time_created < ?
+    AND json_extract(m.data, '$.role') = 'assistant'
+    AND %s
+)
+WHERE tok_in > 0 OR tok_out > 0 OR tok_reason > 0 OR cache_read > 0 OR cache_write > 0
+GROUP BY day, session_id, provider_id, model_id
 ORDER BY day;`, msgClause)
 
 	toolSQL := fmt.Sprintf(`
@@ -222,9 +235,9 @@ FROM (
 GROUP BY day
 ORDER BY day;`, partClause)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(parentCtx, 10*time.Second)
 	defer cancel()
-	_ = sqlitecli.WithReadOnly(ctx, dbPath, 5*time.Second, func(ctx context.Context, db *sql.DB) error {
+	err := sqlitecli.WithReadOnly(ctx, dbPath, 5*time.Second, func(ctx context.Context, db *sql.DB) error {
 		rows, err := db.QueryContext(ctx, sqlQuery, startMs, endMs)
 		if err != nil {
 			return err
@@ -273,16 +286,19 @@ ORDER BY day;`, partClause)
 			day(key).Sessions += len(sessions)
 		}
 
+		if !includeTools {
+			return nil
+		}
 		tRows, err := db.QueryContext(ctx, toolSQL, startMs-partMessageLookbackMs, endMs, startMs, endMs)
 		if err != nil {
-			return nil
+			return err
 		}
 		defer tRows.Close()
 		for tRows.Next() {
 			var trDay string
 			var toolsTotal, toolsFailed int
 			if err := tRows.Scan(&trDay, &toolsTotal, &toolsFailed); err != nil {
-				break
+				return err
 			}
 			if trDay == "" {
 				continue
@@ -291,8 +307,9 @@ ORDER BY day;`, partClause)
 			target.ToolCallsTotal += toolsTotal
 			target.ToolCallsFailed += toolsFailed
 		}
-		return nil
+		return tRows.Err()
 	})
+	return err == nil
 }
 
 func mergeHistoryModel(target *HistoryDay, incoming HistoryModelStat) {

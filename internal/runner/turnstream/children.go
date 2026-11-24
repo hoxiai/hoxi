@@ -204,10 +204,10 @@ func (c *childSink) noteAgyUsage(stepIndex int, u agyUsage) bool {
 	latestStep := -1
 	var latestUsage agyUsage
 	for idx, s := range c.agySteps {
-		in += s.InputTokens
-		out += s.OutputTokens
-		reasoning += s.ThinkingTokens
-		cacheRead += s.CacheReadTokens
+		in += max(0, s.InputTokens)
+		out += s.normalizedOutputTokens()
+		reasoning += max(0, s.ThinkingTokens)
+		cacheRead += max(0, s.CacheReadTokens)
 		if idx >= latestStep {
 			latestStep = idx
 			latestUsage = s

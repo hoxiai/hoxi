@@ -8,6 +8,7 @@ import {
   isModelFree,
   isNonChatUtilityModelID,
 } from "./auto-models";
+import { matchesModelSlot, normalizeStoredModelCapabilities } from "./model-capabilities";
 import { leaderboardState } from "./leaderboard-state";
 import {
   buildModelLimitIndex,
@@ -722,6 +723,14 @@ export const LOCAL_CLI_RUNTIME_PROVIDERS: ReadonlySet<string> = new Set([
  * Claude Code, Antigravity, Qoder) can only be driven by the runner, so they
  * must never be selected for those roles.
  */
+function isChatCapableProviderModel(providerID: string, modelID: string): boolean {
+  if (isNonChatUtilityModelID(modelID)) return false;
+  const prov = workspace.providers.find((p) => p.id === providerID);
+  const mInfo = (prov?.models?.[modelID] ??
+    workspace.hoxiProviders?.[providerID]?.models?.[modelID]) as Record<string, any> | undefined;
+  return matchesModelSlot(normalizeStoredModelCapabilities(modelID, mInfo), "chat");
+}
+
 export function isInternalLLMModel(model?: { providerID?: string; modelID?: string } | null): boolean {
   const providerID = model?.providerID?.trim();
   const modelID = model?.modelID?.trim();
@@ -733,7 +742,7 @@ export function isInternalLLMModel(model?: { providerID?: string; modelID?: stri
   // only reach a provider the user has visibly configured.
   if (!provider) return false;
   if (provider.source === "runner") return false;
-  return Boolean(provider.models?.[modelID]);
+  return Boolean(provider.models?.[modelID]) && isChatCapableProviderModel(providerID, modelID);
 }
 
 /** First candidate that can actually serve an internal HTTP LLM call. */
@@ -755,9 +764,13 @@ export function getInternalLLMProviderModelGroups(): ConnectedProviderGroup[] {
       .filter((p) => p.source !== "runner" && !LOCAL_CLI_RUNTIME_PROVIDERS.has(p.id))
       .map((p) => p.id)
   );
-  return getConnectedProviderModelGroups().filter(
-    (group) => group.providerID !== AUTO_PROVIDER_ID && internalIDs.has(group.providerID)
-  );
+  return getConnectedProviderModelGroups()
+    .filter((group) => group.providerID !== AUTO_PROVIDER_ID && internalIDs.has(group.providerID))
+    .map((group) => ({
+      ...group,
+      models: group.models.filter((m) => isChatCapableProviderModel(group.providerID, m.id)),
+    }))
+    .filter((group) => group.models.length > 0);
 }
 
 export function isHoxiCustomProvider(provider: ProviderInfo | string): boolean {

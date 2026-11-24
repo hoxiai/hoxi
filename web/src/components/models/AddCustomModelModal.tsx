@@ -193,12 +193,17 @@ export function AddCustomModelModal(props: {
     if (!cleanId) return;
     const cleanName = draftName().trim() || cleanId;
     const cat = draftCategory();
+    const guessed = !manualCaps() ? guessFetchedModelDraft({ id: cleanId, name: cleanName }) : null;
     props.setModels((prev) => [
       ...prev.filter((m) => m.id.trim().length > 0 && m.id.trim() !== cleanId),
       {
         id: cleanId,
         name: cleanName,
         category: cat,
+        ...(guessed?.capabilityTags ? { capabilityTags: guessed.capabilityTags } : {}),
+        ...(guessed?.imageTranslateOutputModes
+          ? { imageTranslateOutputModes: guessed.imageTranslateOutputModes }
+          : {}),
         reasoning: cat === "chat" ? draftReasoning() : false,
         image: cat === "chat" || cat === "image" ? draftImage() : false,
         toolCall: cat === "chat" ? draftTools() : false,
@@ -541,6 +546,8 @@ export function AddCustomModelModal(props: {
                 >
                   <option value="chat">{t("models.categoryChat")}</option>
                   <option value="image">{t("models.categoryImageGen")}</option>
+                  <option value="image_translate">{t("models.categoryImageTranslate")}</option>
+                  <option value="video">{t("models.categoryVideoGen")}</option>
                   <option value="audio">{t("models.categoryAudioAsr")}</option>
                   <option value="embedding">{t("models.categoryEmbedding")}</option>
                 </select>

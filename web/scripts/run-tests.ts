@@ -100,6 +100,9 @@ import "../src/__tests__/desktop-window.test";
 import "../src/__tests__/gateway-directory.test";
 import "../src/__tests__/orchestrator-mode.test";
 import "../src/__tests__/schedules.test";
+import "../src/__tests__/context-protocol.test";
+import "../src/__tests__/display-layer.test";
+import "../src/__tests__/model-capabilities.test";
 
 // Guard against orphaned unit tests: every src/__tests__/*.test.{ts,tsx} file
 // must be imported above so newly added suites cannot silently go unexecuted.

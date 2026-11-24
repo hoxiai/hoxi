@@ -6,6 +6,7 @@ import {
   canForkSession,
   canRevertSession,
   forkFromMessage,
+  formatContextPromptForClipboard,
   openAttachmentInInspector,
   openImagePreview,
   resolveTurnSkillStatus,
@@ -41,11 +42,12 @@ export function UserTurnItem(props: {
   });
 
   const onCopyUserMessage = async () => {
-    const text = props.turn.parts
+    const rawText = props.turn.parts
       .filter((p): p is Extract<MessagePart, { type: "text" }> => p.type === "text")
       .map((p) => p.text)
       .join("\n")
       .trim();
+    const text = formatContextPromptForClipboard(rawText);
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);

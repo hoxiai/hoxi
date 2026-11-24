@@ -1,6 +1,7 @@
 package worktree
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -16,8 +17,16 @@ func RunGit(workDir string, args ...string) (string, error) {
 	return runGit(workDir, args...)
 }
 
+func RunGitContext(ctx context.Context, workDir string, args ...string) (string, error) {
+	return runGitContext(ctx, workDir, args...)
+}
+
 func RunGitRaw(workDir string, args ...string) (string, error) {
 	return runGitRaw(workDir, args...)
+}
+
+func RunGitRawContext(ctx context.Context, workDir string, args ...string) (string, error) {
+	return runGitRawContext(ctx, workDir, args...)
 }
 
 func ParseBranchFromPorcelainHeader(headerLine string) string {

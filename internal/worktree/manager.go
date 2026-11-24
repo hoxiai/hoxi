@@ -737,12 +737,23 @@ func ensureGitExclude(repoRoot string, patterns ...string) {
 }
 
 func runGit(workDir string, args ...string) (string, error) {
-	out, err := runGitRaw(workDir, args...)
+	return runGitContext(context.Background(), workDir, args...)
+}
+
+func runGitContext(ctx context.Context, workDir string, args ...string) (string, error) {
+	out, err := runGitRawContext(ctx, workDir, args...)
 	return strings.TrimSpace(out), err
 }
 
 func runGitRaw(workDir string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout)
+	return runGitRawContext(context.Background(), workDir, args...)
+}
+
+func runGitRawContext(ctx context.Context, workDir string, args ...string) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, gitCommandTimeout)
 	defer cancel()
 	cmdArgs := append([]string{"-c", "core.autocrlf=false", "-C", workDir}, args...)
 	cmd := subproc.CommandContext(ctx, "git", cmdArgs...)

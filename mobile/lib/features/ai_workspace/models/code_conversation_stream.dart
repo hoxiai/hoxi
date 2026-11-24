@@ -638,18 +638,37 @@ class CodeConversationStreamParser {
             activityKind: 'question_resolved', activity: '问题已回答，继续执行', message: '',
           );
         }
-        if (resolvedType == 'session.status' &&
-            props['status'] is Map &&
-            props['status']['type'] == 'busy') {
-          return const CodeConversationStreamEvent(
-            type: 'status', runId: 0, content: '', status: 'running',
-            activityKind: 'running', activity: '正在生成回复...', message: '',
-          );
+        if (resolvedType == 'session.status') {
+          final rawStatus = props['status'];
+          final statusType = (rawStatus is Map
+                  ? (rawStatus['type'] ?? rawStatus['status'] ?? '')
+                  : (rawStatus ?? ''))
+              .toString()
+              .toLowerCase()
+              .trim();
+          if (statusType == 'busy' ||
+              statusType == 'running' ||
+              statusType == 'executing') {
+            return const CodeConversationStreamEvent(
+              type: 'status', runId: 0, content: '', status: 'running',
+              activityKind: 'running', activity: '正在生成回复...', message: '',
+            );
+          }
+          if (statusType == 'idle' ||
+              statusType == 'completed' ||
+              statusType == 'stopped' ||
+              statusType == 'aborted' ||
+              statusType == 'cancelled') {
+            _lastEmittedTextPartId = '';
+            _lastEmittedTextMessageId = '';
+            _lastEmittedReasoningPartId = '';
+            return const CodeConversationStreamEvent(
+              type: 'done', runId: 0, content: '', status: 'completed',
+              activityKind: '', activity: '', message: '',
+            );
+          }
         }
-        if (resolvedType == 'session.idle' ||
-            (resolvedType == 'session.status' &&
-                props['status'] is Map &&
-                props['status']['type'] == 'idle')) {
+        if (resolvedType == 'session.idle') {
           _lastEmittedTextPartId = '';
           _lastEmittedTextMessageId = '';
           _lastEmittedReasoningPartId = '';

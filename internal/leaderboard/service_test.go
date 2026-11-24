@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestModelPricingServiceFallback(t *testing.T) {
@@ -120,5 +123,76 @@ func TestHTTPHandlerRoutes(t *testing.T) {
 	}
 	if freeRes.Data == nil || freeRes.Data.Items == nil {
 		t.Fatalf("expected valid free-tiers response envelope, got %+v", freeRes)
+	}
+}
+
+func TestGetModelPricingServesDiskCacheWithoutBlockingOnUpstream(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOXI_HOME", home)
+	cached := ModelPricingResponse{
+		Code:    200,
+		Message: "ok",
+		Data: &ModelPricingData{
+			UpdatedAt: "2026-11-24",
+			Total:     1,
+			Items:     []ModelPricingItem{{Slug: "cached-model", Name: "Cached Model"}},
+		},
+	}
+	raw, err := json.Marshal(cached)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "model-pricing-cache.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer func() {
+		close(release)
+		server.Close()
+	}()
+
+	svc := NewService(server.URL, &http.Client{Timeout: 5 * time.Second})
+	start := time.Now()
+	got, err := svc.GetModelPricing(false)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("GetModelPricing(false): %v", err)
+	}
+	if got.Data == nil || len(got.Data.Items) != 1 || got.Data.Items[0].Slug != "cached-model" {
+		t.Fatalf("expected disk cached model, got %+v", got)
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("GetModelPricing(false) blocked %v instead of returning disk cache immediately", elapsed)
+	}
+
+	// Future mtime (clock skew) must be treated as stale and trigger background refresh.
+	future := time.Now().Add(2 * time.Hour)
+	cachePath := filepath.Join(home, "model-pricing-cache.json")
+	if err := os.Chtimes(cachePath, future, future); err != nil {
+		t.Fatal(err)
+	}
+	refreshed := make(chan struct{}, 1)
+	refreshSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case refreshed <- struct{}{}:
+		default:
+		}
+		_ = json.NewEncoder(w).Encode([]ModelPricingItem{{Slug: "fresh-model", Name: "Fresh Model"}})
+	}))
+	defer refreshSrv.Close()
+
+	svc2 := NewService(refreshSrv.URL, refreshSrv.Client())
+	if _, err := svc2.GetModelPricing(false); err != nil {
+		t.Fatalf("GetModelPricing(false) with future mtime: %v", err)
+	}
+	select {
+	case <-refreshed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected future-mtime pricing disk cache to trigger background refresh")
 	}
 }

@@ -56,6 +56,21 @@ func TestTranslateCodexAndOpenCodeCLIStreams(t *testing.T) {
 	if !trCdx.IsTurnFinished() || len(evtsDone) != 3 {
 		t.Fatalf("expected codex turn finished with 3 terminal events, got finished=%v evts=%d", trCdx.IsTurnFinished(), len(evtsDone))
 	}
+	if tok := trCdx.MsgInfo.Tokens; tok == nil || tok.Input != 800 || tok.Cache.Read != 400 || tok.Output != 80 || tok.Reasoning != 0 || tok.Total != 1280 {
+		t.Fatalf("codex tokens must subtract cached_input_tokens from input_tokens: got %+v", tok)
+	}
+
+	trCdxReason := NewTurnTranslator("ses_cdx_2", string(RuntimeCodex), "msg_a_r", "msg_u_r", "codex", "o3", "build", "")
+	trCdxReason.FeedLine(`{"type":"turn.completed","usage":{"input_tokens":1200,"cached_input_tokens":400,"output_tokens":80,"reasoning_output_tokens":30}}`)
+	if tok := trCdxReason.MsgInfo.Tokens; tok == nil || tok.Input != 800 || tok.Cache.Read != 400 || tok.Output != 50 || tok.Reasoning != 30 || tok.Total != 1280 {
+		t.Fatalf("codex tokens must subtract reasoning_output_tokens from output_tokens: got %+v", tok)
+	}
+
+	trCdxReasonOnly := NewTurnTranslator("ses_cdx_3", string(RuntimeCodex), "msg_a_ro", "msg_u_ro", "codex", "o3", "build", "")
+	trCdxReasonOnly.FeedLine(`{"type":"turn.completed","usage":{"input_tokens":500,"cached_input_tokens":200,"output_tokens":0,"reasoning_output_tokens":45}}`)
+	if tok := trCdxReasonOnly.MsgInfo.Tokens; tok == nil || tok.Input != 300 || tok.Cache.Read != 200 || tok.Output != 0 || tok.Reasoning != 45 || tok.Total != 545 {
+		t.Fatalf("codex reasoning-only turn must retain reasoning_output_tokens when output_tokens=0: got %+v", tok)
+	}
 
 	trOC := NewTurnTranslator("ses_hoxi_1", string(RuntimeOpenCode), "msg_a_2", "msg_u_2", "opencode", "openai/gpt-5", "build", "")
 	trOC.FeedLine(`{"type":"text","sessionID":"ses_oc_99","part":{"id":"prt_1","type":"text","text":"Done from OpenCode CLI"}}`)

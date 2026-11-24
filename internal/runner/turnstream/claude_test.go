@@ -239,7 +239,8 @@ func TestAgyStepUsageStreamsImmediatelyAndIgnoresCumulativeOrZeroResultOverwrite
 	}
 
 	// Second step in the same turn (where agy sets total_tokens = input_tokens + output_tokens
-	// without cache_read_tokens): Input/Output/Reasoning/Cache.Read accumulate across steps,
+	// without cache_read_tokens, and output_tokens=120 already includes thinking_tokens=40):
+	// Input/Output/Reasoning/Cache.Read accumulate disjointly across steps (out = 80 + (120-40) = 160),
 	// while Total reflects the latest step's full context window (input + cache_read + output).
 	evts2 := tr.FeedLine(`{"event":"step_update","step_update":{"conversation_id":"conv-1","step_index":12,"state":"DONE","step_type":"agent_response","text_delta":"Step 12","usage":{"input_tokens":300,"output_tokens":120,"thinking_tokens":40,"cache_read_tokens":2000,"total_tokens":420}}}`)
 	for _, evt := range evts2 {
@@ -250,10 +251,10 @@ func TestAgyStepUsageStreamsImmediatelyAndIgnoresCumulativeOrZeroResultOverwrite
 		}
 	}
 	if stepUpdated == nil || stepUpdated.Tokens == nil ||
-		stepUpdated.Tokens.Input != 1500 || stepUpdated.Tokens.Output != 200 ||
+		stepUpdated.Tokens.Input != 1500 || stepUpdated.Tokens.Output != 160 ||
 		stepUpdated.Tokens.Reasoning != 60 || stepUpdated.Tokens.Cache.Read != 2500 ||
 		stepUpdated.Tokens.Total != 2420 {
-		t.Fatalf("expected multi-step agy tokens (total=2420, in=1500, out=200, reason=60, cacheRead=2500), got %+v", stepUpdated.Tokens)
+		t.Fatalf("expected multi-step agy tokens (total=2420, in=1500, out=160, reason=60, cacheRead=2500), got %+v", stepUpdated.Tokens)
 	}
 
 	// Resumed conversation result.usage carries cumulative history (999,999); must not overwrite current turn's step sum.

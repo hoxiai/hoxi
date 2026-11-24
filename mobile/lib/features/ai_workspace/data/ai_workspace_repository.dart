@@ -238,6 +238,10 @@ class AiWorkspaceRepository {
     if (_isHoxi) _hoxiAdapter.markSessionStage(sessionId, stage);
   }
 
+  void clearSessionBusyGrace(int sessionId) {
+    if (_isHoxi) _hoxiAdapter.clearSessionBusyGrace(sessionId);
+  }
+
   Future<ResponseBody> openConversationStream(
     int sessionId, {
     int? afterSeq,

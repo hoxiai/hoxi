@@ -27,6 +27,7 @@ export type BlockToken =
   | { type: "heading"; level: 1 | 2 | 3 | 4; text: string }
   | { type: "list"; ordered: boolean; start: number; items: ListItemEntry[] }
   | { type: "blockquote"; alert?: AlertKind; text: string }
+  | { type: "details"; summary: string; body: string; open?: boolean }
   | { type: "table"; headers: string[]; aligns: TableAlign[]; rows: string[][] }
   | { type: "hr" }
   | { type: "paragraph"; text: string };

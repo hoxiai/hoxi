@@ -6,12 +6,12 @@ import {
   type MediaRolePrefs,
   type PromptImageOptions,
 } from "../services/api";
+import { AUTO_PROVIDER_ID } from "./auto-pool-defaults";
 import {
-  AUTO_PROVIDER_ID,
-  isImageGenerationModel,
-  isSpeechSynthesisModel,
-  isVideoGenerationModel,
-} from "./auto-pool-defaults";
+  matchesModelSlot,
+  normalizeStoredModelCapabilities,
+  type ModelSlot,
+} from "./model-capabilities";
 import type { ConnectedProviderGroup } from "./provider-catalog";
 import { workspace } from "./workspace-state";
 
@@ -41,7 +41,18 @@ const [mediaCapabilities, setMediaCapabilities] =
     roles: {},
   });
 
-export type MediaRoleKind = "image" | "video" | "speech" | "transcribe";
+export type MediaRoleKind =
+  | "image"
+  | "image_edit"
+  | "image_translate_raster"
+  | "image_translate_editor"
+  | "video"
+  | "speech"
+  | "transcribe"
+  | "vision"
+  | "text_translate"
+  | "embedding"
+  | "rerank";
 
 export function mediaRolePrefs(): MediaRolePrefs {
   return mediaCapabilities().roles || {};
@@ -59,7 +70,34 @@ export async function updateMediaRolePrefs(
   return nextRoles;
 }
 
-export function getMediaRoleModelGroups(kind: MediaRoleKind): ConnectedProviderGroup[] {
+function slotForMediaRoleKind(kind: MediaRoleKind): ModelSlot {
+  switch (kind) {
+    case "image":
+      return "image_generate";
+    case "image_edit":
+      return "image_edit";
+    case "image_translate_raster":
+      return "image_translate_raster";
+    case "image_translate_editor":
+      return "image_translate_editor";
+    case "video":
+      return "video";
+    case "speech":
+      return "tts";
+    case "transcribe":
+      return "asr";
+    case "vision":
+      return "vision";
+    case "text_translate":
+      return "text_translate";
+    case "embedding":
+      return "embedding";
+    case "rerank":
+      return "rerank";
+  }
+}
+
+export function getSlotModelGroups(slot: ModelSlot): ConnectedProviderGroup[] {
   const caps = mediaCapabilities();
   const byProv = new Map<string, { name: string; models: Map<string, string> }>();
   const provNameLookup = new Map<string, string>();
@@ -86,38 +124,72 @@ export function getMediaRoleModelGroups(kind: MediaRoleKind): ConnectedProviderG
     }
   };
 
-  const serverList =
-    kind === "image"
-      ? caps.imageModels
-      : kind === "video"
-      ? caps.videoModels
-      : kind === "speech"
-      ? caps.speechModels
-      : caps.transcribeModels;
-  for (const item of serverList || []) {
-    addEntry(item.providerID, item.modelID, item.name);
+  const serverSlotList = caps.slots?.[slot];
+  if (Array.isArray(serverSlotList)) {
+    for (const item of serverSlotList) {
+      addEntry(item.providerID, item.modelID, item.name);
+    }
+  } else {
+    const legacyServerList =
+      slot === "image_generate"
+        ? caps.imageModels
+        : slot === "image_edit"
+        ? caps.imageEditModels
+        : slot === "image_translate_raster"
+        ? caps.imageTranslateRasterModels
+        : slot === "image_translate_editor"
+        ? caps.imageTranslateEditorModels
+        : slot === "video"
+        ? caps.videoModels
+        : slot === "tts"
+        ? caps.speechModels
+        : slot === "asr"
+        ? caps.transcribeModels
+        : undefined;
+    for (const item of legacyServerList || []) {
+      addEntry(item.providerID, item.modelID, item.name);
+    }
   }
+
+  const inspectModel = (pid: string, mid: string, mInfo?: Record<string, any>) => {
+    const normalized = normalizeStoredModelCapabilities(mid, mInfo);
+    if (matchesModelSlot(normalized, slot)) {
+      addEntry(pid, mid, mInfo?.name);
+      return;
+    }
+    // Preserve Gemini multimodal audio transcription compatibility for ASR slot.
+    if (slot === "asr") {
+      const id = mid.toLowerCase();
+      if (
+        id.includes("gemini") &&
+        !id.includes("image") &&
+        !id.includes("embed") &&
+        Boolean(mInfo?.capabilities?.input?.audio || mInfo?.modalities?.input?.includes("audio"))
+      ) {
+        addEntry(pid, mid, mInfo?.name);
+      }
+    }
+  };
 
   for (const prov of workspace.providers) {
     if (!prov || prov.id === AUTO_PROVIDER_ID) continue;
+    const hoxiProv = (workspace.hoxiProviders || {})[prov.id] as Record<string, any> | undefined;
+    const hoxiModels =
+      hoxiProv?.models && typeof hoxiProv.models === "object"
+        ? (hoxiProv.models as Record<string, any>)
+        : {};
     for (const [mid, mInfo] of Object.entries(prov.models || {})) {
-      const id = mid.toLowerCase();
-      const match =
-        kind === "image"
-          ? isImageGenerationModel(prov.id, mid)
-          : kind === "video"
-          ? isVideoGenerationModel(prov.id, mid)
-          : kind === "speech"
-          ? isSpeechSynthesisModel(prov.id, mid)
-          : id.includes("whisper") ||
-            id.includes("sensevoice") ||
-            id.includes("paraformer") ||
-            id.includes("transcribe") ||
-            (id.includes("gemini") &&
-              !id.includes("image") &&
-              !id.includes("embed") &&
-              Boolean(mInfo?.capabilities?.input?.audio || mInfo?.modalities?.input?.includes("audio")));
-      if (match) addEntry(prov.id, mid, mInfo?.name);
+      const mergedInfo =
+        hoxiModels[mid] && typeof hoxiModels[mid] === "object"
+          ? { ...(hoxiModels[mid] as Record<string, any>), ...(mInfo as Record<string, any>) }
+          : (mInfo as Record<string, any>);
+      inspectModel(prov.id, mid, mergedInfo);
+    }
+    const mediaMap = hoxiProv?.mediaModels;
+    if (mediaMap && typeof mediaMap === "object") {
+      for (const [mid, mInfo] of Object.entries(mediaMap)) {
+        inspectModel(prov.id, mid, mInfo as Record<string, any>);
+      }
     }
   }
 
@@ -131,6 +203,28 @@ export function getMediaRoleModelGroups(kind: MediaRoleKind): ConnectedProviderG
       free: false,
     })),
   }));
+}
+
+export function getMediaRoleModelGroups(kind: MediaRoleKind): ConnectedProviderGroup[] {
+  return getSlotModelGroups(slotForMediaRoleKind(kind));
+}
+
+/**
+ * Checks whether a legacy `imageModel` preference smoothly maps to `image_edit`
+ * (only when the model actually appears in the `image_edit` candidate pool).
+ */
+export function resolveLegacyImageEditFallbackSpec(): string {
+  const prefs = mediaRolePrefs();
+  if (prefs.imageEditModel) return "";
+  const legacy = (prefs.imageModel || "").trim();
+  if (!legacy) return "";
+  const editGroups = getSlotModelGroups("image_edit");
+  for (const g of editGroups) {
+    if (g.models.some((m) => m.fullKey === legacy)) {
+      return legacy;
+    }
+  }
+  return "";
 }
 
 export {

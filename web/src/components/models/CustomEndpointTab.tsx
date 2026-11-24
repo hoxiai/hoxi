@@ -13,6 +13,7 @@ import {
   setWorkspace,
   workspace,
   type CustomProviderModelDraft,
+  type FetchedCustomModelItem,
 } from "../../store/workspace";
 import { t } from "../../i18n";
 import { HelpTip } from "../settings/setting-controls";
@@ -41,7 +42,7 @@ export default function CustomEndpointTab() {
 
   // Fetch & probe models state
   const [fetching, setFetching] = createSignal(false);
-  const [fetchedModels, setFetchedModels] = createSignal<Array<{ id: string; name: string }>>([]);
+  const [fetchedModels, setFetchedModels] = createSignal<FetchedCustomModelItem[]>([]);
   const [modelProbes, setModelProbes] = createSignal<Record<string, ModelProbeResult>>({});
   const [saving, setSaving] = createSignal(false);
   const [deleting, setDeleting] = createSignal(false);

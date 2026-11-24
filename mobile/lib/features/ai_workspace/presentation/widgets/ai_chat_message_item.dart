@@ -5,7 +5,9 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/models/hoxi_context_protocol.dart';
 import '../../../../shared/widgets/chat_image_preview.dart';
+import '../../../../shared/widgets/hoxi_context_blocks.dart';
 import '../../../../shared/widgets/stream_text_pacer.dart';
 import '../../models/chat_message.dart';
 import '../../models/code_convoy_plan.dart';
@@ -197,7 +199,9 @@ class _AiChatMessageItemState extends State<AiChatMessageItem>
 
   Future<void> _copyText() async {
     final text = widget.message.text.trim();
-    final content = text.isNotEmpty ? text : widget.message.reasoning.trim();
+    final content = text.isNotEmpty
+        ? (widget.message.isUser ? formatContextPromptForClipboard(text) : text)
+        : widget.message.reasoning.trim();
     if (content.isEmpty) return;
     await Clipboard.setData(ClipboardData(text: content));
     if (!mounted) return;
@@ -379,6 +383,17 @@ class _AiChatMessageItemState extends State<AiChatMessageItem>
     if (message.isUser) {
       final hasImage = message.hasImage;
       final hasUserText = message.text.trim().isNotEmpty;
+      final parsedContext = hasUserText
+          ? parseHoxiContextPrompt(message.text)
+          : const ParsedHoxiContextPrompt(
+              envelopes: [],
+              bodyText: '',
+              hasContext: false,
+            );
+      final visibleBody = parsedContext.hasContext
+          ? parsedContext.bodyText
+          : message.text;
+      final hasVisibleBody = visibleBody.trim().isNotEmpty;
       return Align(
         alignment: Alignment.centerRight,
         child: Column(
@@ -401,15 +416,21 @@ class _AiChatMessageItemState extends State<AiChatMessageItem>
                     : null,
               ),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
+                crossAxisAlignment: parsedContext.hasContext
+                    ? CrossAxisAlignment.stretch
+                    : CrossAxisAlignment.end,
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   if (hasImage)
                     ChatTappableImage(imageDataUrl: message.imageDataUrl!, width: 220),
                   if (hasImage && hasUserText) const SizedBox(height: 8),
-                  if (hasUserText)
+                  if (parsedContext.hasContext)
+                    HoxiContextBlocks(envelopes: parsedContext.envelopes),
+                  if (parsedContext.hasContext && hasVisibleBody)
+                    const SizedBox(height: 8),
+                  if (hasVisibleBody)
                     SelectableText(
-                      message.text,
+                      visibleBody,
                       scrollPhysics: const NeverScrollableScrollPhysics(),
                       contextMenuBuilder: buildConversationContextMenu,
                       style: const TextStyle(color: Colors.white, fontSize: 14.5, height: 1.5),

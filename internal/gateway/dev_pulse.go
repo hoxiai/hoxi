@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"strings"
@@ -53,19 +54,14 @@ func (s *gatewayDevPulseSource) CandidateDirectories() []string {
 	}
 	if s.g.runner != nil {
 		store := s.g.runner.Store()
-		for _, info := range store.List("") {
-			if info.Directory != "" {
-				dirs = append(dirs, info.Directory)
+		store.EachMeta(func(rec runner.SessionRecord) {
+			if rec.ProjectDir != "" {
+				dirs = append(dirs, rec.ProjectDir)
 			}
-			if rec, ok := store.Meta(info.ID); ok {
-				if rec.ProjectDir != "" {
-					dirs = append(dirs, rec.ProjectDir)
-				}
-				if rec.WorktreePath != "" {
-					dirs = append(dirs, rec.WorktreePath)
-				}
+			if rec.WorktreePath != "" {
+				dirs = append(dirs, rec.WorktreePath)
 			}
-		}
+		})
 	}
 	return dirs
 }
@@ -89,22 +85,21 @@ func (s *gatewayDevPulseSource) VisitSessions(minUpdatedMs int64, fn func(sessio
 		return
 	}
 	store := s.g.runner.Store()
-	for _, info := range store.List("") {
-		if info.Time.Updated < minUpdatedMs {
-			continue
-		}
-		rec, ok := store.Meta(info.ID)
-		if !ok || rec.Subagent {
-			continue
+	store.EachMeta(func(rec runner.SessionRecord) {
+		if rec.UpdatedAt < minUpdatedMs || rec.Subagent {
+			return
 		}
 		fn(rec.ID, func(yield func(devpulse.TurnUsage)) {
-			store.VisitTurnsSummary(rec.ID, func(full runner.SessionRecord) {
-				for i := range full.Turns {
-					yield(turnToPulseUsage(full.Turns[i], full))
+			store.VisitUsageTurns(rec.ID, func(full runner.SessionRecord, turns []runner.TurnUsageSummary) {
+				for i := range turns {
+					if isImportedRunnerTurn(turns[i].ID, turns[i].Imported, full) {
+						continue
+					}
+					yield(usageSummaryToPulseUsage(turns[i], full))
 				}
 			})
 		})
-	}
+	})
 }
 
 func (s *gatewayDevPulseSource) NotImportedTurnSQLClause(titleCol, dataCol, rowTimeCol, sessTimeCol string) string {
@@ -115,37 +110,41 @@ func (s *gatewayDevPulseSource) RunGit(workDir string, args ...string) (string, 
 	return worktree.RunGit(workDir, args...)
 }
 
+func (s *gatewayDevPulseSource) RunGitContext(ctx context.Context, workDir string, args ...string) (string, error) {
+	return worktree.RunGitContext(ctx, workDir, args...)
+}
+
 func (s *gatewayDevPulseSource) RunGitRaw(workDir string, args ...string) (string, error) {
 	return worktree.RunGitRaw(workDir, args...)
+}
+
+func (s *gatewayDevPulseSource) RunGitRawContext(ctx context.Context, workDir string, args ...string) (string, error) {
+	return worktree.RunGitRawContext(ctx, workDir, args...)
 }
 
 func (s *gatewayDevPulseSource) ParseBranchFromPorcelainHeader(headerLine string) string {
 	return worktree.ParseBranchFromPorcelainHeader(headerLine)
 }
 
-func turnToPulseUsage(turn runner.MessageTurn, full runner.SessionRecord) devpulse.TurnUsage {
-	providerID, isNative := nativeTurnProvider(turn, full)
+func usageSummaryToPulseUsage(turn runner.TurnUsageSummary, full runner.SessionRecord) devpulse.TurnUsage {
+	providerID, isNative := nativeTurnProviderParts(turn.ID, turn.ProviderID, full)
 	u := devpulse.TurnUsage{
-		Role:       turn.Info.Role,
-		Created:    turn.Info.Time.Created,
-		Completed:  turn.Info.Time.Completed,
-		ProviderID: providerID,
-		ModelID:    firstNonEmptyString(turn.Info.ModelID, full.ModelID, "unknown"),
-		IsNative:   isNative,
-		Cost:       turn.Info.Cost,
+		ID:              turn.ID,
+		Role:            turn.Role,
+		Created:         turn.Created,
+		Completed:       turn.Completed,
+		ProviderID:      providerID,
+		ModelID:         firstNonEmptyString(turn.ModelID, full.ModelID, "unknown"),
+		IsNative:        isNative,
+		Cost:            turn.Cost,
+		ToolCallsTotal:  turn.ToolCallsTotal,
+		ToolCallsFailed: turn.ToolCallsFailed,
 	}
-	if isNative {
-		for _, part := range turn.Parts {
-			if part.Type != "tool" {
-				continue
-			}
-			u.ToolCallsTotal++
-			if part.State != nil && part.State.Status == "error" {
-				u.ToolCallsFailed++
-			}
-		}
+	if !isNative {
+		u.ToolCallsTotal = 0
+		u.ToolCallsFailed = 0
 	}
-	if tokens := turn.Info.Tokens; tokens != nil {
+	if tokens := turn.Tokens; tokens != nil {
 		if tokens.Input > 0 || tokens.Output > 0 || tokens.Reasoning > 0 || tokens.Cache.Read > 0 || tokens.Cache.Write > 0 {
 			u.HasTokens = true
 			u.InputTokens = int64(tokens.Input)
@@ -220,16 +219,31 @@ func (g *Gateway) sessionPulseDirectories(sessionID string) (workDir, projectDir
 	return "", ""
 }
 
+// isImportedRunnerTurn reports whether a turn in the runner session store came
+// from external CLI handoff materialization rather than being executed inside
+// Hoxi. Newly materialized turns carry Imported=true; pre-fix sessions are
+// identified by their handoff title prefix and non-runner turn ID.
+func isImportedRunnerTurn(turnID string, imported bool, rec runner.SessionRecord) bool {
+	if imported {
+		return true
+	}
+	return handoff.IsImportedSessionTitle(rec.Title) && !strings.HasPrefix(strings.TrimSpace(turnID), "msg_a_")
+}
+
 // nativeTurnProvider reports whether turn was executed by a native CLI runtime
 // (as opposed to OpenCode, whose turns already live in hoxi.db) and returns its
 // runtime/provider identifier.
 func nativeTurnProvider(turn runner.MessageTurn, rec runner.SessionRecord) (string, bool) {
-	prov := strings.TrimSpace(turn.Info.ProviderID)
+	return nativeTurnProviderParts(turn.Info.ID, turn.Info.ProviderID, rec)
+}
+
+func nativeTurnProviderParts(turnID, turnProviderID string, rec runner.SessionRecord) (string, bool) {
+	prov := strings.TrimSpace(turnProviderID)
 	rt := strings.TrimSpace(rec.Runtime)
 	if runner.IsValidRuntime(prov) {
 		return prov, true
 	}
-	if strings.HasPrefix(turn.Info.ID, "msg_a_") {
+	if strings.HasPrefix(turnID, "msg_a_") {
 		if prov != "" && prov != "opencode" {
 			return prov, true
 		}

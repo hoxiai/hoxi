@@ -3,10 +3,11 @@ import { createEffect, createMemo, createSignal, For, Index, mapArray, on, onCle
 import { ListTree, Search } from "lucide-solid";
 import type { MessagePart, ToolPart } from "../../services/sse-types";
 import type { MessageTurn } from "../../store/workspace";
-import { buildTimelineActivity, createTimelineActivity, type TimelineActivityKind, type TimelineActivitySegment } from "../../store/workspace";
+import { buildTimelineActivity, createTimelineActivity, formatContextPromptForClipboard, type TimelineActivityKind, type TimelineActivitySegment } from "../../store/workspace";
 import "./task-timeline.css";
 import TranscriptSearchBar from "./TranscriptSearchBar";
-import { expandInlineThinkingParts } from "./context-activity-parts";
+import { expandInlineThinkingParts, extractVisibleAssistantText } from "./context-activity-parts";
+import { extractMarkdownHeadings } from "./markdown-parser";
 import { formatToolDisplayName } from "./tool-card-helpers";
 import { t } from "../../i18n";
 import { formatElapsedSeconds } from "./duration-label";
@@ -291,8 +292,15 @@ export default function TaskTimelineBar(props: {
       button?.focus();
     }
   };
+  const [navTab, setNavTab] = createSignal<"turns" | "sections">("turns");
+  let sectionJumpRafId = 0;
+  onCleanup(() => {
+    if (sectionJumpRafId) cancelAnimationFrame(sectionJumpRafId);
+  });
+
   createEffect(on(() => props.sessionID, () => {
     setNavOpen(false);
+    setNavTab("turns");
     setActiveSegment(null);
     props.onCloseSearch();
   }));
@@ -366,11 +374,12 @@ export default function TaskTimelineBar(props: {
     return props.turns
       .filter((turn) => turn.info.role === "user")
       .map((turn, idx) => {
-        const txt = turn.parts
+        const raw = turn.parts
           .filter((p): p is Extract<MessagePart, { type: "text" }> => p.type === "text")
           .map((p) => p.text)
           .join(" ")
           .trim();
+        const txt = formatContextPromptForClipboard(raw).replace(/\s+/g, " ").trim();
         return {
           id: turn.info.id,
           index: idx + 1,
@@ -378,6 +387,50 @@ export default function TaskTimelineBar(props: {
         };
       });
   });
+
+  // Lazily extracted per text part only while the outline dropdown is open (0ms cost when closed).
+  // Per-part extraction keeps duplicate-heading slugs aligned with each MarkdownView in the DOM.
+  const assistantSections = createMemo(() => {
+    if (!navOpen()) return [];
+    const out: Array<{ messageID: string; partID: string; slug: string; text: string; level: number }> = [];
+    for (const turn of props.turns) {
+      if (turn.info.role !== "assistant") continue;
+      for (const part of turn.parts) {
+        if (part.type !== "text") continue;
+        const body = extractVisibleAssistantText(part.text);
+        if (!body || !body.includes("#")) continue;
+        for (const h of extractMarkdownHeadings(body)) {
+          if (h.level <= 3) {
+            out.push({
+              messageID: turn.info.id,
+              partID: part.id,
+              slug: h.slug,
+              text: h.text,
+              level: h.level,
+            });
+          }
+          if (out.length >= 60) return out;
+        }
+      }
+    }
+    return out;
+  });
+
+  const jumpToSection = (messageID: string, partID: string, slug: string) => {
+    setNavOpen(false);
+    props.onJumpToTurn(messageID, partID);
+    if (sectionJumpRafId) cancelAnimationFrame(sectionJumpRafId);
+    sectionJumpRafId = requestAnimationFrame(() => {
+      sectionJumpRafId = 0;
+      const escapedSlug = CSS.escape(slug);
+      const partEl = document.querySelector<HTMLElement>(`[data-part-id="${CSS.escape(partID)}"]`);
+      const turnEl = document.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(messageID)}"]`);
+      const target =
+        partEl?.querySelector<HTMLElement>(`[data-heading-slug="${escapedSlug}"]`) ??
+        turnEl?.querySelector<HTMLElement>(`[data-heading-slug="${escapedSlug}"]`);
+      target?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
 
   return (
     <Show when={props.turns.length > 0}>
@@ -409,31 +462,82 @@ export default function TaskTimelineBar(props: {
             </button>
           </Show>
 
-          {/* MessageNav Dropdown */}
+          {/* MessageNav Dropdown (Prompts + on-demand Assistant Section Outline) */}
           <Show when={navOpen()}>
             <div class="task-activity-menu rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-xl">
-              <div class="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
-                {t("timeline.turnsMenuTitle")}
-              </div>
-              <div class="max-h-56 overflow-y-auto space-y-0.5">
-                <For each={userTurns()}>
-                  {(u) => (
+              <div class="mb-1 flex items-center justify-between gap-2 px-1.5 py-0.5">
+                <span class="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+                  {navTab() === "sections" && assistantSections().length >= 2
+                    ? t("timeline.outlineTabSections")
+                    : t("timeline.turnsMenuTitle")}
+                </span>
+                <Show when={assistantSections().length >= 2}>
+                  <div class="inline-flex items-center rounded-md bg-[var(--bg-inset)] p-0.5 text-[10.5px]">
                     <button
                       type="button"
-                      onClick={() => {
-                        setNavOpen(false);
-                        props.onJumpToTurn(u.id);
-                      }}
-                      class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
+                      onClick={() => setNavTab("turns")}
+                      class={`rounded px-1.5 py-0.5 transition-colors cursor-pointer ${
+                        navTab() === "turns"
+                          ? "bg-[var(--bg-panel)] text-[var(--text-primary)] font-medium shadow-2xs"
+                          : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                      }`}
                     >
-                      <span class="shrink-0 rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)]">
-                        #{u.index}
-                      </span>
-                      <span class="truncate">{u.preview}</span>
+                      {t("timeline.outlineTabTurns")}
                     </button>
-                  )}
-                </For>
+                    <button
+                      type="button"
+                      onClick={() => setNavTab("sections")}
+                      class={`rounded px-1.5 py-0.5 transition-colors cursor-pointer ${
+                        navTab() === "sections"
+                          ? "bg-[var(--bg-panel)] text-[var(--text-primary)] font-medium shadow-2xs"
+                          : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                      }`}
+                    >
+                      {t("timeline.outlineTabSections")}
+                    </button>
+                  </div>
+                </Show>
               </div>
+              <Show
+                when={navTab() === "sections" && assistantSections().length >= 2}
+                fallback={
+                  <div class="max-h-56 overflow-y-auto space-y-0.5">
+                    <For each={userTurns()}>
+                      {(u) => (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNavOpen(false);
+                            props.onJumpToTurn(u.id);
+                          }}
+                          class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
+                        >
+                          <span class="shrink-0 rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)]">
+                            #{u.index}
+                          </span>
+                          <span class="truncate">{u.preview}</span>
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                }
+              >
+                <div class="max-h-56 overflow-y-auto space-y-0.5">
+                  <For each={assistantSections()}>
+                    {(sec) => (
+                      <button
+                        type="button"
+                        onClick={() => jumpToSection(sec.messageID, sec.partID, sec.slug)}
+                        style={{ "padding-left": `${Math.max(0, sec.level - 1) * 10 + 8}px` }}
+                        class="flex w-full items-center gap-1.5 rounded-lg pr-2 py-1 text-left text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
+                        title={sec.text}
+                      >
+                        <span class="truncate">{sec.text}</span>
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </Show>
             </div>
           </Show>
         </div>

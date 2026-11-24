@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/llm"
 )
 
 func (g *Service) provisionProviderWithMCPToken(ctx context.Context, sess *mcpOAuthSession, accessToken string) (string, string, []mcpOAuthModelItem) {
@@ -129,6 +131,13 @@ func (g *Service) persistMCPOAuthProvisioning(
 			modelsMap[k] = v
 		}
 	}
+	mediaModelsMap := map[string]interface{}{}
+	if existingMedia, ok := existingProv["mediaModels"].(map[string]interface{}); ok {
+		for k, v := range existingMedia {
+			mediaModelsMap[k] = v
+		}
+	}
+	allSyncedModels := map[string]interface{}{}
 	for _, m := range models {
 		mid := strings.TrimSpace(m.ID)
 		if mid == "" {
@@ -138,19 +147,70 @@ func (g *Service) persistMCPOAuthProvisioning(
 		if mName == "" {
 			mName = mid
 		}
-		isChat := !isNonChatUtilityModel(mid)
+		category := inferModelCategory(mid, m.Category, m.Modality)
+		normCaps := llm.NormalizeModelCapabilities(llm.ModelCapabilityInput{
+			ModelID:                 mid,
+			Modality:                m.Modality,
+			Category:                category,
+			HasExplicitCapabilities: len(m.Capabilities) > 0,
+			ExplicitCapabilities: func() []string {
+				out := make([]string, len(m.Capabilities))
+				for i, c := range m.Capabilities {
+					out[i] = string(c)
+				}
+				return out
+			}(),
+			ExplicitImageTranslateOutputModes: func() []string {
+				if m.ImageTranslate == nil {
+					return nil
+				}
+				out := make([]string, len(m.ImageTranslate.OutputModes))
+				for i, mode := range m.ImageTranslate.OutputModes {
+					out[i] = string(mode)
+				}
+				return out
+			}(),
+		})
+		isChat := normCaps.Has(llm.CapabilityChat)
+		hasVision := normCaps.Has(llm.CapabilityVision)
 		inputs := []interface{}{"text"}
-		if isChat {
+		if hasVision || normCaps.Has(llm.CapabilityImageEdit) {
 			inputs = []interface{}{"text", "image"}
+		}
+		outputs := []interface{}{"text"}
+		if normCaps.Has(llm.CapabilityImageGenerate) {
+			outputs = []interface{}{"text", "image"}
+		} else if normCaps.Has(llm.CapabilityVideo) {
+			outputs = []interface{}{"video"}
 		}
 		mEntry := map[string]interface{}{
 			"name":       mName,
-			"attachment": isChat,
+			"category":   category,
+			"attachment": hasVision || normCaps.Has(llm.CapabilityImageEdit),
 			"reasoning":  isChat,
 			"modalities": map[string]interface{}{
 				"input":  inputs,
-				"output": []interface{}{"text"},
+				"output": outputs,
 			},
+		}
+		if strings.TrimSpace(m.Modality) != "" {
+			mEntry["modality"] = strings.TrimSpace(m.Modality)
+		}
+		if len(normCaps.Capabilities) > 0 {
+			tags := make([]string, len(normCaps.Capabilities))
+			for i, c := range normCaps.Capabilities {
+				tags[i] = string(c)
+			}
+			mEntry["capabilityTags"] = tags
+		} else if llm.IsExcludedUtilityModel(mid, m.Modality) {
+			mEntry["capabilityTags"] = []string{}
+		}
+		if normCaps.ImageTranslate != nil && len(normCaps.ImageTranslate.OutputModes) > 0 {
+			modes := make([]string, len(normCaps.ImageTranslate.OutputModes))
+			for i, mode := range normCaps.ImageTranslate.OutputModes {
+				modes[i] = string(mode)
+			}
+			mEntry["imageTranslate"] = map[string]interface{}{"outputModes": modes}
 		}
 		if m.InputPrice > 0 || m.OutputPrice > 0 {
 			mEntry["cost"] = map[string]interface{}{
@@ -158,9 +218,21 @@ func (g *Service) persistMCPOAuthProvisioning(
 				"output": m.OutputPrice,
 			}
 		}
-		modelsMap[mid] = mEntry
+		allSyncedModels[mid] = mEntry
+		if isChat {
+			modelsMap[mid] = mEntry
+		} else {
+			mediaModelsMap[mid] = mEntry
+		}
 	}
-	nextProv["models"] = modelsMap
+	if len(modelsMap) == 0 {
+		nextProv["models"] = allSyncedModels
+	} else {
+		nextProv["models"] = modelsMap
+	}
+	if len(mediaModelsMap) > 0 {
+		nextProv["mediaModels"] = mediaModelsMap
+	}
 
 	g.normalizeAndStoreMultiKeys(pid, nextProv)
 	hoxiMap[pid] = nextProv
@@ -247,7 +319,14 @@ func (g *Service) fetchSiteModels(ctx context.Context, siteOrigin, baseURL, acce
 					if fetched := parseOpenAIModelsPayload(raw); len(fetched) > 0 {
 						out := make([]mcpOAuthModelItem, 0, len(fetched))
 						for _, m := range fetched {
-							out = append(out, mcpOAuthModelItem{ID: m.ID, Name: m.Name})
+							out = append(out, mcpOAuthModelItem{
+								ID:             m.ID,
+								Name:           m.Name,
+								Category:       m.Category,
+								Modality:       m.Modality,
+								Capabilities:   m.Capabilities,
+								ImageTranslate: m.ImageTranslate,
+							})
 						}
 						return out
 					}
@@ -279,11 +358,27 @@ func parseSiteModelsPayload(payload map[string]any) []mcpOAuthModelItem {
 			}
 			seen[id] = struct{}{}
 			name := firstNonEmptyString(m["name"], m["displayName"], id)
+			rawModality := firstNonEmptyString(m["modality"])
+			rawCategory := firstNonEmptyString(m["category"])
+			explicitCaps, hasExplicitCaps := stringSliceFromAny(m["capabilities"])
+			explicitModes := extractImageTranslateModesFromConfig(m)
+			normCaps := llm.NormalizeModelCapabilities(llm.ModelCapabilityInput{
+				ModelID:                           id,
+				Modality:                          rawModality,
+				Category:                          rawCategory,
+				HasExplicitCapabilities:           hasExplicitCaps,
+				ExplicitCapabilities:              explicitCaps,
+				ExplicitImageTranslateOutputModes: explicitModes,
+			})
 			out = append(out, mcpOAuthModelItem{
-				ID:          id,
-				Name:        name,
-				InputPrice:  toFloat64(m["inputPrice"], m["inputUsdPerM"]),
-				OutputPrice: toFloat64(m["outputPrice"], m["outputUsdPerM"]),
+				ID:             id,
+				Name:           name,
+				Category:       inferModelCategory(id, rawCategory, rawModality),
+				Modality:       rawModality,
+				Capabilities:   normCaps.Capabilities,
+				ImageTranslate: normCaps.ImageTranslate,
+				InputPrice:     toFloat64(m["inputPrice"], m["inputUsdPerM"]),
+				OutputPrice:    toFloat64(m["outputPrice"], m["outputUsdPerM"]),
 			})
 		}
 	}

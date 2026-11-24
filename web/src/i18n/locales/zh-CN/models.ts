@@ -257,19 +257,42 @@ export const models: ModelsI18n = {
     "任务优先自检当前对话模型的原生能力；若不支持则优先使用此处指定的模型（未指定时自动择优）",
   mediaRoleAutoBestOption: "自动选择最优可用模型",
   mediaRoleUnconfiguredBadge: "尚未配置本地模型",
+  slotMissingCapabilityBadge: "暂无匹配能力模型",
+  imageEditLegacyFallbackOption: "自动 · 继承生图模型（{model}）",
   mediaRoleConfigureBtn: "去配置服务商",
   imageRoleModelTitle: "默认图片生成模型",
   imageRoleModelDesc:
-    "当前会话模型无原生生图能力时，hoxi_image 默认使用的生图模型",
+    "当前会话模型无原生生图能力时，hoxi_image 默认使用的生图模型（需 image_generate 能力）",
+  imageEditRoleModelTitle: "AI 改图 / 局部重绘模型",
+  imageEditRoleModelDesc:
+    "局部重绘与图生图改图专用槽位（需 image_edit 能力；未配置时若默认生图模型支持改图则自动继承）",
+  imageTranslateEditorRoleModelTitle: "图片翻译（可编辑图层）",
+  imageTranslateEditorRoleModelDesc:
+    "输出可编辑文字图层的整图翻译专用槽位（需 image_translate + editable_scene 能力）",
+  imageTranslateRasterRoleModelTitle: "图片翻译（批量成图）",
+  imageTranslateRasterRoleModelDesc:
+    "直接生成翻译后成品图的批量图译槽位（需 image_translate + raster 能力）",
   videoRoleModelTitle: "默认视频生成模型",
   videoRoleModelDesc:
-    "当前会话模型无原生生视频能力时，hoxi_video 默认使用的视频模型",
+    "当前会话模型无原生生视频能力时，hoxi_video 默认使用的视频模型（需 video 能力）",
   speechRoleModelTitle: "默认语音合成（TTS）模型",
   speechRoleModelDesc:
-    "hoxi_speech 生成配音与口播音频时默认使用的语音模型",
+    "hoxi_speech 生成配音与口播音频时默认使用的语音模型（需 tts 能力）",
   transcribeRoleModelTitle: "默认语音转写（ASR）模型",
   transcribeRoleModelDesc:
-    "输入框语音听写与音频附件转文字时默认使用的识别模型",
+    "输入框语音听写与音频附件转文字时默认使用的识别模型（需 asr 能力）",
+  visionRoleModelTitle: "视觉理解模型",
+  visionRoleModelDesc:
+    "看图分析与视觉巡检专用槽位（需 vision 能力，自动排除纯文本模型）",
+  textTranslateRoleModelTitle: "文本翻译模型",
+  textTranslateRoleModelDesc:
+    "文案与多语种结构化文本翻译专用槽位（需 text_translate 能力）",
+  embeddingRoleModelTitle: "向量嵌入模型",
+  embeddingRoleModelDesc:
+    "语义检索与记忆索引专用向量模型（需 embedding 能力）",
+  rerankRoleModelTitle: "重排模型（Rerank）",
+  rerankRoleModelDesc:
+    "检索结果相关性重排专用槽位（需 rerank 能力）",
   modeModelsTitle: "按模式指定模型",
   modeModelsDesc:
     "分别为构建模式或规划模式绑定独立模型",
@@ -484,8 +507,16 @@ export const models: ModelsI18n = {
   mediaCap: "音视频",
   categoryChat: "对话/编程",
   categoryImageGen: "生图专用",
+  categoryImageTranslate: "图片翻译",
+  categoryVideoGen: "视频生成",
   categoryAudioAsr: "语音/ASR",
   categoryEmbedding: "向量嵌入",
+  capBadgeImageGen: "生图",
+  capBadgeImageEdit: "改图",
+  capBadgeImageTranslateEditor: "图译·可编辑",
+  capBadgeImageTranslateRaster: "图译·成图",
+  capBadgeVideo: "视频",
+  capBadgeUtilityExcluded: "工具类（不入槽位）",
   subagentsBindEconomyBtn: "一键为只读子代理绑定轻量模型 ({model})",
   subagentsBindEconomyDone: "已为只读探索子代理绑定 {model}",
   fastModeLabel: "极速",

@@ -483,7 +483,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Add("Vary", "Origin")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Range, X-Hoxi-Browser, X-Hoxi-Computer, X-Hoxi-Directory, X-Hoxi-Token, X-Hoxi-Work-UI, MCP-Protocol-Version")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Range, X-Hoxi-Browser, X-Hoxi-Computer, X-Hoxi-Directory, X-Hoxi-Token, X-Hoxi-Work-UI, X-Hoxi-Work-App, X-Hoxi-Store-Id, MCP-Protocol-Version")
 		w.Header().Set("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

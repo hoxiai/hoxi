@@ -29,9 +29,11 @@ type imageGenConn struct {
 }
 
 type imageGenExecOptions struct {
-	aspectRatio string
-	imageSize   string
-	count       int
+	aspectRatio    string
+	imageSize      string
+	count          int
+	idempotencyKey string
+	promptKind     string
 }
 
 const (
@@ -180,9 +182,11 @@ func (s *Service) GenerateImage(ctx context.Context, req llm.ImageRequest) (resp
 	}
 
 	opts := imageGenExecOptions{
-		aspectRatio: normalizeAspectRatio(req.AspectRatio),
-		imageSize:   normalizeImageSizeTier(req.ImageSize),
-		count:       clampImageCount(req.Count),
+		aspectRatio:    normalizeAspectRatio(req.AspectRatio),
+		imageSize:      normalizeImageSizeTier(req.ImageSize),
+		count:          clampImageCount(req.Count),
+		idempotencyKey: strings.TrimSpace(req.IdempotencyKey),
+		promptKind:     strings.TrimSpace(req.PromptKind),
 	}
 
 	started := time.Now()
@@ -252,6 +256,19 @@ func (s *Service) executeImageRequest(
 			probePrompt = "Reply with OK only, no image needed."
 		}
 		return s.googleGeminiGenerateImage(ctx, conn, probePrompt, chatInputs, opts, probeOnly, timeout)
+	}
+
+	if !probeOnly && len(inputImages) > 0 && opts.promptKind == "image_inpaint" {
+		taskResp, taskErr := s.openAIImagesEditTask(ctx, conn, prompt, inputImages[0], maskImage, opts, opts.idempotencyKey, opts.promptKind, timeout)
+		if taskErr == nil {
+			return taskResp, nil
+		}
+		var stErr *imageHTTPStatusError
+		if !errors.As(taskErr, &stErr) || (stErr.status != http.StatusNotFound && stErr.status != http.StatusMethodNotAllowed && stErr.status != http.StatusNotImplemented) {
+			if !shouldFallbackImageEndpoint(taskErr) {
+				return llm.ImageResponse{}, taskErr
+			}
+		}
 	}
 
 	if isConversationalImageModelID(conn.ModelID) {

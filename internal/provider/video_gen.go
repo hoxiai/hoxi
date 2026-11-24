@@ -163,7 +163,8 @@ func (s *Service) executeVideoRequest(
 
 func (s *Service) probeVideoModel(parentCtx context.Context, conn imageGenConn) error {
 	proto := effectiveProviderProtocol(conn.ProviderID, conn.NPM, conn.BaseURL)
-	targetURL := strings.TrimRight(strings.TrimSpace(conn.BaseURL), "/") + "/models"
+	trimmedBase := strings.TrimRight(strings.TrimSpace(conn.BaseURL), "/")
+	targetURL := trimmedBase + "/models"
 	isGoogle := proto == "google"
 	if isGoogle {
 		cleanModel := strings.TrimPrefix(strings.TrimSpace(conn.ModelID), "models/")
@@ -172,6 +173,14 @@ func (s *Service) probeVideoModel(parentCtx context.Context, conn imageGenConn) 
 	status, _, body, err := s.doVideoHTTP(parentCtx, http.MethodGet, targetURL, conn, isGoogle, nil, nil, defaultVideoProbeTimeout)
 	if err != nil {
 		return err
+	}
+	lowerBase := strings.ToLower(trimmedBase)
+	if !isGoogle && status == http.StatusNotFound &&
+		!strings.HasSuffix(lowerBase, "/v1") &&
+		!strings.HasSuffix(lowerBase, "/models") {
+		if rStatus, _, rBody, rErr := s.doVideoHTTP(parentCtx, http.MethodGet, trimmedBase+"/v1/models", conn, false, nil, nil, defaultVideoProbeTimeout); rErr == nil && rStatus >= 200 && rStatus < 300 {
+			status, body = rStatus, rBody
+		}
 	}
 	if status < 200 || status >= 300 {
 		return errors.New(redactSecretInText(extractAPIErrorMessage(status, body), conn.APIKey))

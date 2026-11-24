@@ -274,3 +274,95 @@ func TestRawOpenCodePermissionRepliesAreRefused(t *testing.T) {
 		t.Fatalf("GET /permission: status=%d forwarded=%v", w.Code, forwarded)
 	}
 }
+
+type desktopIframeTestExtension struct {
+	route string
+}
+
+func (e *desktopIframeTestExtension) HasSessionContext(string) bool { return false }
+func (e *desktopIframeTestExtension) ForgetSession(string)          {}
+func (e *desktopIframeTestExtension) Close()                        {}
+func (e *desktopIframeTestExtension) DesktopIframeRoutes() []string { return []string{e.route} }
+func (e *desktopIframeTestExtension) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc(e.route, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+}
+
+func TestDesktopIframeRouteCrossSitePolicy(t *testing.T) {
+	g := New(0, "desktop-iframe", t.TempDir(), nil, nil)
+	g.AttachExtension(&desktopIframeTestExtension{route: "/api/hoxi/test/iframe-bridge"})
+	g.mux.HandleFunc("/api/hoxi/test/other", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		host   string
+		origin string
+		site   string
+		dest   string
+		mode   string
+		remote bool
+		want   int
+	}{
+		{"wails cross-site iframe GET", http.MethodGet, "/api/hoxi/test/iframe-bridge?lang=zh", "127.0.0.1:5089", "", "cross-site", "iframe", "navigate", false, http.StatusOK},
+		{"wails cross-site iframe HEAD", http.MethodHead, "/api/hoxi/test/iframe-bridge", "127.0.0.1:5089", "", "cross-site", "iframe", "", false, http.StatusOK},
+		{"reject POST on iframe bridge", http.MethodPost, "/api/hoxi/test/iframe-bridge", "127.0.0.1:5089", "", "cross-site", "iframe", "navigate", false, http.StatusForbidden},
+		{"reject fetch empty dest", http.MethodGet, "/api/hoxi/test/iframe-bridge", "127.0.0.1:5089", "", "cross-site", "empty", "no-cors", false, http.StatusForbidden},
+		{"reject top-level document dest", http.MethodGet, "/api/hoxi/test/iframe-bridge", "127.0.0.1:5089", "", "cross-site", "document", "navigate", false, http.StatusForbidden},
+		{"reject missing dest", http.MethodGet, "/api/hoxi/test/iframe-bridge", "127.0.0.1:5089", "", "cross-site", "", "navigate", false, http.StatusForbidden},
+		{"reject non-navigate mode", http.MethodGet, "/api/hoxi/test/iframe-bridge", "127.0.0.1:5089", "", "cross-site", "iframe", "no-cors", false, http.StatusForbidden},
+		{"reject hostile origin", http.MethodGet, "/api/hoxi/test/iframe-bridge", "127.0.0.1:5089", "https://evil.example", "cross-site", "iframe", "navigate", false, http.StatusForbidden},
+		{"reject untrusted host", http.MethodGet, "/api/hoxi/test/iframe-bridge", "evil.example:5089", "", "cross-site", "iframe", "navigate", false, http.StatusForbidden},
+		{"reject sibling path", http.MethodGet, "/api/hoxi/test/iframe-bridge/extra", "127.0.0.1:5089", "", "cross-site", "iframe", "navigate", false, http.StatusForbidden},
+		{"reject undeclared route", http.MethodGet, "/api/hoxi/test/other", "127.0.0.1:5089", "", "cross-site", "iframe", "navigate", false, http.StatusForbidden},
+		{"reject remote request", http.MethodGet, "/api/hoxi/test/iframe-bridge", "127.0.0.1:5089", "", "cross-site", "iframe", "navigate", true, http.StatusForbidden},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := localRequest(tc.method, tc.path, nil)
+			req.Host = tc.host
+			if tc.origin != "" {
+				req.Header.Set("Origin", tc.origin)
+			}
+			if tc.site != "" {
+				req.Header.Set("Sec-Fetch-Site", tc.site)
+			}
+			if tc.dest != "" {
+				req.Header.Set("Sec-Fetch-Dest", tc.dest)
+			}
+			if tc.mode != "" {
+				req.Header.Set("Sec-Fetch-Mode", tc.mode)
+			}
+			if tc.remote {
+				req = WithRemoteSource(req, "gopanel")
+			}
+			rec := httptest.NewRecorder()
+			g.ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, tc.want, rec.Body.String())
+			}
+		})
+	}
+
+	// Cross-origin loopback CORS preflight from macOS Wails must allow Work save headers.
+	preflight := localRequest(http.MethodOptions, "/api/hoxi/work/apps/1688/service/v1/catalog/assets/save", nil)
+	preflight.Header.Set("Origin", "wails://wails")
+	preflight.Header.Set("Access-Control-Request-Method", "POST")
+	preflight.Header.Set("Access-Control-Request-Headers", "content-type, authorization, x-hoxi-work-ui, x-hoxi-work-app, x-hoxi-store-id")
+	preRec := httptest.NewRecorder()
+	g.ServeHTTP(preRec, preflight)
+	if preRec.Code != http.StatusNoContent {
+		t.Fatalf("Wails CORS preflight status = %d, want 204", preRec.Code)
+	}
+	allowHeaders := preRec.Header().Get("Access-Control-Allow-Headers")
+	for _, hdr := range []string{"X-Hoxi-Work-UI", "X-Hoxi-Work-App", "X-Hoxi-Store-Id"} {
+		if !strings.Contains(allowHeaders, hdr) {
+			t.Fatalf("Access-Control-Allow-Headers missing %q: %q", hdr, allowHeaders)
+		}
+	}
+}

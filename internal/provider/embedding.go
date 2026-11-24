@@ -75,6 +75,9 @@ func (s *Service) resolveEmbeddingTarget(preferredProviderID, preferredModelID s
 
 	prefPID := strings.TrimSpace(preferredProviderID)
 	prefMID := strings.TrimSpace(preferredModelID)
+	if prefPID == "" && prefMID == "" {
+		prefPID, prefMID = splitMediaRoleSpec(s.LoadMediaRolePrefs().EmbeddingModel)
+	}
 	if prefPID != "" && prefMID != "" && s.isProviderUsableForLocalMedia(prefPID) {
 		if t, ok := build(prefPID, prefMID); ok {
 			return t, true
@@ -86,16 +89,15 @@ func (s *Service) resolveEmbeddingTarget(preferredProviderID, preferredModelID s
 			continue
 		}
 		pObj, _ := merged[pid].(map[string]interface{})
-		mMap, _ := pObj["models"].(map[string]interface{})
-		for _, mid := range sortedKeys(mMap) {
-			mObj, _ := mMap[mid].(map[string]interface{})
-			cat := ""
-			if mObj != nil {
-				cat, _ = mObj["category"].(string)
-			}
-			if isEmbeddingModelCandidate(mid, cat) {
-				if t, ok := build(pid, mid); ok {
-					return t, true
+		for _, mapKey := range []string{"models", "mediaModels"} {
+			mMap, _ := pObj[mapKey].(map[string]interface{})
+			for _, mid := range sortedKeys(mMap) {
+				mObj, _ := mMap[mid].(map[string]interface{})
+				caps := extractModelCapabilitiesFromConfig(mid, mObj)
+				if caps.Has(llm.CapabilityEmbedding) {
+					if t, ok := build(pid, mid); ok {
+						return t, true
+					}
 				}
 			}
 		}

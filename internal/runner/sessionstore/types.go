@@ -243,6 +243,7 @@ type MessageInfo struct {
 	Agent        string         `json:"agent,omitempty"`
 	ServiceTier  string         `json:"serviceTier,omitempty"`
 	ContinueTask bool           `json:"continueTask,omitempty"`
+	Imported     bool           `json:"imported,omitempty"`
 	Cost         float64        `json:"cost,omitempty"`
 	Tokens       *MessageTokens `json:"tokens,omitempty"`
 	Finish       string         `json:"finish,omitempty"`

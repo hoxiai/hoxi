@@ -66,10 +66,14 @@ export type {
   MediaAudioModelOption,
   MediaCapabilitiesResponse,
   MediaImageModelOption,
+  MediaImageTranslateInput,
+  MediaImageTranslateResponse,
   MediaRolePrefs,
+  MediaSlotModelOption,
   MediaTranscribeResponse,
   MediaVideoModelOption,
 } from "./media-api";
+export type { FetchedCustomModelItem } from "./provider-api";
 
 export interface WorktreeRepoStatus {
   repo: string;
@@ -576,6 +580,16 @@ export interface GitDailyPulseResponse {
   dbToolCallsTotal?: number;
   dbToolCallsFailed?: number;
   dbLatestTurnTs?: number;
+  dbActiveTurns?: Record<
+    string,
+    {
+      input: number;
+      output: number;
+      reasoning: number;
+      cacheRead: number;
+      cacheWrite: number;
+    }
+  >;
   dbModels?: Array<{
     providerID: string;
     modelID: string;

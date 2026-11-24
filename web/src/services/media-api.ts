@@ -7,6 +7,17 @@ export interface MediaImageModelOption {
   name?: string;
   protocol?: string;
   supportsImageInput?: boolean;
+  capabilities?: string[];
+}
+
+export interface MediaSlotModelOption {
+  providerID: string;
+  modelID: string;
+  name?: string;
+  modality?: string;
+  capabilities?: string[];
+  image_translate?: { output_modes?: string[] };
+  supportsImageInput?: boolean;
 }
 
 export interface MediaVideoModelOption {
@@ -24,23 +35,61 @@ export interface MediaAudioModelOption {
 
 export interface MediaRolePrefs {
   imageModel?: string;
+  imageEditModel?: string;
+  imageTranslateRasterModel?: string;
+  imageTranslateEditorModel?: string;
   videoModel?: string;
   speechModel?: string;
   transcribeModel?: string;
+  visionModel?: string;
+  textTranslateModel?: string;
+  embeddingModel?: string;
+  rerankModel?: string;
 }
 
 export interface MediaCapabilitiesResponse {
   ok: boolean;
   hasImageModel: boolean;
+  hasImageEditModel?: boolean;
+  hasImageTranslateRasterModel?: boolean;
+  hasImageTranslateEditorModel?: boolean;
   hasVideoModel?: boolean;
   hasSpeechModel?: boolean;
   hasAudioTranscriber: boolean;
   hasEmbeddingModel: boolean;
   imageModels?: MediaImageModelOption[];
+  imageEditModels?: MediaSlotModelOption[];
+  imageTranslateRasterModels?: MediaSlotModelOption[];
+  imageTranslateEditorModels?: MediaSlotModelOption[];
   videoModels?: MediaVideoModelOption[];
   speechModels?: MediaAudioModelOption[];
   transcribeModels?: MediaAudioModelOption[];
+  slots?: Record<string, MediaSlotModelOption[]>;
   roles?: MediaRolePrefs;
+}
+
+export interface MediaImageTranslateInput {
+  requestId?: string;
+  image: string;
+  sourceLanguage?: string;
+  targetLanguage?: string;
+  providerID?: string;
+  model?: string;
+  modelID?: string;
+  outputMode?: "raster" | "editable_scene";
+}
+
+export interface MediaImageTranslateResponse {
+  ok: boolean;
+  requestId?: string;
+  providerID?: string;
+  modelID?: string;
+  resolution?: string;
+  finalImageUrl?: string;
+  inPaintingUrl?: string;
+  scene?: unknown;
+  missingCapability?: string;
+  error?: string;
 }
 
 export interface MediaTranscribeResponse {
@@ -133,6 +182,15 @@ export const mediaAPI = {
     input: MediaGenerateImageInput
   ): Promise<MediaGenerateImageResponse> {
     return requestJSON("/api/hoxi/media/image", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  translateImageMedia(
+    input: MediaImageTranslateInput
+  ): Promise<MediaImageTranslateResponse> {
+    return requestJSON("/api/hoxi/media/image-translate", {
       method: "POST",
       body: JSON.stringify(input),
     });

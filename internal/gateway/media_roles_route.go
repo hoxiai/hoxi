@@ -34,7 +34,17 @@ func (g *Gateway) handleMediaRoles(w http.ResponseWriter, r *http.Request) {
 		patch := map[string]*string{}
 		for k, val := range raw {
 			switch k {
-			case "imageModel", "videoModel", "speechModel", "transcribeModel":
+			case "imageModel",
+				"imageEditModel",
+				"imageTranslateRasterModel",
+				"imageTranslateEditorModel",
+				"videoModel",
+				"speechModel",
+				"transcribeModel",
+				"visionModel",
+				"textTranslateModel",
+				"embeddingModel",
+				"rerankModel":
 			default:
 				writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("unknown media role field %q", k))
 				return

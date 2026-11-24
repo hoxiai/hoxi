@@ -1,9 +1,11 @@
 // web/src/components/timeline/MermaidBlockCard.tsx
 import { createEffect, createSignal, on, onCleanup, Show } from "solid-js";
-import { Check, Code2, Copy, Eye, LoaderCircle, Maximize2 } from "lucide-solid";
+import { Check, Code2, Copy, Download, Eye, ImageDown, LoaderCircle, Maximize2, Sparkles } from "lucide-solid";
 import { t } from "../../i18n";
-import { openImagePreview, workspace } from "../../store/workspace";
+import { isTesterPortalMode, openImagePreview, workspace } from "../../store/workspace";
+import type { ContextEnvelope } from "../../store/context-protocol";
 import { useMarkdownStreaming } from "./stream-reveal";
+import { downloadSvgAsPng, downloadSvgFile, svgToDataURL } from "./svg-sanitizer";
 
 let mermaidModulePromise: Promise<typeof import("mermaid")> | null = null;
 let mermaidSeq = 0;
@@ -13,10 +15,6 @@ function loadMermaid() {
     mermaidModulePromise = import("mermaid");
   }
   return mermaidModulePromise;
-}
-
-function svgToDataURL(svg: string): string {
-  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
 export default function MermaidBlockCard(props: {
@@ -110,6 +108,70 @@ export default function MermaidBlockCard(props: {
     });
   };
 
+  const handleDownloadPng = async () => {
+    const svg = svgMarkup();
+    if (!svg) return;
+    const bg = workspace.theme === "dark" ? "#141418" : "#ffffff";
+    const ok = await downloadSvgAsPng(svg, "mermaid-diagram.png", bg);
+    if (ok) return;
+    // Chromium taints <canvas> when an SVG contains <foreignObject> HTML labels.
+    // Re-render once offscreen with htmlLabels disabled so PNG export still succeeds.
+    const source = (props.code || "").trim();
+    if (!source || !/<foreignObject\b/i.test(svg)) return;
+    try {
+      const mod = await loadMermaid();
+      const mermaid = mod.default;
+      const theme = workspace.theme === "dark" ? "dark" : "default";
+      try {
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: "strict",
+          theme,
+          fontFamily: "inherit",
+          htmlLabels: false,
+          flowchart: { htmlLabels: false },
+        });
+        const { svg: pureSvg } = await mermaid.render(`hoxi-mermaid-png-${++mermaidSeq}`, source);
+        await downloadSvgAsPng(pureSvg, "mermaid-diagram.png", bg);
+      } finally {
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: "strict",
+          theme,
+          fontFamily: "inherit",
+          htmlLabels: true,
+          flowchart: { htmlLabels: true },
+        });
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const handleFixWithAI = () => {
+    const err = renderError();
+    const content = err ? `${props.code}\n\nError: ${err}` : props.code;
+    const envelope: ContextEnvelope = {
+      version: 1,
+      items: [
+        {
+          kind: "quote",
+          title: t("timeline.mermaidDiagramLabel"),
+          content,
+        },
+      ],
+    };
+    window.dispatchEvent(
+      new CustomEvent("hoxi:composer-fill", {
+        detail: {
+          text: t("timeline.mermaidFixPrompt"),
+          contexts: [envelope],
+          appendContexts: true,
+        },
+      })
+    );
+  };
+
   const showPreview = () => viewMode() === "preview" && Boolean(svgMarkup());
 
   return (
@@ -156,6 +218,22 @@ export default function MermaidBlockCard(props: {
             </div>
             <button
               type="button"
+              onClick={() => downloadSvgFile(svgMarkup(), "mermaid-diagram.svg")}
+              title={t("timeline.downloadSvg")}
+              class="inline-flex items-center justify-center rounded-md p-1 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            >
+              <Download size={12} />
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleDownloadPng()}
+              title={t("timeline.downloadPng")}
+              class="inline-flex items-center justify-center rounded-md p-1 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            >
+              <ImageDown size={12} />
+            </button>
+            <button
+              type="button"
               onClick={handleZoom}
               title={t("timeline.previewImageTooltip")}
               class="inline-flex items-center justify-center rounded-md p-1 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
@@ -181,8 +259,18 @@ export default function MermaidBlockCard(props: {
         fallback={
           <div>
             <Show when={renderError() && viewMode() === "preview"}>
-              <div class="border-b border-[var(--border-subtle)] bg-[var(--warn-surface)]/40 px-3 py-1.5 text-[11px] text-[var(--warn-text)]">
-                {t("timeline.mermaidRenderFailed")}
+              <div class="flex items-center justify-between gap-2 border-b border-[var(--border-subtle)] bg-[var(--warn-surface)]/40 px-3 py-1.5 text-[11px] text-[var(--warn-text)]">
+                <span>{t("timeline.mermaidRenderFailed")}</span>
+                <Show when={!isTesterPortalMode() && workspace.activeSessionID}>
+                  <button
+                    type="button"
+                    onClick={handleFixWithAI}
+                    class="inline-flex shrink-0 items-center gap-1 rounded-md border border-[var(--warn-border)] bg-[var(--bg-panel)]/80 px-2 py-0.5 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+                  >
+                    <Sparkles size={11} class="text-[var(--accent-primary)]" />
+                    <span>{t("timeline.mermaidFixWithAI")}</span>
+                  </button>
+                </Show>
               </div>
             </Show>
             <pre

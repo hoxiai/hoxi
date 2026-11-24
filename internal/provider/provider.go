@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/llm"
 	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
 )
 
@@ -177,8 +178,13 @@ type fetchProviderModelsRequest struct {
 }
 
 type fetchedModelItem struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID             string                        `json:"id"`
+	Name           string                        `json:"name"`
+	Modality       string                        `json:"modality,omitempty"`
+	Category       string                        `json:"category,omitempty"`
+	Capabilities   []llm.ModelCapability         `json:"capabilities,omitempty"`
+	ImageTranslate *llm.ImageTranslateCapability `json:"image_translate,omitempty"`
+	Slots          []llm.ModelSlot               `json:"slots,omitempty"`
 }
 
 type fetchProviderModelsResponse struct {
@@ -295,6 +301,13 @@ func (g *Service) handleFetchProviderModels(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusOK, fetchProviderModelsResponse{Error: redactSecretInText(err.Error(), apiKey)})
 		return
 	}
+	if !isGoogle && !isAnthropic && resp.StatusCode == http.StatusNotFound &&
+		!strings.HasSuffix(strings.ToLower(trimmedBase), "/v1") &&
+		!strings.HasSuffix(strings.ToLower(trimmedBase), "/models") {
+		if retryResp, retryBytes, retryErr := doFetch(trimmedBase+"/v1/models", false); retryErr == nil && retryResp != nil && retryResp.StatusCode >= 200 && retryResp.StatusCode < 300 {
+			resp, bodyBytes = retryResp, retryBytes
+		}
+	}
 	if isGoogle && apiKey != "" && !isOfficialGoogleHost(modelsURL) &&
 		(resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
 		if retryResp, retryBytes, retryErr := doFetch(appendGoogleQueryKey(modelsURL, apiKey), shouldSendBearerOnGoogleRetry(apiKey)); retryErr == nil && retryResp != nil {
@@ -316,18 +329,70 @@ func (g *Service) handleFetchProviderModels(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, fetchProviderModelsResponse{Models: models})
 }
 
-func parseOpenAIModelsPayload(raw []byte) []fetchedModelItem {
-	type rawModel struct {
-		ID          string `json:"id"`
-		Name        string `json:"name"`
-		DisplayName string `json:"displayName"`
+func extractStringSliceFromRaw(raw json.RawMessage) ([]string, bool) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" || trimmed[0] != '[' {
+		return nil, false
 	}
+	var out []string
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, false
+	}
+	return out, true
+}
+
+func extractImageTranslateOutputModesFromRaw(rawItem map[string]json.RawMessage) []string {
+	tryObj := func(raw json.RawMessage) []string {
+		if len(raw) == 0 {
+			return nil
+		}
+		var obj struct {
+			OutputModes      []string `json:"output_modes"`
+			CamelOutputModes []string `json:"outputModes"`
+		}
+		if json.Unmarshal(raw, &obj) == nil {
+			if len(obj.OutputModes) > 0 {
+				return obj.OutputModes
+			}
+			if len(obj.CamelOutputModes) > 0 {
+				return obj.CamelOutputModes
+			}
+		}
+		return nil
+	}
+	for _, key := range []string{"image_translate", "imageTranslate"} {
+		if modes := tryObj(rawItem[key]); len(modes) > 0 {
+			return modes
+		}
+	}
+	for _, key := range []string{"image_translate_output_modes", "imageTranslateOutputModes", "output_modes", "outputModes"} {
+		if modes, ok := extractStringSliceFromRaw(rawItem[key]); ok && len(modes) > 0 {
+			return modes
+		}
+	}
+	for _, containerKey := range []string{"capability_details", "capabilityDetails", "metadata"} {
+		if rawCont, ok := rawItem[containerKey]; ok && len(rawCont) > 0 {
+			var nested map[string]json.RawMessage
+			if json.Unmarshal(rawCont, &nested) == nil {
+				if modes := tryObj(nested["image_translate"]); len(modes) > 0 {
+					return modes
+				}
+				if modes := tryObj(nested["imageTranslate"]); len(modes) > 0 {
+					return modes
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func parseOpenAIModelsPayload(raw []byte) []fetchedModelItem {
 	var wrapper struct {
-		Data   []rawModel `json:"data"`
-		Models []rawModel `json:"models"`
+		Data   []json.RawMessage `json:"data"`
+		Models []json.RawMessage `json:"models"`
 	}
 
-	var list []rawModel
+	var list []json.RawMessage
 	if err := json.Unmarshal(raw, &wrapper); err == nil {
 		if len(wrapper.Data) > 0 {
 			list = wrapper.Data
@@ -341,7 +406,18 @@ func parseOpenAIModelsPayload(raw []byte) []fetchedModelItem {
 
 	seen := make(map[string]struct{}, len(list))
 	result := make([]fetchedModelItem, 0, len(list))
-	for _, item := range list {
+	for _, rawElem := range list {
+		var item struct {
+			ID           string          `json:"id"`
+			Name         string          `json:"name"`
+			DisplayName  string          `json:"displayName"`
+			Modality     string          `json:"modality"`
+			Category     string          `json:"category"`
+			Capabilities json.RawMessage `json:"capabilities"`
+		}
+		if err := json.Unmarshal(rawElem, &item); err != nil {
+			continue
+		}
 		id := strings.TrimSpace(item.ID)
 		name := strings.TrimSpace(item.Name)
 		if id == "" && name != "" {
@@ -364,7 +440,29 @@ func parseOpenAIModelsPayload(raw []byte) []fetchedModelItem {
 		if name == "" {
 			name = id
 		}
-		result = append(result, fetchedModelItem{ID: id, Name: name})
+
+		var rawMap map[string]json.RawMessage
+		_ = json.Unmarshal(rawElem, &rawMap)
+		explicitCaps, hasExplicitCaps := extractStringSliceFromRaw(item.Capabilities)
+		explicitModes := extractImageTranslateOutputModesFromRaw(rawMap)
+		normalized := llm.NormalizeModelCapabilities(llm.ModelCapabilityInput{
+			ModelID:                           id,
+			Modality:                          item.Modality,
+			Category:                          item.Category,
+			HasExplicitCapabilities:           hasExplicitCaps,
+			ExplicitCapabilities:              explicitCaps,
+			ExplicitImageTranslateOutputModes: explicitModes,
+		})
+		cat := inferModelCategory(id, item.Category, item.Modality)
+		result = append(result, fetchedModelItem{
+			ID:             id,
+			Name:           name,
+			Modality:       strings.TrimSpace(item.Modality),
+			Category:       cat,
+			Capabilities:   normalized.Capabilities,
+			ImageTranslate: normalized.ImageTranslate,
+			Slots:          llm.SlotsForCapabilities(normalized),
+		})
 	}
 
 	sort.Slice(result, func(i, j int) bool {

@@ -6,6 +6,8 @@ import { findQuestionReply, questionSummaryText } from "../../store/question-ans
 import { Icon, type IconName } from "../icons";
 import FileDiffBlock from "../inspector/LazyFileDiffBlock";
 import QuestionToolBody from "./question-card";
+import ShellOutputView from "./ShellOutputView";
+import ToolOutputView from "./ToolOutputView";
 import { t } from "../../i18n";
 import { processCarriageReturns, repairWindowsMojibake } from "./terminal-output-text";
 import {
@@ -627,12 +629,11 @@ export function ToolCardExpandedBody(props: {
               </div>
             }
           >
-            <pre
-              ref={props.setOutputRef}
-              class="max-h-[260px] overflow-auto px-3.5 py-2.5 text-[12px] leading-[1.55] text-[#e6edf3] whitespace-pre-wrap break-all selectable-text"
-            >
-              {props.shellOut}
-            </pre>
+            <ShellOutputView
+              rawOutput={truncateToolOutput(getFullToolOutput(props.part.id) ?? rawShellOutputFromState(props.part.state))}
+              plainOutput={props.shellOut}
+              setRef={props.setOutputRef}
+            />
           </Show>
         </div>
       </Show>
@@ -761,17 +762,12 @@ export function ToolCardExpandedBody(props: {
 
           <Show when={props.part.state.status === "completed" && props.part.state.output}>
             <div>
-              <div class="text-[11px] font-medium text-[var(--text-muted)] mb-1">
-                {t("toolCard.output")}
-              </div>
-              <pre class="text-[12px] font-mono bg-[var(--bg-code)] border border-[var(--border-subtle)] p-2.5 rounded-lg overflow-x-auto max-h-56 text-[var(--text-secondary)] whitespace-pre-wrap break-all selectable-text">
-                {processCarriageReturns(
-                  truncateToolOutput(
-                    getFullToolOutput(props.part.id) ??
-                      (props.part.state as Extract<ToolState, { status: "completed" }>).output
-                  )
-                )}
-              </pre>
+              <div class="text-[11px] font-medium text-[var(--text-muted)] mb-1">{t("toolCard.output")}</div>
+              <ToolOutputView
+                text={processCarriageReturns(truncateToolOutput(
+                  getFullToolOutput(props.part.id) ?? (props.part.state as Extract<ToolState, { status: "completed" }>).output
+                ))}
+              />
             </div>
           </Show>
 

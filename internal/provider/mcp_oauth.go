@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
+	"github.com/hoxiai/hoxi/internal/llm"
 	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
@@ -43,10 +44,14 @@ type mcpOAuthStartResponse struct {
 }
 
 type mcpOAuthModelItem struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name"`
-	InputPrice  float64 `json:"inputPrice,omitempty"`
-	OutputPrice float64 `json:"outputPrice,omitempty"`
+	ID             string                        `json:"id"`
+	Name           string                        `json:"name"`
+	Category       string                        `json:"category,omitempty"`
+	Modality       string                        `json:"modality,omitempty"`
+	Capabilities   []llm.ModelCapability         `json:"capabilities,omitempty"`
+	ImageTranslate *llm.ImageTranslateCapability `json:"image_translate,omitempty"`
+	InputPrice     float64                       `json:"inputPrice,omitempty"`
+	OutputPrice    float64                       `json:"outputPrice,omitempty"`
 }
 
 type mcpOAuthPollResponse struct {

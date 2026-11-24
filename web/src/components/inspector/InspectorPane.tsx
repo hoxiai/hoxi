@@ -6,6 +6,7 @@ import SkillsInspectorView from "../skills/SkillsInspectorView";
 import TaskOverviewView from "../tasks/TaskOverviewView";
 import {
   activeDirectory,
+  canvasPreview,
   isSessionBusy,
   loadIntakeTasks,
   loadSchedules,
@@ -22,11 +23,12 @@ const PierreDiffViewer = lazy(() => import("./PierreDiffViewer"));
 const WebGLTerminal = lazy(() => import("../terminal/WebGLTerminal"));
 const BrowserInspector = lazy(() => import("./BrowserInspector"));
 const ComputerInspector = lazy(() => import("../computer/ComputerInspector"));
+const CanvasPreviewView = lazy(() => import("./CanvasPreviewView"));
 
-type TabID = "diffs" | "memory" | "files" | "skills" | "terminal" | "browser" | "computer" | "tasks";
+type TabID = "diffs" | "memory" | "files" | "skills" | "terminal" | "browser" | "computer" | "tasks" | "preview";
 
 const PRIMARY_TABS: TabID[] = ["diffs", "files", "terminal", "tasks"];
-const SECONDARY_TABS: TabID[] = ["browser", "computer", "memory", "skills"];
+const SECONDARY_TABS: TabID[] = ["preview", "browser", "computer", "memory", "skills"];
 
 export default function InspectorPane() {
   const [visitedTabs, setVisitedTabs] = createSignal<Record<TabID, boolean>>({
@@ -38,6 +40,7 @@ export default function InspectorPane() {
     browser: workspace.inspectorTab === "browser",
     computer: workspace.inspectorTab === "computer",
     tasks: workspace.inspectorTab === "tasks",
+    preview: workspace.inspectorTab === "preview",
   });
   const [activeCustomTabID, setActiveCustomTabID] = createSignal<string | null>(null);
 
@@ -73,6 +76,7 @@ export default function InspectorPane() {
     const allowed = new Set([
       ...surfaceExtension.inspectorTabs.primary,
       ...surfaceExtension.inspectorTabs.secondary,
+      ...(canvasPreview() ? (["preview"] as TabID[]) : []),
     ]);
     if (!allowed.has(workspace.inspectorTab)) {
       const next = surfaceExtension.inspectorTabs.primary[0] || "files";
@@ -80,8 +84,8 @@ export default function InspectorPane() {
     }
   });
 
-  // Secondary panes (memory / skills / browser) stay reachable through the
-  // command palette; they join the tab strip once opened, so switching to a
+  // Secondary panes (preview / memory / skills / browser) stay reachable through the
+  // command palette or docking; they join the tab strip once opened, so switching to a
   // primary tab never strands them.
   const tabs = createMemo<Array<{ id: TabID }>>(() => {
     const active = workspace.inspectorTab;
@@ -90,10 +94,14 @@ export default function InspectorPane() {
       isWorkSurface() && surfaceExtension.inspectorTabs
         ? surfaceExtension.inspectorTabs.primary
         : PRIMARY_TABS;
-    const secondaryList =
+    const baseSecondary =
       isWorkSurface() && surfaceExtension.inspectorTabs
         ? surfaceExtension.inspectorTabs.secondary
         : SECONDARY_TABS;
+    const secondaryList =
+      canvasPreview() && !baseSecondary.includes("preview") && !primaryList.includes("preview")
+        ? (["preview", ...baseSecondary] as TabID[])
+        : baseSecondary;
     const secondary = secondaryList.filter((id) => id === active || visited[id]);
     return [...primaryList, ...secondary].map((id) => ({ id }));
   });
@@ -135,6 +143,8 @@ export default function InspectorPane() {
         return t("computer.title");
       case "browser":
         return t("inspector.tabs.browser");
+      case "preview":
+        return t("inspector.tabs.preview");
       case "tasks": {
         const badgeCount =
           pendingIntakeCount() +
@@ -258,6 +268,11 @@ export default function InspectorPane() {
           <Show when={workspace.inspectorOpen && workspace.inspectorTab === "tasks"}>
             <div class="hoxi-tab-panel" data-active="true">
               <TaskOverviewView />
+            </div>
+          </Show>
+          <Show when={workspace.inspectorOpen && workspace.inspectorTab === "preview"}>
+            <div class="hoxi-tab-panel" data-active="true">
+              <CanvasPreviewView />
             </div>
           </Show>
           </Show>

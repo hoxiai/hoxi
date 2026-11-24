@@ -1,7 +1,6 @@
 package provider
 
 import (
-	"sort"
 	"strings"
 
 	"github.com/hoxiai/hoxi/internal/llm"
@@ -68,84 +67,22 @@ func (s *Service) CanModelGenerateVideo(providerID, modelID string) bool {
 
 // ListVideoModels returns all video generation models configured on active,
 // credentialed providers in Hoxi / OpenCode config, ordered by capability rank.
+// Delegates to the single-source-of-truth ModelSlotVideo index.
 func (s *Service) ListVideoModels() []llm.VideoModelOption {
-	if s == nil {
+	slotOpts := s.ListModelsBySlot(llm.ModelSlotVideo)
+	if len(slotOpts) == 0 {
 		return nil
 	}
-	merged := s.loadOpenCodeImportedProviderMap()
-	for k, v := range s.loadHoxiProvidersMap() {
-		merged[k] = v
-	}
-
-	type scoredOpt struct {
-		opt   llm.VideoModelOption
-		score int
-	}
-	var found []scoredOpt
-	seen := map[string]bool{}
-
-	for _, pid := range sortedKeys(merged) {
-		if !s.isProviderUsableForLocalMedia(pid) {
-			continue
+	out := make([]llm.VideoModelOption, len(slotOpts))
+	for i, item := range slotOpts {
+		mObj := s.lookupConfiguredModelObject(item.ProviderID, item.ModelID)
+		supportsIn := supportsVideoImageInput(item.ModelID) || (mObj != nil && hasImageInputModality(mObj))
+		out[i] = llm.VideoModelOption{
+			ProviderID: item.ProviderID,
+			ModelID:    item.ModelID,
+			Name:       item.Name,
+			SupportsIn: supportsIn,
 		}
-		pObj, ok := merged[pid].(map[string]interface{})
-		if !ok {
-			continue
-		}
-		for _, mapKey := range []string{"models", "mediaModels"} {
-			mMap, ok := pObj[mapKey].(map[string]interface{})
-			if !ok {
-				continue
-			}
-			for _, mid := range sortedKeys(mMap) {
-				mObj, _ := mMap[mid].(map[string]interface{})
-				cat := ""
-				name := mid
-				supportsIn := supportsVideoImageInput(mid)
-				if mObj != nil {
-					cat, _ = mObj["category"].(string)
-					if n, _ := mObj["name"].(string); strings.TrimSpace(n) != "" {
-						name = strings.TrimSpace(n)
-					}
-					if hasImageInputModality(mObj) {
-						supportsIn = true
-					}
-				}
-				isVid := IsVideoGenerationModel(mid, cat, "") || (mObj != nil && hasVideoOutputModality(mObj))
-				if !isVid {
-					continue
-				}
-				key := pid + "/" + mid
-				if seen[key] {
-					continue
-				}
-				seen[key] = true
-				found = append(found, scoredOpt{
-					opt: llm.VideoModelOption{
-						ProviderID: pid,
-						ModelID:    mid,
-						Name:       name,
-						SupportsIn: supportsIn,
-					},
-					score: scoreVideoModelPreference(mid),
-				})
-			}
-		}
-	}
-
-	sort.SliceStable(found, func(i, j int) bool {
-		if found[i].score != found[j].score {
-			return found[i].score > found[j].score
-		}
-		if found[i].opt.ProviderID != found[j].opt.ProviderID {
-			return found[i].opt.ProviderID < found[j].opt.ProviderID
-		}
-		return found[i].opt.ModelID < found[j].opt.ModelID
-	})
-
-	out := make([]llm.VideoModelOption, len(found))
-	for i, item := range found {
-		out[i] = item.opt
 	}
 	return out
 }

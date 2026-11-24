@@ -28,6 +28,10 @@ const (
 
 	devPulseCacheTTL        = 15 * time.Second
 	maxDevPulseCacheEntries = 16
+	historyCacheTTL         = 30 * time.Second
+	historyPastCacheTTL     = 5 * time.Minute
+	gitHistoryCacheTTL      = 60 * time.Second
+	maxHistoryCacheEntries  = 16
 	partMessageLookbackMs   = 24 * 60 * 60 * 1000
 )
 
@@ -44,6 +48,14 @@ type DailyModelStat struct {
 	Cost             float64 `json:"cost"`
 }
 
+type DailyTurnTokens struct {
+	Input      int64 `json:"input"`
+	Output     int64 `json:"output"`
+	Reasoning  int64 `json:"reasoning"`
+	CacheRead  int64 `json:"cacheRead"`
+	CacheWrite int64 `json:"cacheWrite"`
+}
+
 type DailyPulseResponse struct {
 	TodayCommits       int `json:"todayCommits"`
 	CommittedAdditions int `json:"committedAdditions"`
@@ -57,23 +69,24 @@ type DailyPulseResponse struct {
 	UncommittedFiles     int `json:"uncommittedFiles"`
 	// UncommittedTruncated reports that untracked-file line counting stopped at
 	// its read budget, so additions are a lower bound rather than a total.
-	UncommittedTruncated bool             `json:"uncommittedTruncated,omitempty"`
-	Branch               string           `json:"branch,omitempty"`
-	HeadCommit           string           `json:"headCommit,omitempty"`
-	HeadSubject          string           `json:"headSubject,omitempty"`
-	DbTotalTokens        int64            `json:"dbTotalTokens"`
-	DbInputTokens        int64            `json:"dbInputTokens"`
-	DbOutputTokens       int64            `json:"dbOutputTokens"`
-	DbReasoningTokens    int64            `json:"dbReasoningTokens"`
-	DbCacheReadTokens    int64            `json:"dbCacheReadTokens"`
-	DbCacheWriteTokens   int64            `json:"dbCacheWriteTokens"`
-	DbTotalCost          float64          `json:"dbTotalCost"`
-	DbTurnsCount         int              `json:"dbTurnsCount"`
-	DbSessionsCount      int              `json:"dbSessionsCount"`
-	DbToolCallsTotal     int              `json:"dbToolCallsTotal"`
-	DbToolCallsFailed    int              `json:"dbToolCallsFailed"`
-	DbLatestTurnTs       int64            `json:"dbLatestTurnTs"`
-	DbModels             []DailyModelStat `json:"dbModels"`
+	UncommittedTruncated bool                       `json:"uncommittedTruncated,omitempty"`
+	Branch               string                     `json:"branch,omitempty"`
+	HeadCommit           string                     `json:"headCommit,omitempty"`
+	HeadSubject          string                     `json:"headSubject,omitempty"`
+	DbTotalTokens        int64                      `json:"dbTotalTokens"`
+	DbInputTokens        int64                      `json:"dbInputTokens"`
+	DbOutputTokens       int64                      `json:"dbOutputTokens"`
+	DbReasoningTokens    int64                      `json:"dbReasoningTokens"`
+	DbCacheReadTokens    int64                      `json:"dbCacheReadTokens"`
+	DbCacheWriteTokens   int64                      `json:"dbCacheWriteTokens"`
+	DbTotalCost          float64                    `json:"dbTotalCost"`
+	DbTurnsCount         int                        `json:"dbTurnsCount"`
+	DbSessionsCount      int                        `json:"dbSessionsCount"`
+	DbToolCallsTotal     int                        `json:"dbToolCallsTotal"`
+	DbToolCallsFailed    int                        `json:"dbToolCallsFailed"`
+	DbLatestTurnTs       int64                      `json:"dbLatestTurnTs"`
+	DbActiveTurns        map[string]DailyTurnTokens `json:"dbActiveTurns,omitempty"`
+	DbModels             []DailyModelStat           `json:"dbModels"`
 }
 
 // CandidateDirectories returns workspace directories supplied by the pulse Source.
@@ -98,6 +111,7 @@ type SourceKey struct {
 
 // TurnUsage summarizes a single assistant turn from the runner session store.
 type TurnUsage struct {
+	ID               string
 	Role             string
 	Created          int64
 	Completed        int64
@@ -128,9 +142,18 @@ type Source interface {
 	ParseBranchFromPorcelainHeader(headerLine string) string
 }
 
+// contextGitSource is optionally implemented by Source to support cancellation
+// of in-flight git subprocesses when the caller's HTTP request is aborted.
+type contextGitSource interface {
+	RunGitContext(ctx context.Context, workDir string, args ...string) (string, error)
+	RunGitRawContext(ctx context.Context, workDir string, args ...string) (string, error)
+}
+
 type pulseEntry struct {
-	at  time.Time
-	res DailyPulseResponse
+	at             time.Time
+	startOfTodayMs int64
+	usageKey       SourceKey
+	res            DailyPulseResponse
 }
 
 type pulseFlight struct {
@@ -138,23 +161,65 @@ type pulseFlight struct {
 	res DailyPulseResponse
 }
 
+type usageFlight struct {
+	wg             sync.WaitGroup
+	startOfTodayMs int64
+	sourceKey      SourceKey
+	res            DailyPulseResponse
+}
+
+type ocDirsCacheKey struct {
+	dbPath                         string
+	dbSize, dbMod, walSize, walMod int64
+}
+
 type Service struct {
-	source       Source
-	mu           sync.Mutex
-	entries      map[string]pulseEntry
-	inflight     map[string]*pulseFlight
-	usageAt      time.Time
-	usageStartMs int64
-	usageKey     SourceKey
-	usageRes     DailyPulseResponse
+	source            Source
+	mu                sync.Mutex
+	entries           map[string]pulseEntry
+	inflight          map[string]*pulseFlight
+	historyEntries    map[string]historyCacheEntry
+	historyInflight   map[string]*historyFlight
+	gitHistoryEntries map[string]gitHistoryCacheEntry
+	ocDirsKey         ocDirsCacheKey
+	ocDirsLoaded      bool
+	ocDirs            []string
+	usageAt           time.Time
+	usageStartMs      int64
+	usageKey          SourceKey
+	usageRes          DailyPulseResponse
+	usageInflight     *usageFlight
 }
 
 func NewService(source Source) *Service {
 	return &Service{
-		source:   source,
-		entries:  make(map[string]pulseEntry),
-		inflight: make(map[string]*pulseFlight),
+		source:            source,
+		entries:           make(map[string]pulseEntry),
+		inflight:          make(map[string]*pulseFlight),
+		historyEntries:    make(map[string]historyCacheEntry),
+		historyInflight:   make(map[string]*historyFlight),
+		gitHistoryEntries: make(map[string]gitHistoryCacheEntry),
 	}
+}
+
+func (s *Service) runGit(ctx context.Context, workDir string, args ...string) (string, error) {
+	if s.source == nil {
+		return "", nil
+	}
+	if cs, ok := s.source.(contextGitSource); ok {
+		return cs.RunGitContext(ctx, workDir, args...)
+	}
+	return s.source.RunGit(workDir, args...)
+}
+
+func (s *Service) runGitRaw(ctx context.Context, workDir string, args ...string) (string, error) {
+	if s.source == nil {
+		return "", nil
+	}
+	if cs, ok := s.source.(contextGitSource); ok {
+		return cs.RunGitRawContext(ctx, workDir, args...)
+	}
+	return s.source.RunGitRaw(workDir, args...)
 }
 
 func (s *Service) RegisterRoutes(mux *http.ServeMux) {
@@ -179,6 +244,13 @@ func (s *Service) DailyPulse(dir, sessionID string, forced bool) DailyPulseRespo
 	cacheKey := TargetsCacheKey(targets)
 
 	now := time.Now()
+	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	startOfTodayMs := startOfToday.UnixMilli()
+	var sourceKey SourceKey
+	if s.source != nil {
+		sourceKey = s.source.SourceKey()
+	}
+
 	s.mu.Lock()
 	if s.entries == nil {
 		s.entries = make(map[string]pulseEntry)
@@ -187,14 +259,36 @@ func (s *Service) DailyPulse(dir, sessionID string, forced bool) DailyPulseRespo
 		s.inflight = make(map[string]*pulseFlight)
 	}
 	if !forced {
-		if entry, ok := s.entries[cacheKey]; ok && !entry.at.IsZero() && now.Sub(entry.at) < devPulseCacheTTL {
+		if entry, ok := s.entries[cacheKey]; ok && !entry.at.IsZero() && entry.startOfTodayMs == startOfTodayMs && now.Sub(entry.at) < devPulseCacheTTL {
+			if entry.usageKey == sourceKey {
+				res := cloneDailyPulseResponse(entry.res)
+				s.mu.Unlock()
+				return res
+			}
+			// Git stats are still within TTL, but token usage changed; reuse
+			// the cached git totals and recompute only lightweight token usage.
+			res := cloneDailyPulseResponse(entry.res)
+			gitAt := entry.at
 			s.mu.Unlock()
-			return entry.res
+
+			usageKey := s.collectDailyUsage(now, startOfTodayMs, false, &res)
+
+			s.mu.Lock()
+			if cur, ok := s.entries[cacheKey]; ok && cur.at.Equal(gitAt) && cur.startOfTodayMs == startOfTodayMs {
+				s.entries[cacheKey] = pulseEntry{
+					at:             gitAt,
+					startOfTodayMs: startOfTodayMs,
+					usageKey:       usageKey,
+					res:            cloneDailyPulseResponse(res),
+				}
+			}
+			s.mu.Unlock()
+			return res
 		}
 		if flight, ok := s.inflight[cacheKey]; ok {
 			s.mu.Unlock()
 			flight.wg.Wait()
-			return flight.res
+			return cloneDailyPulseResponse(flight.res)
 		}
 	}
 	var flight *pulseFlight
@@ -203,16 +297,14 @@ func (s *Service) DailyPulse(dir, sessionID string, forced bool) DailyPulseRespo
 		flight.wg.Add(1)
 		s.inflight[cacheKey] = flight
 	}
+	computeStartedAt := time.Now()
 	s.mu.Unlock()
-
-	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	startOfTodayMs := startOfToday.UnixMilli()
 
 	res := DailyPulseResponse{
 		DbModels: []DailyModelStat{},
 	}
 
-	s.collectDailyUsage(now, startOfTodayMs, forced, &res)
+	usageKey := s.collectDailyUsage(now, startOfTodayMs, forced, &res)
 	if len(targets) > 0 {
 		s.CollectGitDailyStats(targets, startOfToday, &res)
 	}
@@ -235,15 +327,29 @@ func (s *Service) DailyPulse(dir, sessionID string, forced bool) DailyPulseRespo
 			delete(s.entries, oldestKey)
 		}
 	}
-	s.entries[cacheKey] = pulseEntry{at: time.Now(), res: res}
+	cachedRes := cloneDailyPulseResponse(res)
+	if cur, ok := s.entries[cacheKey]; forced || !ok || cur.startOfTodayMs != startOfTodayMs || !cur.at.After(computeStartedAt) {
+		s.entries[cacheKey] = pulseEntry{
+			at:             computeStartedAt,
+			startOfTodayMs: startOfTodayMs,
+			usageKey:       usageKey,
+			res:            cachedRes,
+		}
+	}
 	if flight != nil {
-		flight.res = res
+		flight.res = cachedRes
 		delete(s.inflight, cacheKey)
 		flight.wg.Done()
 	}
 	s.mu.Unlock()
 
 	return res
+}
+
+func cloneDailyPulseResponse(src DailyPulseResponse) DailyPulseResponse {
+	dst := src
+	copyDailyUsage(&dst, src)
+	return dst
 }
 
 func copyDailyUsage(dst *DailyPulseResponse, src DailyPulseResponse) {
@@ -259,24 +365,51 @@ func copyDailyUsage(dst *DailyPulseResponse, src DailyPulseResponse) {
 	dst.DbCacheReadTokens = src.DbCacheReadTokens
 	dst.DbCacheWriteTokens = src.DbCacheWriteTokens
 	dst.DbTotalCost = src.DbTotalCost
+	if len(src.DbActiveTurns) > 0 {
+		dst.DbActiveTurns = make(map[string]DailyTurnTokens, len(src.DbActiveTurns))
+		for k, v := range src.DbActiveTurns {
+			dst.DbActiveTurns[k] = v
+		}
+	} else {
+		dst.DbActiveTurns = nil
+	}
 	dst.DbModels = make([]DailyModelStat, len(src.DbModels))
 	copy(dst.DbModels, src.DbModels)
 }
 
-func (s *Service) collectDailyUsage(now time.Time, startOfTodayMs int64, forced bool, res *DailyPulseResponse) {
+func (s *Service) collectDailyUsage(now time.Time, startOfTodayMs int64, forced bool, res *DailyPulseResponse) SourceKey {
 	var sourceKey SourceKey
 	if s.source != nil {
 		sourceKey = s.source.SourceKey()
 	}
+	hasFingerprint := sourceKey != (SourceKey{})
+	var flight *usageFlight
+	computeStartedAt := time.Now()
 	if !forced {
 		s.mu.Lock()
 		if !s.usageAt.IsZero() &&
 			s.usageStartMs == startOfTodayMs &&
-			(now.Sub(s.usageAt) < devPulseCacheTTL || s.usageKey == sourceKey) {
+			((hasFingerprint && s.usageKey == sourceKey) || (!hasFingerprint && now.Sub(s.usageAt) < devPulseCacheTTL)) {
 			copyDailyUsage(res, s.usageRes)
+			cachedKey := s.usageKey
 			s.mu.Unlock()
-			return
+			return cachedKey
 		}
+		if existing := s.usageInflight; existing != nil &&
+			existing.startOfTodayMs == startOfTodayMs &&
+			existing.sourceKey == sourceKey {
+			s.mu.Unlock()
+			existing.wg.Wait()
+			copyDailyUsage(res, existing.res)
+			return existing.sourceKey
+		}
+		flight = &usageFlight{
+			startOfTodayMs: startOfTodayMs,
+			sourceKey:      sourceKey,
+		}
+		flight.wg.Add(1)
+		s.usageInflight = flight
+		computeStartedAt = time.Now()
 		s.mu.Unlock()
 	}
 
@@ -286,14 +419,25 @@ func (s *Service) collectDailyUsage(now time.Time, startOfTodayMs int64, forced 
 	s.queryOpenCodeDailyDB(startOfTodayMs, &usage)
 	s.CollectRunnerDailyUsage(startOfTodayMs, &usage)
 
+	cachedUsage := cloneDailyPulseResponse(usage)
 	s.mu.Lock()
-	s.usageAt = time.Now()
-	s.usageStartMs = startOfTodayMs
-	s.usageKey = sourceKey
-	s.usageRes = usage
+	if forced || s.usageStartMs != startOfTodayMs || !s.usageAt.After(computeStartedAt) {
+		s.usageAt = computeStartedAt
+		s.usageStartMs = startOfTodayMs
+		s.usageKey = sourceKey
+		s.usageRes = cachedUsage
+	}
+	if flight != nil {
+		flight.res = cachedUsage
+		if s.usageInflight == flight {
+			s.usageInflight = nil
+		}
+		flight.wg.Done()
+	}
 	s.mu.Unlock()
 
 	copyDailyUsage(res, usage)
+	return sourceKey
 }
 
 // CollectRunnerDailyUsage folds native-runtime token usage into the pulse.
@@ -330,6 +474,22 @@ func (s *Service) CollectRunnerDailyUsage(startOfTodayMs int64, res *DailyPulseR
 			hasNativeTurnToday = true
 			toolsTotal += turn.ToolCallsTotal
 			toolsFailed += turn.ToolCallsFailed
+			if turn.Completed == 0 && turn.ID != "" {
+				if res.DbActiveTurns == nil {
+					res.DbActiveTurns = make(map[string]DailyTurnTokens)
+				}
+				if turn.HasTokens {
+					res.DbActiveTurns[turn.ID] = DailyTurnTokens{
+						Input:      turn.InputTokens,
+						Output:     turn.OutputTokens,
+						Reasoning:  turn.ReasoningTokens,
+						CacheRead:  turn.CacheReadTokens,
+						CacheWrite: turn.CacheWriteTokens,
+					}
+				} else {
+					res.DbActiveTurns[turn.ID] = DailyTurnTokens{}
+				}
+			}
 			if !turn.HasTokens {
 				return
 			}
@@ -443,7 +603,9 @@ FROM (
     AND (
       CAST(COALESCE(json_extract(m.data, '$.tokens.input'), 0) AS INTEGER) > 0
       OR CAST(COALESCE(json_extract(m.data, '$.tokens.output'), 0) AS INTEGER) > 0
+      OR CAST(COALESCE(json_extract(m.data, '$.tokens.reasoning'), 0) AS INTEGER) > 0
       OR CAST(COALESCE(json_extract(m.data, '$.tokens.cache.read'), 0) AS INTEGER) > 0
+      OR CAST(COALESCE(json_extract(m.data, '$.tokens.cache.write'), 0) AS INTEGER) > 0
     )
 )
 GROUP BY provider_id, model_id

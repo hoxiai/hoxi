@@ -1266,4 +1266,21 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get chatReportedBadge => '已举报';
+
+  @override
+  String get contextQuoteLabel => '引用';
+
+  @override
+  String get contextReferencedSingle => '已附上下文';
+
+  @override
+  String contextAttachedCount(int count) {
+    return '已附 $count 项数据';
+  }
+
+  @override
+  String get contextResolveHint => '按需回查';
+
+  @override
+  String get contextCopyItem => '复制此项';
 }

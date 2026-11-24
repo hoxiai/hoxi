@@ -21,11 +21,12 @@ type cachedEntry struct {
 }
 
 type Service struct {
-	mu       sync.RWMutex
-	client   *http.Client
-	baseURL  string
-	cache    map[string]cachedEntry
-	cacheTTL time.Duration
+	mu                sync.RWMutex
+	client            *http.Client
+	baseURL           string
+	cache             map[string]cachedEntry
+	cacheTTL          time.Duration
+	pricingRefreshing bool
 }
 
 func NewService(baseURL string, client *http.Client) *Service {
@@ -122,6 +123,103 @@ func pricingDiskCachePath() string {
 	return hoxipaths.Join("model-pricing-cache.json")
 }
 
+const modelPricingCacheTTL = 30 * time.Minute
+
+func (s *Service) readPricingDiskCache() (*ModelPricingResponse, time.Time, bool) {
+	p := pricingDiskCachePath()
+	if p == "" {
+		return nil, time.Time{}, false
+	}
+	info, err := os.Stat(p)
+	if err != nil {
+		return nil, time.Time{}, false
+	}
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		return nil, time.Time{}, false
+	}
+	var cached ModelPricingResponse
+	if json.Unmarshal(raw, &cached) != nil || cached.Data == nil || len(cached.Data.Items) == 0 {
+		return nil, time.Time{}, false
+	}
+	return &cached, info.ModTime(), true
+}
+
+func (s *Service) fetchRemoteModelPricing() (*ModelPricingResponse, bool) {
+	if hoxipaths.AuxiliaryNetworkDisabled() {
+		return nil, false
+	}
+	endpoint := fmt.Sprintf("%s/api/hoxi/models", s.baseURL)
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, false
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", buildinfo.UserAgent())
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, false
+	}
+	var items []ModelPricingItem
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&items); err != nil || len(items) == 0 {
+		return nil, false
+	}
+	updatedAt := time.Now().Format("2006-01-02")
+	for _, it := range items {
+		if it.UpdatedAt != "" {
+			updatedAt = it.UpdatedAt
+			break
+		}
+	}
+	result := &ModelPricingResponse{
+		Code:    200,
+		Message: "ok",
+		Data: &ModelPricingData{
+			UpdatedAt: updatedAt,
+			Total:     len(items),
+			Items:     items,
+		},
+	}
+	s.mu.Lock()
+	s.cache["model_pricing_catalog"] = cachedEntry{
+		data:      result,
+		expiresAt: time.Now().Add(modelPricingCacheTTL),
+	}
+	s.mu.Unlock()
+	if p := pricingDiskCachePath(); p != "" {
+		if raw, err := json.Marshal(result); err == nil {
+			_ = hoxipaths.WriteFileAtomic(p, raw, 0o600)
+		}
+	}
+	return result, true
+}
+
+func (s *Service) triggerBackgroundPricingRefresh() {
+	if hoxipaths.AuxiliaryNetworkDisabled() {
+		return
+	}
+	s.mu.Lock()
+	if s.pricingRefreshing {
+		s.mu.Unlock()
+		return
+	}
+	s.pricingRefreshing = true
+	s.mu.Unlock()
+
+	go func() {
+		defer func() {
+			s.mu.Lock()
+			s.pricingRefreshing = false
+			s.mu.Unlock()
+		}()
+		_, _ = s.fetchRemoteModelPricing()
+	}()
+}
+
 func (s *Service) GetModelPricing(forceRefresh bool) (*ModelPricingResponse, error) {
 	const cacheKey = "model_pricing_catalog"
 
@@ -132,69 +230,44 @@ func (s *Service) GetModelPricing(forceRefresh bool) (*ModelPricingResponse, err
 			return entry.data.(*ModelPricingResponse), nil
 		}
 		s.mu.RUnlock()
-	}
 
-	endpoint := fmt.Sprintf("%s/api/hoxi/models", s.baseURL)
-	var req *http.Request
-	var err error
-	if !hoxipaths.AuxiliaryNetworkDisabled() {
-		req, err = http.NewRequest(http.MethodGet, endpoint, nil)
-	}
-	if !hoxipaths.AuxiliaryNetworkDisabled() && err == nil {
-		req.Header.Set("Accept", "application/json")
-		req.Header.Set("User-Agent", buildinfo.UserAgent())
-		if resp, err := s.client.Do(req); err == nil {
-			defer resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				var items []ModelPricingItem
-				if err := json.NewDecoder(resp.Body).Decode(&items); err == nil && len(items) > 0 {
-					updatedAt := time.Now().Format("2006-01-02")
-					for _, it := range items {
-						if it.UpdatedAt != "" {
-							updatedAt = it.UpdatedAt
-							break
-						}
-					}
-					result := &ModelPricingResponse{
-						Code:    200,
-						Message: "ok",
-						Data: &ModelPricingData{
-							UpdatedAt: updatedAt,
-							Total:     len(items),
-							Items:     items,
-						},
-					}
-					s.mu.Lock()
-					s.cache[cacheKey] = cachedEntry{
-						data:      result,
-						expiresAt: time.Now().Add(30 * time.Minute),
-					}
-					s.mu.Unlock()
-					if p := pricingDiskCachePath(); p != "" {
-						if raw, err := json.Marshal(result); err == nil {
-							_ = hoxipaths.WriteFileAtomic(p, raw, 0o600)
-						}
-					}
-					return result, nil
+		// Serve persisted pricing immediately on cold start so local UI views
+		// (like usage history) never block up to 8s waiting on remote network.
+		if cached, modTime, ok := s.readPricingDiskCache(); ok {
+			age := time.Since(modTime)
+			fresh := age >= 0 && age < modelPricingCacheTTL
+			ttl := 5 * time.Minute
+			if fresh {
+				ttl = modelPricingCacheTTL - age
+				if ttl < time.Minute {
+					ttl = time.Minute
 				}
 			}
+			s.mu.Lock()
+			s.cache[cacheKey] = cachedEntry{
+				data:      cached,
+				expiresAt: time.Now().Add(ttl),
+			}
+			s.mu.Unlock()
+			if !fresh {
+				s.triggerBackgroundPricingRefresh()
+			}
+			return cached, nil
 		}
 	}
 
-	// Try reading last synced catalog from ~/.hoxi/model-pricing-cache.json
-	if p := pricingDiskCachePath(); p != "" {
-		if raw, err := os.ReadFile(p); err == nil {
-			var cached ModelPricingResponse
-			if json.Unmarshal(raw, &cached) == nil && cached.Data != nil && len(cached.Data.Items) > 0 {
-				s.mu.Lock()
-				s.cache[cacheKey] = cachedEntry{
-					data:      &cached,
-					expiresAt: time.Now().Add(5 * time.Minute),
-				}
-				s.mu.Unlock()
-				return &cached, nil
-			}
+	if result, ok := s.fetchRemoteModelPricing(); ok {
+		return result, nil
+	}
+
+	if cached, _, ok := s.readPricingDiskCache(); ok {
+		s.mu.Lock()
+		s.cache[cacheKey] = cachedEntry{
+			data:      cached,
+			expiresAt: time.Now().Add(5 * time.Minute),
 		}
+		s.mu.Unlock()
+		return cached, nil
 	}
 
 	return s.fallbackModelPricing(), nil

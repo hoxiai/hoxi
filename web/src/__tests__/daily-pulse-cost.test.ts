@@ -6,6 +6,7 @@ import {
   refreshDailyDevPulse,
 } from "../store/daily-pulse";
 import { leaderboardState, setLeaderboardState } from "../store/leaderboard-state";
+import { indexSession } from "../store/session-index";
 import { setWorkspace, workspace } from "../store/workspace-state";
 import { assertEqual, assertTrue, describe, it } from "./test-harness";
 
@@ -476,6 +477,261 @@ describe("daily pulse market cost", () => {
     } finally {
       hoxiAPI.getGitDailyPulse = origGet;
       setWorkspace({ rootDir: savedRoot, activeSessionID: savedSid });
+    }
+  });
+
+  it("merges in-flight turn deltas across top-level sessions while skipping subagents and imported turns", async () => {
+    const origGet = hoxiAPI.getGitDailyPulse;
+    const savedActive = workspace.activeSessionID;
+    const savedMessages = workspace.messagesBySession;
+    const savedSessions = workspace.sessions;
+    const savedIndex = workspace.sessionIndex;
+    const now = Date.now();
+    try {
+      hoxiAPI.getGitDailyPulse = async () => ({
+        todayCommits: 0,
+        committedAdditions: 0,
+        committedDeletions: 0,
+        committedFiles: 0,
+        uncommittedAdditions: 0,
+        uncommittedDeletions: 0,
+        uncommittedFiles: 0,
+        dbTurnsCount: 2,
+        dbSessionsCount: 2,
+        dbInputTokens: 1000,
+        dbOutputTokens: 200,
+        dbReasoningTokens: 50,
+        dbCacheReadTokens: 300,
+        dbCacheWriteTokens: 0,
+        dbTotalTokens: 1550,
+        dbLatestTurnTs: now - 1000,
+        dbActiveTurns: {
+          msg_a_inflight: {
+            input: 400,
+            output: 50,
+            reasoning: 10,
+            cacheRead: 100,
+            cacheWrite: 0,
+          },
+        },
+        dbModels: [
+          {
+            providerID: "openai",
+            modelID: "gpt-5.4",
+            turns: 2,
+            totalTokens: 1550,
+            inputTokens: 1000,
+            outputTokens: 200,
+            reasoningTokens: 50,
+            cacheReadTokens: 300,
+            cacheWriteTokens: 0,
+            cost: 0,
+          },
+        ],
+      });
+
+      setWorkspace({
+        activeSessionID: "ses_main",
+        sessions: [
+          { id: "ses_main", title: "Main", time: { created: now - 5000, updated: now } },
+          { id: "ses_bg", title: "Background", time: { created: now - 5000, updated: now } },
+          { id: "ses_sub", title: "Subagent", parentID: "ses_main", time: { created: now - 5000, updated: now } },
+        ],
+        sessionIndex: {
+          ses_sub: { parentID: "ses_main", updated: now },
+        },
+        messagesBySession: {
+          ses_main: [
+            // In-flight turn started BEFORE latestDbTs: must add only positive delta (+600 in, +100 out, +20 reasoning, +200 cacheRead) and 0 extra turns.
+            {
+              info: {
+                id: "msg_a_inflight",
+                sessionID: "ses_main",
+                role: "assistant",
+                providerID: "openai",
+                modelID: "gpt-5.4",
+                time: { created: now - 3000 },
+                tokens: { input: 1000, output: 150, reasoning: 30, cache: { read: 300, write: 0 } },
+              },
+              parts: [],
+            },
+            // Imported turn newer than latestDbTs must be excluded.
+            {
+              info: {
+                id: "msg_imported_live",
+                sessionID: "ses_main",
+                role: "assistant",
+                providerID: "openai",
+                modelID: "gpt-5.4",
+                imported: true,
+                time: { created: now - 200 },
+                tokens: { input: 9999, output: 999, reasoning: 0, cache: { read: 0, write: 0 } },
+              },
+              parts: [],
+            },
+          ],
+          // Parallel background top-level session with a brand-new turn that only has reasoning + cacheWrite.
+          ses_bg: [
+            {
+              info: {
+                id: "msg_a_bg_new",
+                sessionID: "ses_bg",
+                role: "assistant",
+                providerID: "anthropic",
+                modelID: "claude-opus-5",
+                time: { created: now - 100 },
+                tokens: { input: 0, output: 0, reasoning: 70, cache: { read: 0, write: 80 } },
+              },
+              parts: [],
+            },
+          ],
+          // Subagent session turn must NEVER be added on top of parent.
+          ses_sub: [
+            {
+              info: {
+                id: "msg_a_sub_live",
+                sessionID: "ses_sub",
+                role: "assistant",
+                providerID: "openai",
+                modelID: "gpt-5.4",
+                time: { created: now - 50 },
+                tokens: { input: 5000, output: 500, reasoning: 0, cache: { read: 0, write: 0 } },
+              },
+              parts: [],
+            },
+          ],
+        },
+      });
+
+      await refreshDailyDevPulse(true);
+      const stats = computeDailyDevPulseStats();
+      assertEqual(stats.inputTokens, 1600, "input = 1000 db + 600 in-flight delta");
+      assertEqual(stats.outputTokens, 300, "output = 200 db + 100 in-flight delta");
+      assertEqual(stats.reasoningTokens, 140, "reasoning = 50 db + 20 delta + 70 bg");
+      assertEqual(stats.cacheReadTokens, 500, "cacheRead = 300 db + 200 delta");
+      assertEqual(stats.cacheWriteTokens, 80, "cacheWrite = 80 bg");
+      assertEqual(stats.totalTokens, 2620, "total = 1600 + 300 + 140 + 500 + 80");
+      assertEqual(stats.todayTurnsCount, 3, "turns = 2 db + 0 in-flight + 1 bg new");
+    } finally {
+      hoxiAPI.getGitDailyPulse = origGet;
+      setWorkspace({
+        activeSessionID: savedActive,
+        messagesBySession: savedMessages,
+        sessions: savedSessions,
+        sessionIndex: savedIndex,
+      });
+    }
+  });
+
+  it("skips legacy pre-fix imported turns in frontend live merge while keeping post-import Hoxi turns", async () => {
+    const origGet = hoxiAPI.getGitDailyPulse;
+    const savedActive = workspace.activeSessionID;
+    const savedMessages = workspace.messagesBySession;
+    const savedSessions = workspace.sessions;
+    const savedIndex = workspace.sessionIndex;
+    const now = Date.now();
+    try {
+      // Backend already filtered out the legacy imported turns, so dbTotals are 0.
+      hoxiAPI.getGitDailyPulse = async () => ({
+        todayCommits: 0,
+        committedAdditions: 0,
+        committedDeletions: 0,
+        committedFiles: 0,
+        uncommittedAdditions: 0,
+        uncommittedDeletions: 0,
+        uncommittedFiles: 0,
+        dbTurnsCount: 0,
+        dbSessionsCount: 0,
+        dbInputTokens: 0,
+        dbOutputTokens: 0,
+        dbReasoningTokens: 0,
+        dbCacheReadTokens: 0,
+        dbCacheWriteTokens: 0,
+        dbTotalTokens: 0,
+        dbLatestTurnTs: 0,
+        dbModels: [],
+      });
+
+      // Index a cross-project legacy imported session (absent from workspace.sessions).
+      setWorkspace({
+        activeSessionID: "ses_imp_active",
+        sessions: [
+          {
+            id: "ses_imp_active",
+            title: "[Claude Code] Imported Task",
+            time: { created: now - 5000, updated: now },
+          },
+        ],
+        sessionIndex: {},
+        messagesBySession: {
+          ses_imp_active: [
+            // Legacy pre-fix imported turn without info.imported flag: must be skipped.
+            {
+              info: {
+                id: "msg_019legacy_today",
+                sessionID: "ses_imp_active",
+                role: "assistant",
+                providerID: "anthropic",
+                modelID: "claude-opus-5",
+                time: { created: now - 2000 },
+                tokens: { input: 9000, output: 500, reasoning: 0, cache: { read: 0, write: 0 } },
+              },
+              parts: [],
+            },
+            // Post-import turn run inside Hoxi (msg_a_*): must still count.
+            {
+              info: {
+                id: "msg_a_post_live",
+                sessionID: "ses_imp_active",
+                role: "assistant",
+                providerID: "anthropic",
+                modelID: "claude-opus-5",
+                time: { created: now - 1000 },
+                tokens: { input: 300, output: 40, reasoning: 10, cache: { read: 50, write: 0 } },
+              },
+              parts: [],
+            },
+          ],
+          ses_imp_other_project: [
+            // Legacy imported turn from another project tracked via sessionIndex.imported.
+            {
+              info: {
+                id: "msg_019other_proj",
+                sessionID: "ses_imp_other_project",
+                role: "assistant",
+                providerID: "openai",
+                modelID: "gpt-5.4",
+                time: { created: now - 1500 },
+                tokens: { input: 7000, output: 300, reasoning: 0, cache: { read: 0, write: 0 } },
+              },
+              parts: [],
+            },
+          ],
+        },
+      });
+      indexSession({
+        id: "ses_imp_other_project",
+        title: "[Codex] Other Project Thread",
+        directory: "/other-repo",
+        time: { created: now - 5000, updated: now },
+      });
+
+      await refreshDailyDevPulse(true);
+      const stats = computeDailyDevPulseStats();
+      assertEqual(stats.inputTokens, 300, "only post-import Hoxi turn input counted");
+      assertEqual(stats.outputTokens, 40, "only post-import Hoxi turn output counted");
+      assertEqual(stats.reasoningTokens, 10, "only post-import Hoxi turn reasoning counted");
+      assertEqual(stats.cacheReadTokens, 50, "only post-import Hoxi turn cacheRead counted");
+      assertEqual(stats.totalTokens, 400, "legacy imported turns must not leak back in");
+      assertEqual(stats.todayTurnsCount, 1, "only 1 post-import turn counted");
+    } finally {
+      hoxiAPI.getGitDailyPulse = origGet;
+      setWorkspace({
+        activeSessionID: savedActive,
+        messagesBySession: savedMessages,
+        sessions: savedSessions,
+        sessionIndex: savedIndex,
+      });
     }
   });
 });

@@ -166,13 +166,31 @@ func (t *TurnTranslator) feedCodexLine(line string) []SSEEvent {
 
 	case "turn.completed":
 		if u, ok := raw["usage"].(map[string]interface{}); ok {
-			inTok := intFromMap(u, "input_tokens")
-			cacheTok := intFromMap(u, "cached_input_tokens")
-			outTok := intFromMap(u, "output_tokens")
+			inTok := max(0, intFromMap(u, "input_tokens"))
+			cacheTok := max(0, intFromMap(u, "cached_input_tokens"))
+			outTok := max(0, intFromMap(u, "output_tokens"))
+			reasonTok := max(0, intFromMap(u, "reasoning_output_tokens"))
+			if reasonTok == 0 {
+				if details, ok := u["output_tokens_details"].(map[string]interface{}); ok {
+					reasonTok = max(0, intFromMap(details, "reasoning_tokens"))
+				}
+			}
+			// Codex reports OpenAI Responses usage where input_tokens already includes
+			// cached_input_tokens and output_tokens includes reasoning_output_tokens.
+			// Normalize into Hoxi's disjoint canonical buckets to avoid double-counting.
+			nonCachedIn := inTok
+			if cacheTok <= inTok {
+				nonCachedIn = inTok - cacheTok
+			}
+			nonReasonOut := outTok
+			if reasonTok <= outTok {
+				nonReasonOut = outTok - reasonTok
+			}
 			tok := &MessageTokens{
-				Total:  inTok + outTok,
-				Input:  inTok,
-				Output: outTok,
+				Total:     nonCachedIn + cacheTok + nonReasonOut + reasonTok,
+				Input:     nonCachedIn,
+				Output:    nonReasonOut,
+				Reasoning: reasonTok,
 			}
 			tok.Cache.Read = cacheTok
 			t.MsgInfo.Tokens = tok

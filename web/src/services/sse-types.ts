@@ -98,6 +98,8 @@ export interface MessageInfo {
   serviceTier?: string;
   /** This user message resumes or steers the existing task. */
   continueTask?: boolean;
+  /** True for historical turns materialized from external CLI handoff imports. */
+  imported?: boolean;
   mode?: string;
   cost?: number;
   tokens?: MessageTokens;

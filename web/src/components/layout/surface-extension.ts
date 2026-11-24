@@ -11,7 +11,8 @@ export type InspectorSurfaceTabID =
   | "terminal"
   | "browser"
   | "computer"
-  | "tasks";
+  | "tasks"
+  | "preview";
 
 export interface CustomInspectorTabSpec {
   id: string;

@@ -1,7 +1,6 @@
 package provider
 
 import (
-	"sort"
 	"strings"
 
 	"github.com/hoxiai/hoxi/internal/llm"
@@ -52,96 +51,21 @@ func scoreImageModelPreference(modelID string) int {
 
 // ListImageModels returns all image generation models configured on active,
 // credentialed providers in Hoxi / OpenCode config, ordered by capability rank.
+// Delegates to the single-source-of-truth ModelSlotImageGenerate index.
 func (s *Service) ListImageModels() []llm.ImageModelOption {
-	if s == nil {
+	slotOpts := s.ListModelsBySlot(llm.ModelSlotImageGenerate)
+	if len(slotOpts) == 0 {
 		return nil
 	}
-	merged := s.loadOpenCodeImportedProviderMap()
-	for k, v := range s.loadHoxiProvidersMap() {
-		merged[k] = v
-	}
-
-	type scoredOpt struct {
-		opt   llm.ImageModelOption
-		score int
-	}
-	var found []scoredOpt
-	seen := map[string]bool{}
-
-	for _, pid := range sortedKeys(merged) {
-		if !s.isProviderUsableForLocalMedia(pid) {
-			continue
+	out := make([]llm.ImageModelOption, len(slotOpts))
+	for i, item := range slotOpts {
+		out[i] = llm.ImageModelOption{
+			ProviderID:   item.ProviderID,
+			ModelID:      item.ModelID,
+			Name:         item.Name,
+			SupportsIn:   item.SupportsIn,
+			Capabilities: item.Capabilities,
 		}
-		pObj, ok := merged[pid].(map[string]interface{})
-		if !ok {
-			continue
-		}
-		for _, mapKey := range []string{"models", "mediaModels"} {
-			mMap, ok := pObj[mapKey].(map[string]interface{})
-			if !ok {
-				continue
-			}
-			for _, mid := range sortedKeys(mMap) {
-				mObj, _ := mMap[mid].(map[string]interface{})
-				cat := ""
-				name := mid
-				supportsIn := supportsMultimodalImageEditInput(mid)
-				if mObj != nil {
-					cat, _ = mObj["category"].(string)
-					if n, _ := mObj["name"].(string); strings.TrimSpace(n) != "" {
-						name = strings.TrimSpace(n)
-					}
-					if hasImageInputModality(mObj) {
-						supportsIn = true
-					}
-				}
-				isImg := IsImageGenerationModel(mid, cat, "") || (mObj != nil && hasImageOutputModality(mObj))
-				if !isImg {
-					continue
-				}
-				key := pid + "/" + mid
-				if seen[key] {
-					continue
-				}
-				seen[key] = true
-				found = append(found, scoredOpt{
-					opt: llm.ImageModelOption{
-						ProviderID: pid,
-						ModelID:    mid,
-						Name:       name,
-						SupportsIn: supportsIn,
-					},
-					score: scoreImageModelPreference(mid),
-				})
-			}
-		}
-		if pid == "grok-cli" && !seen["grok-cli/grok-imagine-image"] {
-			seen["grok-cli/grok-imagine-image"] = true
-			found = append(found, scoredOpt{
-				opt: llm.ImageModelOption{
-					ProviderID: "grok-cli",
-					ModelID:    "grok-imagine-image",
-					Name:       "Grok Imagine Image (Grok CLI)",
-					SupportsIn: false,
-				},
-				score: scoreImageModelPreference("grok-imagine-image"),
-			})
-		}
-	}
-
-	sort.SliceStable(found, func(i, j int) bool {
-		if found[i].score != found[j].score {
-			return found[i].score > found[j].score
-		}
-		if found[i].opt.ProviderID != found[j].opt.ProviderID {
-			return found[i].opt.ProviderID < found[j].opt.ProviderID
-		}
-		return found[i].opt.ModelID < found[j].opt.ModelID
-	})
-
-	out := make([]llm.ImageModelOption, len(found))
-	for i, item := range found {
-		out[i] = item.opt
 	}
 	return out
 }

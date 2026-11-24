@@ -7,9 +7,13 @@ import {
   getComposerSkill,
   hasEditingQueuedPrompt,
   normalizeFolderPath,
+  parseHoxiContextPrompt,
   popStashedComposerDraft,
   selectComposerSkill,
+  serializeContextEnvelopes,
   workspace,
+  type ComposerContextAttachment,
+  type ContextEnvelope,
 } from "../../store/workspace";
 
 export type AttachmentKind =
@@ -43,7 +47,88 @@ export interface SessionComposerDraft {
   text: string;
   images: ImageItem[];
   pastes: CollapsedPasteItem[];
+  contexts?: ComposerContextAttachment[];
   notice?: string | null;
+}
+
+let contextAttachmentSeq = 0;
+
+export function createContextAttachment(envelope: ContextEnvelope): ComposerContextAttachment {
+  return {
+    id: `ctx_${Date.now()}_${++contextAttachmentSeq}_${Math.random().toString(36).slice(2, 6)}`,
+    ...(envelope.source ? { source: { ...envelope.source } } : {}),
+    items: envelope.items.map((item) => ({
+      ...item,
+      ...(item.ref ? { ref: { ...item.ref, ...(item.ref.resolve ? { resolve: { ...item.ref.resolve } } : {}) } } : {}),
+    })),
+  };
+}
+
+export function createContextAttachments() {
+  const [contexts, setContexts] = createSignal<ComposerContextAttachment[]>([]);
+
+  const addContexts = (envelopes: ContextEnvelope[], append = true) => {
+    const valid = envelopes.filter((env) => env && Array.isArray(env.items) && env.items.length > 0);
+    if (valid.length === 0) return;
+    const created = valid.map(createContextAttachment);
+    setContexts((prev) => (append ? [...prev, ...created] : created));
+  };
+
+  const addContext = (envelope: ContextEnvelope, append = true) => {
+    addContexts([envelope], append);
+  };
+
+  const removeContext = (id: string) => {
+    setContexts((prev) => prev.filter((c) => c.id !== id));
+  };
+
+  const removeContextItem = (attachmentId: string, itemIndex: number) => {
+    setContexts((prev) =>
+      prev
+        .map((att) =>
+          att.id === attachmentId
+            ? { ...att, items: att.items.filter((_, idx) => idx !== itemIndex) }
+            : att
+        )
+        .filter((att) => att.items.length > 0)
+    );
+  };
+
+  const clearContexts = () => setContexts([]);
+  const replaceContexts = (items: ComposerContextAttachment[]) => setContexts(items);
+
+  const serializeIntoPrompt = (typedText: string): string => {
+    const list = contexts();
+    if (list.length === 0) return typedText.trim();
+    const envelopes: ContextEnvelope[] = list.map((att) => ({
+      version: 1,
+      ...(att.source ? { source: att.source } : {}),
+      items: att.items,
+    }));
+    return serializeContextEnvelopes(envelopes, typedText);
+  };
+
+  const extractFromPromptText = (rawText: string, append = false): string => {
+    const parsed = parseHoxiContextPrompt(rawText);
+    if (!parsed.hasContext) {
+      if (!append) clearContexts();
+      return rawText;
+    }
+    addContexts(parsed.envelopes, append);
+    return parsed.bodyText;
+  };
+
+  return {
+    contexts,
+    addContext,
+    addContexts,
+    removeContext,
+    removeContextItem,
+    clearContexts,
+    replaceContexts,
+    serializeIntoPrompt,
+    extractFromPromptText,
+  };
 }
 
 const draftResetEpochByKey = new Map<string, number>();
@@ -160,6 +245,7 @@ export function createSessionDraftSync(params: {
   setText: Setter<string>;
   imgAttach: DraftImageAttachmentsBridge;
   pasteCollapse: ReturnType<typeof createPasteCollapse>;
+  contextAttach?: ReturnType<typeof createContextAttachments>;
   onAfterRestore: () => void;
 }) {
   let activeSessionID = params.sessionID();
@@ -170,8 +256,9 @@ export function createSessionDraftSync(params: {
   let disposed = false;
   const saveOutgoingDraft = () => {
     if (activeSessionID && hasEditingQueuedPrompt(activeSessionID)) {
+      const expanded = params.pasteCollapse.expandIntoPrompt(params.text());
       flushEditingQueuedPromptToQueue(activeSessionID, {
-        text: params.pasteCollapse.expandIntoPrompt(params.text()),
+        text: params.contextAttach ? params.contextAttach.serializeIntoPrompt(expanded) : expanded,
         attachments: params.imgAttach.toPromptAttachments(),
         skillSelection: getComposerSkill(activeSessionID, activeDir) ?? undefined,
       });
@@ -185,13 +272,15 @@ export function createSessionDraftSync(params: {
       void drainNextQueuedPrompt(activeSessionID);
       return;
     }
-    const draft = {
+    const contexts = params.contextAttach?.contexts() ?? [];
+    const draft: SessionComposerDraft = {
       text: params.text(),
       images: params.imgAttach.images(),
       pastes: params.pasteCollapse.pastes(),
+      ...(contexts.length > 0 ? { contexts } : {}),
       notice: params.imgAttach.notice(),
     };
-    if (draft.text.trim() || draft.images.length || draft.pastes.length || draft.notice) {
+    if (draft.text.trim() || draft.images.length || draft.pastes.length || contexts.length || draft.notice) {
       setSessionDraft(activeKey, draft);
     } else {
       sessionDrafts.delete(activeKey);
@@ -253,6 +342,7 @@ export function createSessionDraftSync(params: {
       params.setText(saved?.text ?? "");
       params.imgAttach.replaceImages(saved?.images ?? []);
       params.pasteCollapse.replacePastes(saved?.pastes ?? []);
+      params.contextAttach?.replaceContexts(saved?.contexts ?? []);
       params.imgAttach.setNotice(saved?.notice ?? null);
       params.onAfterRestore();
     });
@@ -263,6 +353,7 @@ export function createSessionDraftSync(params: {
     params.setText(initial.text);
     params.imgAttach.replaceImages(initial.images);
     params.pasteCollapse.replacePastes(initial.pastes);
+    params.contextAttach?.replaceContexts(initial.contexts ?? []);
     params.imgAttach.setNotice(initial.notice ?? null);
     params.onAfterRestore();
   }
@@ -290,10 +381,12 @@ export function createSessionDraftSync(params: {
           text: params.text(),
           images: params.imgAttach.images(),
           pastes: params.pasteCollapse.pastes(),
+          contexts: params.contextAttach?.contexts() ?? [],
         }
       : sessionDrafts.get(key);
     const mergeItems = <T extends { id: string }>(failed: T[], current: T[] = []) =>
       Array.from(new Map([...failed, ...current].map((item) => [item.id, item])).values());
+    const mergedContexts = mergeItems(draft.contexts ?? [], existing?.contexts ?? []);
     const restored: SessionComposerDraft = {
       text:
         existing?.text && existing.text !== draft.text
@@ -301,6 +394,7 @@ export function createSessionDraftSync(params: {
           : draft.text,
       images: mergeItems(draft.images, existing?.images),
       pastes: mergeItems(draft.pastes, existing?.pastes),
+      ...(mergedContexts.length > 0 ? { contexts: mergedContexts } : {}),
       notice,
     };
     setSessionDraft(key, restored);
@@ -308,6 +402,7 @@ export function createSessionDraftSync(params: {
     params.setText(restored.text);
     params.imgAttach.replaceImages(restored.images);
     params.pasteCollapse.replacePastes(restored.pastes);
+    params.contextAttach?.replaceContexts(mergedContexts);
     params.imgAttach.setNotice(notice);
     params.onAfterRestore();
   };

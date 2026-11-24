@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import {
   ArrowLeft,
   Check,
@@ -13,6 +13,7 @@ import {
   GitBranch,
   ListTree,
   LoaderCircle,
+  Search,
 } from "lucide-solid";
 import type { FileContentResponse, SpreadsheetSheetPreview } from "../../services/api";
 import type { SnapshotFileDiff } from "../../services/sse-types";
@@ -34,7 +35,9 @@ import { t } from "../../i18n";
 import {
   formatByteSize,
   isAudioPreviewable,
+  isHtmlPath,
   isImagePreviewable,
+  isJsonPath,
   isMarkdownPath,
   isOfficeDocumentPath,
   isPdfPath,
@@ -44,6 +47,9 @@ import {
 } from "./file-tree-helpers";
 import MarkdownDocumentReader from "./MarkdownDocumentReader";
 import { PdfPreviewFrame, SpreadsheetPreviewView } from "./SpreadsheetPreviewView";
+import SandboxedHtmlPreview from "../preview/SandboxedHtmlPreview";
+import FileSourceCodeView from "./FileSourceCodeView";
+import JsonTreeView, { tryParseStructuredJson } from "../timeline/JsonTreeView";
 
 export interface FilePreviewPaneProps {
   previewPath: string;
@@ -69,8 +75,10 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
   const [copiedPath, setCopiedPath] = createSignal(false);
   const [copiedContent, setCopiedContent] = createSignal(false);
   const [outlineOpen, setOutlineOpen] = createSignal(false);
+  const [searchOpen, setSearchOpen] = createSignal(false);
   const [editedSheets, setEditedSheets] = createSignal<SpreadsheetSheetPreview[] | null>(null);
   const [mediaError, setMediaError] = createSignal(false);
+  let rootContainer: HTMLDivElement | undefined;
   let sourceContainer: HTMLDivElement | undefined;
   let drillPhase = false;
   const drillEnterClass = createMemo(() => {
@@ -84,6 +92,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
     void props.previewMeta;
     setEditedSheets(null);
     setMediaError(false);
+    setSearchOpen(false);
   });
 
   const isBinaryPreview = createMemo(() => props.previewMeta?.type === "binary");
@@ -126,14 +135,28 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
     const p = props.previewMeta?.resolvedPath || props.previewPath || "";
     return !isBinaryPreview() && isMarkdownPath(p, props.previewMeta?.mimeType);
   });
+  const isHtmlFile = createMemo(() => {
+    const p = props.previewMeta?.resolvedPath || props.previewPath || "";
+    return !isBinaryPreview() && isHtmlPath(p, props.previewMeta?.mimeType);
+  });
+  const isJsonFile = createMemo(() => {
+    const p = props.previewMeta?.resolvedPath || props.previewPath || "";
+    return !isBinaryPreview() && isJsonPath(p, props.previewMeta?.mimeType);
+  });
   const effectiveSourceText = createMemo(() => {
     if (!isBinaryPreview()) return props.previewContent;
     return props.previewMeta?.extractedText || "";
   });
+  const parsedJsonData = createMemo(() =>
+    isJsonFile() ? tryParseStructuredJson(effectiveSourceText()) : null
+  );
   const canTogglePreview = createMemo(() => {
     const p = props.previewMeta?.resolvedPath || props.previewPath || "";
     const mime = props.previewMeta?.mimeType;
-    if (!isBinaryPreview() && (isMarkdownPath(p, mime) || isSvgPath(p, mime))) {
+    if (!isBinaryPreview() && (isMarkdownPath(p, mime) || isHtmlPath(p, mime) || isSvgPath(p, mime))) {
+      return true;
+    }
+    if (isJsonFile() && Boolean(parsedJsonData())) {
       return true;
     }
     if (Boolean(props.previewMeta?.sheets?.length) && Boolean(effectiveSourceText())) {
@@ -269,8 +292,57 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
     });
   };
 
+  const renderExternalOpenButtons = () => (
+    <div class="flex items-center gap-2 pt-1">
+      <button
+        type="button"
+        onClick={() => handleOpenExternal("reveal")}
+        class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-1.5 text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+      >
+        <FolderOpen size={13} />
+        <span>{t("inspector.files.revealInFinder")}</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => handleOpenExternal("open")}
+        class="inline-flex items-center gap-1.5 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-3 py-1.5 text-[12px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
+      >
+        <ExternalLink size={13} />
+        <span>{t("inspector.files.openInDefaultApp")}</span>
+      </button>
+    </div>
+  );
+
+  const showSourceView = createMemo(
+    () =>
+      !props.loadingPreview &&
+      !props.previewError &&
+      Boolean(effectiveSourceText()) &&
+      !(isImageFile() && (isBinaryPreview() || props.viewMode === "preview") && imageDataUrl()) &&
+      !(props.viewMode === "preview" && isSpreadsheetFile() && (props.previewMeta?.sheets?.length ?? 0) > 0) &&
+      !(props.viewMode === "preview" && isPdfFile() && Boolean(props.previewContent)) &&
+      !((isVideoFile() || isAudioFile()) && Boolean(mediaStreamUrl())) &&
+      !(props.viewMode === "preview" && isHtmlFile()) &&
+      !(props.viewMode === "preview" && Boolean(parsedJsonData())) &&
+      !(props.viewMode === "preview" && (isMarkdownFile() || isOfficeDocFile()))
+  );
+
+  // Scoped Cmd/Ctrl+F inside FilePreviewPane opens in-file search without hijacking chat search.
+  const handleRootKeyDown = (ev: KeyboardEvent) => {
+    if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === "f" && showSourceView()) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      setSearchOpen(true);
+    }
+  };
+
   return (
-    <div class={`flex-1 min-h-0 flex flex-col ${drillEnterClass()}`}>
+    <div
+      ref={rootContainer}
+      tabIndex={-1}
+      onKeyDown={handleRootKeyDown}
+      class={`flex-1 min-h-0 flex flex-col outline-none ${drillEnterClass()}`}
+    >
       {/* Preview Header Toolbar */}
       <div class="shrink-0 flex items-center gap-1.5 px-2.5 py-1.5">
         <button
@@ -394,8 +466,22 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
           </button>
         </Show>
 
-        {/* Quick Action Icons: Copy Path, Copy Content, Reveal in Finder, Open in Default App */}
+        {/* Quick Action Icons: Search in File, Copy Path, Copy Content, Reveal in Finder, Open in Default App */}
         <div class="shrink-0 inline-flex items-center gap-0.5">
+          <Show when={showSourceView()}>
+            <button
+              type="button"
+              onClick={() => setSearchOpen((v) => !v)}
+              class={`inline-flex items-center justify-center rounded p-1 transition-colors cursor-pointer ${
+                searchOpen()
+                  ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                  : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+              }`}
+              title={t("inspector.files.searchInFile")}
+            >
+              <Search size={12} />
+            </button>
+          </Show>
           <button
             type="button"
             onClick={handleCopyPath}
@@ -523,87 +609,44 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
                           <Show
                             when={isBinaryPreview() && !effectiveSourceText()}
                         fallback={
-                          /* 5. Markdown or Extracted Office Document Reader */
+                          /* 5. Sandboxed HTML or Markdown / Extracted Office Document Reader */
+                          <Show
+                            when={props.viewMode === "preview" && isHtmlFile() && Boolean(effectiveSourceText())}
+                            fallback={
                           <Show
                             when={
                               props.viewMode === "preview" &&
                               (isMarkdownFile() || (isOfficeDocFile() && Boolean(effectiveSourceText())))
                             }
                             fallback={
-                              /* 6. Highlighted Code / Extracted Text Source View */
-                              <pre
-                                class="py-3 font-mono leading-relaxed text-[var(--text-primary)] whitespace-pre selectable-text"
-                                style={{ "font-size": "var(--app-code-text-size)" }}
+                              /* 6. Structured JSON Tree (preview mode) or Highlighted Source View */
+                              <Show
+                                when={props.viewMode === "preview" && parsedJsonData()}
+                                fallback={
+                                  <FileSourceCodeView
+                                    filePath={props.previewPath}
+                                    sourceLines={sourceLines()}
+                                    visibleLines={visibleSourceLines()}
+                                    highlighted={highlighted()}
+                                    changedLines={changedLines()}
+                                    highlightedLine={props.highlightedLine}
+                                    searchOpen={searchOpen()}
+                                    onCloseSearch={() => setSearchOpen(false)}
+                                    onEnsureLineVisible={(line) => {
+                                      if (line > renderedLineLimit()) {
+                                        setRenderedLineLimit(Math.min(sourceLines().length, line + 200));
+                                      }
+                                    }}
+                                    scrollContainer={() => sourceContainer}
+                                  />
+                                }
                               >
-                                <For each={visibleSourceLines()}>
-                                  {(line, index) => {
-                                    const lineNo = () => index() + 1;
-                                    const isChanged = () => changedLines().has(lineNo());
-                                    const isTarget = () => props.highlightedLine === lineNo();
-                                    return (
-                                      <div
-                                        data-line={lineNo()}
-                                        class={`flex min-h-[1.55em] px-3 ${
-                                          isChanged()
-                                            ? "bg-emerald-500/18 border-l-[3px] border-emerald-400"
-                                            : isTarget()
-                                              ? "bg-[var(--accent-surface)] border-l-[3px] border-[var(--accent-primary)]"
-                                              : "border-l-[3px] border-transparent"
-                                        }`}
-                                      >
-                                        <span
-                                          class={`mr-2 w-10 shrink-0 select-none text-right ${
-                                            isChanged()
-                                              ? "text-[var(--ok-text)] font-semibold"
-                                              : "text-[var(--text-faint)]"
-                                          }`}
-                                        >
-                                          {lineNo()}
-                                        </span>
-                                        <span
-                                          class={`mr-2 w-3 shrink-0 select-none text-center font-bold ${
-                                            isChanged() ? "text-[var(--ok-text)]" : "text-transparent"
-                                          }`}
-                                        >
-                                          +
-                                        </span>
-                                        <span class={isChanged() ? "text-[var(--text-primary)]" : ""}>
-                                          <Show
-                                            when={highlighted()?.tokens[index()]}
-                                            fallback={line || " "}
-                                          >
-                                            {(tokens) => (
-                                              <For each={tokens()}>
-                                                {(token) => (
-                                                  <span
-                                                    style={{
-                                                      color: token.color,
-                                                      "font-style":
-                                                        (token.fontStyle ?? 0) & 1
-                                                          ? "italic"
-                                                          : undefined,
-                                                      "font-weight":
-                                                        (token.fontStyle ?? 0) & 2
-                                                          ? "bold"
-                                                          : undefined,
-                                                      "text-decoration":
-                                                        (token.fontStyle ?? 0) & 4
-                                                          ? "underline"
-                                                          : undefined,
-                                                    }}
-                                                  >
-                                                    {token.content}
-                                                  </span>
-                                                )}
-                                              </For>
-                                            )}
-                                          </Show>
-                                        </span>
-                                      </div>
-                                    );
-                                  }}
-                                </For>
-                              </pre>
+                                {(jsonObj) => (
+                                  <div class="p-3">
+                                    <JsonTreeView data={jsonObj()} rawText={effectiveSourceText()} fullHeight={true} />
+                                  </div>
+                                )}
+                              </Show>
                             }
                           >
                             <MarkdownDocumentReader
@@ -613,6 +656,14 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
                               outlineOpen={outlineOpen()}
                               onToggleOutline={setOutlineOpen}
                               scrollContainer={() => sourceContainer}
+                            />
+                          </Show>
+                            }
+                          >
+                            <SandboxedHtmlPreview
+                              html={effectiveSourceText()}
+                              title={props.previewPath}
+                              compactToolbar={true}
                             />
                           </Show>
                         }
@@ -631,24 +682,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
                               mimeType: props.previewMeta?.mimeType || "application/octet-stream",
                             })}
                           </div>
-                          <div class="flex items-center gap-2 pt-1">
-                            <button
-                              type="button"
-                              onClick={() => handleOpenExternal("reveal")}
-                              class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-1.5 text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-                            >
-                              <FolderOpen size={13} />
-                              <span>{t("inspector.files.revealInFinder")}</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleOpenExternal("open")}
-                              class="inline-flex items-center gap-1.5 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-3 py-1.5 text-[12px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
-                            >
-                              <ExternalLink size={13} />
-                              <span>{t("inspector.files.openInDefaultApp")}</span>
-                            </button>
-                          </div>
+                          {renderExternalOpenButtons()}
                         </div>
                       </Show>
                         }
@@ -686,24 +720,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
                               />
                             </Show>
                           </Show>
-                          <div class="flex items-center gap-2 pt-1">
-                            <button
-                              type="button"
-                              onClick={() => handleOpenExternal("reveal")}
-                              class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-1.5 text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-                            >
-                              <FolderOpen size={13} />
-                              <span>{t("inspector.files.revealInFinder")}</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleOpenExternal("open")}
-                              class="inline-flex items-center gap-1.5 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-3 py-1.5 text-[12px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
-                            >
-                              <ExternalLink size={13} />
-                              <span>{t("inspector.files.openInDefaultApp")}</span>
-                            </button>
-                          </div>
+                          {renderExternalOpenButtons()}
                         </div>
                       </Show>
                     }

@@ -2474,6 +2474,36 @@ abstract class AppLocalizations {
   /// **'Reported'**
   String get chatReportedBadge;
 
+  /// No description provided for @contextQuoteLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Quote'**
+  String get contextQuoteLabel;
+
+  /// No description provided for @contextReferencedSingle.
+  ///
+  /// In en, this message translates to:
+  /// **'Attached context'**
+  String get contextReferencedSingle;
+
+  /// No description provided for @contextAttachedCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} items attached'**
+  String contextAttachedCount(int count);
+
+  /// No description provided for @contextResolveHint.
+  ///
+  /// In en, this message translates to:
+  /// **'On-demand'**
+  String get contextResolveHint;
+
+  /// No description provided for @contextCopyItem.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy item'**
+  String get contextCopyItem;
+
 }
 
 class _AppLocalizationsDelegate

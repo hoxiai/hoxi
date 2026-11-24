@@ -69,17 +69,36 @@ func (u agyUsage) empty() bool {
 	return u.InputTokens == 0 && u.OutputTokens == 0 && u.ThinkingTokens == 0 && u.CacheReadTokens == 0 && u.TotalTokens == 0
 }
 
+// normalizedOutputTokens returns non-thinking output tokens so Hoxi's disjoint
+// Output and Reasoning buckets do not double-count thinking_tokens.
+// Antigravity's stream-json and brain transcripts report output_tokens inclusive
+// of thinking_tokens (total_tokens == input_tokens + output_tokens). When
+// total_tokens explicitly equals input + output + thinking (with or without
+// cache_read_tokens), output_tokens is already disjoint and kept as-is.
+func (u agyUsage) normalizedOutputTokens() int {
+	out := max(0, u.OutputTokens)
+	th := max(0, u.ThinkingTokens)
+	if th == 0 || out < th {
+		return out
+	}
+	in := max(0, u.InputTokens)
+	cache := max(0, u.CacheReadTokens)
+	if u.TotalTokens > 0 && (u.TotalTokens == in+out+th || u.TotalTokens == in+cache+out+th) {
+		return out
+	}
+	return out - th
+}
+
 // contextTokens returns the single-step context window occupancy for an agy
 // LLM call. Antigravity's stream-json sets total_tokens = input_tokens +
 // output_tokens (where output_tokens already includes thinking_tokens) and
 // omits cache_read_tokens, so the true context occupancy is
-// input_tokens + cache_read_tokens + output_tokens.
+// input_tokens + cache_read_tokens + normalized_output + thinking_tokens.
 func (u agyUsage) contextTokens() int {
-	out := u.OutputTokens
-	if out == 0 && u.ThinkingTokens > 0 {
-		out = u.ThinkingTokens
-	}
-	return max(u.TotalTokens, u.InputTokens+u.CacheReadTokens+out)
+	in := max(0, u.InputTokens)
+	cache := max(0, u.CacheReadTokens)
+	out := u.normalizedOutputTokens() + max(0, u.ThinkingTokens)
+	return max(u.TotalTokens, in+cache+out)
 }
 
 func parseAgyParentStepKey(key string) (int, bool) {
@@ -304,10 +323,10 @@ func (t *TurnTranslator) noteAgyStepUsage(key string, u agyUsage) bool {
 	var latestParentUsage agyUsage
 	var fallbackContext int
 	for k, s := range t.agyStepUsage {
-		in += s.InputTokens
-		out += s.OutputTokens
-		reasoning += s.ThinkingTokens
-		cacheRead += s.CacheReadTokens
+		in += max(0, s.InputTokens)
+		out += s.normalizedOutputTokens()
+		reasoning += max(0, s.ThinkingTokens)
+		cacheRead += max(0, s.CacheReadTokens)
 		if stepIdx, ok := parseAgyParentStepKey(k); ok && stepIdx >= latestStep {
 			latestStep = stepIdx
 			latestParentUsage = s

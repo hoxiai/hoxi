@@ -231,3 +231,85 @@ func TestCollectRunnerDailyUsageHandlesMixedRuntimeSwitchSessions(t *testing.T) 
 		t.Fatalf("expected only antigravity model usage, got %+v", res.DbModels)
 	}
 }
+
+func TestCollectRunnerDailyUsageSkipsImportedNativeTurnsAndTracksActiveTurns(t *testing.T) {
+	root := t.TempDir()
+	svc := runner.NewService(root, nil, nil, filepath.Join(root, "sessions"))
+	now := time.Now()
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).UnixMilli()
+	today := now.UnixMilli()
+
+	// 1. Newly materialized native handoff session: imported historical turns must
+	// be skipped in both Daily Pulse and Request Log, while post-import Hoxi turns count.
+	matInfo, err := svc.MaterializeNativeHandoff(runner.NativeHandoffRequest{
+		TargetDirectory: root,
+		Title:           "[Codex] Imported Today",
+		ProviderID:      "openai",
+		ModelID:         "gpt-5.4",
+		CreatedAt:       today - 10_000,
+		UpdatedAt:       today - 5_000,
+		Turns: []runner.NativeHandoffTurn{
+			{
+				ID:          "msg_019imported1",
+				Role:        "assistant",
+				CreatedMs:   today - 8_000,
+				CompletedMs: today - 7_000,
+				ProviderID:  "openai",
+				ModelID:     "gpt-5.4",
+				Tokens:      &runner.NativeHandoffTokens{Total: 9500, Input: 9000, Output: 500},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("MaterializeNativeHandoff: %v", err)
+	}
+	matID, _ := matInfo["id"].(string)
+	postTurn := pulseTokenMessage("msg_a_post_1", matID, "gpt-5.4", today-2_000, 300, 40, 10, 50)
+	postTurn.ProviderID = "openai"
+	if _, _, err := svc.Store().Update(matID, func(rec *runner.SessionRecord) {
+		rec.Turns = append(rec.Turns, runner.MessageTurn{Info: postTurn})
+		rec.UpdatedAt = today - 1_000
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Legacy pre-fix native imported session (no Imported flag, handoff title prefix,
+	// non-msg_a_ ID): imported turn is excluded, post-import in-flight turn is counted
+	// and exposed in DbActiveTurns.
+	legacyImp := pulseTokenMessage("msg_019legacyimp", "ses_nat_legacy_imp", "claude-opus-5", today-6_000, 8000, 400, 0, 0)
+	legacyImp.ProviderID = "anthropic"
+	inFlight := pulseTokenMessage("msg_a_live_1", "ses_nat_legacy_imp", "claude-opus-5", today-500, 200, 25, 5, 100)
+	inFlight.ProviderID = "anthropic"
+	inFlight.Time.Completed = 0
+	if err := svc.Store().Put(runner.SessionRecord{
+		ID: "ses_nat_legacy_imp", Runtime: string(runner.RuntimeNative),
+		ProjectDir: root, WorktreePath: root, SandboxMode: "local",
+		Title: "[Claude Code] Earlier Task", CreatedAt: today - 9_000, UpdatedAt: today,
+		Turns: []runner.MessageTurn{{Info: legacyImp}, {Info: inFlight}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res := gitDailyPulseResponse{DbModels: []dailyModelStat{}}
+	g := &Gateway{runner: svc}
+	g.collectRunnerDailyUsage(start, &res)
+
+	if res.DbTurnsCount != 2 || res.DbInputTokens != 500 || res.DbOutputTokens != 65 || res.DbReasoningTokens != 15 || res.DbCacheReadTokens != 150 {
+		t.Fatalf("unexpected imported-filtered rollup: turns=%d in=%d out=%d reasoning=%d cacheRead=%d",
+			res.DbTurnsCount, res.DbInputTokens, res.DbOutputTokens, res.DbReasoningTokens, res.DbCacheReadTokens)
+	}
+	active, ok := res.DbActiveTurns["msg_a_live_1"]
+	if !ok || active.Input != 200 || active.Output != 25 || active.Reasoning != 5 || active.CacheRead != 100 {
+		t.Fatalf("expected in-flight turn in DbActiveTurns, got %+v", res.DbActiveTurns)
+	}
+	if _, exists := res.DbActiveTurns["msg_a_post_1"]; exists {
+		t.Fatalf("completed turn must not appear in DbActiveTurns: %+v", res.DbActiveTurns)
+	}
+
+	reqEntries := g.collectRequestLog()
+	for _, entry := range reqEntries {
+		if entry.ID == "msg_019imported1" || entry.ID == "msg_019legacyimp" {
+			t.Fatalf("imported turn %s must be excluded from request log", entry.ID)
+		}
+	}
+}

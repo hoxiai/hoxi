@@ -320,6 +320,13 @@ export const leaderboardAPI = {
 export interface ProviderMcpOAuthModelItem {
   id: string;
   name: string;
+  category?: string;
+  modality?: string;
+  capabilities?: string[];
+  image_translate?: {
+    output_modes?: string[];
+    outputModes?: string[];
+  };
   inputPrice?: number;
   outputPrice?: number;
 }
@@ -368,6 +375,11 @@ export interface OfficialChannelModel {
   vendor?: string;
   category?: string;
   modality?: string;
+  capabilities?: string[];
+  image_translate?: {
+    output_modes?: string[];
+    outputModes?: string[];
+  };
   isChatModel?: boolean;
   isDefault?: boolean;
   defaultVoice?: string;

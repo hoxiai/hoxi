@@ -21,6 +21,7 @@ import {
   errorMessageOf,
   isHtmlPreviewPath,
   isTesterPortalMode,
+  openCanvasPreview,
   openExternalFile,
   openFileInInspector,
   readDocumentPreviewFile,
@@ -40,6 +41,7 @@ import {
 import { extractMarkdownHeadings } from "../timeline/MarkdownView";
 import MarkdownDocumentReader from "../inspector/MarkdownDocumentReader";
 import { PdfPreviewFrame, SpreadsheetPreviewView } from "../inspector/SpreadsheetPreviewView";
+import SandboxedHtmlPreview from "./SandboxedHtmlPreview";
 
 export default function DocumentPreviewOverlay() {
   const [loading, setLoading] = createSignal(false);
@@ -159,7 +161,12 @@ export default function DocumentPreviewOverlay() {
 
   const handleDockToInspector = () => {
     const p = documentViewer();
-    if (!p || p.kind !== "file") return;
+    if (!p) return;
+    if (p.kind === "html") {
+      closeDocumentPreview();
+      openCanvasPreview({ kind: "html", title: p.title, content: p.html });
+      return;
+    }
     closeDocumentPreview();
     openFileInInspector(p.path);
   };
@@ -285,6 +292,18 @@ export default function DocumentPreviewOverlay() {
                         <Show when={copiedSource()} fallback={<Copy size={14} />}>
                           <Check size={14} class="text-[var(--ok-text)]" />
                         </Show>
+                      </button>
+                    </Show>
+
+                    <Show when={payload()?.kind === "html" && !isTesterPortalMode()}>
+                      <button
+                        type="button"
+                        onClick={handleDockToInspector}
+                        title={t("timeline.dockHtmlPreview")}
+                        class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-secondary)] hover:border-[var(--accent-border)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                      >
+                        <PanelRightOpen size={13} />
+                        <span class="hidden sm:inline">{t("timeline.dockToInspector")}</span>
                       </button>
                     </Show>
 
@@ -446,11 +465,9 @@ export default function DocumentPreviewOverlay() {
                         </Show>
                       }
                     >
-                      <iframe
-                        sandbox="allow-scripts"
-                        srcdoc={sourceText()}
+                      <SandboxedHtmlPreview
+                        html={sourceText()}
                         title={payload()?.title || "HTML"}
-                        class="h-full w-full border-0 bg-white"
                       />
                     </Show>
                   </Show>

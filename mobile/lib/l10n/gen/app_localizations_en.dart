@@ -1341,4 +1341,21 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get chatReportedBadge => 'Reported';
+
+  @override
+  String get contextQuoteLabel => 'Quote';
+
+  @override
+  String get contextReferencedSingle => 'Attached context';
+
+  @override
+  String contextAttachedCount(int count) {
+    return '$count items attached';
+  }
+
+  @override
+  String get contextResolveHint => 'On-demand';
+
+  @override
+  String get contextCopyItem => 'Copy item';
 }

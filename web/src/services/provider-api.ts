@@ -23,6 +23,16 @@ export interface PromptOrchestrator {
   executorEffort?: string;
 }
 
+export interface FetchedCustomModelItem {
+  id: string;
+  name: string;
+  modality?: string;
+  category?: string;
+  capabilities?: string[];
+  image_translate?: { output_modes?: string[] };
+  slots?: string[];
+}
+
 export const providerAndAssistAPI = {
   // Providers, Models & Auth (Unified Hoxi provider plane)
   listProviders(directory?: string): Promise<ProviderListResponse> {
@@ -74,7 +84,7 @@ export const providerAndAssistAPI = {
     npm?: string;
     headers?: Record<string, string>;
     directory?: string;
-  }): Promise<{ ok?: boolean; models?: Array<{ id: string; name: string }>; error?: string; auth?: boolean }> {
+  }): Promise<{ ok?: boolean; models?: FetchedCustomModelItem[]; error?: string; auth?: boolean }> {
     return requestJSON("/api/hoxi/provider/fetch-models", { method: "POST", body: JSON.stringify(opts) });
   },
   startProviderMcpOAuth: providerMcpOAuthAPI.start,

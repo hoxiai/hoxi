@@ -1,7 +1,7 @@
 // web/src/components/settings/UsageHeatmap.tsx
 // GitHub-style contribution heatmap for the usage overview. One square per
 // day, shaded by that day's token count, laid out as weeks (Sunday-first).
-import { createMemo, Index, Show } from "solid-js";
+import { createMemo, For, Index, Show } from "solid-js";
 import { locale, t } from "../../i18n";
 import { formatCompactTokens } from "./usage-format";
 
@@ -21,6 +21,17 @@ interface HeatCell {
   date: string;
   tokens: number;
   level: number;
+  cls: string;
+  title?: string;
+}
+
+function emptyCell(): HeatCell {
+  return {
+    date: "",
+    tokens: 0,
+    level: 0,
+    cls: "h-[11px] w-[11px] rounded-[2px]",
+  };
 }
 
 function parseDate(value: string): Date {
@@ -34,9 +45,9 @@ function toKey(date: Date): string {
   return `${date.getFullYear()}-${month}-${day}`;
 }
 
-function buildGrid(points: Array<{ date: string; tokens: number }>) {
+function buildGrid(points: Array<{ date: string; tokens: number }>, tokensLabel: string, loc: string) {
   const sorted = [...points].sort((a, b) => a.date.localeCompare(b.date));
-  if (sorted.length === 0) return { weeks: [] as Array<Array<HeatCell | null>>, months: [] as Array<string | null> };
+  if (sorted.length === 0) return { cells: [] as HeatCell[], months: [] as Array<string | null> };
 
   const tokenByDate = new Map(sorted.map((point) => [point.date, point.tokens]));
   const start = parseDate(sorted[0].date);
@@ -45,39 +56,50 @@ function buildGrid(points: Array<{ date: string; tokens: number }>) {
   const levelOf = (tokens: number) =>
     tokens <= 0 ? 0 : Math.min(4, Math.max(1, Math.ceil((tokens / max) * 4)));
 
-  const cells: Array<HeatCell | null> = [];
-  for (let i = 0; i < start.getDay(); i++) cells.push(null);
+  const cells: HeatCell[] = [];
+  for (let i = 0; i < start.getDay(); i++) cells.push(emptyCell());
   for (const cursor = new Date(start); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
     const key = toKey(cursor);
     const tokens = tokenByDate.get(key) ?? 0;
-    cells.push({ date: key, tokens, level: levelOf(tokens) });
+    const level = levelOf(tokens);
+    cells.push({
+      date: key,
+      tokens,
+      level,
+      cls: `h-[11px] w-[11px] rounded-[2px] ${LEVEL[level]}`,
+      title: `${key} · ${formatCompactTokens(tokens)} ${tokensLabel}`,
+    });
   }
-  while (cells.length % 7 !== 0) cells.push(null);
+  while (cells.length % 7 !== 0) cells.push(emptyCell());
 
-  const weeks: Array<Array<HeatCell | null>> = [];
-  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
-
-  const monthFormat = new Intl.DateTimeFormat(locale(), { month: "short" });
-  const topDate = (week: Array<HeatCell | null>) => {
-    const first = week.find((cell) => cell);
-    return first ? parseDate(first.date) : null;
+  const monthFormat = new Intl.DateTimeFormat(loc, { month: "short" });
+  const weekCount = cells.length / 7;
+  const topDate = (weekIdx: number) => {
+    const base = weekIdx * 7;
+    for (let row = 0; row < 7; row++) {
+      const c = cells[base + row];
+      if (c && c.date) return parseDate(c.date);
+    }
+    return null;
   };
-  const months = weeks.map((week, index) => {
-    const current = topDate(week);
-    if (!current) return null;
-    if (index === 0) return monthFormat.format(current);
-    const previous = topDate(weeks[index - 1]);
-    return previous && previous.getMonth() !== current.getMonth()
-      ? monthFormat.format(current)
-      : null;
-  });
+  const months: Array<string | null> = new Array(weekCount);
+  let prevMonth = -1;
+  for (let index = 0; index < weekCount; index++) {
+    const current = topDate(index);
+    if (!current) {
+      months[index] = null;
+      continue;
+    }
+    const m = current.getMonth();
+    months[index] = index === 0 || (prevMonth >= 0 && prevMonth !== m) ? monthFormat.format(current) : null;
+    prevMonth = m;
+  }
 
-  return { weeks, months };
+  return { cells, months };
 }
 
 export function UsageHeatmap(props: { points: Array<{ date: string; tokens: number }> }) {
-  const grid = createMemo(() => buildGrid(props.points));
-  const cells = createMemo(() => grid().weeks.flat());
+  const grid = createMemo(() => buildGrid(props.points, t("settings.usageTotalTokens"), locale()));
 
   return (
     <div class="flex flex-col items-center gap-2">
@@ -110,21 +132,15 @@ export function UsageHeatmap(props: { points: Array<{ date: string; tokens: numb
             </div>
             <div
               class="grid grid-flow-col grid-rows-7"
-              style={{ "grid-auto-columns": `${CELL}px`, gap: `${GAP}px` }}
+              style={{
+                "grid-auto-columns": `${CELL}px`,
+                gap: `${GAP}px`,
+                contain: "layout style paint",
+              }}
             >
-              <Index each={cells()}>
-                {(cell) => (
-                  <div
-                    class={`rounded-[2px] ${cell() ? LEVEL[cell()!.level] : ""}`}
-                    style={{ width: `${CELL}px`, height: `${CELL}px` }}
-                    title={
-                      cell()
-                        ? `${cell()!.date} · ${formatCompactTokens(cell()!.tokens)} ${t("settings.usageTotalTokens")}`
-                        : undefined
-                    }
-                  />
-                )}
-              </Index>
+              <For each={grid().cells}>
+                {(cell) => <div class={cell.cls} title={cell.title} />}
+              </For>
             </div>
           </div>
         </div>

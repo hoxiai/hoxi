@@ -5,7 +5,10 @@ mixin _AiWorkspaceDelivery on Notifier<AiWorkspaceState> {
   static const _deliveryPollInterval = Duration(seconds: 3);
   Timer? _deliveryPollTimer;
   AiWorkspaceRepository get _repo;
-  Future<void> refreshCurrentSession({bool showLoading = false});
+  Future<void> refreshCurrentSession({
+    bool showLoading = false,
+    bool trustServerState = false,
+  });
 
   Future<CodeDeliveryReview?> loadDeliveryReview() async {
     final nodeRequest = NodeRequestGuard(_repo);

@@ -410,5 +410,10 @@
   "chatActionPickGallery": "从相册选择图片",
   "commonCopied": "已复制",
   "chatReportAction": "举报",
-  "chatReportedBadge": "已举报"
+  "chatReportedBadge": "已举报",
+  "contextQuoteLabel": "引用",
+  "contextReferencedSingle": "已附上下文",
+  "contextAttachedCount": "已附 {count} 项数据",
+  "contextResolveHint": "按需回查",
+  "contextCopyItem": "复制此项"
 }

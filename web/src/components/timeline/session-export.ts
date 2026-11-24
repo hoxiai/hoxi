@@ -1,5 +1,5 @@
 import type { MessageInfo, MessagePart } from "../../services/sse-types";
-import { fetchSessionExportTurns, workspace } from "../../store/workspace";
+import { fetchSessionExportTurns, formatContextPromptForExport, workspace } from "../../store/workspace";
 import { t } from "../../i18n";
 import { showMessage } from "../settings/confirm-dialog";
 import { expandInlineThinkingParts } from "./context-activity-parts";
@@ -33,7 +33,7 @@ function fenced(value: string, language = ""): string {
 function renderPart(part: MessagePart): string {
   switch (part.type) {
     case "text":
-      return part.text.trim();
+      return formatContextPromptForExport(part.text.trim());
     case "reasoning": {
       const text = normalizeReasoningText(part.text).trim();
       if (!text) return "";

@@ -47,9 +47,20 @@ export function isOfficeDocumentPath(p: string, mime?: string): boolean {
   return /\.(docx|doc|pptx|ppt|rtf)$/i.test(p.trim());
 }
 
+export function isHtmlPath(p: string, mime?: string): boolean {
+  if (mime === "text/html" || mime === "application/xhtml+xml") return true;
+  return /\.html?$/i.test(p.trim());
+}
+
+export function isJsonPath(p: string, mime?: string): boolean {
+  if (mime === "application/json" || mime === "text/json") return true;
+  return /\.json$/i.test(p.trim());
+}
+
 export function isPreviewableDocumentPath(p: string, mime?: string): boolean {
   return (
     isMarkdownPath(p, mime) ||
+    isHtmlPath(p, mime) ||
     isSvgPath(p, mime) ||
     isPdfPath(p, mime) ||
     isSpreadsheetPath(p, mime) ||

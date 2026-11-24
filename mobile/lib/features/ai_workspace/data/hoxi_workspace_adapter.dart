@@ -33,6 +33,7 @@ part 'hoxi_session_list_adapter.dart';
 /// 将 Hoxi Gateway (/api/hoxi/* 及 OpenCode 接口) 转换为移动端现有的领域模型
 class HoxiWorkspaceAdapter {
   static const Duration defaultRecentSessionWindow = defaultRecentTaskWindow;
+  static const Duration _startupBusyGraceWindow = Duration(seconds: 4);
 
   final ApiClient _apiClient;
   late final HoxiGitArtifactAdapter _gitAdapter;
@@ -74,16 +75,21 @@ class HoxiWorkspaceAdapter {
     return false;
   }
 
+  void clearSessionBusyGrace(int sessionId) {
+    if (sessionId <= 0) return;
+    _startedUntilBySessionId.remove(sessionId);
+  }
+
   void markSessionStage(int sessionId, String stage) {
     if (sessionId <= 0) return;
-    final normalized = stage.trim();
+    final normalized = stage.trim().toLowerCase();
     if (normalized.isEmpty) return;
     _knownStageBySessionId[sessionId] = normalized;
-    if (isBusySessionStatusValue(normalized)) {
-      _startedUntilBySessionId[sessionId] = DateTime.now().add(const Duration(seconds: 15));
-    } else if (normalized == 'idle' ||
+    if (normalized == 'idle' ||
         normalized == 'completed' ||
         normalized == 'failed' ||
+        normalized == 'stopped' ||
+        normalized == 'cancelled' ||
         normalized == 'awaiting_approval') {
       _startedUntilBySessionId.remove(sessionId);
     }
@@ -605,7 +611,7 @@ class HoxiWorkspaceAdapter {
     final rawInstructionId = (res.data?['instructionId'] as num?)?.toInt() ?? 0;
     final instructionId = rawInstructionId > 0 ? rawInstructionId : 0;
     final now = DateTime.now();
-    _startedUntilBySessionId[sessionId] = now.add(const Duration(seconds: 15));
+    _startedUntilBySessionId[sessionId] = now.add(_startupBusyGraceWindow);
     _knownStageBySessionId[sessionId] = 'running';
     ref = ref.copyWith(updatedAt: now);
     _sessionsById[sessionId] = ref;

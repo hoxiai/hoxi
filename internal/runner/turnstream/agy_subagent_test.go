@@ -636,3 +636,46 @@ func TestAgySubagentBackfillsExternalIDOnPoll(t *testing.T) {
 		t.Fatalf("expected UpdateChildExternalID called with %q, got child=%q ext=%q", agyBugConv, updatedChildID, updatedExtID)
 	}
 }
+
+func TestAgyStepAndSubagentUsageNormalizesInclusiveThinkingTokens(t *testing.T) {
+	t.Parallel()
+	tr := NewTurnTranslator("ses_agy_norm", string(RuntimeAntigravity), "msg_a_1", "msg_u_1", "antigravity", "gemini-4-argon", "build", agyParentConv)
+
+	// Real Antigravity stream-json: output_tokens (399) already includes thinking_tokens (236)
+	// and total_tokens = input_tokens + output_tokens.
+	tr.noteAgyStepUsage("step:1", agyUsage{
+		InputTokens:     37466,
+		OutputTokens:    399,
+		ThinkingTokens:  236,
+		CacheReadTokens: 0,
+		TotalTokens:     37865,
+	})
+	// Subagent transcript row: total_tokens is 0, output_tokens (1591) includes thinking_tokens (800).
+	child := &childSink{
+		agySteps: make(map[int]agyUsage),
+		asst:     MessageInfo{ID: "msg_child_1", Role: "assistant"},
+	}
+	subU := agyUsage{
+		InputTokens:     2256,
+		OutputTokens:    1591,
+		ThinkingTokens:  800,
+		CacheReadTokens: 200150,
+	}
+	child.noteAgyUsage(2, subU)
+	tr.noteAgyStepUsage("sub:prt_1:2", subU)
+
+	// Thinking-only step where output_tokens is 0 must keep thinking without going negative.
+	tr.noteAgyStepUsage("step:3", agyUsage{ThinkingTokens: 100})
+
+	if child.asst.Tokens == nil || child.asst.Tokens.Output != 791 || child.asst.Tokens.Reasoning != 800 || child.asst.Tokens.Total != 203997 {
+		t.Fatalf("unexpected child tokens: %+v", child.asst.Tokens)
+	}
+	tok := tr.MsgInfo.Tokens
+	if tok == nil || tok.Input != 39722 || tok.Output != 954 || tok.Reasoning != 1136 || tok.Cache.Read != 200150 {
+		t.Fatalf("expected disjoint parent+subagent tokens (in=39722 out=954 reasoning=1136 cacheRead=200150), got %+v", tok)
+	}
+	// Total reflects latest parent step context (step 3: 100).
+	if tok.Total != 100 {
+		t.Fatalf("expected latest parent context 100, got %d", tok.Total)
+	}
+}

@@ -2,6 +2,12 @@
 
 All notable releases of **Hoxi Desktop** are documented below. Full per-version release notes are archived under [`docs/release-notes/`](docs/release-notes/) and consumed directly by `.github/workflows/release.yml` and `scripts/ai-release.sh`.
 
+## [v0.7.5](docs/release-notes/v0.7.5.md) — 2026-11-24
+
+- **Usage History Performance & Daily Token Accounting Accuracy**: Persisted lightweight per-session usage summaries (`turns.usage.json`), added response/Git-history caching, inflight coalescing, cancellation, parallel worktree Git scans, and instant disk-cached pricing reads to eliminate Usage History slowness and UI jank; fixed token double-counting in Codex (`cached_input_tokens`/`reasoning_output_tokens`), Gemini CLI (`cached`/`thoughts` and multi-model mixed schemas), and Antigravity (`thinking_tokens` across parent and subagents), excluded imported handoff history turns from Daily Pulse, Usage History, and Request Log while retaining post-import Hoxi turns, and upgraded frontend live delta merging across top-level sessions.
+- **Unified Model Capabilities, Media Slots & Image Proxy**: Unified model capability schemas and media business slots, added async image-edit task support and an image-translation proxy with protocol-relative URL normalization and header forwarding, preserved `mediaModels` on custom/OAuth provider saves, routed non-chat model probes via `/models`, and tightened bare-baseURL/SSRF safeguards.
+- **Display Layer, `hoxi-context v1` & Mobile Polish**: Upgraded timeline and inspector rendering with unit-aware interactive charts, live preview canvas, rich code/file inspection, `JsonTreeView` expand-all, and SVG isolation/Escape hardening; shipped `hoxi-context v1` structured reference chips and collapsible quote cards across desktop and mobile, allowed declared desktop iframe bridges on cross-site WebView navigation, fixed mobile follow-up prompt queueing on completed sessions, and published `Hoxi-Remote-0.7.5-android.apk` (`ai.hoxi.remote`).
+
 ## [v0.7.4](docs/release-notes/v0.7.4.md) — 2026-11-23
 
 - **Orchestrator + Executor Dual-Model Mode**: Added dual-model orchestration on the native Go engine pairing a planner/reviewer Orchestrator with a dedicated Executor model, sticky Executor threads, factual execution receipts, fail-closed routing, revert cleanup, and dedicated model selector UI.

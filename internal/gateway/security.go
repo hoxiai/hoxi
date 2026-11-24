@@ -248,6 +248,35 @@ func (g *Gateway) guardUpstreamPassthrough(w http.ResponseWriter, r *http.Reques
 	return true
 }
 
+// allowsCrossSiteDesktopIframe permits cross-site GET/HEAD iframe navigations
+// from a native desktop WebView (e.g. macOS wails://wails) to exact,
+// zero-secret loopback HTML bridge paths declared by an installed extension
+// and guarded by CSP frame-ancestors. Non-iframe fetches, remote requests, and
+// mutating methods remain blocked.
+func (g *Gateway) allowsCrossSiteDesktopIframe(r *http.Request) bool {
+	if isRemoteRequest(r) || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
+		return false
+	}
+	if !g.isDesktopIframeRoute(r.URL.Path) {
+		return false
+	}
+	dests := r.Header.Values("Sec-Fetch-Dest")
+	if len(dests) != 1 || !strings.EqualFold(strings.TrimSpace(dests[0]), "iframe") {
+		return false
+	}
+	modes := r.Header.Values("Sec-Fetch-Mode")
+	if len(modes) > 1 {
+		return false
+	}
+	if len(modes) == 1 {
+		mode := strings.TrimSpace(modes[0])
+		if mode != "" && !strings.EqualFold(mode, "navigate") {
+			return false
+		}
+	}
+	return true
+}
+
 func (g *Gateway) allowRequest(w http.ResponseWriter, r *http.Request) bool {
 	if !trustedHost(r.Host) {
 		http.Error(w, "untrusted Host", http.StatusForbidden)
@@ -270,6 +299,9 @@ func (g *Gateway) allowRequest(w http.ResponseWriter, r *http.Request) bool {
 		// no-Origin CLI/OpenCode calls and native WebView requests working.
 		for _, site := range r.Header.Values("Sec-Fetch-Site") {
 			if site != "" && site != "same-origin" && site != "same-site" && site != "none" {
+				if site == "cross-site" && g.allowsCrossSiteDesktopIframe(r) {
+					continue
+				}
 				http.Error(w, "untrusted Sec-Fetch-Site", http.StatusForbidden)
 				return false
 			}

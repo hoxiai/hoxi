@@ -23,6 +23,7 @@ func (g *Gateway) registerMediaRoutes() {
 	g.mux.HandleFunc("/api/hoxi/media/capabilities", g.handleMediaCapabilities)
 	g.mux.HandleFunc("/api/hoxi/media/roles", g.handleMediaRoles)
 	g.mux.HandleFunc("/api/hoxi/media/image", g.handleMediaImage)
+	g.mux.HandleFunc("/api/hoxi/media/image-translate", g.handleMediaImageTranslate)
 	g.mux.HandleFunc("/api/hoxi/media/video", g.handleMediaVideo)
 	g.mux.HandleFunc("/api/hoxi/media/speech", g.handleMediaSpeech)
 	g.mux.HandleFunc("/api/hoxi/media/transcribe", g.handleMediaTranscribe)
@@ -49,6 +50,7 @@ func (g *Gateway) handleMediaCapabilities(w http.ResponseWriter, r *http.Request
 	var speechModels []llm.AudioModelOption
 	var transcribeModels []llm.AudioModelOption
 	var roles llm.MediaRolePrefs
+	var slots map[llm.ModelSlot][]llm.SlotModelOption
 	hasASR := false
 	hasEmbedding := false
 	if g.providers != nil {
@@ -57,38 +59,52 @@ func (g *Gateway) handleMediaCapabilities(w http.ResponseWriter, r *http.Request
 		speechModels = g.providers.ListSpeechModels()
 		transcribeModels = g.providers.ListAudioTranscriberModels()
 		roles = g.providers.LoadMediaRolePrefs()
+		slots = g.providers.ListAllModelSlots()
 		hasASR = g.providers.HasAudioTranscriber()
 		hasEmbedding = g.providers.HasEmbeddingModel()
 	}
+	imageEditModels := slots[llm.ModelSlotImageEdit]
+	imageTranslateRasterModels := slots[llm.ModelSlotImageTranslateRaster]
+	imageTranslateEditorModels := slots[llm.ModelSlotImageTranslateEditor]
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":                  true,
-		"hasImageModel":       len(imageModels) > 0,
-		"hasVideoModel":       len(videoModels) > 0,
-		"hasSpeechModel":      len(speechModels) > 0,
-		"hasAudioTranscriber": hasASR,
-		"hasEmbeddingModel":   hasEmbedding,
-		"imageModels":         imageModels,
-		"videoModels":         videoModels,
-		"speechModels":        speechModels,
-		"transcribeModels":    transcribeModels,
-		"roles":               roles,
+		"ok":                           true,
+		"hasImageModel":                len(imageModels) > 0,
+		"hasImageEditModel":            len(imageEditModels) > 0,
+		"hasImageTranslateRasterModel": len(imageTranslateRasterModels) > 0,
+		"hasImageTranslateEditorModel": len(imageTranslateEditorModels) > 0,
+		"hasVideoModel":                len(videoModels) > 0,
+		"hasSpeechModel":               len(speechModels) > 0,
+		"hasAudioTranscriber":          hasASR,
+		"hasEmbeddingModel":            hasEmbedding,
+		"imageModels":                  imageModels,
+		"imageEditModels":              imageEditModels,
+		"imageTranslateRasterModels":   imageTranslateRasterModels,
+		"imageTranslateEditorModels":   imageTranslateEditorModels,
+		"videoModels":                  videoModels,
+		"speechModels":                 speechModels,
+		"transcribeModels":             transcribeModels,
+		"slots":                        slots,
+		"roles":                        roles,
 	})
 }
 
 type mediaImageRequest struct {
-	Prompt        string   `json:"prompt"`
-	ProviderID    string   `json:"providerID,omitempty"`
-	ModelID       string   `json:"modelID,omitempty"`
-	AspectRatio   string   `json:"aspectRatio,omitempty"`
-	ImageSize     string   `json:"imageSize,omitempty"`
-	Count         int      `json:"count,omitempty"`
-	SessionID     string   `json:"sessionID,omitempty"`
-	Directory     string   `json:"directory,omitempty"`
-	InputPaths    []string `json:"inputPaths,omitempty"`
-	InputDataURLs []string `json:"inputDataUrls,omitempty"`
-	MaskDataURL   string   `json:"maskDataUrl,omitempty"`
-	OutputPath    string   `json:"outputPath,omitempty"`
-	ReturnDataURL bool     `json:"returnDataUrl,omitempty"`
+	Prompt         string   `json:"prompt"`
+	ProviderID     string   `json:"providerID,omitempty"`
+	ModelID        string   `json:"modelID,omitempty"`
+	AspectRatio    string   `json:"aspectRatio,omitempty"`
+	ImageSize      string   `json:"imageSize,omitempty"`
+	Count          int      `json:"count,omitempty"`
+	SessionID      string   `json:"sessionID,omitempty"`
+	Directory      string   `json:"directory,omitempty"`
+	InputPaths     []string `json:"inputPaths,omitempty"`
+	InputDataURLs  []string `json:"inputDataUrls,omitempty"`
+	MaskDataURL    string   `json:"maskDataUrl,omitempty"`
+	OutputPath     string   `json:"outputPath,omitempty"`
+	ReturnDataURL  bool     `json:"returnDataUrl,omitempty"`
+	IdempotencyKey string   `json:"idempotencyKey,omitempty"`
+	PromptKind     string   `json:"promptKind,omitempty"`
+	Slot           string   `json:"slot,omitempty"`
 }
 
 type mediaImageSavedItem struct {
@@ -228,6 +244,57 @@ func mediaExtForMime(mime string) string {
 	}
 }
 
+type resolvedImageCandidate struct {
+	providerID string
+	modelID    string
+	resolution string
+}
+
+func buildAutoImageCandidates(
+	primaryPID, primaryMID, primaryResolution string,
+	configured []llm.ImageModelOption,
+) []resolvedImageCandidate {
+	candidates := []resolvedImageCandidate{
+		{providerID: primaryPID, modelID: primaryMID, resolution: primaryResolution},
+	}
+	if primaryResolution == "explicit" {
+		return candidates
+	}
+	const maxAutoImageCandidates = 4
+	seen := map[string]bool{
+		strings.ToLower(strings.TrimSpace(primaryPID)) + "/" + strings.ToLower(strings.TrimSpace(primaryMID)): true,
+	}
+	for _, opt := range configured {
+		if len(candidates) >= maxAutoImageCandidates {
+			break
+		}
+		key := strings.ToLower(strings.TrimSpace(opt.ProviderID)) + "/" + strings.ToLower(strings.TrimSpace(opt.ModelID))
+		if seen[key] || strings.TrimSpace(opt.ProviderID) == "" || strings.TrimSpace(opt.ModelID) == "" {
+			continue
+		}
+		seen[key] = true
+		candidates = append(candidates, resolvedImageCandidate{
+			providerID: opt.ProviderID,
+			modelID:    opt.ModelID,
+			resolution: "configured_model_fallback",
+		})
+	}
+	return candidates
+}
+
+func isUnsupportedImageModelError(err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "unsupported model") ||
+		strings.Contains(lower, "model_not_found") ||
+		strings.Contains(lower, "model not found") ||
+		strings.Contains(lower, "does not exist") ||
+		strings.Contains(lower, "no available channel") ||
+		strings.Contains(lower, "no eligible channel")
+}
+
 func (g *Gateway) handleMediaImage(w http.ResponseWriter, r *http.Request) {
 	if isRemoteRequest(r) {
 		writeJSONError(w, http.StatusForbidden, "local media generation is not exposed over remote tunnel")
@@ -346,42 +413,91 @@ func (g *Gateway) handleMediaImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sessPID, sessMID := g.sessionActiveModel(req.SessionID)
-	resolvedPID, resolvedMID, resolution, hasImgModel := g.providers.ResolveImageModelForSession(
-		req.ProviderID, req.ModelID, sessPID, sessMID,
-	)
+	wantEditSlot := strings.EqualFold(strings.TrimSpace(req.Slot), string(llm.ModelSlotImageEdit)) || maskImage != nil
+	var resolvedPID, resolvedMID, resolution string
+	var hasImgModel bool
+	if wantEditSlot {
+		resolvedPID, resolvedMID, resolution, hasImgModel = g.providers.ResolveImageEditModelForSession(
+			req.ProviderID, req.ModelID, sessPID, sessMID,
+		)
+	} else {
+		resolvedPID, resolvedMID, resolution, hasImgModel = g.providers.ResolveImageModelForSession(
+			req.ProviderID, req.ModelID, sessPID, sessMID,
+		)
+	}
 	if !hasImgModel {
 		if writeAppMediaFailure(w, r, llm.ErrUnavailable) {
 			return
 		}
+		missingKind := "image"
+		missingMsg := "neither the active model nor any configured local provider supports image generation; configure a Gemini Image, Imagen, GPT-Image, Flux, or Seedream model in Settings -> Providers, or fall back to hoxi_tools (discover -> inspect -> run) if cloud media APIs are available"
+		if wantEditSlot {
+			missingKind = "image_edit"
+			missingMsg = "no configured local provider supports image editing/inpainting; configure an image_edit-capable model (such as GPT-Image, Qwen-Image-Edit, Flux-Kontext, Seedream, or Gemini Image) in Settings -> Providers"
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":                false,
-			"missingCapability": "image",
+			"missingCapability": missingKind,
 			"fallbackTool":      "hoxi_tools",
-			"error":             "neither the active model nor any configured local provider supports image generation; configure a Gemini Image, Imagen, GPT-Image, Flux, or Seedream model in Settings -> Providers, or fall back to hoxi_tools (discover -> inspect -> run) if cloud media APIs are available",
+			"error":             missingMsg,
 		})
 		return
 	}
 
-	resp, err := g.providers.GenerateImage(r.Context(), llm.ImageRequest{
-		ProviderID:  resolvedPID,
-		ModelID:     resolvedMID,
-		Prompt:      req.Prompt,
-		AspectRatio: req.AspectRatio,
-		ImageSize:   req.ImageSize,
-		Count:       req.Count,
-		InputImages: inputImages,
-		MaskImage:   maskImage,
-	})
+	var candidatePool []llm.ImageModelOption
+	if wantEditSlot {
+		for _, opt := range g.providers.ListModelsBySlot(llm.ModelSlotImageEdit) {
+			candidatePool = append(candidatePool, llm.ImageModelOption{
+				ProviderID: opt.ProviderID,
+				ModelID:    opt.ModelID,
+				Name:       opt.Name,
+				SupportsIn: true,
+			})
+		}
+	} else {
+		candidatePool = g.providers.ListImageModels()
+	}
+	candidates := buildAutoImageCandidates(resolvedPID, resolvedMID, resolution, candidatePool)
+	var resp llm.ImageResponse
+	var err error
+	allUnsupported := true
+	for _, cand := range candidates {
+		resp, err = g.providers.GenerateImage(r.Context(), llm.ImageRequest{
+			ProviderID:     cand.providerID,
+			ModelID:        cand.modelID,
+			Prompt:         req.Prompt,
+			AspectRatio:    req.AspectRatio,
+			ImageSize:      req.ImageSize,
+			Count:          req.Count,
+			InputImages:    inputImages,
+			MaskImage:      maskImage,
+			IdempotencyKey: strings.TrimSpace(req.IdempotencyKey),
+			PromptKind:     strings.TrimSpace(req.PromptKind),
+		})
+		if err == nil {
+			resolution = cand.resolution
+			allUnsupported = false
+			break
+		}
+		if resolution == "explicit" || (!errors.Is(err, llm.ErrUnavailable) && !isUnsupportedImageModelError(err)) {
+			allUnsupported = false
+			break
+		}
+	}
 	if err != nil {
 		if writeAppMediaFailure(w, r, err) {
 			return
 		}
-		if errors.Is(err, llm.ErrUnavailable) {
+		if errors.Is(err, llm.ErrUnavailable) || (resolution != "explicit" && allUnsupported) {
+			missingKind := "image"
+			if wantEditSlot {
+				missingKind = "image_edit"
+			}
 			writeJSON(w, http.StatusOK, map[string]any{
 				"ok":                false,
-				"missingCapability": "image",
+				"missingCapability": missingKind,
 				"fallbackTool":      "hoxi_tools",
-				"error":             "neither the active model nor any configured local provider supports image generation; configure a Gemini Image, Imagen, GPT-Image, Flux, or Seedream model in Settings -> Providers, or fall back to hoxi_tools (discover -> inspect -> run) if cloud media APIs are available",
+				"error":             "no configured local image model is supported by its upstream gateway (" + err.Error() + "); configure a working image model in Settings -> Providers, or fall back to hoxi_tools / canvas cutout",
 			})
 			return
 		}

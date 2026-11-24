@@ -52,6 +52,11 @@ async function realTypeScriptStream(): Promise<string> {
     setContent(`\`\`\`typescript\n${body}\n\`\`\``);
     setStreaming(false);
     for (let i = 0; i < 300; i++) {
+      // Completed blocks longer than CODE_COLLAPSE_THRESHOLD_LINES auto-collapse once the stream pacer drains;
+      // expand it to verify full-body integrity and off-main-thread worker highlighting across all 450 lines.
+      if (host.querySelector('[data-code-collapsed="true"]')) {
+        host.querySelector<HTMLButtonElement>('[data-code-expand-btn="true"]')?.click();
+      }
       if (host.querySelector("code")?.textContent === body && host.querySelector("code span[style]")) break;
       await wait(10);
     }

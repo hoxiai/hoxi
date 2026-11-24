@@ -55,6 +55,8 @@ type storedSession struct {
 	cache            transcriptCacheEntry // protected by Store.mu
 	summaryAccess    uint64               // protected by Store.mu; >0 when summaryTurns is cached
 	summaryTurns     []MessageTurn
+	usageTurns       []TurnUsageSummary
+	usageCached      bool
 	turnsLoaded      bool
 	hasRevertedTurns bool
 	active           bool
@@ -176,6 +178,7 @@ func (s *Store) ensureTurnsLocked(ss *storedSession) {
 	}
 	ss.turnsLoaded = true
 	ss.summaryTurns = nil
+	ss.usageTurns, ss.usageCached = nil, false
 	ss.deltas = nil
 	ss.index.rebuild(ss.rec.Turns)
 	ss.bodyBytes = estimateTurnsBytes(ss.rec.Turns) + estimateTurnsBytes(ss.rec.RevertedTurns)
@@ -213,6 +216,7 @@ func (s *Store) commitLocked(next SessionRecord, ss *storedSession) error {
 	ss.rec, ss.turnsLoaded, ss.logLines = next, true, lines
 	ss.edits = nil
 	ss.summaryTurns = nil
+	ss.usageTurns, ss.usageCached = nil, false
 	ss.metaDirty, ss.dirty, ss.deltas, ss.pending = false, nil, nil, nil
 	ss.dirtyInfos = nil
 	s.cancelPersistLocked(ss)
@@ -504,6 +508,7 @@ func (s *Store) Delete(sessionID string) error {
 		return err
 	}
 	ss.summaryTurns = nil
+	ss.usageTurns, ss.usageCached = nil, false
 	s.mu.Lock()
 	if ss.cache.loaded {
 		s.cachedSessions--

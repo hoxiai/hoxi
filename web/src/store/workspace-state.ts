@@ -259,10 +259,31 @@ export type WorkspaceModalMode = "create" | "edit" | "delete" | "manage" | null;
 // provider so the two catalogs never overwrite or mix with each other.
 export const OFFICIAL_PROVIDER_ID = "hoxi-official";
 
+export const IMPORTED_SESSION_TITLE_PREFIXES: readonly string[] = [
+  "[Grok CLI]",
+  "[Claude Code]",
+  "[Codex",
+  "[OpenAI Codex]",
+  "[Gemini",
+  "[Antigravity]",
+  "[Antigravity (Gemini)]",
+  "[CodeBuddy]",
+  "[Trae]",
+  "[Qoder]",
+  "[OpenCode",
+];
+
+export function isImportedSessionTitle(title?: string | null): boolean {
+  const trimmed = (title || "").trim();
+  if (!trimmed) return false;
+  return IMPORTED_SESSION_TITLE_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
+}
+
 export interface SessionIndexEntry {
   directory?: string;
   projectID?: string;
   parentID?: string;
+  imported?: boolean;
   surface?: SessionInfo["surface"];
   managed?: boolean;
   runtime?: SessionInfo["runtime"];
@@ -320,7 +341,7 @@ export interface WorkspaceState {
   sessionSandboxMode: "local" | "worktree";
   sidebarNavTab: SidebarNavTab;
   sidebarProjectMode: SidebarProjectMode;
-  inspectorTab: "diffs" | "memory" | "files" | "skills" | "terminal" | "browser" | "computer" | "tasks";
+  inspectorTab: "diffs" | "memory" | "files" | "skills" | "terminal" | "browser" | "computer" | "tasks" | "preview";
   inspectorOpen: boolean;
   inspectorMaximized: boolean;
   inspectedFilePath: string | null;

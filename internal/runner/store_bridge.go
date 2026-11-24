@@ -29,6 +29,7 @@ type (
 	SessionEditsSnapshot = sessionstore.SessionEditsSnapshot
 	HistoryPage          = sessionstore.HistoryPage
 	MessageTurn          = sessionstore.MessageTurn
+	TurnUsageSummary     = sessionstore.TurnUsageSummary
 	MessageInfo          = sessionstore.MessageInfo
 	MessageTime          = sessionstore.MessageTime
 	MessageTokens        = sessionstore.MessageTokens

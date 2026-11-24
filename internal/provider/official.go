@@ -12,6 +12,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/llm"
 )
 
 // AuthSource exposes the signed-in Hoxi account so the provider plane can
@@ -104,18 +106,20 @@ const (
 )
 
 type officialModelView struct {
-	ID               string  `json:"id"`
-	Name             string  `json:"name"`
-	Vendor           string  `json:"vendor"`
-	Category         string  `json:"category,omitempty"`
-	Modality         string  `json:"modality,omitempty"`
-	IsChatModel      bool    `json:"isChatModel"`
-	IsDefault        bool    `json:"isDefault,omitempty"`
-	DefaultVoice     string  `json:"defaultVoice,omitempty"`
-	BillingMode      string  `json:"billingMode"`
-	InputPointsPerM  float64 `json:"inputPointsPerM"`
-	OutputPointsPerM float64 `json:"outputPointsPerM"`
-	PerCallPoints    float64 `json:"perCallPoints"`
+	ID               string                        `json:"id"`
+	Name             string                        `json:"name"`
+	Vendor           string                        `json:"vendor"`
+	Category         string                        `json:"category,omitempty"`
+	Modality         string                        `json:"modality,omitempty"`
+	Capabilities     []llm.ModelCapability         `json:"capabilities,omitempty"`
+	ImageTranslate   *llm.ImageTranslateCapability `json:"image_translate,omitempty"`
+	IsChatModel      bool                          `json:"isChatModel"`
+	IsDefault        bool                          `json:"isDefault,omitempty"`
+	DefaultVoice     string                        `json:"defaultVoice,omitempty"`
+	BillingMode      string                        `json:"billingMode"`
+	InputPointsPerM  float64                       `json:"inputPointsPerM"`
+	OutputPointsPerM float64                       `json:"outputPointsPerM"`
+	PerCallPoints    float64                       `json:"perCallPoints"`
 }
 
 type officialModelsResponse struct {
@@ -409,20 +413,69 @@ func (s *Service) persistOfficialProvider(baseURL, apiKey string, models []offic
 		}
 		mName := firstNonEmptyString(m.Name, mid)
 		category := inferModelCategory(mid, m.Category, m.Modality)
-		isChat := isConversationalCategory(category)
+		normCaps := llm.NormalizeModelCapabilities(llm.ModelCapabilityInput{
+			ModelID:                 mid,
+			Modality:                m.Modality,
+			Category:                category,
+			HasExplicitCapabilities: len(m.Capabilities) > 0,
+			ExplicitCapabilities: func() []string {
+				out := make([]string, len(m.Capabilities))
+				for i, c := range m.Capabilities {
+					out[i] = string(c)
+				}
+				return out
+			}(),
+			ExplicitImageTranslateOutputModes: func() []string {
+				if m.ImageTranslate == nil {
+					return nil
+				}
+				out := make([]string, len(m.ImageTranslate.OutputModes))
+				for i, mode := range m.ImageTranslate.OutputModes {
+					out[i] = string(mode)
+				}
+				return out
+			}(),
+		})
+		isChat := isConversationalCategory(category) && normCaps.Has(llm.CapabilityChat)
+		hasVision := normCaps.Has(llm.CapabilityVision)
 		inputs := []interface{}{"text"}
-		if isChat {
+		if hasVision || normCaps.Has(llm.CapabilityImageEdit) {
 			inputs = []interface{}{"text", "image"}
+		}
+		outputs := []interface{}{"text"}
+		if normCaps.Has(llm.CapabilityImageGenerate) {
+			outputs = []interface{}{"text", "image"}
+		} else if normCaps.Has(llm.CapabilityVideo) {
+			outputs = []interface{}{"video"}
 		}
 		mEntry := map[string]interface{}{
 			"name":       mName,
 			"category":   category,
-			"attachment": isChat,
+			"attachment": hasVision || normCaps.Has(llm.CapabilityImageEdit),
 			"reasoning":  isChat,
 			"modalities": map[string]interface{}{
 				"input":  inputs,
-				"output": []interface{}{"text"},
+				"output": outputs,
 			},
+		}
+		if strings.TrimSpace(m.Modality) != "" {
+			mEntry["modality"] = strings.TrimSpace(m.Modality)
+		}
+		if len(normCaps.Capabilities) > 0 {
+			tags := make([]string, len(normCaps.Capabilities))
+			for i, c := range normCaps.Capabilities {
+				tags[i] = string(c)
+			}
+			mEntry["capabilityTags"] = tags
+		} else if llm.IsExcludedUtilityModel(mid, m.Modality) {
+			mEntry["capabilityTags"] = []string{}
+		}
+		if normCaps.ImageTranslate != nil && len(normCaps.ImageTranslate.OutputModes) > 0 {
+			modes := make([]string, len(normCaps.ImageTranslate.OutputModes))
+			for i, mode := range normCaps.ImageTranslate.OutputModes {
+				modes[i] = string(mode)
+			}
+			mEntry["imageTranslate"] = map[string]interface{}{"outputModes": modes}
 		}
 		if m.IsDefault {
 			mEntry["isDefault"] = true
@@ -550,7 +603,17 @@ func parseOfficialModelsWithMeta(payload map[string]any) ([]officialModelView, m
 
 		rawModality := firstNonEmptyString(m["modality"])
 		category := inferModelCategory(id, firstNonEmptyString(m["category"]), rawModality)
-		isChat := isConversationalCategory(category)
+		explicitCaps, hasExplicitCaps := stringSliceFromAny(m["capabilities"])
+		explicitModes := extractImageTranslateModesFromConfig(m)
+		normCaps := llm.NormalizeModelCapabilities(llm.ModelCapabilityInput{
+			ModelID:                           id,
+			Modality:                          rawModality,
+			Category:                          category,
+			HasExplicitCapabilities:           hasExplicitCaps,
+			ExplicitCapabilities:              explicitCaps,
+			ExplicitImageTranslateOutputModes: explicitModes,
+		})
+		isChat := isConversationalCategory(category) && normCaps.Has(llm.CapabilityChat)
 		isDefault, _ := m["isDefault"].(bool)
 		defaultVoice := firstNonEmptyString(m["defaultVoice"], m["voice"])
 
@@ -563,6 +626,8 @@ func parseOfficialModelsWithMeta(payload map[string]any) ([]officialModelView, m
 			Vendor:           firstNonEmptyString(m["vendor"], m["provider"]),
 			Category:         category,
 			Modality:         rawModality,
+			Capabilities:     normCaps.Capabilities,
+			ImageTranslate:   normCaps.ImageTranslate,
 			IsChatModel:      isChat,
 			IsDefault:        isDefault,
 			DefaultVoice:     defaultVoice,

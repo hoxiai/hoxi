@@ -38,6 +38,15 @@ export type UsageSelection =
 /** Days fetched for the overview heatmap (the backend's maximum window). */
 export const USAGE_OVERVIEW_DAYS = 365;
 
+const OVERVIEW_CACHE_TTL_MS = 60_000;
+
+interface CachedOverview {
+  days: DevPulseHistoryDay[];
+  startDate: string;
+  endDate: string;
+  fetchedAt: number;
+}
+
 const [usageHistory, setUsageHistory] = createSignal<UsageHistoryDay[]>([]);
 const [usageSelection, setUsageSelection] = createSignal<UsageSelection>({ kind: "overview" });
 const [usageHistoryLoading, setUsageHistoryLoading] = createSignal(false);
@@ -45,8 +54,49 @@ const [usageHistoryError, setUsageHistoryError] = createSignal("");
 
 let inFlight = false;
 let historyGeneration = 0;
+let cachedOverview: CachedOverview | null = null;
+let loadedSelection: UsageSelection | null = null;
+let activeController: AbortController | null = null;
 
 export { usageHistory, usageSelection, usageHistoryLoading, usageHistoryError };
+
+function localTodayKey(): string {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${now.getFullYear()}-${month}-${day}`;
+}
+
+function sliceCachedOverview(
+  cache: CachedOverview,
+  selection: UsageSelection
+): DevPulseHistoryDay[] | null {
+  if (selection.kind === "overview") {
+    return cache.days;
+  }
+  if (selection.kind === "days") {
+    if (cache.days.length < selection.days) return null;
+    return cache.days.slice(-selection.days);
+  }
+  const { start, end } = selection.range;
+  if (!start || !end) return null;
+  if (start < cache.startDate || end > cache.endDate) return null;
+  return cache.days.filter((day) => day.date >= start && day.date <= end);
+}
+
+function isAbortError(err: unknown): boolean {
+  return (
+    !!err &&
+    typeof err === "object" &&
+    "name" in err &&
+    (err as { name?: unknown }).name === "AbortError"
+  );
+}
+
+export function clearUsageHistoryCache(): void {
+  cachedOverview = null;
+  loadedSelection = null;
+}
 
 function sameSelection(a: UsageSelection, b: UsageSelection): boolean {
   if (a.kind !== b.kind) return false;
@@ -90,36 +140,92 @@ export async function loadUsageHistory(
   manual = false
 ): Promise<void> {
   if (inFlight && !manual && sameSelection(selection, usageSelection())) return;
+
+  const today = localTodayKey();
+  const cache = cachedOverview;
+  const sliced = !manual && cache ? sliceCachedOverview(cache, selection) : null;
+  const cacheFresh =
+    !!cache &&
+    cache.endDate === today &&
+    Date.now() - cache.fetchedAt < OVERVIEW_CACHE_TTL_MS;
+  const keepCurrentView =
+    !!loadedSelection && sameSelection(selection, loadedSelection);
+
+  if (sliced) {
+    activeController?.abort();
+    activeController = null;
+    inFlight = false;
+    setUsageSelection(selection);
+    setUsageHistoryError("");
+    setUsageHistory(sliced.map(priceHistoryDay));
+    loadedSelection = selection;
+    if (cacheFresh) {
+      historyGeneration++;
+      setUsageHistoryLoading(false);
+      return;
+    }
+  } else if (!keepCurrentView) {
+    setUsageHistory([]);
+    loadedSelection = null;
+  }
+
   const gen = ++historyGeneration;
+  activeController?.abort();
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  activeController = controller;
   inFlight = true;
   setUsageSelection(selection);
   setUsageHistoryLoading(true);
   setUsageHistoryError("");
   try {
-    // Pricing must be present before the days are priced.
-    await syncOfficialModelPricing();
-    if (gen !== historyGeneration) return;
-    const res =
+    const historyPromise =
       selection.kind === "custom"
-        ? await hoxiAPI.getDevPulseHistory(30, undefined, {
+        ? hoxiAPI.getDevPulseHistory(30, undefined, {
             startDate: selection.range.start,
             endDate: selection.range.end,
+            includeTools: false,
+            refresh: manual,
+            signal: controller?.signal,
           })
-        : await hoxiAPI.getDevPulseHistory(
-            selection.kind === "overview" ? USAGE_OVERVIEW_DAYS : selection.days
+        : hoxiAPI.getDevPulseHistory(
+            selection.kind === "overview" ? USAGE_OVERVIEW_DAYS : selection.days,
+            undefined,
+            {
+              includeTools: false,
+              refresh: manual,
+              signal: controller?.signal,
+            }
           );
+    // Sync pricing in parallel with history instead of serially blocking local data.
+    const [, res] = await Promise.all([syncOfficialModelPricing(), historyPromise]);
     if (gen !== historyGeneration) return;
     if (!res || !Array.isArray(res.days)) {
       setUsageHistory([]);
+      loadedSelection = null;
       return;
     }
+    if (selection.kind === "overview") {
+      cachedOverview = {
+        days: res.days,
+        startDate: res.startDate || (res.days[0]?.date ?? ""),
+        endDate: res.endDate || (res.days[res.days.length - 1]?.date ?? today),
+        fetchedAt: Date.now(),
+      };
+    }
     setUsageHistory(res.days.map(priceHistoryDay));
+    loadedSelection = selection;
   } catch (err: any) {
-    if (gen !== historyGeneration) return;
-    setUsageHistory([]);
+    if (gen !== historyGeneration || isAbortError(err)) return;
+    if (!loadedSelection || !sameSelection(selection, loadedSelection)) {
+      setUsageHistory([]);
+      loadedSelection = null;
+    }
     setUsageHistoryError(errorMessageOf(err, t("common.error")));
   } finally {
     if (gen === historyGeneration) {
+      if (activeController === controller) {
+        activeController = null;
+      }
       inFlight = false;
       setUsageHistoryLoading(false);
     }

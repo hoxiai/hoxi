@@ -1,16 +1,18 @@
 import {
-  inferDedicatedMediaModality,
   inferProviderNpmFromEndpoint,
   isCustomOrConfiguredProvider,
   isHoxiCustomProvider,
   isImportedOpenCodeProvider,
+  isKnownPureTextModelID,
   isNonChatUtilityModelID,
   isNonThinkingGeminiModelID,
   MASKED_SECRET,
-  supportsMultimodalImageEditModelID,
+  normalizeModelCapabilities,
+  normalizeStoredModelCapabilities,
   workspace,
   type CustomModelCategory,
   type CustomProviderModelDraft,
+  type FetchedCustomModelItem,
 } from "../../store/workspace";
 
 export { inferProviderNpmFromEndpoint };
@@ -21,30 +23,54 @@ export interface ModelProbeResult {
   error?: string;
 }
 
-function inferModelCategoryFromID(cleanID: string): CustomModelCategory {
-  if (inferDedicatedMediaModality(cleanID) === "image") return "image";
-  if (/(whisper|sensevoice|paraformer|transcribe|tts|speech)/i.test(cleanID)) return "audio";
-  if (/(embedding|embed|bge-|jina-embeddings)/i.test(cleanID)) return "embedding";
-  return "chat";
-}
-
 /** Default capability guess for a model fetched from a provider's model list. */
-export function guessFetchedModelDraft(rm: { id: string; name: string }): CustomProviderModelDraft {
+export function guessFetchedModelDraft(rm: FetchedCustomModelItem): CustomProviderModelDraft {
   const cleanID = rm.id.trim().replace(/^models\/(?=gemini|imagen|gemma|veo|embedding|text-embedding)/i, "");
-  const category = inferModelCategoryFromID(cleanID);
+  const normalized = normalizeModelCapabilities({
+    modelID: cleanID,
+    modality: rm.modality,
+    category: rm.category,
+    capabilities: Array.isArray(rm.capabilities) ? rm.capabilities : undefined,
+    imageTranslate: rm.image_translate,
+  });
+  const caps = normalized.capabilities;
+  const has = (c: string) => caps.includes(c as any);
+
+  let category: CustomModelCategory = "chat";
+  if (has("image_translate")) {
+    category = "image_translate";
+  } else if (has("image_generate") || has("image_edit")) {
+    category = "image";
+  } else if (has("video")) {
+    category = "video";
+  } else if (has("tts") || has("asr")) {
+    category = "audio";
+  } else if (has("embedding") || has("rerank") || has("moderation")) {
+    category = "embedding";
+  }
+
+  const baseMeta = {
+    ...(rm.modality ? { modality: rm.modality } : {}),
+    capabilityTags: caps,
+    ...(normalized.imageTranslate?.outputModes?.length
+      ? { imageTranslateOutputModes: normalized.imageTranslate.outputModes }
+      : {}),
+  };
+
   if (category === "image") {
     return {
       id: cleanID,
       name: rm.name || cleanID,
       category: "image",
       reasoning: false,
-      image: supportsMultimodalImageEditModelID(cleanID),
+      image: has("image_edit"),
       toolCall: false,
       pdf: false,
       media: false,
+      ...baseMeta,
     };
   }
-  if (category !== "chat" || isNonChatUtilityModelID(cleanID)) {
+  if (category !== "chat" || caps.length === 0 || isNonChatUtilityModelID(cleanID)) {
     return {
       id: cleanID,
       name: rm.name || cleanID,
@@ -54,6 +80,7 @@ export function guessFetchedModelDraft(rm: { id: string; name: string }): Custom
       toolCall: false,
       pdf: false,
       media: false,
+      ...baseMeta,
     };
   }
   const lower = cleanID.toLowerCase();
@@ -71,15 +98,21 @@ export function guessFetchedModelDraft(rm: { id: string; name: string }): Custom
     /qwen-?3\.[5-9]|qwen-?[4-9]/.test(lower);
   const isToollessVariant = /-speciale\b/i.test(lower);
 
+  const hasExplicitCapabilitiesOrModality =
+    Array.isArray(rm.capabilities) || Boolean((rm.modality || "").trim());
+
   return {
     id: cleanID,
     name: rm.name || cleanID,
     category: "chat",
     reasoning: !isNonThinkingGeminiModelID(cleanID),
-    image: true,
+    image: hasExplicitCapabilitiesOrModality
+      ? has("vision")
+      : has("vision") || !isKnownPureTextModelID(cleanID),
     toolCall: !isToollessVariant,
     pdf: isGemini || isClaudePdf || isOpenAIPdf,
     media: supportsMedia,
+    ...baseMeta,
   };
 }
 
@@ -113,6 +146,10 @@ export interface CustomProviderFormState {
 interface RawConfigModelEntry {
   name?: string;
   category?: CustomModelCategory;
+  modality?: string;
+  capabilityTags?: string[];
+  imageTranslate?: { outputModes?: string[]; output_modes?: string[] };
+  image_translate?: { output_modes?: string[]; outputModes?: string[] };
   tool_call?: boolean;
   attachment?: boolean;
   reasoning?: boolean;
@@ -134,6 +171,7 @@ interface RawConfigProviderEntry {
     headers?: Record<string, unknown>;
   };
   models?: Record<string, RawConfigModelEntry>;
+  mediaModels?: Record<string, RawConfigModelEntry>;
 }
 
 export function listExistingCustomProviders(): Array<{
@@ -200,10 +238,10 @@ export function extractCustomProviderFormState(editID: string | null): CustomPro
     preserveExistingKey = true;
   }
 
-  const rawModels = (cfgProv.models || runtimeProv?.models || {}) as Record<
-    string,
-    RawConfigModelEntry
-  >;
+  const rawModels: Record<string, RawConfigModelEntry> = {
+    ...((cfgProv.models || runtimeProv?.models || {}) as Record<string, RawConfigModelEntry>),
+    ...((cfgProv.mediaModels || {}) as Record<string, RawConfigModelEntry>),
+  };
   const loadedModels: CustomProviderModelDraft[] = [];
   for (const [mID, mVal] of Object.entries(rawModels)) {
     if (!mVal || typeof mVal !== "object") continue;
@@ -275,10 +313,18 @@ export function extractCustomProviderFormState(editID: string | null): CustomPro
         ? mVal.modalities.input.includes("audio") || mVal.modalities.input.includes("video")
         : Boolean(guessed.media);
 
+    const storedNorm = normalizeStoredModelCapabilities(mID, mVal as Record<string, any>);
     loadedModels.push({
       id: mID,
       name: mVal.name || rtModel?.name || mID,
       category,
+      ...(mVal.modality ? { modality: mVal.modality } : {}),
+      ...(storedNorm.capabilities.length > 0 || Array.isArray(mVal.capabilityTags)
+        ? { capabilityTags: storedNorm.capabilities }
+        : {}),
+      ...(storedNorm.imageTranslate?.outputModes?.length
+        ? { imageTranslateOutputModes: storedNorm.imageTranslate.outputModes }
+        : {}),
       reasoning,
       image,
       toolCall,

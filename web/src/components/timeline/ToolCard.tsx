@@ -25,12 +25,13 @@ import SubagentTaskDetails from "./SubagentTaskDetails";
 
 import {
   ActionIconButton,
-  extractCommand, extractDescription,
+  extractCommand, extractDescription, extractExitCode,
   extractShellOutput, extractTargetFile, formatToolDisplayName, getDirectory, getFilename,
   hasDistinctShellDescription, InlineDiagnosticsDisplay, isBrowserTool, isComputerTool, isEditingTool, isQuestionTool, isReadTool, isShellTool, isShellAwaitingFirstOutput,
   isTaskTool, isTodoTool, kiloToolIconName, processCarriageReturns, resolveToolMediaAttachments,
   ToolCardExpandedBody, type ToolPart,
 } from "./tool-card-helpers";
+import { extractToolErrorBadge } from "./ToolOutputView";
 import ToolMissingMediaCard from "./ToolMissingMediaCard";
 import {
   extractTargetFiles, resolveLoadedContextFiles, resolveReadLineRange, resolveToolArgPills,
@@ -572,6 +573,24 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
               <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)]">
                 {t("toolCard.stoppedByUser")}
               </span>
+            </Show>
+
+            <Show
+              when={
+                status() === "error" &&
+                !isStoppedByUser() &&
+                extractToolErrorBadge(props.part, extractExitCode(props.part.state))
+              }
+            >
+              {(badge) => (
+                <span
+                  data-tool-error-badge="true"
+                  class="hidden sm:inline-block max-w-[200px] truncate rounded bg-[var(--danger-surface)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--danger-text)]"
+                  title={badge()}
+                >
+                  {badge()}
+                </span>
+              )}
             </Show>
 
             <Show when={isShell() && isRunning() && stopFailed()}>

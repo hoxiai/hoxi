@@ -26,10 +26,11 @@ export interface LiveQueuedEditDraft {
   skillSelection?: SkillSelection;
 }
 
-export interface StashedComposerDraft<TImage = any, TPaste = any> {
+export interface StashedComposerDraft<TImage = any, TPaste = any, TContext = any> {
   text: string;
   images: TImage[];
   pastes: TPaste[];
+  contexts?: TContext[];
   skillSelection?: SkillSelection | null;
 }
 
@@ -275,10 +276,10 @@ export function editQueuedPrompt(sessionID: string, itemID: string) {
   });
 }
 
-export function beginComposerDraftEdit<TImage = any, TPaste = any>(
+export function beginComposerDraftEdit<TImage = any, TPaste = any, TContext = any>(
   sessionID: string,
   draft: ComposerDraftEdit,
-  currentComposer: StashedComposerDraft<TImage, TPaste>
+  currentComposer: StashedComposerDraft<TImage, TPaste, TContext>
 ): { replaceComposer: boolean; priorDraftText: string } {
   consumeComposerDraftEdit(sessionID);
   if (draft.queuedEdit) {
@@ -287,6 +288,7 @@ export function beginComposerDraftEdit<TImage = any, TPaste = any>(
       currentComposer.text.trim().length > 0 ||
       currentComposer.images.length > 0 ||
       currentComposer.pastes.length > 0 ||
+      (currentComposer.contexts?.length ?? 0) > 0 ||
       Boolean(currentComposer.skillSelection);
     if (
       !editing?.switchedFromAnotherQueuedItem &&
@@ -297,6 +299,7 @@ export function beginComposerDraftEdit<TImage = any, TPaste = any>(
         text: currentComposer.text,
         images: [...currentComposer.images],
         pastes: [...currentComposer.pastes],
+        ...(currentComposer.contexts?.length ? { contexts: [...currentComposer.contexts] } : {}),
         skillSelection: currentComposer.skillSelection
           ? { ...currentComposer.skillSelection }
           : null,
@@ -310,24 +313,24 @@ export function beginComposerDraftEdit<TImage = any, TPaste = any>(
   }
   if (editingBySession.has(sessionID)) {
     flushEditingQueuedPromptToQueue(sessionID);
-    const stashed = popStashedComposerDraft<TImage, TPaste>(sessionID);
+    const stashed = popStashedComposerDraft<TImage, TPaste, TContext>(sessionID);
     return { replaceComposer: true, priorDraftText: stashed?.text ?? "" };
   }
   return { replaceComposer: false, priorDraftText: currentComposer.text };
 }
 
-export function popStashedComposerDraft<TImage = any, TPaste = any>(
+export function popStashedComposerDraft<TImage = any, TPaste = any, TContext = any>(
   sessionID?: string | null
-): StashedComposerDraft<TImage, TPaste> | undefined {
+): StashedComposerDraft<TImage, TPaste, TContext> | undefined {
   if (!sessionID) return undefined;
   const stashed = stashedDraftBySession.get(sessionID);
   if (stashed) stashedDraftBySession.delete(sessionID);
-  return stashed as StashedComposerDraft<TImage, TPaste> | undefined;
+  return stashed as StashedComposerDraft<TImage, TPaste, TContext> | undefined;
 }
 
-export function pushStashedComposerDraft<TImage = any, TPaste = any>(
+export function pushStashedComposerDraft<TImage = any, TPaste = any, TContext = any>(
   sessionID: string,
-  draft: StashedComposerDraft<TImage, TPaste>
+  draft: StashedComposerDraft<TImage, TPaste, TContext>
 ) {
   stashedDraftBySession.set(sessionID, draft);
 }
@@ -339,7 +342,7 @@ export function cancelQueuedEditInComposer(sessionID?: string | null): boolean {
   return true;
 }
 
-export interface ComposerQueuedEditBridgeParams<TImage = any, TPaste = any> {
+export interface ComposerQueuedEditBridgeParams<TImage = any, TPaste = any, TContext = any> {
   sessionID: () => string | null;
   getText: () => string;
   setText: (text: string) => void;
@@ -351,6 +354,9 @@ export interface ComposerQueuedEditBridgeParams<TImage = any, TPaste = any> {
   restoreFromAttachments: (atts: QueuedPromptAttachment[]) => void;
   getPastes: () => TPaste[];
   replacePastes: (items: TPaste[]) => void;
+  getContexts?: () => TContext[];
+  replaceContexts?: (items: TContext[]) => void;
+  extractContextsFromText?: (raw: string, append?: boolean) => string;
   getSelectedSkill: () => SkillSelection | null;
   selectSkill: (
     sessionID: string | null,
@@ -362,8 +368,8 @@ export interface ComposerQueuedEditBridgeParams<TImage = any, TPaste = any> {
   onDrain: (sessionID: string) => void;
 }
 
-export function bindComposerQueuedEditBridge<TImage = any, TPaste = any>(
-  params: ComposerQueuedEditBridgeParams<TImage, TPaste>
+export function bindComposerQueuedEditBridge<TImage = any, TPaste = any, TContext = any>(
+  params: ComposerQueuedEditBridgeParams<TImage, TPaste, TContext>
 ) {
   const getter = (sid: string): LiveQueuedEditDraft | null =>
     sid === params.sessionID()
@@ -378,6 +384,7 @@ export function bindComposerQueuedEditBridge<TImage = any, TPaste = any>(
     nextText: string,
     images: TImage[],
     pastes: TPaste[],
+    contexts: TContext[],
     skill: SkillSelection | null,
     directory?: string,
     focus = false
@@ -387,19 +394,21 @@ export function bindComposerQueuedEditBridge<TImage = any, TPaste = any>(
     params.setCursorOffset(nextText.length);
     params.replacePastes(pastes);
     params.replaceImages(images);
+    params.replaceContexts?.(contexts);
     params.selectSkill(id, skill, directory);
     if (focus) params.focusEnd(nextText.length);
   };
   const cancelHandler = (sid: string): boolean => {
     if (!editingBySession.has(sid)) return false;
     cancelEditingQueuedPrompt(sid);
-    const stashed = popStashedComposerDraft<TImage, TPaste>(sid);
+    const stashed = popStashedComposerDraft<TImage, TPaste, TContext>(sid);
     if (sid === params.sessionID()) {
       applyInputs(
         sid,
         stashed?.text ?? "",
         stashed?.images ?? [],
         stashed?.pastes ?? [],
+        stashed?.contexts ?? [],
         stashed?.skillSelection ?? null,
         undefined,
         true
@@ -421,20 +430,25 @@ export function bindComposerQueuedEditBridge<TImage = any, TPaste = any>(
         text: params.getText(),
         images: params.getImages(),
         pastes: params.getPastes(),
+        contexts: params.getContexts?.() ?? [],
         skillSelection: params.getSelectedSkill(),
       });
       params.resetHistoryCursor();
-      const nextText =
-        priorDraftText.trim() && draft.text
-          ? `${priorDraftText}\n${draft.text}`
-          : draft.text || priorDraftText;
       if (replaceComposer) {
         params.replacePastes([]);
         params.replaceImages([]);
+        params.replaceContexts?.([]);
         params.selectSkill(id, draft.skillSelection ?? null);
       } else if (draft.skillSelection) {
         params.selectSkill(id, draft.skillSelection);
       }
+      const cleanDraftText = params.extractContextsFromText
+        ? params.extractContextsFromText(draft.text || "", !replaceComposer)
+        : (draft.text || "");
+      const nextText =
+        priorDraftText.trim() && cleanDraftText
+          ? `${priorDraftText}\n${cleanDraftText}`
+          : cleanDraftText || priorDraftText;
       params.setText(nextText);
       params.setCursorOffset(nextText.length);
       if (draft.attachments?.length) {
@@ -444,13 +458,13 @@ export function bindComposerQueuedEditBridge<TImage = any, TPaste = any>(
     },
     popStashedBeforeSend: (draftSessionID: string | null) =>
       draftSessionID && hasEditingQueuedPrompt(draftSessionID)
-        ? popStashedComposerDraft<TImage, TPaste>(draftSessionID)
+        ? popStashedComposerDraft<TImage, TPaste, TContext>(draftSessionID)
         : undefined,
     applyAfterClear: (
       draftSessionID: string | null,
       directory: string,
       isCurrent: boolean,
-      stashed?: StashedComposerDraft<TImage, TPaste>
+      stashed?: StashedComposerDraft<TImage, TPaste, TContext>
     ) => {
       if (isCurrent) {
         applyInputs(
@@ -458,6 +472,7 @@ export function bindComposerQueuedEditBridge<TImage = any, TPaste = any>(
           stashed?.text ?? "",
           stashed?.images ?? [],
           stashed?.pastes ?? [],
+          stashed?.contexts ?? [],
           stashed?.skillSelection ?? null,
           directory,
           false
@@ -469,7 +484,7 @@ export function bindComposerQueuedEditBridge<TImage = any, TPaste = any>(
     rollbackStashedOnError: (
       restoreID: string | null,
       isCurrent: boolean,
-      stashed?: StashedComposerDraft<TImage, TPaste>
+      stashed?: StashedComposerDraft<TImage, TPaste, TContext>
     ) => {
       if (!stashed || !restoreID) return false;
       pushStashedComposerDraft(restoreID, stashed);
@@ -477,6 +492,7 @@ export function bindComposerQueuedEditBridge<TImage = any, TPaste = any>(
         params.setText("");
         params.replacePastes([]);
         params.replaceImages([]);
+        params.replaceContexts?.([]);
       }
       return true;
     },

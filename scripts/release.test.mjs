@@ -881,6 +881,8 @@ test("stage-host.sh writes Windows-compatible portable go.work paths and commerc
   assert.match(desktopWorkflow, /HOXI_WORK_TOKEN:\?[^\n]*macOS releases/);
   assert.match(desktopWorkflow, /HOXI_WORK_TOKEN:\?[^\n]*Windows releases/);
   assert.match(desktopWorkflow, /HOXI_WORK_TOKEN:\?[^\n]*Linux releases/);
+  assert.match(desktopWorkflow, /persist-credentials: false/);
+  assert.match(desktopWorkflow, /git -C "\$\{RUNNER_TEMP:-\/tmp\}" -c "http\.https:\/\/github\.com\/\.extraheader=" -c "http\.https:\/\/github\.com\/\.extraheader=\$\{WORK_AUTH\}" ls-remote "\$WORK_REPO_URL"/);
   assert.match(desktopWorkflow, /ls-remote "\$WORK_REPO_URL"/);
   assert.match(desktopWorkflow, /fetch --depth 1 origin "\$WORK_SHA"/);
   assert.doesNotMatch(desktopWorkflow, /clone --depth 1 https:\/\/github\.com\/hoxiai\/hoxi-ext\.git \.\.\/hoxi-ext/);
@@ -1131,4 +1133,13 @@ test("CDN mirror config fails closed on partial env, signs SigV4, skips identica
   assert.equal(macIntel.size, 2345);
   assert.equal(cdnPayload.metaData.mirrors["windows-x64-zip"].cdn, "https://cdn.hoxi.dev/hoxi-desktop/v0.7.3/Hoxi-0.7.3-windows-amd64.zip");
   assert.equal(cdnPayload.metaData.mirrors["windows-x64-zip"].global, "https://github.com/hoxiai/hoxi/releases/download/v0.7.3/Hoxi-0.7.3-windows-amd64.zip");
+});
+
+test("package-dmg.sh sizes HFS+ DMG explicitly with headroom to avoid hdiutil ENOSPC", () => {
+  const pkgScript = path.join(scripts, "package-dmg.sh");
+  const src = fs.readFileSync(pkgScript, "utf8");
+  const syntax = spawnSync("bash", ["-n", pkgScript], { encoding: "utf8" });
+  assert.equal(syntax.status, 0, syntax.stderr);
+  assert.match(src, /-fs HFS\+/);
+  assert.match(src, /-size "\$\{DMG_SIZE_MB\}m"/);
 });

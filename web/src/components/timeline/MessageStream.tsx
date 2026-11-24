@@ -62,6 +62,7 @@ import { createSessionScroll } from "./session-scroll";
 import { createTailHeightHold } from "./tail-hold";
 import { resolveActiveExecutionCycle } from "./context-activity-turns";
 import { createMessageNavigation } from "./message-navigation";
+import SelectionQuoteBar from "./SelectionQuoteBar";
 
 export default function MessageStream(props: { hidden?: boolean }) {
   let scroller: HTMLDivElement | undefined;
@@ -620,6 +621,9 @@ export default function MessageStream(props: { hidden?: boolean }) {
           >
             <Icon name="arrow-down-to-line" />
           </button>
+        <Show when={!props.hidden}>
+          <SelectionQuoteBar container={() => content} />
+        </Show>
       </div>
     </div>
   );
