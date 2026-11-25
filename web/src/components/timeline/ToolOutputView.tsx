@@ -2,12 +2,18 @@
 // Renders generic tool outputs cleanly: structured JsonTreeView for JSON objects/arrays,
 // or clickable workspace `path:line` links for plain-text search/diagnostic output.
 // Also provides a concise error badge extractor for collapsed failed ToolCard rows.
-import { createMemo, For, Show } from "solid-js";
+import { createMemo, createSignal, For, Show } from "solid-js";
+import { Code2, LayoutGrid } from "lucide-solid";
 import type { MessagePart } from "../../services/sse-types";
 import { t } from "../../i18n";
-import { isTesterPortalMode, openFileInInspector } from "../../store/workspace";
+import {
+  isTesterPortalMode,
+  openFileInInspector,
+  type StructuredRichViewSpec,
+} from "../../store/workspace";
 import { parseShellOutputRuns } from "./ansi-output";
 import JsonTreeView, { tryParseStructuredJson } from "./JsonTreeView";
+import StructuredRichView from "./StructuredRichView";
 import { processCarriageReturns } from "./terminal-output-text";
 
 type ToolPart = Extract<MessagePart, { type: "tool" }>;
@@ -35,7 +41,11 @@ export function extractToolErrorBadge(part: ToolPart, exitCode?: number): string
   return compact.length > 44 ? `${compact.slice(0, 43)}…` : compact;
 }
 
-export default function ToolOutputView(props: { text: string }) {
+export default function ToolOutputView(props: {
+  text: string;
+  richView?: StructuredRichViewSpec | null;
+}) {
+  const [viewMode, setViewMode] = createSignal<"rich" | "raw">("rich");
   const parsedJson = createMemo(() => tryParseStructuredJson(props.text));
   const shouldLinkify = createMemo(() => {
     if (parsedJson() || isTesterPortalMode()) return false;
@@ -47,7 +57,7 @@ export default function ToolOutputView(props: { text: string }) {
   );
   const hasAnyFileLink = createMemo(() => runs().some((r) => Boolean(r.fileRef)));
 
-  return (
+  const renderRawOutput = () => (
     <Show
       when={parsedJson()}
       fallback={
@@ -78,6 +88,52 @@ export default function ToolOutputView(props: { text: string }) {
       }
     >
       {(data) => <JsonTreeView data={data()} rawText={props.text} />}
+    </Show>
+  );
+
+  return (
+    <Show when={props.richView} fallback={renderRawOutput()}>
+      {(richSpec) => (
+        <div class="space-y-1.5">
+          <div class="flex items-center justify-end">
+            <div class="inline-flex items-center rounded-md bg-[var(--bg-inset)] p-0.5 text-[10.5px]">
+              <button
+                type="button"
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  setViewMode("rich");
+                }}
+                class={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors cursor-pointer ${
+                  viewMode() === "rich"
+                    ? "bg-[var(--bg-panel)] text-[var(--text-primary)] font-medium shadow-2xs"
+                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                }`}
+              >
+                <LayoutGrid size={10.5} />
+                <span>{t("toolCard.richViewTab")}</span>
+              </button>
+              <button
+                type="button"
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  setViewMode("raw");
+                }}
+                class={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors cursor-pointer ${
+                  viewMode() === "raw"
+                    ? "bg-[var(--bg-panel)] text-[var(--text-primary)] font-medium shadow-2xs"
+                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                }`}
+              >
+                <Code2 size={10.5} />
+                <span>{t("toolCard.jsonViewTab")}</span>
+              </button>
+            </div>
+          </div>
+          <Show when={viewMode() === "rich"} fallback={renderRawOutput()}>
+            <StructuredRichView spec={richSpec()} compact={true} />
+          </Show>
+        </div>
+      )}
     </Show>
   );
 }

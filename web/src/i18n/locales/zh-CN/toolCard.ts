@@ -88,4 +88,6 @@ export const toolCard: ToolCardI18n = {
   jsonItemsCount: "{count} 项",
   jsonKeysCount: "{count} 个字段",
   openFileLineTooltip: "跳转到 {file} 第 {line} 行",
+  richViewTab: "卡片",
+  jsonViewTab: "JSON",
 };

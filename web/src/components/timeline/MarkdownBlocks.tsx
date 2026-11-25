@@ -12,6 +12,8 @@ import { Icon } from "../icons";
 import {
   isChartCodeBlockLang,
   isMermaidCodeBlockLang,
+  isRichCardsCodeBlockLang,
+  isRichMetricsCodeBlockLang,
   isSubtaskPlanCodeBlockLang,
   isSvgCodeBlockLang,
   isTesterPortalMode,
@@ -21,8 +23,14 @@ import CodeBlockCard from "./CodeBlockCard";
 import InlineSubtaskPlanCard from "./InlineSubtaskPlanCard";
 import MarkdownInline from "./MarkdownInline";
 import MarkdownTableCard from "./MarkdownTableCard";
+import MediaGalleryView from "./MediaGalleryView";
 import MermaidBlockCard from "./MermaidBlockCard";
+import RichBlockCard from "./RichBlockCard";
 import SvgBlockCard from "./SvgBlockCard";
+import {
+  extractMarkdownParagraphGallery,
+  extractSingleMarkdownImage,
+} from "./rich-view-spec";
 import { createRevealBirths, revealBlock } from "./stream-reveal";
 
 function alertStyle(alert?: AlertKind): { border: string; badgeBg: string; label: string } {
@@ -116,6 +124,19 @@ export default function MarkdownBlocks(props: {
           >
             <ChartBlockCard
               ref={(el) => revealBlock(el, blockBirth(blockIdx))}
+              code={(block() as Extract<BlockToken, { type: "code" }>).code}
+            />
+          </Match>
+          <Match
+            when={
+              block().type === "code" &&
+              (isRichCardsCodeBlockLang((block() as Extract<BlockToken, { type: "code" }>).lang) ||
+                isRichMetricsCodeBlockLang((block() as Extract<BlockToken, { type: "code" }>).lang))
+            }
+          >
+            <RichBlockCard
+              ref={(el) => revealBlock(el, blockBirth(blockIdx))}
+              lang={(block() as Extract<BlockToken, { type: "code" }>).lang}
               code={(block() as Extract<BlockToken, { type: "code" }>).code}
             />
           </Match>
@@ -420,16 +441,58 @@ export default function MarkdownBlocks(props: {
             </Show>
           </Match>
           <Match when={block().type === "paragraph"}>
-            <p
-              ref={(el) =>
-                revealBlock(el, blockBirth(blockIdx), { startOpacity: 0.5, translateY: 2 })
-              }
-              class="whitespace-pre-wrap break-words leading-[1.7]"
-            >
-              <MarkdownInline
-                text={(block() as Extract<BlockToken, { type: "paragraph" }>).text}
-              />
-            </p>
+            {(_) => {
+              const paraText = () => (block() as Extract<BlockToken, { type: "paragraph" }>).text;
+              const galleryResolution = createMemo(() => {
+                const inlineGallery = extractMarkdownParagraphGallery(paraText());
+                if (inlineGallery) return { kind: "gallery" as const, images: inlineGallery };
+                const selfImg = extractSingleMarkdownImage(paraText());
+                if (!selfImg) return { kind: "paragraph" as const };
+                const prev = props.blocks[blockIdx - 1];
+                if (prev?.type === "paragraph" && extractSingleMarkdownImage(prev.text)) {
+                  return { kind: "absorbed" as const };
+                }
+                const run = [selfImg];
+                for (let j = blockIdx + 1; j < props.blocks.length; j++) {
+                  const next = props.blocks[j];
+                  if (next?.type !== "paragraph") break;
+                  const nextImg = extractSingleMarkdownImage(next.text);
+                  if (!nextImg) break;
+                  run.push(nextImg);
+                }
+                return run.length >= 2
+                  ? { kind: "gallery" as const, images: run }
+                  : { kind: "paragraph" as const };
+              });
+              return (
+                <Switch>
+                  <Match when={galleryResolution().kind === "absorbed"}>{null}</Match>
+                  <Match when={galleryResolution().kind === "gallery"}>
+                    <MediaGalleryView
+                      ref={(el) => revealBlock(el, blockBirth(blockIdx))}
+                      images={
+                        (
+                          galleryResolution() as Extract<
+                            ReturnType<typeof galleryResolution>,
+                            { kind: "gallery" }
+                          >
+                        ).images
+                      }
+                    />
+                  </Match>
+                  <Match when={galleryResolution().kind === "paragraph"}>
+                    <p
+                      ref={(el) =>
+                        revealBlock(el, blockBirth(blockIdx), { startOpacity: 0.5, translateY: 2 })
+                      }
+                      class="whitespace-pre-wrap break-words leading-[1.7]"
+                    >
+                      <MarkdownInline text={paraText()} />
+                    </p>
+                  </Match>
+                </Switch>
+              );
+            }}
           </Match>
         </Switch>
       )}

@@ -87,4 +87,6 @@ export const toolCard = {
   jsonItemsCount: "{count} items",
   jsonKeysCount: "{count} keys",
   openFileLineTooltip: "Open {file} at line {line}",
+  richViewTab: "Card",
+  jsonViewTab: "JSON",
 };

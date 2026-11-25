@@ -181,3 +181,13 @@ export function isChartCodeBlockLang(lang: string): boolean {
   const clean = (lang || "").trim().toLowerCase();
   return clean === "chart" || clean === "hoxi-chart" || clean === "chartjs";
 }
+
+export function isRichCardsCodeBlockLang(lang: string): boolean {
+  const clean = (lang || "").trim().toLowerCase();
+  return clean === "hoxi-cards" || clean === "cards";
+}
+
+export function isRichMetricsCodeBlockLang(lang: string): boolean {
+  const clean = (lang || "").trim().toLowerCase();
+  return clean === "hoxi-metrics" || clean === "metrics";
+}

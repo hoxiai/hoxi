@@ -21,9 +21,9 @@ import {
   AssistantTurnFooter,
   ContextActivityGroupView,
   groupAssistantParts,
-  PartView,
   resolveMergedTurnParts,
   stabilizeTurnRenderItems,
+  TurnPromotedItemView,
   type TurnRenderItem,
 } from "./message-stream-parts";
 
@@ -712,21 +712,11 @@ export function AssistantTurnItem(props: {
               <Show
                 when={item().kind === "activity-group"}
                 fallback={
-                  <Show
-                    when={
-                      item().kind === "single"
-                        ? (item() as Extract<ReturnType<typeof item>, { kind: "single" }>).part
-                        : undefined
-                    }
-                  >
-                    {(part) => (
-                      <PartView
-                        part={part()}
-                        streaming={isLiveTailItem()}
-                        defaultOpenReasoning={defaultOpenFinalReasoning()}
-                      />
-                    )}
-                  </Show>
+                  <TurnPromotedItemView
+                    item={item() as Exclude<TurnRenderItem, { kind: "activity-group" }>}
+                    streaming={isLiveTailItem()}
+                    defaultOpenReasoning={defaultOpenFinalReasoning()}
+                  />
                 }
               >
                 <ContextActivityGroupView

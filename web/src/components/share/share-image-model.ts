@@ -5,6 +5,7 @@
 import type { MessageInfo, MessagePart, SessionInfo, ToolPart } from "../../services/sse-types";
 import { formatContextPromptForExport } from "../../store/workspace";
 import { expandInlineThinkingParts, extractVisibleAssistantText } from "../timeline/context-activity-parts";
+import { replaceRichFencesForReadableExport } from "../timeline/rich-view-spec";
 import { normalizeReasoningText } from "../timeline/ThoughtBox";
 import { formatToolDisplayName, isTodoTool, meaningfulToolTitle } from "../timeline/tool-taxonomy";
 
@@ -411,7 +412,9 @@ export function groupTurnsIntoExchanges(
       const expanded = expandInlineThinkingParts(aTurn.parts);
       for (const part of expanded) {
         if (part.type === "text") {
-          const visible = extractVisibleAssistantText(part.text).trim();
+          const visible = replaceRichFencesForReadableExport(
+            extractVisibleAssistantText(part.text).trim()
+          );
           if (visible) {
             assistantChunks.push(cleanText(visible));
             for (const img of extractMarkdownImages(visible)) {

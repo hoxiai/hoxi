@@ -4,6 +4,8 @@ import { AlertCircle, ExternalLink, Terminal } from "lucide-solid";
 import ThoughtBox from "./ThoughtBox";
 import ToolCard from "./ToolCard";
 import MarkdownView from "./MarkdownView";
+import MediaGalleryView from "./MediaGalleryView";
+import StructuredRichView from "./StructuredRichView";
 import { resolveSentSlashCommand } from "./composer-hooks";
 import {
   expandInlineThinkingParts,
@@ -143,6 +145,44 @@ export function ContextActivityGroupView(props: {
         />
       )}
     />
+  );
+}
+
+export function TurnPromotedItemView(props: {
+  item: Exclude<TurnRenderItem, { kind: "activity-group" }>;
+  streaming?: boolean;
+  defaultOpenReasoning?: boolean;
+}) {
+  return (
+    <Switch>
+      <Match when={props.item.kind === "single"}>
+        <PartView
+          part={(props.item as Extract<TurnRenderItem, { kind: "single" }>).part}
+          streaming={props.streaming}
+          defaultOpenReasoning={props.defaultOpenReasoning}
+        />
+      </Match>
+      <Match when={props.item.kind === "media-gallery"}>
+        <MediaGalleryView
+          images={(props.item as Extract<TurnRenderItem, { kind: "media-gallery" }>).parts.map(
+            (fp) => ({
+              id: fp.id,
+              src: fp.url,
+              alt: fp.filename || "image",
+              filename: fp.filename,
+              downloadUrl: fp.url,
+            })
+          )}
+        />
+      </Match>
+      <Match when={props.item.kind === "rich-view"}>
+        <div data-part-id={(props.item as Extract<TurnRenderItem, { kind: "rich-view" }>).partID}>
+          <StructuredRichView
+            spec={(props.item as Extract<TurnRenderItem, { kind: "rich-view" }>).spec}
+          />
+        </div>
+      </Match>
+    </Switch>
   );
 }
 

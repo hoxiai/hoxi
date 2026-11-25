@@ -694,7 +694,13 @@ describe("SSE client & 120Hz rAF delta batching", () => {
       );
       const grouped = groupAssistantParts(liveParts);
       assertDeepEqual(
-        grouped.map((g) => (g.kind === "activity-group" ? `group:${g.parts.length}` : `single:${g.part.id}`)),
+        grouped.map((g) =>
+          g.kind === "activity-group"
+            ? `group:${g.parts.length}`
+            : g.kind === "single"
+              ? `single:${g.part.id}`
+              : g.kind
+        ),
         ["group:2", "single:prt_m_agy_text_147"]
       );
 

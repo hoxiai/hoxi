@@ -233,6 +233,121 @@ export async function runBrowserTest(): Promise<string[]> {
       window.removeEventListener("hoxi:composer-fill", onFill);
     }
 
+    dispose();
+    dispose = undefined;
+
+    // Scenario 5: Multi-image Markdown gallery + A/B compare, hoxi-cards reverse hoxi-context handoff, and ToolOutputView Card/JSON toggle
+    const tinyPngA =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    const tinyPngB =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    const richMd = [
+      `![Before](${tinyPngA})`,
+      "",
+      `![After](${tinyPngB})`,
+      "",
+      "```hoxi-cards",
+      JSON.stringify({
+        title: "Candidate Comparison",
+        entities: [
+          {
+            id: "cand-1",
+            title: "Heavyweight Hoodie",
+            badge: "Top Pick",
+            badgeTone: "ok",
+            metrics: [
+              { label: "Cost", value: "$8.20" },
+              { label: "Margin", value: "44%", tone: "ok" },
+            ],
+            ref: { id: "cand-1", uri: "hoxi://demo/cand-1" },
+          },
+          {
+            id: "cand-2",
+            title: "Lightweight Tee",
+            badge: "Draft",
+            metrics: [{ label: "Cost", value: "$3.90" }],
+          },
+        ],
+      }),
+      "```",
+    ].join("\n");
+
+    let richContextEvent: CustomEvent | null = null;
+    const onRichFill = (ev: Event) => {
+      richContextEvent = ev as CustomEvent;
+    };
+    window.addEventListener("hoxi:composer-fill", onRichFill);
+    try {
+      const toolRichSpec = {
+        schemaVersion: "hoxi.ui/v1" as const,
+        title: "Pulse Snapshot",
+        metrics: [{ label: "Orders", value: "48", tone: "ok" as const }],
+      };
+      dispose = render(
+        () => (
+          <div>
+            <MarkdownBlocks blocks={parseMarkdownBlocks(richMd)} />
+            <ToolOutputView
+              richView={toolRichSpec}
+              text={JSON.stringify({ orders: 48, note: "raw-json-marker" })}
+            />
+          </div>
+        ),
+        host
+      );
+      await tick();
+
+      const galleryEl = host.querySelector<HTMLElement>('[data-hoxi-media-gallery="true"]');
+      assertTrue(Boolean(galleryEl), "consecutive image paragraphs render MediaGalleryView");
+      assertEqual(
+        galleryEl!.querySelectorAll('[data-hoxi-gallery-tile="true"]').length,
+        2,
+        "gallery renders both image tiles"
+      );
+      const compareBtn = Array.from(galleryEl!.querySelectorAll<HTMLButtonElement>("button")).find(
+        (btn) => btn.textContent?.includes(t("timeline.galleryCompareBtn"))
+      );
+      assertTrue(Boolean(compareBtn), "2-image gallery exposes Compare A/B button");
+      compareBtn!.click();
+      await tick();
+      assertTrue(
+        Boolean(galleryEl!.querySelector('[data-hoxi-gallery-compare="true"]')),
+        "clicking Compare A/B opens split slider comparison"
+      );
+
+      const richCardBlock = host.querySelector<HTMLElement>('[data-hoxi-rich-block-card="true"]');
+      assertTrue(Boolean(richCardBlock), "hoxi-cards block renders RichBlockCard");
+      const firstEntity = richCardBlock!.querySelector<HTMLElement>('[data-hoxi-entity-card="true"]');
+      assertTrue(Boolean(firstEntity), "entity cards render inside RichBlockCard");
+      const selectBtn = firstEntity!.querySelector<HTMLButtonElement>("button[aria-pressed]");
+      assertTrue(Boolean(selectBtn), "entity card exposes checkbox button");
+      selectBtn!.click();
+      await tick();
+      const sendSelectedBtn = richCardBlock!.querySelector<HTMLButtonElement>(
+        '[data-hoxi-rich-send-selected="true"]'
+      );
+      assertTrue(Boolean(sendSelectedBtn), "selecting an entity shows Send to Chat action");
+      sendSelectedBtn!.click();
+      await tick();
+      assertTrue(Boolean(richContextEvent), "Send to Chat dispatches hoxi:composer-fill");
+      const richDetail = (richContextEvent as unknown as CustomEvent).detail;
+      assertEqual(richDetail.contexts?.[0]?.items?.[0]?.title, "Heavyweight Hoodie");
+      assertEqual(richDetail.contexts?.[0]?.items?.[0]?.ref?.uri, "hoxi://demo/cand-1");
+
+      // ToolOutputView defaults to Card view and toggles to JSON tree
+      assertTrue(host.textContent!.includes("Pulse Snapshot"), "ToolOutputView renders rich card by default");
+      assertTrue(!host.textContent!.includes("raw-json-marker"), "raw JSON hidden while Card tab active");
+      const jsonTabBtn = Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find(
+        (btn) => btn.textContent?.trim() === t("toolCard.jsonViewTab")
+      );
+      assertTrue(Boolean(jsonTabBtn), "ToolOutputView renders JSON toggle button");
+      jsonTabBtn!.click();
+      await tick();
+      assertTrue(host.textContent!.includes("raw-json-marker"), "switching to JSON tab reveals JsonTreeView");
+    } finally {
+      window.removeEventListener("hoxi:composer-fill", onRichFill);
+    }
+
     return [
       "ChartBlockCard renders interactive SVG bar chart from declarative JSON",
       "SvgBlockCard sanitizes <script> and onload in real browser DOM",
@@ -241,6 +356,7 @@ export async function runBrowserTest(): Promise<string[]> {
       "ShellOutputView + ToolOutputView linkify file:line and JsonTreeView renders structured JSON",
       "CodeBlockCard auto-collapses long code blocks and tints diff blocks",
       "FileSourceCodeView line-range click quotes exact lines into hoxi-context v1",
+      "MediaGalleryView renders auto-grouped images with A/B slider, RichBlockCard sends hoxi-context v1, and ToolOutputView toggles Card/JSON",
     ];
   } finally {
     dispose?.();

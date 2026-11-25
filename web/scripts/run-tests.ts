@@ -102,6 +102,7 @@ import "../src/__tests__/orchestrator-mode.test";
 import "../src/__tests__/schedules.test";
 import "../src/__tests__/context-protocol.test";
 import "../src/__tests__/display-layer.test";
+import "../src/__tests__/rich-views.test";
 import "../src/__tests__/model-capabilities.test";
 import "../src/__tests__/share-image-model.test";
 

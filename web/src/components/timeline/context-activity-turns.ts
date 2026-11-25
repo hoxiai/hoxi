@@ -1,6 +1,10 @@
 // web/src/components/timeline/context-activity-turns.ts
 import type { MessageInfo, MessagePart, ToolPart } from "../../services/sse-types";
-import { isSessionBusy, type MessageTurn } from "../../store/workspace";
+import {
+  isSessionBusy,
+  type MessageTurn,
+  type StructuredRichViewSpec,
+} from "../../store/workspace";
 import {
   expandInlineThinkingParts,
   extractVisibleAssistantText,
@@ -11,10 +15,25 @@ import {
 } from "./context-activity-parts";
 import { resolveToolMediaAttachments } from "./tool-card-helpers";
 import { isImageGenTool, isSpeechGenTool, isVideoGenTool } from "./tool-taxonomy";
+import { resolveToolRichView } from "./rich-view-spec";
 
 export type TurnRenderItem =
   | { kind: "single"; part: MessagePart }
-  | { kind: "activity-group"; parts: MessagePart[] };
+  | { kind: "activity-group"; parts: MessagePart[] }
+  | { kind: "media-gallery"; parts: Array<Extract<MessagePart, { type: "file" }>> }
+  | { kind: "rich-view"; partID: string; spec: StructuredRichViewSpec };
+
+const MAX_PROMOTED_RICH_VIEWS_PER_GROUP = 2;
+
+function isImageFilePart(part: MessagePart): part is Extract<MessagePart, { type: "file" }> {
+  if (part.type !== "file" || !part.url?.trim()) return false;
+  const mime = (part.mime || "").toLowerCase();
+  return (
+    mime.startsWith("image/") ||
+    /^data:image\//i.test(part.url) ||
+    /\.(png|jpe?g|webp|gif|bmp|tiff?|svg|heic|heif|avif)$/i.test(part.filename || "")
+  );
+}
 
 const TRANSITIONAL_TEXT_MAX_CHARS = 180;
 const MARKDOWN_IMAGE_URL_RE = /!\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+["'][^"']*["'])?\s*\)/g;
@@ -96,6 +115,7 @@ export function groupAssistantParts(parts: MessagePart[]): TurnRenderItem[] {
   const flushBuffer = () => {
     if (buffer.length === 0) return;
     const promoted: SyntheticFilePart[] = [];
+    const promotedRich: Array<{ partID: string; spec: StructuredRichViewSpec }> = [];
     for (const step of buffer) {
       if (step.type !== "tool") continue;
       for (const mediaPart of resolvePromotedMediaParts(step)) {
@@ -104,10 +124,17 @@ export function groupAssistantParts(parts: MessagePart[]): TurnRenderItem[] {
         seenMediaURLs.add(key);
         promoted.push(mediaPart);
       }
+      const richSpec = resolveToolRichView(step);
+      if (richSpec?.promote) {
+        promotedRich.push({ partID: `${step.id}#rich`, spec: richSpec });
+      }
     }
     items.push({ kind: "activity-group", parts: buffer });
     for (const mediaPart of promoted) {
       items.push({ kind: "single", part: mediaPart });
+    }
+    for (const richItem of promotedRich.slice(-MAX_PROMOTED_RICH_VIEWS_PER_GROUP)) {
+      items.push({ kind: "rich-view", partID: richItem.partID, spec: richItem.spec });
     }
     buffer = [];
   };
@@ -130,7 +157,32 @@ export function groupAssistantParts(parts: MessagePart[]): TurnRenderItem[] {
     }
   }
   flushBuffer();
-  return items;
+
+  // Collapse >= 2 consecutive image file parts into a responsive MediaGallery item.
+  const collapsed: TurnRenderItem[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const cur = items[i];
+    if (cur.kind === "single" && isImageFilePart(cur.part)) {
+      const imgRun: Array<Extract<MessagePart, { type: "file" }>> = [cur.part];
+      let j = i + 1;
+      while (j < items.length) {
+        const next = items[j];
+        if (next.kind === "single" && isImageFilePart(next.part)) {
+          imgRun.push(next.part);
+          j++;
+        } else {
+          break;
+        }
+      }
+      if (imgRun.length >= 2) {
+        collapsed.push({ kind: "media-gallery", parts: imgRun });
+        i = j - 1;
+        continue;
+      }
+    }
+    collapsed.push(cur);
+  }
+  return collapsed;
 }
 
 function samePartReferenceList(a: MessagePart[], b: MessagePart[]): boolean {
@@ -176,6 +228,27 @@ export function stabilizeTurnRenderItems(
     }
     if (item.kind === "activity-group" && prior.kind === "activity-group") {
       if (samePartReferenceList(prior.parts, item.parts)) return prior;
+      reusedAll = false;
+      return item;
+    }
+    if (item.kind === "media-gallery" && prior.kind === "media-gallery") {
+      if (
+        prior.parts.length === item.parts.length &&
+        prior.parts.every(
+          (p, i) =>
+            p === item.parts[i] ||
+            (p.id === item.parts[i].id &&
+              p.url === item.parts[i].url &&
+              p.filename === item.parts[i].filename)
+        )
+      ) {
+        return prior;
+      }
+      reusedAll = false;
+      return item;
+    }
+    if (item.kind === "rich-view" && prior.kind === "rich-view") {
+      if (prior.partID === item.partID && prior.spec === item.spec) return prior;
       reusedAll = false;
       return item;
     }

@@ -3,6 +3,7 @@ import { fetchSessionExportTurns, formatContextPromptForExport, workspace } from
 import { t } from "../../i18n";
 import { showMessage } from "../settings/confirm-dialog";
 import { expandInlineThinkingParts } from "./context-activity-parts";
+import { replaceRichFencesForReadableExport } from "./rich-view-spec";
 import { normalizeReasoningText } from "./ThoughtBox";
 
 function formatTime(value?: number): string {
@@ -33,7 +34,7 @@ function fenced(value: string, language = ""): string {
 function renderPart(part: MessagePart): string {
   switch (part.type) {
     case "text":
-      return formatContextPromptForExport(part.text.trim());
+      return replaceRichFencesForReadableExport(formatContextPromptForExport(part.text.trim()));
     case "reasoning": {
       const text = normalizeReasoningText(part.text).trim();
       if (!text) return "";

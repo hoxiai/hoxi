@@ -8,6 +8,7 @@ import FileDiffBlock from "../inspector/LazyFileDiffBlock";
 import QuestionToolBody from "./question-card";
 import ShellOutputView from "./ShellOutputView";
 import ToolOutputView from "./ToolOutputView";
+import { resolveToolRichView } from "./rich-view-spec";
 import { t } from "../../i18n";
 import { processCarriageReturns, repairWindowsMojibake } from "./terminal-output-text";
 import {
@@ -764,6 +765,7 @@ export function ToolCardExpandedBody(props: {
             <div>
               <div class="text-[11px] font-medium text-[var(--text-muted)] mb-1">{t("toolCard.output")}</div>
               <ToolOutputView
+                richView={resolveToolRichView(props.part)}
                 text={processCarriageReturns(truncateToolOutput(
                   getFullToolOutput(props.part.id) ?? (props.part.state as Extract<ToolState, { status: "completed" }>).output
                 ))}

@@ -97,6 +97,7 @@ export * from "./subagent-config";
 export * from "./image-viewer";
 export * from "./share-image";
 export * from "./document-viewer";
+export * from "./rich-view-registry";
 export * from "./markdown-images";
 export * from "./media-options";
 export * from "./model-capabilities";
