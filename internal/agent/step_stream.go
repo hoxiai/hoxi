@@ -19,6 +19,7 @@ type stepStreamResult struct {
 	stepFinish           string
 	emittedVisible       bool
 	droppedTruncatedTool bool
+	usage                *TokenUsage
 }
 
 type thinkSegment struct {
@@ -235,6 +236,8 @@ func collectStepStream(
 		case EventUsage:
 			if se.Usage != nil {
 				u := pricedUsage(target, *se.Usage)
+				uCopy := u
+				res.usage = &uCopy
 				emit(EngineEvent{Kind: EngineTurnUsage, Step: step, Usage: &u})
 			}
 
@@ -288,14 +291,56 @@ func collectStepStream(
 	return res, parseErr
 }
 
-func isUnsupportedAnthropicMessagesEndpoint(err error) bool {
+func isUnsupportedPromotedProtocolEndpoint(proto llm.StreamProtocol, err error) bool {
 	var httpErr *llm.StreamHTTPError
 	if !errors.As(err, &httpErr) || httpErr == nil {
 		return false
 	}
-	return httpErr.StatusCode == http.StatusNotFound ||
+	if httpErr.StatusCode == http.StatusNotFound ||
 		httpErr.StatusCode == http.StatusMethodNotAllowed ||
-		httpErr.StatusCode == http.StatusNotImplemented
+		httpErr.StatusCode == http.StatusNotImplemented {
+		return true
+	}
+	if proto != llm.ProtocolOpenAIResponses ||
+		(httpErr.StatusCode != http.StatusBadRequest && httpErr.StatusCode != http.StatusUnprocessableEntity) {
+		return false
+	}
+	lower := strings.ToLower(strings.TrimSpace(httpErr.Message))
+	if !strings.Contains(lower, "responses") && !strings.Contains(lower, "endpoint") && !strings.Contains(lower, "path") && !strings.Contains(lower, "route") {
+		return false
+	}
+	return strings.Contains(lower, "unsupported") ||
+		strings.Contains(lower, "not supported") ||
+		strings.Contains(lower, "not implemented") ||
+		strings.Contains(lower, "not found") ||
+		strings.Contains(lower, "invalid url") ||
+		strings.Contains(lower, "unknown path")
+}
+
+func (e *Engine) applyCompactWithBudget(
+	msgs []Message,
+	fullSystem, worktreeDir string,
+	toolSpecs []ToolSpec,
+	compactLimit int,
+	thresholds turnContextThresholds,
+	tracker *contextTokenTracker,
+) ([]Message, bool) {
+	if e == nil {
+		return msgs, false
+	}
+	var compacted []Message
+	if e.defaultCompact {
+		var changed bool
+		compacted, changed = pruneOldToolResultsWithBudget(msgs, fullSystem, worktreeDir, toolSpecs, thresholds, tracker)
+		out := stripPrefixInvalidatedHistoricalThinking(msgs, compacted)
+		return out, changed || messagesSliceMutated(compacted, out)
+	}
+	if e.compact != nil {
+		compacted = e.compact(msgs, fullSystem, compactLimit)
+		out := stripPrefixInvalidatedHistoricalThinking(msgs, compacted)
+		return out, messagesSliceMutated(msgs, out)
+	}
+	return msgs, false
 }
 
 // applyCompact runs workspace tool-result pruning and strips any historical

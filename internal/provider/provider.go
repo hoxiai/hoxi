@@ -53,7 +53,10 @@ type Service struct {
 	noReasoningEffort sync.Map
 	// noAnthropicMessages remembers custom OpenAI-compatible gateways that returned
 	// 404/405/501 on /v1/messages so subsequent Claude calls go straight to /v1/chat/completions.
-	noAnthropicMessages    sync.Map
+	noAnthropicMessages sync.Map
+	// noOpenAIResponses remembers custom OpenAI-compatible gateways that rejected
+	// /v1/responses so subsequent OpenAI/Codex calls go straight to /v1/chat/completions.
+	noOpenAIResponses      sync.Map
 	onProviderDisconnected func(string)
 }
 

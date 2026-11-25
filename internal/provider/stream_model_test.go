@@ -295,3 +295,161 @@ func TestOpenStreamRetryAfterUpdatesBreakerCooldownWithoutPollutingLatency(t *te
 		t.Fatalf("expected OpenUntil=%d (now + 600s Retry-After), got %d", wantUntil, rec.OpenUntil)
 	}
 }
+
+func TestCodexAndGPTModelsOnUnifiedGatewayPromoteToResponsesWithMemoizedFallback(t *testing.T) {
+	_, workspace := setupIsolatedEnv(t)
+	var seenPaths []string
+	var statusToReturn int
+	var bodyToReturn string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPaths = append(seenPaths, r.URL.Path)
+		w.WriteHeader(statusToReturn)
+		_, _ = w.Write([]byte(bodyToReturn))
+	}))
+	defer srv.Close()
+
+	cfgPath := filepath.Join(workspace, ".hoxi", "models.json")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `{"provider":{
+		"subapi":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"` + srv.URL + `/v1","apiKey":"sk-sub"},"models":{
+			"openai-codex-gpt-6.2-sol":{"limit":{"context":1050000,"output":128000}},
+			"gpt-5.4-codex":{"limit":{"context":400000,"output":128000}},
+			"gpt-4o":{"limit":{"context":128000,"output":16384}},
+			"openai/gpt-oss-120b":{"limit":{"context":131072,"output":16384}},
+			"Loomy-DeepSeek-V4.1-Flash":{"limit":{"context":128000,"output":16384}}
+		}},
+		"openrouter":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://openrouter.ai/api/v1"},"models":{
+			"openai/gpt-5":{"limit":{"context":400000,"output":128000}}
+		}},
+		"groq":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://api.groq.com/openai/v1"},"models":{
+			"gpt-5":{"limit":{"context":128000,"output":16384}}
+		}}
+	}}`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(0, "", workspace, nil)
+
+	// 1. Positive promotions on unified OpenAI-compatible gateway.
+	codexTarget := svc.ResolveStreamTarget("subapi", "openai-codex-gpt-6.2-sol")
+	if codexTarget.Protocol != llm.ProtocolOpenAIResponses || !codexTarget.FallbackOpenAI {
+		t.Fatalf("expected subapi Codex model to promote to ProtocolOpenAIResponses with FallbackOpenAI, got %+v", codexTarget)
+	}
+	gpt5Target := svc.ResolveStreamTarget("subapi", "gpt-5.4-codex")
+	if gpt5Target.Protocol != llm.ProtocolOpenAIResponses || !gpt5Target.FallbackOpenAI {
+		t.Fatalf("expected subapi gpt-5.4-codex to promote to ProtocolOpenAIResponses with FallbackOpenAI, got %+v", gpt5Target)
+	}
+
+	// 2. Negative / rejection cases must stay ProtocolOpenAI without FallbackOpenAI.
+	for _, tc := range []struct{ pid, mid string }{
+		{"subapi", "gpt-4o"},
+		{"subapi", "openai/gpt-oss-120b"},
+		{"subapi", "Loomy-DeepSeek-V4.1-Flash"},
+		{"openrouter", "openai/gpt-5"},
+		{"groq", "gpt-5"},
+	} {
+		got := svc.ResolveStreamTarget(tc.pid, tc.mid)
+		if got.Protocol != llm.ProtocolOpenAI || got.FallbackOpenAI {
+			t.Fatalf("expected %s/%s to remain ProtocolOpenAI without FallbackOpenAI, got %+v", tc.pid, tc.mid, got)
+		}
+	}
+
+	// 3. A regular 400 (e.g. context overflow) must NOT memoize noOpenAIResponses.
+	statusToReturn = http.StatusBadRequest
+	bodyToReturn = `{"error":{"message":"context_length_exceeded"}}`
+	if _, err := svc.OpenStream(context.Background(), llm.StreamHTTPRequest{
+		Target: codexTarget,
+		Body:   []byte(`{"model":"openai-codex-gpt-6.2-sol"}`),
+	}); err == nil {
+		t.Fatal("expected error on 400")
+	}
+	if still := svc.ResolveStreamTarget("subapi", "openai-codex-gpt-6.2-sol"); still.Protocol != llm.ProtocolOpenAIResponses {
+		t.Fatalf("regular 400 must not disable Responses promotion, got %+v", still)
+	}
+
+	// 4. 404 on /v1/responses memoizes noOpenAIResponses and skips circuit breaker penalty.
+	statusToReturn = http.StatusNotFound
+	bodyToReturn = `{"error":{"message":"404 page not found"}}`
+	_, err := svc.OpenStream(context.Background(), llm.StreamHTTPRequest{
+		Target: codexTarget,
+		Body:   []byte(`{"model":"openai-codex-gpt-6.2-sol"}`),
+	})
+	var httpErr *llm.StreamHTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404 StreamHTTPError, got %v", err)
+	}
+	if after := svc.ResolveStreamTarget("subapi", "openai-codex-gpt-6.2-sol"); after.Protocol != llm.ProtocolOpenAI || after.FallbackOpenAI {
+		t.Fatalf("expected memoized fallback to ProtocolOpenAI after 404, got %+v", after)
+	}
+	if len(seenPaths) != 2 || seenPaths[0] != "/v1/responses" || seenPaths[1] != "/v1/responses" {
+		t.Fatalf("expected /v1/responses probes, got %v", seenPaths)
+	}
+}
+
+func TestCodexChatGPTBackendReceivesSessionIDHeader(t *testing.T) {
+	_, workspace := setupIsolatedEnv(t)
+	var gotHeaders http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeaders = r.Header.Clone()
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"))
+	}))
+	defer srv.Close()
+
+	SetCodexOAuthBaseURLForTest(srv.URL)
+	defer SetCodexOAuthBaseURLForTest("")
+
+	cfgPath := filepath.Join(workspace, ".hoxi", "models.json")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `{"provider":{"codex-direct":{"npm":"@ai-sdk/openai","options":{"baseURL":"` + srv.URL + `","apiKey":"sk-oauth"},"models":{"gpt-6.2-sol":{}}}}}`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewService(0, "", workspace, nil)
+	target := svc.ResolveStreamTarget("codex-direct", "gpt-6.2-sol")
+	resp, err := svc.OpenStream(context.Background(), llm.StreamHTTPRequest{
+		Target:    target,
+		SessionID: "ses_codex_affinity_42",
+		Body:      []byte(`{"model":"gpt-6.2-sol","input":[]}`),
+	})
+	if err != nil {
+		t.Fatalf("OpenStream failed: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	if got := gotHeaders.Get("Session-Id"); got != "ses_codex_affinity_42" {
+		t.Fatalf("expected Session-Id=ses_codex_affinity_42 on Codex backend, got %q", got)
+	}
+	if got := gotHeaders.Get("x-session-affinity"); got != "" {
+		t.Fatalf("expected no x-session-affinity on Codex ChatGPT backend, got %q", got)
+	}
+	if got := gotHeaders.Get("X-Session-Id"); got != "" {
+		t.Fatalf("expected no X-Session-Id on Codex ChatGPT backend, got %q", got)
+	}
+}
+
+func TestHTTP1FallbackTransportIsolatesCloneWithoutMutatingSharedTransport(t *testing.T) {
+	base := &http.Transport{IdleConnTimeout: 90 * time.Second}
+	h1 := newHTTP1FallbackTransport(base)
+	if h1 == nil || h1 == base {
+		t.Fatalf("expected cloned transport distinct from base")
+	}
+	if h1.Protocols == nil || !h1.Protocols.HTTP1() || h1.Protocols.HTTP2() {
+		t.Fatalf("expected HTTP/1.1-only protocols on fallback clone, got %+v", h1.Protocols)
+	}
+	if base.Protocols != nil {
+		t.Fatalf("shared base transport must not be mutated, got %+v", base.Protocols)
+	}
+	if !llm.IsHTTP2ProtocolError(errors.New("stream error: stream ID 7; PROTOCOL_ERROR; received from peer")) {
+		t.Fatal("expected HTTP/2 PROTOCOL_ERROR to be detected")
+	}
+	if llm.IsHTTP2ProtocolError(&llm.StreamHTTPError{StatusCode: 500, Message: "http2 protocol_error"}) {
+		t.Fatal("structured HTTP status responses must not be classified as HTTP/2 transport resets")
+	}
+}

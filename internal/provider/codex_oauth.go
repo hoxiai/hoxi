@@ -61,8 +61,11 @@ func isCodexChatGPTBackendURL(rawURL string) bool {
 	if trimmed == "" {
 		return false
 	}
-	if override := effectiveCodexChatGPTBaseURL(); override != defaultCodexChatGPTBaseURL && sameProviderBaseURL(trimmed, override) {
-		return true
+	if override := effectiveCodexChatGPTBaseURL(); override != defaultCodexChatGPTBaseURL {
+		if sameProviderBaseURL(trimmed, override) ||
+			sameProviderBaseURL(strings.TrimSuffix(strings.TrimRight(trimmed, "/"), "/responses"), override) {
+			return true
+		}
 	}
 	return llm.IsCodexBackendURL(trimmed)
 }

@@ -61,6 +61,7 @@ func (e *Engine) SummarizeWithUsage(ctx context.Context, providerID, modelID, tr
 		return "", fmt.Errorf("summarization transcript is empty")
 	}
 	const maxSummaryCalls = 256
+	const minAdaptiveChunkBytes = 4096
 	calls := 0
 	for pass := 0; pass < 8; pass++ {
 		chunks := splitSummaryTranscript(transcript, chunkBytes)
@@ -68,19 +69,34 @@ func (e *Engine) SummarizeWithUsage(ctx context.Context, providerID, modelID, tr
 			return "", fmt.Errorf("summarization exceeds %d requests; original context retained", maxSummaryCalls)
 		}
 		var checkpoints strings.Builder
+		halved := false
 		for i, chunk := range chunks {
 			if err := ctx.Err(); err != nil {
 				return "", err
 			}
-			summary, err := e.summarizeChunk(ctx, target, drv, maxOut, chunk, record)
+			summary, err := e.summarizeChunkWithFallback(ctx, &target, &drv, maxOut, chunk, record)
 			calls++
 			if err != nil {
+				// If an upstream gateway advertises a larger context window than it
+				// actually accepts, halve the chunk budget and re-split cleanly.
+				if ctx.Err() == nil && isContextOverflowError(err) && chunkBytes > minAdaptiveChunkBytes && len(chunk) > minAdaptiveChunkBytes {
+					nextChunk := max(minAdaptiveChunkBytes, min(chunkBytes, len(chunk))/2)
+					if nextChunk < chunkBytes {
+						chunkBytes = nextChunk
+						halved = true
+						break
+					}
+				}
 				return "", fmt.Errorf("summarize segment %d/%d: %w", i+1, len(chunks), err)
 			}
 			if len(chunks) == 1 {
 				return summary, nil
 			}
 			fmt.Fprintf(&checkpoints, "[Checkpoint %d/%d in chronological order]\n%s\n\n", i+1, len(chunks), summary)
+		}
+		if halved {
+			pass--
+			continue
 		}
 		next := checkpoints.String()
 		if len(next) >= len(transcript) {
@@ -89,6 +105,28 @@ func (e *Engine) SummarizeWithUsage(ctx context.Context, providerID, modelID, tr
 		transcript = next
 	}
 	return "", fmt.Errorf("summarization did not converge; original context retained")
+}
+
+func (e *Engine) summarizeChunkWithFallback(
+	ctx context.Context,
+	target *llm.StreamTarget,
+	drv *ModelDriver,
+	maxOut int,
+	chunk string,
+	record func(TokenUsage),
+) (string, error) {
+	summary, err := e.summarizeChunk(ctx, *target, *drv, maxOut, chunk, record)
+	if err != nil && target.FallbackOpenAI && ctx.Err() == nil && isUnsupportedPromotedProtocolEndpoint(target.Protocol, err) {
+		target.Protocol = llm.ProtocolOpenAI
+		target.FallbackOpenAI = false
+		fallbackDrv, drvErr := e.drivers.Create(target.Protocol)
+		if drvErr != nil {
+			return "", drvErr
+		}
+		*drv = fallbackDrv
+		return e.summarizeChunk(ctx, *target, *drv, maxOut, chunk, record)
+	}
+	return summary, err
 }
 
 func splitSummaryTranscript(text string, maxBytes int) []string {
@@ -201,6 +239,18 @@ func (e *Engine) compactContextOverflow(
 	currentStep int,
 	emit func(EngineEvent),
 ) ([]Message, *compactionCheckpointInfo, bool) {
+	return e.compactContextOverflowWithInPlace(ctx, providerID, modelID, msgs, historyLen, currentStep, nil, emit)
+}
+
+func (e *Engine) compactContextOverflowWithInPlace(
+	ctx context.Context,
+	providerID, modelID string,
+	msgs []Message,
+	historyLen int,
+	currentStep int,
+	inPlace *inPlaceCompactionContext,
+	emit func(EngineEvent),
+) ([]Message, *compactionCheckpointInfo, bool) {
 	if len(msgs) == 0 {
 		return nil, nil, false
 	}
@@ -209,56 +259,61 @@ func (e *Engine) compactContextOverflow(
 	// user prompt slice (at step 1), the final user message, or the final
 	// [assistant(tool_use), user(tool_result)] pair so every tool_result retains
 	// its matching tool_use call ID.
-	tailStart := len(msgs) - 1
-	keptPriorToolPair := false
-	if currentStep <= 1 && historyLen >= 2 && historyLen < len(msgs) {
-		tailStart = historyLen
-	} else if hasToolResultBlocks(msgs[tailStart]) && tailStart > 0 && msgs[tailStart-1].Role == RoleAssistant {
-		tailStart--
-		keptPriorToolPair = true
-	}
+	tailStart, keptPriorToolPair := compactionTailAnchor(msgs, historyLen, currentStep)
 
 	if tailStart >= 2 {
-		transcript := renderOverflowTranscript(msgs[:tailStart])
-		if transcript != "" {
-			record := func(u TokenUsage) {
-				if emit != nil {
-					emit(EngineEvent{Kind: EngineSummaryUsage, Step: currentStep, Usage: &u})
+		record := func(u TokenUsage) {
+			if emit != nil {
+				emit(EngineEvent{Kind: EngineSummaryUsage, Step: currentStep, Usage: &u})
+			}
+		}
+		var trimmedSummary string
+		if inPlace != nil && inPlace.eligible() {
+			if summary, ok := e.tryInPlaceCompaction(ctx, inPlace, msgs, record); ok {
+				trimmedSummary = strings.TrimSpace(summary)
+			} else if ctx.Err() != nil {
+				return nil, nil, false
+			}
+		}
+		if trimmedSummary == "" {
+			transcript := renderOverflowTranscript(msgs[:tailStart])
+			if transcript != "" {
+				if summary, err := e.SummarizeWithUsage(ctx, providerID, modelID, transcript, record); err == nil && strings.TrimSpace(summary) != "" {
+					trimmedSummary = strings.TrimSpace(summary)
 				}
 			}
-			if summary, err := e.SummarizeWithUsage(ctx, providerID, modelID, transcript, record); err == nil && strings.TrimSpace(summary) != "" {
-				trimmedSummary := strings.TrimSpace(summary)
-				checkpoint := Message{
-					Role: RoleUser,
-					Content: []ContentBlock{{
-						Type: ContentText,
-						Text: "<context_checkpoint>\n" + trimmedSummary + "\n</context_checkpoint>\nContinue working from this compacted session checkpoint.",
-					}},
-				}
-				var out []Message
-				out = append(out, checkpoint)
-				if msgs[tailStart].Role == RoleUser {
-					out = append(out, Message{
-						Role:    RoleAssistant,
-						Content: []ContentBlock{{Type: ContentText, Text: "Understood. Continuing from the compacted checkpoint."}},
-					})
-				}
-				out = append(out, msgs[tailStart:]...)
-				info := &compactionCheckpointInfo{
-					Summary:      trimmedSummary,
-					Scope:        "before_current_user",
-					KeepFromStep: 1,
-				}
-				if currentStep > 1 {
-					info.Scope = "before_step"
-					if keptPriorToolPair {
-						info.KeepFromStep = max(1, currentStep-1)
-					} else {
-						info.KeepFromStep = currentStep
-					}
-				}
-				return out, info, true
+		}
+		if trimmedSummary != "" {
+			checkpoint := Message{
+				Role: RoleUser,
+				Content: []ContentBlock{{
+					Type: ContentText,
+					Text: "<context_checkpoint>\n" + trimmedSummary + "\n</context_checkpoint>\nContinue working from this compacted session checkpoint.",
+				}},
 			}
+			var out []Message
+			out = append(out, checkpoint)
+			if msgs[tailStart].Role == RoleUser {
+				out = append(out, Message{
+					Role:    RoleAssistant,
+					Content: []ContentBlock{{Type: ContentText, Text: "Understood. Continuing from the compacted checkpoint."}},
+				})
+			}
+			out = append(out, msgs[tailStart:]...)
+			info := &compactionCheckpointInfo{
+				Summary:      trimmedSummary,
+				Scope:        "before_current_user",
+				KeepFromStep: 1,
+			}
+			if currentStep > 1 {
+				info.Scope = "before_step"
+				if keptPriorToolPair {
+					info.KeepFromStep = max(1, currentStep-1)
+				} else {
+					info.KeepFromStep = currentStep
+				}
+			}
+			return out, info, true
 		}
 	}
 

@@ -299,8 +299,11 @@ func (e *Engine) runGracefulFinalizeStep(
 	req TurnRequest,
 	systemPrompt string,
 	msgs []Message,
+	toolSpecs []ToolSpec,
 	maxOut int,
 	compactLimit int,
+	thresholds turnContextThresholds,
+	tokenTracker *contextTokenTracker,
 	stepBudget int,
 	effectiveEffort string,
 	foldUnsignedToolSteps bool,
@@ -326,7 +329,8 @@ func (e *Engine) runGracefulFinalizeStep(
 		finalMsgs, _ = recoverMessagesFromThinkingSignatureError(finalMsgs)
 	}
 	systemSuffix := strings.TrimSpace(req.SystemSuffix)
-	finalMsgs = e.applyCompact(finalMsgs, appendSystemPromptSuffix(systemPrompt, systemSuffix), req.WorktreeDir, compactLimit)
+	fullSystem := appendSystemPromptSuffix(systemPrompt, systemSuffix)
+	finalMsgs, _ = e.applyCompactWithBudget(finalMsgs, fullSystem, req.WorktreeDir, toolSpecs, compactLimit, thresholds, tokenTracker)
 	httpReq, err := drv.BuildRequest(ModelRequest{
 		SessionID:    req.SessionID,
 		CacheKey:     req.CacheKey,

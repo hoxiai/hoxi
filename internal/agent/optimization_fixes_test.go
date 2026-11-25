@@ -528,7 +528,7 @@ func TestCompactBudgetPrunesOversizedToolInputsAndRealisticMediaWeight(t *testin
 	for i := 0; i < 10; i++ {
 		msgs = append(msgs,
 			Message{Role: RoleAssistant, Content: []ContentBlock{{Type: ContentText, Text: fmt.Sprintf("step %d", i)}}},
-			Message{Role: RoleUser, Content: []ContentBlock{{Type: ContentText, Text: strings.Repeat("padding text ", 40)}}},
+			Message{Role: RoleUser, Content: []ContentBlock{{Type: ContentText, Text: strings.Repeat("padding text ", 65)}}},
 		)
 	}
 	pruned := PruneOldToolResults(msgs, "sys", 5000)

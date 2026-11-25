@@ -30,6 +30,24 @@ var (
 	}
 )
 
+// newHTTP1FallbackTransport clones base into an isolated HTTP/1.1-only
+// transport for a single fallback attempt after an HTTP/2 PROTOCOL_ERROR,
+// without mutating or permanently downgrading the shared transport.
+func newHTTP1FallbackTransport(base *http.Transport) *http.Transport {
+	if base == nil {
+		return nil
+	}
+	cloned := base.Clone()
+	var protos http.Protocols
+	protos.SetHTTP1(true)
+	cloned.Protocols = &protos
+	if cloned.TLSClientConfig != nil {
+		cloned.TLSClientConfig = cloned.TLSClientConfig.Clone()
+		cloned.TLSClientConfig.NextProtos = []string{"http/1.1"}
+	}
+	return cloned
+}
+
 func isLoopbackURL(rawURL string) bool {
 	u, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil {

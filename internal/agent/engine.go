@@ -209,6 +209,8 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 	}
 	toolSpecs := catalog.specs(e.registry, effectiveMode, req.SubtaskDepth)
 	compactLimit := effectiveCompactContextLimit(target.ContextLimit, toolSpecs)
+	contextThresholds := resolveTurnContextThresholds(target)
+	tokenTracker := newContextTokenTracker()
 	loopGuard := newStepLoopGuard()
 
 	historyLen := len(req.History)
@@ -280,15 +282,56 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 			msgs = append(msgs, steered...)
 		}
 		if foldUnsignedToolSteps && !tailToolExchangeHasSignedThinking(msgs) {
-			msgs, _ = recoverMessagesFromThinkingSignatureError(msgs)
+			var recovered bool
+			if msgs, recovered = recoverMessagesFromThinkingSignatureError(msgs); recovered {
+				tokenTracker.InvalidateAnchor(true)
+			}
+		}
+		maxOut := target.OutputLimit
+		if maxOut <= 0 {
+			maxOut = 8192
 		}
 		fullSystem := appendSystemPromptSuffix(systemPrompt, systemSuffix)
-		msgs = e.applyCompact(msgs, fullSystem, req.WorktreeDir, compactLimit)
+		prePruneMsgs := msgs
+		wasCacheWarm := tokenTracker.IsPrefixCacheWarm()
+		prePruneTokens := tokenTracker.EstimateTotalTokens(msgs, fullSystem, toolSpecs)
+		var prunedChanged bool
+		msgs, prunedChanged = e.applyCompactWithBudget(msgs, fullSystem, req.WorktreeDir, toolSpecs, compactLimit, contextThresholds, tokenTracker)
+		if prunedChanged {
+			tokenTracker.RebaseAfterPrune(prePruneMsgs, msgs, fullSystem, toolSpecs)
+		}
 		if overflowCompactions < maxReactiveOverflowCompactions &&
-			shouldProactivelyCompact(msgs, fullSystem, target.ContextLimit, compactLimit, historyLen, step) {
-			if compacted, cpInfo, ok := e.compactContextOverflow(ctx, req.ProviderID, req.ModelID, msgs, historyLen, step, emit); ok {
+			shouldProactivelyCompactWithBudget(msgs, fullSystem, toolSpecs, contextThresholds, tokenTracker, target.ContextLimit, historyLen, step) {
+			inPlaceMsgs := msgs
+			inPlaceCacheWarm := tokenTracker.IsPrefixCacheWarm()
+			inPlaceTokens := tokenTracker.EstimateTotalTokens(msgs, fullSystem, toolSpecs)
+			// If an emergency tight-prune just mutated the prefix but failed to keep
+			// context under hardCap, prefer the unmodified warm prefix for in-place
+			// compaction so the summary call still hits the upstream prompt cache.
+			if prunedChanged && wasCacheWarm && prePruneTokens+minInPlaceCompactionHeadroom < target.ContextLimit {
+				inPlaceMsgs = prePruneMsgs
+				inPlaceCacheWarm = true
+				inPlaceTokens = prePruneTokens
+			}
+			inPlace := &inPlaceCompactionContext{
+				Driver:         drv,
+				Target:         target,
+				SessionID:      req.SessionID,
+				CacheKey:       req.CacheKey,
+				System:         systemPrompt,
+				SystemSuffix:   systemSuffix,
+				Tools:          toolSpecs,
+				Messages:       inPlaceMsgs,
+				MaxTokens:      maxOut,
+				Effort:         effectiveEffort,
+				FastMode:       effectiveFast,
+				CacheWarm:      inPlaceCacheWarm,
+				MeasuredTokens: inPlaceTokens,
+			}
+			if compacted, cpInfo, ok := e.compactContextOverflowWithInPlace(ctx, req.ProviderID, req.ModelID, msgs, historyLen, step, inPlace, emit); ok {
 				overflowCompactions++
 				historyLen = 0
+				tokenTracker.InvalidateAnchor(true)
 				loopGuard.ResetOnCompaction()
 				if autoScaledSteps {
 					maxSteps += compactionRecoveryStepBonus(step)
@@ -309,10 +352,6 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 			}
 		}
 
-		maxOut := target.OutputLimit
-		if maxOut <= 0 {
-			maxOut = 8192
-		}
 		buildStepReq := func() (llm.StreamHTTPRequest, error) {
 			return drv.BuildRequest(ModelRequest{
 				SessionID:    req.SessionID,
@@ -348,6 +387,7 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 			stepThinkingRecovered = true
 			foldUnsignedToolSteps = true
 			msgs = recovered
+			tokenTracker.InvalidateAnchor(true)
 			if needDisable {
 				effectiveEffort = ""
 			}
@@ -364,9 +404,10 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 			resp, openErr := e.stream.OpenStream(ctx, httpReq)
 			headerLatency := time.Since(openStarted)
 			if openErr != nil {
-				if target.FallbackOpenAI && ctx.Err() == nil && isUnsupportedAnthropicMessagesEndpoint(openErr) {
+				if target.FallbackOpenAI && ctx.Err() == nil && isUnsupportedPromotedProtocolEndpoint(target.Protocol, openErr) {
 					target.Protocol = llm.ProtocolOpenAI
 					target.FallbackOpenAI = false
+					tokenTracker.InvalidateAnchor(true)
 					drv, err = e.drivers.Create(target.Protocol)
 					if err != nil {
 						return err
@@ -400,6 +441,7 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 					if compacted, cpInfo, ok := e.compactContextOverflow(ctx, req.ProviderID, req.ModelID, msgs, historyLen, step, emit); ok {
 						overflowCompactions++
 						historyLen = 0
+						tokenTracker.InvalidateAnchor(true)
 						loopGuard.ResetOnCompaction()
 						if autoScaledSteps {
 							maxSteps += compactionRecoveryStepBonus(step)
@@ -427,6 +469,9 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 				stepErr = openErr
 				if ctx.Err() == nil {
 					if dec := e.planStepRetry(openErr, attempt+1, totalRetryWait, time.Now()); dec.shouldRetry {
+						if llm.IsHTTP2ProtocolError(openErr) {
+							httpReq.ForceHTTP1 = true
+						}
 						if !e.waitForStepRetry(ctx, step, req.SubtaskDepth, attempt+1, dec, emit) {
 							return ctx.Err()
 						}
@@ -468,6 +513,7 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 				if compacted, cpInfo, ok := e.compactContextOverflow(ctx, req.ProviderID, req.ModelID, msgs, historyLen, step, emit); ok {
 					overflowCompactions++
 					historyLen = 0
+					tokenTracker.InvalidateAnchor(true)
 					loopGuard.ResetOnCompaction()
 					if autoScaledSteps {
 						maxSteps += compactionRecoveryStepBonus(step)
@@ -498,6 +544,9 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 			// the interrupted stream error cleanly without duplicating output.
 			if !streamed.emittedVisible && ctx.Err() == nil {
 				if dec := e.planStepRetry(parseErr, attempt+1, totalRetryWait, time.Now()); dec.shouldRetry {
+					if llm.IsHTTP2ProtocolError(parseErr) {
+						httpReq.ForceHTTP1 = true
+					}
 					if !e.waitForStepRetry(ctx, step, req.SubtaskDepth, attempt+1, dec, emit) {
 						return ctx.Err()
 					}
@@ -509,6 +558,10 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 		}
 		if stepErr != nil {
 			return stepErr
+		}
+
+		if streamed.usage != nil {
+			tokenTracker.ObserveStep(msgs, fullSystem, toolSpecs, *streamed.usage)
 		}
 
 		if len(streamed.asstBlocks) > 0 {
@@ -614,9 +667,10 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 		if promoteToBuild || loadedTools {
 			toolSpecs = catalog.specs(e.registry, effectiveMode, req.SubtaskDepth)
 			compactLimit = effectiveCompactContextLimit(target.ContextLimit, toolSpecs)
+			tokenTracker.InvalidateAnchor(true)
 		}
 		if step == maxSteps {
-			if finalBlocks, ok := e.runGracefulFinalizeStep(ctx, drv, target, req, systemPrompt, msgs, maxOut, compactLimit, maxSteps, effectiveEffort, foldUnsignedToolSteps, nextPartID, emit); ok {
+			if finalBlocks, ok := e.runGracefulFinalizeStep(ctx, drv, target, req, systemPrompt, msgs, toolSpecs, maxOut, compactLimit, contextThresholds, tokenTracker, maxSteps, effectiveEffort, foldUnsignedToolSteps, nextPartID, emit); ok {
 				if len(finalBlocks) > 0 {
 					msgs = append(msgs, Message{Role: RoleAssistant, Content: finalBlocks})
 				}

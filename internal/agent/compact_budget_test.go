@@ -466,7 +466,7 @@ func TestCompactBudgetUTF8NoDoubleCountAndHysteresisHeadroom(t *testing.T) {
 	// through Chunk 1 in the SAME compaction pass instead of stopping barely under 30000 and
 	// busting KV-cache again on the very next step.
 	var hystMsgs []agent.Message
-	chunk0Out := strings.Repeat("chunk zero verbose output line\n", 140) // ~4340 bytes (~1446 tok) x 3 = ~4340 tok
+	chunk0Out := strings.Repeat("chunk zero verbose output line\n", 180) // ~5580 bytes (~1488 tok) x 3 = ~4464 tok
 	for i := 0; i < 6; i++ {
 		body := "short"
 		if i < 3 {
@@ -474,7 +474,7 @@ func TestCompactBudgetUTF8NoDoubleCountAndHysteresisHeadroom(t *testing.T) {
 		}
 		hystMsgs = append(hystMsgs, makeToolStep(fmt.Sprintf("h0_%d", i), "read", map[string]any{"filePath": fmt.Sprintf("f0_%d.go", i)}, body, false)...)
 	}
-	chunk1Out := strings.Repeat("chunk one verbose output line\n", 260) // ~7800 bytes (~2600 tok) x 5 = ~13000 tok
+	chunk1Out := strings.Repeat("chunk one verbose output line\n", 330) // ~9900 bytes (~2640 tok) x 5 = ~13200 tok
 	for i := 0; i < 6; i++ {
 		body := "short"
 		if i < 5 {
@@ -482,7 +482,7 @@ func TestCompactBudgetUTF8NoDoubleCountAndHysteresisHeadroom(t *testing.T) {
 		}
 		hystMsgs = append(hystMsgs, makeToolStep(fmt.Sprintf("h1_%d", i), "read", map[string]any{"filePath": fmt.Sprintf("f1_%d.go", i)}, body, false)...)
 	}
-	tailOut := strings.Repeat("recent active tail context line\n", 240) // ~7680 bytes (~2560 tok) x 6 = ~15360 tok
+	tailOut := strings.Repeat("recent active tail context line\n", 300) // ~9600 bytes (~2560 tok) x 6 = ~15360 tok
 	for i := 0; i < 7; i++ {
 		body := "short"
 		if i < 6 {

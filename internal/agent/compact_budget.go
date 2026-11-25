@@ -30,63 +30,6 @@ const (
 	compactStaleReadMinLen = 320
 )
 
-// estimateTextWeight returns the UTF-8 byte length; multibyte CJK runes are
-// already 3 bytes each so dividing by 3 conservatively estimates ~1 token/rune
-// without double-counting non-ASCII leading bytes.
-func estimateTextWeight(s string) int {
-	return len(s)
-}
-
-func estimateTokens(msgs []Message, system string) int {
-	chars := estimateTextWeight(system)
-	activeTurnStart := lastPlainUserMessageIndex(msgs)
-	for msgIdx, m := range msgs {
-		inActiveTurn := activeTurnStart < 0 || msgIdx >= activeTurnStart
-		for _, b := range m.Content {
-			switch b.Type {
-			case ContentThinking:
-				// Unsigned prior-turn thinking is stripped on OpenAI chat relays and
-				// not replayed on Anthropic; signed blocks carry encrypted signature cost.
-				if inActiveTurn || b.Signature != "" || b.Data != "" {
-					chars += estimateTextWeight(b.Text) + len(b.Signature)/2 + len(b.Data)/2 + 16
-				}
-			case ContentMedia:
-				chars += estimateTextWeight(b.Text) + 16
-				if b.Data != "" {
-					// Realistic multimodal token budget (~1600 tokens) for images/PDFs.
-					chars += 4800
-				}
-			default:
-				chars += estimateTextWeight(b.Text) + len(b.Input) + 16
-			}
-		}
-	}
-	return chars/3 + 64
-}
-
-func estimateToolSpecsTokens(specs []ToolSpec) int {
-	if len(specs) == 0 {
-		return 0
-	}
-	chars := 0
-	for _, s := range specs {
-		chars += len(s.Name) + estimateTextWeight(s.Description) + 24
-		if len(s.Parameters) > 0 {
-			if raw, err := json.Marshal(s.Parameters); err == nil {
-				chars += len(raw)
-			}
-		}
-	}
-	return chars / 3
-}
-
-func effectiveCompactContextLimit(contextLimit int, specs []ToolSpec) int {
-	if contextLimit <= 0 {
-		contextLimit = 128000
-	}
-	return max(1, contextLimit-estimateToolSpecsTokens(specs))
-}
-
 func preferredKeepRecentMsgs(contextLimit int) int {
 	switch {
 	case contextLimit >= 64000:
@@ -125,14 +68,28 @@ func pruneOldToolResults(msgs []Message, system string, contextLimit int) []Mess
 }
 
 func pruneOldToolResultsInWorkspace(msgs []Message, system, worktreeDir string, contextLimit int) []Message {
-	msgs = sanitizeMessagesUTF8(msgs)
-	msgs = pruneStaleToolScreenshots(msgs)
 	if contextLimit <= 0 {
 		contextLimit = 128000
 	}
 	triggerTokens := min(contextLimit*compactTriggerPercent/100, maxRegularCompactTriggerTokens)
 	hardCapTokens := min(contextLimit*compactHardCapPercent/100, maxRegularCompactHardCapTokens)
-	if estimateTokens(msgs, system) <= triggerTokens {
+	return pruneOldToolResultsCore(msgs, system, worktreeDir, contextLimit, triggerTokens, hardCapTokens, func(cand []Message) int {
+		return estimateTokens(cand, system)
+	})
+}
+
+func pruneOldToolResultsCore(
+	msgs []Message,
+	system, worktreeDir string,
+	contextLimit, triggerTokens, hardCapTokens int,
+	measure func([]Message) int,
+) []Message {
+	msgs = sanitizeMessagesUTF8(msgs)
+	msgs = pruneStaleToolScreenshots(msgs)
+	if contextLimit <= 0 {
+		contextLimit = 128000
+	}
+	if measure(msgs) <= triggerTokens {
 		return msgs
 	}
 
@@ -161,18 +118,18 @@ func pruneOldToolResultsInWorkspace(msgs []Message, system, worktreeDir string, 
 			targetTokens := triggerTokens * compactTargetPercent / 100
 			for stride := compactChunkStride; stride <= quantizedCutoff; stride += compactChunkStride {
 				pruned = pruneToolOutputsBeforeWithNorm(msgs, stride, minToolLen, richPreview, norm)
-				if estimateTokens(pruned, system) <= targetTokens {
+				if measure(pruned) <= targetTokens {
 					break
 				}
 			}
 		}
 
-		if estimateTokens(pruned, system) > hardCapTokens {
+		if measure(pruned) > hardCapTokens {
 			pruned = pruneToolOutputsBeforeWithNorm(msgs, rawCutoff, minToolLen, richPreview, norm)
 		}
 	}
 
-	if estimateTokens(pruned, system) > hardCapTokens {
+	if measure(pruned) > hardCapTokens {
 		tightCutoff := len(msgs) - compactMinKeepRecentMsgs
 		if tightCutoff > 0 {
 			pruned = pruneToolOutputsBeforeWithNorm(msgs, tightCutoff, compactTightMinToolLen, false, norm)
@@ -182,37 +139,6 @@ func pruneOldToolResultsInWorkspace(msgs []Message, system, worktreeDir string, 
 }
 
 const minProactiveCompactContextLimit = 16000
-
-func compactHardCapTokens(contextLimit int) int {
-	if contextLimit <= 0 {
-		contextLimit = 128000
-	}
-	return min(contextLimit*compactHardCapPercent/100, maxRegularCompactHardCapTokens)
-}
-
-// shouldProactivelyCompact reports whether post-pruning context still exceeds
-// the 90% hard cap on a real-sized context window and has substantial older
-// history before the trailing anchor, allowing the engine to summarize
-// proactively before hitting an upstream HTTP 400 context-overflow error.
-func shouldProactivelyCompact(msgs []Message, fullSystem string, rawContextLimit, compactLimit, historyLen, currentStep int) bool {
-	if rawContextLimit < minProactiveCompactContextLimit || len(msgs) < 4 {
-		return false
-	}
-	hardCap := compactHardCapTokens(compactLimit)
-	if estimateTokens(msgs, fullSystem) <= hardCap {
-		return false
-	}
-	tailStart := len(msgs) - 1
-	if currentStep <= 1 && historyLen >= 2 && historyLen < len(msgs) {
-		tailStart = historyLen
-	} else if hasToolResultBlocks(msgs[tailStart]) && tailStart > 0 && msgs[tailStart-1].Role == RoleAssistant {
-		tailStart--
-	}
-	if tailStart < 2 {
-		return false
-	}
-	return estimateTokens(msgs[:tailStart], "") >= max(1024, hardCap/4)
-}
 
 func sanitizeMessagesUTF8(msgs []Message) []Message {
 	var copied []Message
@@ -481,6 +407,26 @@ func attachPreservedRules(prunedBody, rules string) string {
 	return prunedBody + "\n\n" + rules
 }
 
+// splitBashForegroundLogHandle peels a trailing `[Foreground log: bash action=output ...]`
+// paging handle appended by turnCommandLogs so pruning an old bash result keeps
+// the exact handle for on-demand log inspection without re-running the command.
+func splitBashForegroundLogHandle(s string) (body, handle string) {
+	trimmed := strings.TrimRight(s, " \t\r\n")
+	const prefix = "[Foreground log: bash action=output "
+	idx := strings.LastIndex(trimmed, prefix)
+	if idx < 0 || !strings.HasSuffix(trimmed, "]") {
+		return s, ""
+	}
+	if idx > 0 && trimmed[idx-1] != '\n' {
+		return s, ""
+	}
+	cand := trimmed[idx:]
+	if strings.Contains(cand, "\n") {
+		return s, ""
+	}
+	return strings.TrimRight(trimmed[:idx], " \t\r\n"), cand
+}
+
 func pruneToolOutputsBeforeWithNorm(msgs []Message, cutoff, minToolLen int, richPreview bool, norm *prunePathNormalizer) []Message {
 	if cutoff <= 0 {
 		return msgs
@@ -545,10 +491,15 @@ func pruneToolOutputsBeforeWithNorm(msgs []Message, cutoff, minToolLen int, rich
 					}
 				}
 				if len(body) > minToolLen {
-					blocks[j].Text = attachPreservedRules(
-						summarizePrunedToolOutputForCall(body, toolName, blocks[j].IsError, richPreview),
-						rules,
-					)
+					var logHandle string
+					if toolName == "bash" {
+						body, logHandle = splitBashForegroundLogHandle(body)
+					}
+					summarized := summarizePrunedToolOutputForCall(body, toolName, blocks[j].IsError, richPreview)
+					if logHandle != "" {
+						summarized += "\n" + logHandle
+					}
+					blocks[j].Text = attachPreservedRules(summarized, rules)
 					changed = true
 				}
 			case ContentMedia:

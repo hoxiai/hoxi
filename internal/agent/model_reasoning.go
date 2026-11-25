@@ -2,10 +2,23 @@ package agent
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/hoxiai/hoxi/internal/agentcli"
 )
+
+var openAIResponsesReasoningModelRe = regexp.MustCompile(`(?i)(?:^|[/:_-])(?:codex|gpt-(?:5|6|7)(?:$|[._:-])|o[134](?:$|[._:-]))`)
+
+// isOpenAIResponsesReasoningModel reports whether modelID supports encrypted
+// reasoning persistence on stateless (store=false) OpenAI Responses requests.
+func isOpenAIResponsesReasoningModel(modelID string) bool {
+	lower := strings.ToLower(strings.TrimSpace(modelID))
+	if lower == "" || strings.Contains(lower, "gpt-oss") || strings.Contains(lower, "oss-") {
+		return false
+	}
+	return openAIResponsesReasoningModelRe.MatchString(lower)
+}
 
 // reasoningVariant selects the same model-specific tier used by OpenCode.
 // Empty variants explicitly mean that this model has no configured reasoning

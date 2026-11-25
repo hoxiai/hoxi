@@ -253,6 +253,27 @@ func ClassifyFault(name, message string, statusCode int, now time.Time) FaultDet
 	return FaultDetails{RetryAfterMs: retryAfterMs}
 }
 
+// IsHTTP2ProtocolError reports whether err is a transport-level HTTP/2 stream
+// reset (PROTOCOL_ERROR / INTERNAL_ERROR / ENHANCE_YOUR_CALM) that warrants a
+// single-attempt HTTP/1.1 retry fallback. Structured HTTP status responses are
+// never treated as HTTP/2 protocol resets.
+func IsHTTP2ProtocolError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var httpErr *StreamHTTPError
+	if errors.As(err, &httpErr) && httpErr != nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	if !strings.Contains(lower, "http2") && !strings.Contains(lower, "stream error:") {
+		return false
+	}
+	return strings.Contains(lower, "protocol_error") ||
+		strings.Contains(lower, "internal_error") ||
+		strings.Contains(lower, "enhance_your_calm")
+}
+
 // ClassifyError inspects err (including structured *StreamHTTPError status codes
 // and Retry-After headers) and returns canonical FaultDetails.
 func ClassifyError(err error, now time.Time) FaultDetails {
@@ -270,6 +291,9 @@ func ClassifyError(err error, now time.Time) FaultDetails {
 			d.IsRetryable = false
 		}
 		return d
+	}
+	if IsHTTP2ProtocolError(err) {
+		return FaultDetails{Kind: FaultKindNetwork, IsRetryable: true}
 	}
 	return ClassifyFault("", err.Error(), 0, now)
 }

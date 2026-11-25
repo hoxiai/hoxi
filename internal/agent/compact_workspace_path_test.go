@@ -89,7 +89,7 @@ func TestPrunePathNormalizerCrossPlatformAndSymlinkCases(t *testing.T) {
 				Message{Role: RoleUser, Content: []ContentBlock{{Type: ContentToolResult, ToolUseID: "f", Text: "ok"}}},
 			)
 		}
-		tail := strings.Repeat("recent tail context line\n", 750)
+		tail := strings.Repeat("recent tail context line\n", 960)
 		for i := 0; i < 3; i++ {
 			txt := "ok"
 			if i == 0 {

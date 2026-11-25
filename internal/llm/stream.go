@@ -108,9 +108,9 @@ type StreamTarget struct {
 	// Variants contains credential-free model options shared with the OpenCode
 	// configuration (thinking budgets, adaptive effort, and Gemini thinking levels).
 	Variants map[string]any
-	// FallbackOpenAI marks a Claude target on an OpenAI-compatible gateway that
-	// was promoted to native Anthropic /v1/messages so 404/405 falls back cleanly
-	// to /v1/chat/completions.
+	// FallbackOpenAI marks a promoted target on an OpenAI-compatible gateway
+	// (Claude -> /v1/messages or OpenAI/Codex -> /v1/responses) so unsupported
+	// endpoint errors (404/405/501) fall back cleanly to /v1/chat/completions.
 	FallbackOpenAI bool
 }
 
@@ -124,6 +124,10 @@ type StreamHTTPRequest struct {
 	// gateway prompt-cache affinity headers (x-session-affinity / X-Session-Id)
 	// when not overridden by user-configured provider headers.
 	SessionID string
+	// ForceHTTP1 requests a single-attempt HTTP/1.1 transport fallback after an
+	// upstream HTTP/2 PROTOCOL_ERROR stream reset without permanently pinning
+	// the host away from HTTP/2.
+	ForceHTTP1 bool
 }
 
 // StreamClient opens authenticated streaming HTTP responses against user-configured

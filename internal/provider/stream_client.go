@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,10 +47,11 @@ type stallReadCloser struct {
 	timer   *time.Timer
 	cancel  context.CancelFunc
 	stalled *atomic.Bool
+	onClose func()
 	once    sync.Once
 }
 
-func newStallReadCloser(body io.ReadCloser, limit time.Duration, cancel context.CancelFunc, stalled *atomic.Bool, timer *time.Timer) io.ReadCloser {
+func newStallReadCloser(body io.ReadCloser, limit time.Duration, cancel context.CancelFunc, stalled *atomic.Bool, timer *time.Timer, onClose func()) io.ReadCloser {
 	if limit <= 0 {
 		return body
 	}
@@ -59,6 +61,7 @@ func newStallReadCloser(body io.ReadCloser, limit time.Duration, cancel context.
 		timer:   timer,
 		cancel:  cancel,
 		stalled: stalled,
+		onClose: onClose,
 	}
 }
 
@@ -79,6 +82,9 @@ func (r *stallReadCloser) Close() error {
 		r.timer.Stop()
 		r.cancel()
 		closeErr = r.body.Close()
+		if r.onClose != nil {
+			r.onClose()
+		}
 	})
 	return closeErr
 }
@@ -110,6 +116,9 @@ func (s *Service) ResolveStreamTarget(providerID, modelID string) llm.StreamTarg
 		} else if s.shouldPromoteClaudeToAnthropicMessages(pid, mid, baseURL) {
 			target.Protocol = llm.ProtocolAnthropic
 			target.FallbackOpenAI = true
+		} else if s.shouldPromoteOpenAIToResponses(pid, mid, baseURL) {
+			target.Protocol = llm.ProtocolOpenAIResponses
+			target.FallbackOpenAI = true
 		} else {
 			target.Protocol = llm.ProtocolOpenAI
 		}
@@ -124,9 +133,13 @@ func (s *Service) ResolveStreamTarget(providerID, modelID string) llm.StreamTarg
 	}
 	// Reuse the model options exposed to OpenCode so native turns honor the
 	// same legacy/adaptive thinking modes and explicit non-reasoning models.
-	if target.FallbackOpenAI {
+	if target.FallbackOpenAI && target.Protocol == llm.ProtocolAnthropic {
 		if !hasProxyBakedEffortSuffix(mid) {
 			target.Variants = defaultModelVariants(pid, "@ai-sdk/anthropic", mid)
+		}
+	} else if target.FallbackOpenAI && target.Protocol == llm.ProtocolOpenAIResponses {
+		if !hasProxyBakedEffortSuffix(mid) {
+			target.Variants = defaultModelVariants(pid, "@ai-sdk/openai", mid)
 		}
 	} else {
 		target.Variants = defaultModelVariants(pid, npm, mid)
@@ -152,7 +165,7 @@ func (s *Service) ResolveStreamTarget(providerID, modelID string) llm.StreamTarg
 			}
 		}
 		if variants, ok := model["variants"].(map[string]any); ok {
-			if !target.FallbackOpenAI || variantsContainThinkingMap(variants) {
+			if !(target.FallbackOpenAI && target.Protocol == llm.ProtocolAnthropic) || variantsContainThinkingMap(variants) {
 				target.Variants = variants
 			}
 		}
@@ -222,7 +235,7 @@ func (s *Service) OpenStream(ctx context.Context, req llm.StreamHTTPRequest) (*h
 		stallLimit = s.streamStallTimeout
 	}
 
-	doOpen := func(reqURL string, includeBearerWithQueryKey bool) (*http.Response, error) {
+	doOpen := func(reqURL string, includeBearerWithQueryKey, forceHTTP1 bool) (*http.Response, error) {
 		reqCtx, cancelReq := context.WithCancel(ctx)
 		stalled := &atomic.Bool{}
 		timer := time.AfterFunc(stallLimit, func() {
@@ -238,9 +251,13 @@ func (s *Service) OpenStream(ctx context.Context, req llm.StreamHTTPRequest) (*h
 		}
 		outReq.Header.Set("Accept", "text/event-stream")
 		outReq.Header.Set("Content-Type", "application/json")
-		if sid := strings.TrimSpace(req.SessionID); sid != "" && !isCodexChatGPTBackendURL(reqURL) {
-			outReq.Header.Set("x-session-affinity", sid)
-			outReq.Header.Set("X-Session-Id", sid)
+		if sid := strings.TrimSpace(req.SessionID); sid != "" {
+			if isCodexChatGPTBackendURL(reqURL) {
+				outReq.Header.Set("Session-Id", sid)
+			} else {
+				outReq.Header.Set("x-session-affinity", sid)
+				outReq.Header.Set("X-Session-Id", sid)
+			}
 		}
 
 		hasCustomAuth := false
@@ -289,22 +306,36 @@ func (s *Service) OpenStream(ctx context.Context, req llm.StreamHTTPRequest) (*h
 			transport = streamHTTPTransport
 		}
 		streamTransportMu.Unlock()
+		var onClose func()
+		if forceHTTP1 {
+			if baseHT, ok := transport.(*http.Transport); ok && baseHT != nil {
+				h1 := newHTTP1FallbackTransport(baseHT)
+				transport = h1
+				onClose = h1.CloseIdleConnections
+			}
+		}
 		client := &http.Client{Transport: transport}
 		resp, doErr := client.Do(outReq)
 		if doErr != nil {
 			timer.Stop()
 			cancelReq()
+			if onClose != nil {
+				onClose()
+			}
 			if stalled.Load() {
 				return nil, fmt.Errorf("model stream stalled after %s without response headers: %w", stallLimit, context.DeadlineExceeded)
 			}
 			return nil, doErr
 		}
-		resp.Body = newStallReadCloser(resp.Body, stallLimit, cancelReq, stalled, timer)
+		resp.Body = newStallReadCloser(resp.Body, stallLimit, cancelReq, stalled, timer, onClose)
 		return resp, nil
 	}
 
 	started := time.Now()
-	resp, err := doOpen(targetURL, false)
+	resp, err := doOpen(targetURL, false, req.ForceHTTP1)
+	if err != nil && !req.ForceHTTP1 && ctx.Err() == nil && llm.IsHTTP2ProtocolError(err) {
+		resp, err = doOpen(targetURL, false, true)
+	}
 	if err != nil {
 		if s.breaker != nil {
 			s.breaker.RecordFailure(req.Target.ProviderID, req.Target.ModelID, classifyCandidateFailure(0, err, nil), 0, time.Since(started).Milliseconds(), err.Error())
@@ -313,7 +344,7 @@ func (s *Service) OpenStream(ctx context.Context, req llm.StreamHTTPRequest) (*h
 	}
 	if proto == "google" && apiKey != "" && !isOfficialGoogleHost(targetURL) &&
 		(resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
-		if retryResp, retryErr := doOpen(appendGoogleQueryKey(targetURL, apiKey), shouldSendBearerOnGoogleRetry(apiKey)); retryErr == nil && retryResp != nil {
+		if retryResp, retryErr := doOpen(appendGoogleQueryKey(targetURL, apiKey), shouldSendBearerOnGoogleRetry(apiKey), req.ForceHTTP1); retryErr == nil && retryResp != nil {
 			_ = resp.Body.Close()
 			resp = retryResp
 		}
@@ -348,8 +379,13 @@ func (s *Service) OpenStream(ctx context.Context, req llm.StreamHTTPRequest) (*h
 			secrets...,
 		)
 		errText := redactSecretInText(extractAPIErrorMessage(resp.StatusCode, bodyBytes), apiKey)
-		if req.Target.FallbackOpenAI && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusNotImplemented) {
-			s.noAnthropicMessages.Store(anthropicMessagesKey(req.Target.ProviderID, baseURL), true)
+		if req.Target.FallbackOpenAI && isPromotedProtocolUnsupportedResponse(req.Target.Protocol, resp.StatusCode, errText) {
+			memoKey := anthropicMessagesKey(req.Target.ProviderID, baseURL)
+			if req.Target.Protocol == llm.ProtocolOpenAIResponses {
+				s.noOpenAIResponses.Store(memoKey, true)
+			} else {
+				s.noAnthropicMessages.Store(memoKey, true)
+			}
 			return nil, &llm.StreamHTTPError{
 				StatusCode: resp.StatusCode,
 				RetryAfter: retryAfter,
@@ -480,6 +516,85 @@ func (s *Service) shouldPromoteClaudeToAnthropicMessages(providerID, modelID, ba
 	}
 	if s != nil {
 		if _, blocked := s.noAnthropicMessages.Load(anthropicMessagesKey(providerID, baseURL)); blocked {
+			return false
+		}
+	}
+	return true
+}
+
+var openAIResponsesPromotableModelRe = regexp.MustCompile(`(?i)(?:^|[/:_-])(?:codex|gpt-(?:5|6|7)(?:$|[._:-])|o[34](?:$|[._:-]))`)
+
+func isOpenAIResponsesPromotableModel(modelID string) bool {
+	lower := strings.ToLower(strings.TrimSpace(modelID))
+	if lower == "" || strings.Contains(lower, "gpt-oss") || strings.Contains(lower, "oss-") {
+		return false
+	}
+	return openAIResponsesPromotableModelRe.MatchString(lower)
+}
+
+func isResponsesPromotionExcludedHost(rawURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return true
+	}
+	host := strings.ToLower(u.Hostname())
+	p := strings.TrimRight(strings.ToLower(u.Path), "/")
+	if strings.HasSuffix(p, "/chat/completions") || strings.HasSuffix(p, "/openai") || strings.Contains(p, "/openai/") {
+		return true
+	}
+	for _, suffix := range []string{
+		"openai.azure.com",
+		"openrouter.ai",
+		"siliconflow.cn",
+		"siliconflow.com",
+		"githubcopilot.com",
+		"inference.ai.azure.com",
+		"dashscope.aliyuncs.com",
+		"groq.com",
+		"together.xyz",
+		"fireworks.ai",
+		"deepseek.com",
+		"cerebras.ai",
+		"mistral.ai",
+		"x.ai",
+		"googleapis.com",
+		"anthropic.com",
+	} {
+		if host == suffix || strings.HasSuffix(host, "."+suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func isPromotedProtocolUnsupportedResponse(proto llm.StreamProtocol, statusCode int, errText string) bool {
+	if statusCode == http.StatusNotFound || statusCode == http.StatusMethodNotAllowed || statusCode == http.StatusNotImplemented {
+		return true
+	}
+	if proto != llm.ProtocolOpenAIResponses || (statusCode != http.StatusBadRequest && statusCode != http.StatusUnprocessableEntity) {
+		return false
+	}
+	lower := strings.ToLower(strings.TrimSpace(errText))
+	if !strings.Contains(lower, "responses") && !strings.Contains(lower, "endpoint") && !strings.Contains(lower, "path") && !strings.Contains(lower, "route") {
+		return false
+	}
+	return strings.Contains(lower, "unsupported") ||
+		strings.Contains(lower, "not supported") ||
+		strings.Contains(lower, "not implemented") ||
+		strings.Contains(lower, "not found") ||
+		strings.Contains(lower, "invalid url") ||
+		strings.Contains(lower, "unknown path")
+}
+
+func (s *Service) shouldPromoteOpenAIToResponses(providerID, modelID, baseURL string) bool {
+	if !isHTTPEndpoint(baseURL) || isResponsesPromotionExcludedHost(baseURL) {
+		return false
+	}
+	if !isOpenAIResponsesPromotableModel(modelID) {
+		return false
+	}
+	if s != nil {
+		if _, blocked := s.noOpenAIResponses.Load(anthropicMessagesKey(providerID, baseURL)); blocked {
 			return false
 		}
 	}
