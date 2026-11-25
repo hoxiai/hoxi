@@ -363,3 +363,60 @@ func TestMediaImageAutoFallbackOnUnsupportedModelAndNoDropInputImages(t *testing
 		t.Fatalf("expected missingCapability=image when all auto candidates are unsupported, got %+v", res2)
 	}
 }
+
+func TestMediaVideoInlineInputDataURLsAndValidation(t *testing.T) {
+	wsDir := t.TempDir()
+	t.Setenv("HOME", wsDir)
+	t.Setenv("HOXI_HOME", filepath.Join(wsDir, ".hoxi-home"))
+
+	g := &Gateway{
+		rootDir:   wsDir,
+		mux:       http.NewServeMux(),
+		providers: provider.NewService(0, "", wsDir, nil),
+	}
+	g.registerMediaRoutes()
+
+	tinyPNGB64 := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+	validDataURL := "data:image/png;base64," + tinyPNGB64
+
+	// Reject > 2 inline reference images
+	tooMany, _ := json.Marshal(map[string]any{
+		"prompt":        "animate product",
+		"inputDataUrls": []string{validDataURL, validDataURL, validDataURL},
+	})
+	recMany := httptest.NewRecorder()
+	g.mux.ServeHTTP(recMany, httptest.NewRequest(http.MethodPost, "/api/hoxi/media/video", bytes.NewReader(tooMany)))
+	if recMany.Code != http.StatusBadRequest {
+		t.Fatalf("expected HTTP 400 for >2 video inputDataUrls, got %d (%s)", recMany.Code, recMany.Body.String())
+	}
+
+	// Reject non-image data URL
+	nonImg, _ := json.Marshal(map[string]any{
+		"prompt":        "animate product",
+		"inputDataUrls": []string{"data:text/plain;base64,SGVsbG8="},
+	})
+	recNonImg := httptest.NewRecorder()
+	g.mux.ServeHTTP(recNonImg, httptest.NewRequest(http.MethodPost, "/api/hoxi/media/video", bytes.NewReader(nonImg)))
+	if recNonImg.Code != http.StatusBadRequest {
+		t.Fatalf("expected HTTP 400 for non-image video inputDataUrls, got %d (%s)", recNonImg.Code, recNonImg.Body.String())
+	}
+
+	// Valid inline image + returnDataUrl passes decoding and reports missingCapability="video" when unconfigured
+	validBody, _ := json.Marshal(map[string]any{
+		"prompt":          "slow studio turntable pan",
+		"aspectRatio":     "16:9",
+		"durationSeconds": 5,
+		"inputDataUrls":   []string{validDataURL},
+		"returnDataUrl":   true,
+	})
+	recOk := httptest.NewRecorder()
+	g.mux.ServeHTTP(recOk, httptest.NewRequest(http.MethodPost, "/api/hoxi/media/video", bytes.NewReader(validBody)))
+	if recOk.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 structured response for valid video request, got %d (%s)", recOk.Code, recOk.Body.String())
+	}
+	var out map[string]any
+	_ = json.Unmarshal(recOk.Body.Bytes(), &out)
+	if out["ok"] != false || out["missingCapability"] != "video" {
+		t.Fatalf("expected missingCapability=video when unconfigured, got %+v", out)
+	}
+}

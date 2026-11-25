@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,7 +26,9 @@ type mediaVideoRequest struct {
 	SessionID       string   `json:"sessionID,omitempty"`
 	Directory       string   `json:"directory,omitempty"`
 	InputPaths      []string `json:"inputPaths,omitempty"`
+	InputDataURLs   []string `json:"inputDataUrls,omitempty"`
 	OutputPath      string   `json:"outputPath,omitempty"`
+	ReturnDataURL   bool     `json:"returnDataUrl,omitempty"`
 }
 
 func videoExtForMime(mime string) string {
@@ -57,11 +60,11 @@ func (g *Gateway) handleMediaVideo(w http.ResponseWriter, r *http.Request) {
 		if !decodeAppJSON(w, r, &req, 4<<20) {
 			return
 		}
-	} else if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&req); err != nil {
+	} else if err := json.NewDecoder(io.LimitReader(r.Body, 36<<20)).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON payload")
 		return
 	}
-	if isAppMediaRequest(r) && (req.Directory != "" || r.URL.Query().Has("directory") || req.OutputPath != "" || req.SessionID != "" || len(req.InputPaths) != 0) {
+	if isAppMediaRequest(r) && (req.Directory != "" || r.URL.Query().Has("directory") || req.OutputPath != "" || req.SessionID != "" || len(req.InputPaths) != 0 || len(req.InputDataURLs) != 0 || req.ReturnDataURL) {
 		writeAppError(w, http.StatusForbidden, "FILES_FORBIDDEN", "application media endpoints do not access local files or desktop sessions")
 		return
 	}
@@ -110,6 +113,32 @@ func (g *Gateway) handleMediaVideo(w http.ResponseWriter, r *http.Request) {
 		inputImages = append(inputImages, llm.ImageInput{
 			Mime: attachment.DetectFileMimeType(safeIn, raw),
 			Data: raw,
+		})
+	}
+	if len(req.InputDataURLs) > 2 {
+		writeJSONError(w, http.StatusBadRequest, "at most 2 inline input images are allowed for video")
+		return
+	}
+	for _, rawDataURL := range req.InputDataURLs {
+		if strings.TrimSpace(rawDataURL) == "" {
+			continue
+		}
+		parsedMime, decoded, decErr := attachment.DecodeDataURL(rawDataURL, "")
+		if decErr != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid inputDataUrls item: "+decErr.Error())
+			return
+		}
+		if !strings.HasPrefix(strings.ToLower(parsedMime), "image/") {
+			writeJSONError(w, http.StatusBadRequest, "inputDataUrls must contain image/* data URLs")
+			return
+		}
+		if len(decoded) > attachment.MaxAttachmentBytes {
+			writeJSONError(w, http.StatusBadRequest, "inline input image exceeds 15 MB limit")
+			return
+		}
+		inputImages = append(inputImages, llm.ImageInput{
+			Mime: parsedMime,
+			Data: decoded,
 		})
 	}
 
@@ -182,6 +211,13 @@ func (g *Gateway) handleMediaVideo(w http.ResponseWriter, r *http.Request) {
 		item := mediaImageSavedItem{
 			Filename: fname,
 			Mime:     vid.Mime,
+		}
+		if req.ReturnDataURL && len(vid.Data) <= 24<<20 {
+			itemMime := strings.TrimSpace(vid.Mime)
+			if itemMime == "" {
+				itemMime = "video/mp4"
+			}
+			item.DataURL = "data:" + itemMime + ";base64," + base64.StdEncoding.EncodeToString(vid.Data)
 		}
 		if attStore != nil {
 			if meta, saveErr := attStore.Save(attachment.SaveRequest{
