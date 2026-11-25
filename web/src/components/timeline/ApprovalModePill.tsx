@@ -159,13 +159,13 @@ export default function ApprovalModePill(props: {
   };
 
   return (
-    <div class="relative inline-block select-none">
+    <div class="relative inline-block shrink-0 select-none">
       <button
         ref={buttonRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
-        class={`inline-flex items-center justify-center rounded-lg transition-colors cursor-pointer ${
-          isDefaultAuto() ? "h-7 w-7" : "gap-1 px-2 py-1 text-[12px] font-medium"
+        class={`inline-flex h-7 shrink-0 items-center justify-center whitespace-nowrap rounded-lg transition-colors cursor-pointer ${
+          isDefaultAuto() ? "w-7" : "gap-1 px-2 text-[12px] font-medium leading-none"
         } ${
           open()
             ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
@@ -181,7 +181,7 @@ export default function ApprovalModePill(props: {
         aria-label={pillTitle()}
       >
         <span
-          class={
+          class={`inline-flex shrink-0 ${
             currentMode() === "trusted" || currentMode() === "unattended"
               ? "text-[var(--danger-text)]"
               : currentMode() === "manual"
@@ -189,20 +189,23 @@ export default function ApprovalModePill(props: {
               : currentMode() === "auto"
                 ? "text-[var(--ok-text)]"
                 : "text-[var(--accent-primary)]"
-          }
+          }`}
         >
           {renderModeIcon(currentMode(), isDefaultAuto() ? 15 : 12.5)}
         </span>
         <Show when={!isDefaultAuto()}>
           <span>{currentShortLabel()}</span>
           <Show when={unattendedGap()}>
-            <span class="rounded bg-[var(--warn-surface)] border border-[var(--warn-border)] px-1 text-[10.5px] font-medium leading-4 text-[var(--warn-text)]">
+            <span
+              data-composer-wide-pill=""
+              class="shrink-0 rounded bg-[var(--warn-surface)] border border-[var(--warn-border)] px-1 text-[10.5px] font-medium leading-4 text-[var(--warn-text)]"
+            >
               {t("approval.unattendedInactive")}
             </span>
           </Show>
           <ChevronDown
             size={10.5}
-            class={`opacity-75 transition-transform duration-200 ${
+            class={`shrink-0 opacity-75 transition-transform duration-200 ${
               open() ? "rotate-180" : ""
             }`}
           />

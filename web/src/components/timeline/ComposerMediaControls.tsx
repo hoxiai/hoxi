@@ -36,7 +36,7 @@ export function ComposerImageOptionsBar(props: { sessionID: string | null }) {
 
   return (
     <Show when={activeImageModel() || activeVideoModel()}>
-      <div class="inline-flex items-center gap-1.5 flex-wrap">
+      <div class="mt-2 inline-flex items-center gap-1.5 flex-wrap">
         <div
           class="inline-flex items-center gap-0.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5"
           title={t("timeline.imageAspectRatioLabel")}
@@ -211,7 +211,7 @@ export function ComposerVoiceInputButton(props: {
             ? t("timeline.voiceInputStopTooltip")
             : t("timeline.voiceInputTooltip")
         }
-        class={`inline-flex h-7 items-center justify-center gap-1 rounded-full px-2 text-[11px] transition-colors cursor-pointer disabled:opacity-45 ${
+        class={`inline-flex h-7 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-full px-2 text-[11px] transition-colors cursor-pointer disabled:opacity-45 ${
           recording()
             ? "bg-[var(--danger-surface)] text-[var(--danger-text)] ring-1 ring-[var(--danger-border)]"
             : "bg-[var(--bg-inset)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"

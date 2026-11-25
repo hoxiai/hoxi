@@ -151,14 +151,14 @@ export default function ContextProgressPill() {
   return (
     <Show when={stats()}>
       {(s) => (
-        <div ref={containerRef} class="relative inline-flex items-center">
+        <div ref={containerRef} class="relative inline-flex shrink-0 items-center">
           <button
             type="button"
             onClick={() => {
               setOpen((v) => !v);
               setNotice("");
             }}
-            class="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[12px] font-mono tabular-nums text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
+            class="inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 text-[12px] leading-none font-mono tabular-nums text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
             title={`${t("timeline.contextTooltip")} · ${formatCompactNumber(s().used)} / ${formatCompactNumber(s().limit)} (${s().percent}%)`}
             aria-haspopup="dialog"
             aria-expanded={open()}

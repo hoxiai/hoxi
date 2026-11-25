@@ -465,14 +465,14 @@ export default function ModelSelector(props: { openRequest?: number }) {
   });
 
   return (
-    <div ref={containerRef} class="relative">
+    <div ref={containerRef} class="relative min-w-0 max-w-[260px]">
       <button
         ref={triggerBtnRef}
         type="button"
         onClick={toggleOpen}
         onMouseEnter={showHover}
         onMouseLeave={hideHover}
-        class={`hoxi-press inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] font-medium cursor-pointer max-w-[260px] ${
+        class={`hoxi-press inline-flex max-w-full min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-lg px-2 py-1 text-[12px] font-medium cursor-pointer ${
           open()
             ? "bg-[var(--bg-hover)] text-[var(--text-primary)]"
             : activeModelInfo()
@@ -494,7 +494,7 @@ export default function ModelSelector(props: { openRequest?: number }) {
         >
           <Layers size={12} class="shrink-0 text-[var(--accent-primary)]" />
         </Show>
-        <span class="truncate">
+        <span class="min-w-0 truncate">
           {activeModelInfo()?.modelName || t("models.selectModel")}
         </span>
         <Show when={activeModelInfo()?.free}>

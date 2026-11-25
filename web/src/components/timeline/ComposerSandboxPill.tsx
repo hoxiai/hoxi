@@ -102,7 +102,7 @@ export function ComposerSandboxPill(props: {
   });
 
   return (
-    <div class="relative inline-block select-none">
+    <div class="relative inline-block shrink-0 select-none">
       <button
         ref={buttonRef}
         type="button"
@@ -110,7 +110,7 @@ export function ComposerSandboxPill(props: {
           setErrorMsg(null);
           setOpen((v) => !v);
         }}
-        class={`inline-flex items-center gap-1.5 px-2 py-1 text-[12px] font-medium rounded-lg transition-colors cursor-pointer ${
+        class={`inline-flex items-center gap-1.5 whitespace-nowrap px-2 py-1 text-[12px] font-medium rounded-lg transition-colors cursor-pointer ${
           open()
             ? "bg-[var(--bg-hover)] text-[var(--text-primary)]"
             : props.mode === "worktree"
@@ -173,7 +173,7 @@ export function ComposerSandboxPill(props: {
 
         <ChevronDown
           size={11}
-          class={`text-[var(--text-muted)] transition-transform duration-200 ${
+          class={`shrink-0 text-[var(--text-muted)] transition-transform duration-200 ${
             open() ? "rotate-180" : ""
           }`}
         />

@@ -118,12 +118,12 @@ export default function ModeSwitcher() {
   };
 
   return (
-    <div class="relative inline-block">
+    <div class="relative inline-block shrink-0">
       <button
         ref={buttonRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
-        class={`inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] font-medium transition-colors cursor-pointer select-none ${
+        class={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg px-2 py-1 text-[12px] font-medium transition-colors cursor-pointer select-none ${
           open()
             ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
             : currentMode() === "plan"
@@ -132,7 +132,7 @@ export default function ModeSwitcher() {
         }`}
         title={t("timeline.modeTooltip", { mode: currentMode() })}
       >
-        <span class="text-[var(--accent-primary)]">
+        <span class="inline-flex shrink-0 text-[var(--accent-primary)]">
           {modeIcon(currentMode())}
         </span>
         <span>
@@ -140,7 +140,7 @@ export default function ModeSwitcher() {
         </span>
         <ChevronDown
           size={11}
-          class={`text-[var(--text-muted)] transition-transform duration-200 ${
+          class={`shrink-0 text-[var(--text-muted)] transition-transform duration-200 ${
             open() ? "rotate-180" : ""
           }`}
         />

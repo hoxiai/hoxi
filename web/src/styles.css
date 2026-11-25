@@ -422,13 +422,38 @@ body {
 }
 
 /* Keep narrow toolbars on two rows when draft-only send actions disappear. */
-@container (min-width: 56rem) {
+@container (min-width: 716px) {
+  .composer-toolbar:not(:has([data-composer-wide-pill])) {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .composer-toolbar:not(:has([data-composer-wide-pill])) > .composer-toolbar-left {
+    flex: 1 1 0%;
+    flex-wrap: nowrap;
+  }
+
+  .composer-toolbar:not(:has([data-composer-wide-pill])) > .composer-toolbar-right {
+    flex-shrink: 0;
+    flex-wrap: nowrap;
+    align-self: auto;
+  }
+}
+
+@container (min-width: 772px) {
   .composer-toolbar {
     flex-direction: row;
     align-items: center;
   }
 
-  .composer-toolbar > :last-child {
+  .composer-toolbar > .composer-toolbar-left {
+    flex: 1 1 0%;
+    flex-wrap: nowrap;
+  }
+
+  .composer-toolbar > .composer-toolbar-right {
+    flex-shrink: 0;
+    flex-wrap: nowrap;
     align-self: auto;
   }
 }

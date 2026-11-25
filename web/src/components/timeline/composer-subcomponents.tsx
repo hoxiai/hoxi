@@ -45,13 +45,13 @@ export function ComposerSendButtons(props: {
             disabled={props.spawningSubtask || props.sending}
             onClick={props.onSpawnSubtask}
             title={t("timeline.spawnSubtaskAsideTooltip")}
-            class="inline-flex h-7 items-center justify-center gap-1 rounded-full border border-[var(--accent-border)] bg-[var(--accent-surface)]/70 px-2.5 text-[11px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] disabled:opacity-50 transition-colors cursor-pointer"
+            class="inline-flex h-7 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-full border border-[var(--accent-border)] bg-[var(--accent-surface)]/70 px-2.5 text-[11px] font-medium leading-none text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] disabled:opacity-50 transition-colors cursor-pointer"
           >
             <Show
               when={!props.spawningSubtask}
-              fallback={<LoaderCircle size={12} class="animate-spin" />}
+              fallback={<LoaderCircle size={12} class="shrink-0 animate-spin" />}
             >
-              <Workflow size={12} />
+              <Workflow size={12} class="shrink-0" />
             </Show>
             <span>{t("timeline.spawnSubtaskAside")}</span>
           </button>
@@ -60,23 +60,23 @@ export function ComposerSendButtons(props: {
         <Show when={props.canSend}>
           <button
             type="button"
-            class="inline-flex h-7 items-center justify-center gap-1 rounded-full bg-[var(--accent-primary)] px-2.5 text-[var(--accent-foreground)] shadow-xs hover:opacity-90 transition-all cursor-pointer"
+            class="inline-flex h-7 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-full bg-[var(--accent-primary)] px-2.5 text-[var(--accent-foreground)] shadow-xs hover:opacity-90 transition-all cursor-pointer"
             onClick={props.onSend}
             title={t("timeline.queueSend")}
           >
             <Show
               when={!props.sending}
-              fallback={<LoaderCircle size={14} class="animate-spin" />}
+              fallback={<LoaderCircle size={14} class="shrink-0 animate-spin" />}
             >
-              <Clock size={12.5} strokeWidth={2.2} />
-              <ArrowUp size={13.5} strokeWidth={2.5} />
+              <Clock size={12.5} strokeWidth={2.2} class="shrink-0" />
+              <ArrowUp size={13.5} strokeWidth={2.5} class="shrink-0" />
             </Show>
           </button>
         </Show>
 
         <button
           type="button"
-          class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[var(--bg-inset)] text-[var(--text-secondary)] hover:bg-[var(--danger-surface)] hover:text-[var(--danger-text)] disabled:opacity-50 transition-colors cursor-pointer"
+          class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--bg-inset)] text-[var(--text-secondary)] hover:bg-[var(--danger-surface)] hover:text-[var(--danger-text)] disabled:opacity-50 transition-colors cursor-pointer"
           disabled={props.stopping}
           onClick={props.onStop}
           title={t("timeline.stopTooltip")}
@@ -93,7 +93,7 @@ export function ComposerSendButtons(props: {
       <Show when={!props.busy}>
         <button
           type="button"
-          class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[var(--accent-primary)] text-[var(--accent-foreground)] shadow-xs hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer"
+          class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--accent-primary)] text-[var(--accent-foreground)] shadow-xs hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer"
           disabled={!props.canSend}
           onClick={props.onSend}
           title={`${t("timeline.send")} (${
@@ -149,79 +149,81 @@ export function ComposerBottomToolbar(props: {
   onMediaNotice?: (message: string) => void;
 }) {
   return (
-    <div class="composer-toolbar mt-2 flex flex-col items-stretch justify-between gap-2">
-      <div class="flex items-center gap-1 flex-wrap">
-        <ComposerToolsPopover
-          workspaceReady={props.workspaceReady}
-          skillActive={props.skillActive}
-          runtime={props.runtime}
-          busy={props.busy}
-          canEnhance={props.canEnhance}
-          enhancing={props.enhancing}
-          onAttach={props.onAttach}
-          onOpenSkills={props.onOpenSkills}
-          onOpenCodeSearch={props.onOpenCodeSearch}
-          onOpenConvoy={props.onOpenConvoy}
-          onToggleEngine={props.onToggleEngine}
-          onEnhance={props.onEnhance}
-        />
+    <>
+      <ComposerImageOptionsBar sessionID={props.sessionID} />
+      <div class="composer-toolbar mt-2 flex flex-col items-stretch justify-between gap-2">
+        <div class="composer-toolbar-left flex min-w-0 items-center gap-1 flex-wrap">
+          <ComposerToolsPopover
+            workspaceReady={props.workspaceReady}
+            skillActive={props.skillActive}
+            runtime={props.runtime}
+            busy={props.busy}
+            canEnhance={props.canEnhance}
+            enhancing={props.enhancing}
+            onAttach={props.onAttach}
+            onOpenSkills={props.onOpenSkills}
+            onOpenCodeSearch={props.onOpenCodeSearch}
+            onOpenConvoy={props.onOpenConvoy}
+            onToggleEngine={props.onToggleEngine}
+            onEnhance={props.onEnhance}
+          />
 
-        <ModeSwitcher />
-        <ModelSelector openRequest={props.modelPickerRequest} />
-        <ComposerImageOptionsBar sessionID={props.sessionID} />
+          <ModeSwitcher />
+          <ModelSelector openRequest={props.modelPickerRequest} />
 
-        <Show when={!(isWorkSurface() && surfaceExtension.hideCodeComposerControls)}>
-          <Show
-            when={props.hasRootDir}
-            fallback={
-              <button
-                type="button"
-                onClick={props.onChooseFolder}
-                disabled={props.choosingFolder}
-                title={t("timeline.selectFolderHint")}
-                class="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer"
-              >
-                <FolderOpen size={14} />
-                {t("timeline.selectFolder")}
-              </button>
-            }
-          >
-            <ComposerSandboxPill
-              mode={props.sandboxMode}
-              switching={props.switchingSandbox}
-              busy={props.busy}
-              sessionID={props.sessionID}
-              directory={props.directory}
-              forking={props.forking}
-              onToggle={(m) => props.onSwitchSandbox(m)}
-              onFork={props.onFork}
-            />
+          <Show when={!(isWorkSurface() && surfaceExtension.hideCodeComposerControls)}>
+            <Show
+              when={props.hasRootDir}
+              fallback={
+                <button
+                  type="button"
+                  onClick={props.onChooseFolder}
+                  disabled={props.choosingFolder}
+                  title={t("timeline.selectFolderHint")}
+                  class="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2 py-1 text-[12px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer"
+                >
+                  <FolderOpen size={14} class="shrink-0" />
+                  {t("timeline.selectFolder")}
+                </button>
+              }
+            >
+              <ComposerSandboxPill
+                mode={props.sandboxMode}
+                switching={props.switchingSandbox}
+                busy={props.busy}
+                sessionID={props.sessionID}
+                directory={props.directory}
+                forking={props.forking}
+                onToggle={(m) => props.onSwitchSandbox(m)}
+                onFork={props.onFork}
+              />
+            </Show>
           </Show>
-        </Show>
-      </div>
+        </div>
 
-      <div class="flex items-center gap-1.5 self-end">
-        <ContextProgressPill />
-        <ApprovalModePill runtime={props.runtime} sandboxMode={props.sandboxMode} />
-        <ComposerVoiceInputButton
-          disabled={props.sending}
-          onInsertText={props.onInsertDictation}
-          onNotice={props.onMediaNotice}
-        />
+        <div class="composer-toolbar-right flex flex-wrap items-center justify-end gap-1.5 self-end">
+          <ContextProgressPill />
+          <ApprovalModePill runtime={props.runtime} sandboxMode={props.sandboxMode} />
+          <ComposerVoiceInputButton
+            disabled={props.sending}
+            onInsertText={props.onInsertDictation}
+            onNotice={props.onMediaNotice}
+          />
 
-        <ComposerSendButtons
-          busy={props.busy}
-          canSend={props.canSend}
-          canSpawnSubtask={props.canSpawnSubtask}
-          sending={props.sending}
-          spawningSubtask={props.spawningSubtask}
-          stopping={props.stopping}
-          sendShortcut={props.sendShortcut}
-          onSend={props.onSend}
-          onSpawnSubtask={props.onSpawnSubtask}
-          onStop={props.onStop}
-        />
+          <ComposerSendButtons
+            busy={props.busy}
+            canSend={props.canSend}
+            canSpawnSubtask={props.canSpawnSubtask}
+            sending={props.sending}
+            spawningSubtask={props.spawningSubtask}
+            stopping={props.stopping}
+            sendShortcut={props.sendShortcut}
+            onSend={props.onSend}
+            onSpawnSubtask={props.onSpawnSubtask}
+            onStop={props.onStop}
+          />
+        </div>
       </div>
-    </div>
+    </>
   );
 }

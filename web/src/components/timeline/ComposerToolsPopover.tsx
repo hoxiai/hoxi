@@ -62,13 +62,13 @@ export default function ComposerToolsPopover(props: {
     : t("timeline.runtimeNativeShort");
 
   return (
-    <div class="relative inline-block">
+    <div class="relative inline-block shrink-0">
       <button
         ref={buttonRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open()}
-        class={`inline-flex items-center justify-center rounded-lg p-1.5 transition-colors cursor-pointer ${
+        class={`inline-flex shrink-0 items-center justify-center rounded-lg p-1.5 transition-colors cursor-pointer ${
           open()
             ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
             : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
