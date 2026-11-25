@@ -21,7 +21,11 @@ var (
 	providerTransport = &http.Transport{
 		Proxy:           http.ProxyFromEnvironment,
 		DialContext:     (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 15 * time.Second}).DialContext,
-		IdleConnTimeout: 90 * time.Second,
+		IdleConnTimeout: 30 * time.Second,
+		HTTP2: &http.HTTP2Config{
+			SendPingTimeout: 15 * time.Second,
+			PingTimeout:     10 * time.Second,
+		},
 	}
 	titleTransport = &http.Transport{
 		Proxy:           http.ProxyFromEnvironment,
@@ -41,6 +45,7 @@ func newHTTP1FallbackTransport(base *http.Transport) *http.Transport {
 	var protos http.Protocols
 	protos.SetHTTP1(true)
 	cloned.Protocols = &protos
+	cloned.HTTP2 = nil
 	if cloned.TLSClientConfig != nil {
 		cloned.TLSClientConfig = cloned.TLSClientConfig.Clone()
 		cloned.TLSClientConfig.NextProtos = []string{"http/1.1"}

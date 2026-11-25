@@ -52,7 +52,7 @@ type stallReadCloser struct {
 }
 
 func newStallReadCloser(body io.ReadCloser, limit time.Duration, cancel context.CancelFunc, stalled *atomic.Bool, timer *time.Timer, onClose func()) io.ReadCloser {
-	if limit <= 0 {
+	if limit <= 0 && onClose == nil {
 		return body
 	}
 	return &stallReadCloser{
@@ -67,10 +67,10 @@ func newStallReadCloser(body io.ReadCloser, limit time.Duration, cancel context.
 
 func (r *stallReadCloser) Read(p []byte) (int, error) {
 	n, err := r.body.Read(p)
-	if r.stalled.Load() {
+	if r.stalled != nil && r.stalled.Load() {
 		return n, fmt.Errorf("model stream stalled after %s without data: %w", r.limit, context.DeadlineExceeded)
 	}
-	if n > 0 {
+	if n > 0 && r.timer != nil && r.limit > 0 {
 		r.timer.Reset(r.limit)
 	}
 	return n, err
@@ -79,8 +79,12 @@ func (r *stallReadCloser) Read(p []byte) (int, error) {
 func (r *stallReadCloser) Close() error {
 	var closeErr error
 	r.once.Do(func() {
-		r.timer.Stop()
-		r.cancel()
+		if r.timer != nil {
+			r.timer.Stop()
+		}
+		if r.cancel != nil {
+			r.cancel()
+		}
 		closeErr = r.body.Close()
 		if r.onClose != nil {
 			r.onClose()
@@ -332,8 +336,10 @@ func (s *Service) OpenStream(ctx context.Context, req llm.StreamHTTPRequest) (*h
 	}
 
 	started := time.Now()
-	resp, err := doOpen(targetURL, false, req.ForceHTTP1)
-	if err != nil && !req.ForceHTTP1 && ctx.Err() == nil && llm.IsHTTP2ProtocolError(err) {
+	usedHTTP1 := req.ForceHTTP1
+	resp, err := doOpen(targetURL, false, usedHTTP1)
+	if err != nil && !usedHTTP1 && ctx.Err() == nil && llm.IsHTTP2ProtocolError(err) {
+		usedHTTP1 = true
 		resp, err = doOpen(targetURL, false, true)
 	}
 	if err != nil {
@@ -344,7 +350,7 @@ func (s *Service) OpenStream(ctx context.Context, req llm.StreamHTTPRequest) (*h
 	}
 	if proto == "google" && apiKey != "" && !isOfficialGoogleHost(targetURL) &&
 		(resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
-		if retryResp, retryErr := doOpen(appendGoogleQueryKey(targetURL, apiKey), shouldSendBearerOnGoogleRetry(apiKey), req.ForceHTTP1); retryErr == nil && retryResp != nil {
+		if retryResp, retryErr := doOpen(appendGoogleQueryKey(targetURL, apiKey), shouldSendBearerOnGoogleRetry(apiKey), usedHTTP1); retryErr == nil && retryResp != nil {
 			_ = resp.Body.Close()
 			resp = retryResp
 		}

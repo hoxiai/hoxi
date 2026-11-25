@@ -13,6 +13,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/llm"
 )
 
 const (
@@ -32,7 +34,7 @@ func (t *bashTool) Parameters() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"command":           map[string]any{"type": "string", "description": "Shell command to execute (required when starting a foreground or background command)"},
-			"timeoutMs":         map[string]any{"type": "integer", "description": "Timeout in milliseconds for foreground commands (default 120000, max 600000)"},
+			"timeoutMs":         map[string]any{"type": "integer", "description": "Timeout in milliseconds before a running foreground command is promoted to background or stopped if background slots are full (default 120000, max 600000)"},
 			"run_in_background": map[string]any{"type": "boolean", "description": "Set true ONLY for long-lived dev servers or watchers so the call returns a procId immediately while keeping the server alive across steps/turns"},
 			"action":            map[string]any{"type": "string", "enum": []string{"run", "output", "stop", "list"}, "description": "Background lifecycle action: 'output' reads unread logs for procId, 'stop' terminates procId, 'list' lists background commands in this session"},
 			"procId":            map[string]any{"type": "string", "description": "Process ID or foreground log ID returned by bash"},
@@ -140,7 +142,7 @@ func (t *bashTool) Execute(ctx context.Context, tc ToolContext, input json.RawMe
 		}, nil
 	}
 	timeout := resolveBashTimeout(args.TimeoutMs)
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	runCtx, cancel := context.WithTimeoutCause(ctx, timeout, llm.ErrForegroundCommandTimeout)
 	defer cancel()
 
 	var capture io.Writer
@@ -159,7 +161,7 @@ func (t *bashTool) Execute(ctx context.Context, tc ToolContext, input json.RawMe
 		out, code, err := tc.StreamRunCommand(runCtx, tc.WorktreeDir, cmdStr, capture, onLive)
 		var promotedErr *BackgroundPromotedError
 		if errors.As(err, &promotedErr) && promotedErr != nil {
-			return promotedToolOutput(cmdStr, promotedErr.Status), nil
+			return promotedToolOutputWithReason(cmdStr, promotedErr.Status, promotedErr.Reason), nil
 		}
 		if err != nil || code != 0 {
 			return ToolOutput{
@@ -174,7 +176,7 @@ func (t *bashTool) Execute(ctx context.Context, tc ToolContext, input json.RawMe
 		out, code, err := tc.RunCommand(runCtx, tc.WorktreeDir, cmdStr)
 		var promotedErr *BackgroundPromotedError
 		if errors.As(err, &promotedErr) && promotedErr != nil {
-			return promotedToolOutput(cmdStr, promotedErr.Status), nil
+			return promotedToolOutputWithReason(cmdStr, promotedErr.Status, promotedErr.Reason), nil
 		}
 		if err != nil || code != 0 {
 			return ToolOutput{

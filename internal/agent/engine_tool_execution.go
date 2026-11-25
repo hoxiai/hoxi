@@ -3,11 +3,76 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 
 	"github.com/hoxiai/hoxi/internal/llm"
 )
+
+// disambiguateToolCallIDs ensures every tool call emitted in the current step
+// has a session-unique ID (never colliding with prior history or an earlier
+// call in the same parallel batch). Some OpenAI-compatible gateways and open
+// models reuse call IDs like "call_0" across steps, which otherwise triggers
+// upstream 400s or mis-associates historical tool results on replay.
+func disambiguateToolCallIDs(history []Message, asstBlocks []ContentBlock, calls []ToolCall) ([]ContentBlock, []ToolCall) {
+	if len(calls) == 0 {
+		return asstBlocks, calls
+	}
+	used := make(map[string]bool, len(calls)+16)
+	for _, m := range history {
+		for _, b := range m.Content {
+			switch b.Type {
+			case ContentToolUse:
+				if b.ID != "" {
+					used[b.ID] = true
+				}
+			case ContentToolResult:
+				if b.ToolUseID != "" {
+					used[b.ToolUseID] = true
+				}
+			}
+		}
+	}
+	var outCalls []ToolCall
+	var outBlocks []ContentBlock
+	toolBlockPositions := make([]int, 0, len(calls))
+	for bi, b := range asstBlocks {
+		if b.Type == ContentToolUse {
+			toolBlockPositions = append(toolBlockPositions, bi)
+		}
+	}
+	for i, c := range calls {
+		id := c.ID
+		if !used[id] {
+			if id != "" {
+				used[id] = true
+			}
+			continue
+		}
+		if outCalls == nil {
+			outCalls = append([]ToolCall(nil), calls...)
+			outBlocks = append([]ContentBlock(nil), asstBlocks...)
+		}
+		nextID := ""
+		for suffix := 2; ; suffix++ {
+			cand := fmt.Sprintf("%s__%d", id, suffix)
+			if !used[cand] {
+				nextID = cand
+				break
+			}
+		}
+		used[nextID] = true
+		outCalls[i].ID = nextID
+		if i < len(toolBlockPositions) {
+			outBlocks[toolBlockPositions[i]].ID = nextID
+		}
+	}
+	if outCalls == nil {
+		return asstBlocks, calls
+	}
+	return outBlocks, outCalls
+}
 
 func (e *Engine) executeToolCalls(
 	ctx context.Context,

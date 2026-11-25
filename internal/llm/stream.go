@@ -2,9 +2,16 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 )
+
+// ErrForegroundCommandTimeout is attached via context.WithTimeoutCause when a
+// foreground bash tool reaches its configured timeoutMs (distinct from user
+// turn cancellation or parent context deadlines) so runners can promote the
+// still-running command to background without killing active builds/tests.
+var ErrForegroundCommandTimeout = errors.New("foreground command timeout")
 
 // StreamHTTPError carries an upstream non-2xx HTTP status code, parsed
 // Retry-After hint, redacted error message, and sanitized upstream diagnostic

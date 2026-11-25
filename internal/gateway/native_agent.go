@@ -179,6 +179,7 @@ func wrapNativeRunnerError(err error) error {
 	if errors.As(err, &promErr) && promErr != nil {
 		return &agent.BackgroundPromotedError{
 			Status: mapNativeBgStatus(promErr.Proc),
+			Reason: promErr.Reason,
 		}
 	}
 	return err

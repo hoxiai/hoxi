@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/llm"
 	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
@@ -41,10 +42,19 @@ func currentSteerPromoteGrace() time.Duration {
 }
 
 func formatPromotedBackgroundReport(st BackgroundProcStatus) string {
+	return formatPromotedBackgroundReportWithReason(st, "")
+}
+
+func formatPromotedBackgroundReportWithReason(st BackgroundProcStatus, reason string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "[command promoted to background] procId=%s status=running (pid %d) command=%q\n", st.ProcID, st.PID, st.Command)
-	b.WriteString("A new user steering message arrived while this foreground command was still running, so it was moved to the background without terminating it.\n")
-	b.WriteString("Address the user's new steering instructions first; call bash with action=\"output\" and procId=\"" + st.ProcID + "\" to check progress/logs, or action=\"stop\" to cancel it before making conflicting edits.")
+	if reason == "timeout" {
+		b.WriteString("This foreground command reached its timeout while still running, so it was moved to the background without terminating it.\n")
+		b.WriteString("Call bash with action=\"output\" and procId=\"" + st.ProcID + "\" (optionally with waitMs) to check progress/logs, or action=\"stop\" to cancel it before making conflicting edits.")
+	} else {
+		b.WriteString("A new user steering message arrived while this foreground command was still running, so it was moved to the background without terminating it.\n")
+		b.WriteString("Address the user's new steering instructions first; call bash with action=\"output\" and procId=\"" + st.ProcID + "\" to check progress/logs, or action=\"stop\" to cancel it before making conflicting edits.")
+	}
 	trimmed := strings.TrimRight(stripTerminalControlNoise(st.Output), "\n")
 	if trimmed != "" {
 		b.WriteString("\n\n--- Output before background promotion ---\n")
@@ -54,15 +64,23 @@ func formatPromotedBackgroundReport(st BackgroundProcStatus) string {
 }
 
 func promotedToolOutput(cmdStr string, st BackgroundProcStatus) ToolOutput {
+	return promotedToolOutputWithReason(cmdStr, st, "")
+}
+
+func promotedToolOutputWithReason(cmdStr string, st BackgroundProcStatus, reason string) ToolOutput {
+	meta := map[string]any{
+		"procId":   st.ProcID,
+		"promoted": true,
+		"running":  true,
+		"pid":      st.PID,
+	}
+	if reason != "" {
+		meta["reason"] = reason
+	}
 	return ToolOutput{
-		Title:  fmt.Sprintf("%s [%s]", cmdStr, st.ProcID),
-		Output: formatPromotedBackgroundReport(st),
-		Metadata: map[string]any{
-			"procId":   st.ProcID,
-			"promoted": true,
-			"running":  true,
-			"pid":      st.PID,
-		},
+		Title:    fmt.Sprintf("%s [%s]", cmdStr, st.ProcID),
+		Output:   formatPromotedBackgroundReportWithReason(st, reason),
+		Metadata: meta,
 	}
 }
 
@@ -301,6 +319,11 @@ func runDirectForegroundBash(runCtx context.Context, tc ToolContext, cmdStr stri
 			}
 
 		case <-runCtx.Done():
+			if errors.Is(context.Cause(runCtx), llm.ErrForegroundCommandTimeout) {
+				if st, ok := tryPromote(); ok {
+					return promotedToolOutputWithReason(cmdStr, st, "timeout"), nil
+				}
+			}
 			stateMu.Lock()
 			canCancel := !exited && mode == directModeForeground
 			if canCancel {

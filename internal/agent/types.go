@@ -367,9 +367,10 @@ type SteerWaitSource interface {
 }
 
 // BackgroundPromotedError signals that a foreground command was seamlessly promoted
-// into a session-owned background job so newly queued user steering can run immediately.
+// into a session-owned background job (on user steering or foreground timeout).
 type BackgroundPromotedError struct {
 	Status BackgroundProcStatus
+	Reason string
 }
 
 func (e *BackgroundPromotedError) Error() string {

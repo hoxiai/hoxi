@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"math/rand/v2"
 	"strings"
 	"time"
@@ -12,18 +13,22 @@ import (
 const (
 	defaultMaxNetworkRetries      = 4
 	defaultMaxRateOrServerRetries = 5
+	defaultMaxDialTimeoutRetries  = 3
+	defaultMaxOriginTimeoutRetry  = 1
+	statusCloudflareOriginTimeout = 524
 	defaultMaxNetworkBackoff      = 30 * time.Second
 	defaultMaxRateBackoff         = 60 * time.Second
 	defaultMaxTurnRetryBudget     = 3 * time.Minute
+	silentFirstRetryThreshold     = 5 * time.Second
 	retryActivityPulseInterval    = 15 * time.Second
 	maxRetryMessageRunes          = 240
 )
 
 var (
 	defaultNetworkRetrySchedule = []time.Duration{
+		300 * time.Millisecond,
 		1 * time.Second,
-		2 * time.Second,
-		4 * time.Second,
+		3 * time.Second,
 		8 * time.Second,
 	}
 	defaultRateOrServerSchedule = []time.Duration{
@@ -39,6 +44,37 @@ type stepRetryDecision struct {
 	shouldRetry bool
 	delay       time.Duration
 	reason      string
+	silentUI    bool
+}
+
+func isOriginTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var httpErr *llm.StreamHTTPError
+	if errors.As(err, &httpErr) && httpErr != nil {
+		return httpErr.StatusCode == statusCloudflareOriginTimeout
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "http 524") || strings.Contains(lower, "status 524") || strings.Contains(lower, "524 a timeout occurred")
+}
+
+func isPreSendDialFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	var httpErr *llm.StreamHTTPError
+	if errors.As(err, &httpErr) && httpErr != nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	if !strings.Contains(lower, "dial tcp") {
+		return false
+	}
+	return strings.Contains(lower, "i/o timeout") ||
+		strings.Contains(lower, "connection refused") ||
+		strings.Contains(lower, "no such host") ||
+		strings.Contains(lower, "network is unreachable")
 }
 
 func summarizeRetryReason(err error) string {
@@ -145,6 +181,13 @@ func (e *Engine) planStepRetry(err error, attempt int, spentWait time.Duration, 
 		schedule = defaultRateOrServerSchedule
 		maxCap = defaultMaxRateBackoff
 	}
+	if isOriginTimeoutError(err) {
+		// Upstream gateways (e.g. Cloudflare 524) have already waited ~100s;
+		// permit at most one quick retry rather than stalling for 5 cycles.
+		maxAttempts = min(maxAttempts, defaultMaxOriginTimeoutRetry)
+	} else if !rateOrServer && isPreSendDialFailure(err) {
+		maxAttempts = min(maxAttempts, defaultMaxDialTimeoutRetries)
+	}
 	if attempt > maxAttempts {
 		return stepRetryDecision{}
 	}
@@ -161,10 +204,15 @@ func (e *Engine) planStepRetry(err error, attempt int, spentWait time.Duration, 
 	if remainingBudget <= 0 || wait > remainingBudget {
 		return stepRetryDecision{}
 	}
+	// Suppress noisy retry banners on a quick first network resend (<5s);
+	// rate limits, server errors, origin timeouts (524), longer waits, and
+	// subsequent retries stay visible.
+	silentUI := attempt == 1 && !rateOrServer && !isOriginTimeoutError(err) && wait < silentFirstRetryThreshold
 	return stepRetryDecision{
 		shouldRetry: true,
 		delay:       wait,
 		reason:      summarizeRetryReason(err),
+		silentUI:    silentUI,
 	}
 }
 
@@ -213,8 +261,9 @@ func (e *Engine) waitForStepRetry(
 		return false
 	}
 	nextUnixMs := time.Now().Add(dec.delay).UnixMilli()
+	showUI := subtaskDepth == 0 && !dec.silentUI && dec.delay > 0 && emit != nil
 	emitRetry := func() {
-		if subtaskDepth == 0 && dec.delay > 0 && emit != nil {
+		if showUI {
 			emit(EngineEvent{
 				Kind:      EngineStepRetry,
 				Step:      step,
@@ -231,7 +280,7 @@ func (e *Engine) waitForStepRetry(
 	if !waitContextWithPulse(ctx, dec.delay, emitRetry) {
 		return false
 	}
-	if subtaskDepth == 0 && dec.delay > 0 && emit != nil {
+	if showUI {
 		emit(EngineEvent{Kind: EngineStepRetryDone, Step: step})
 	}
 	return true

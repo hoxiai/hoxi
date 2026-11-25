@@ -435,16 +435,24 @@ func TestCodexChatGPTBackendReceivesSessionIDHeader(t *testing.T) {
 }
 
 func TestHTTP1FallbackTransportIsolatesCloneWithoutMutatingSharedTransport(t *testing.T) {
-	base := &http.Transport{IdleConnTimeout: 90 * time.Second}
-	h1 := newHTTP1FallbackTransport(base)
-	if h1 == nil || h1 == base {
-		t.Fatalf("expected cloned transport distinct from base")
+	if providerTransport.IdleConnTimeout != 30*time.Second {
+		t.Fatalf("expected providerTransport IdleConnTimeout=30s, got %v", providerTransport.IdleConnTimeout)
+	}
+	if providerTransport.HTTP2 == nil || providerTransport.HTTP2.SendPingTimeout != 15*time.Second || providerTransport.HTTP2.PingTimeout != 10*time.Second {
+		t.Fatalf("expected providerTransport HTTP/2 health pings (15s/10s), got %+v", providerTransport.HTTP2)
+	}
+	h1 := newHTTP1FallbackTransport(providerTransport)
+	if h1 == nil || h1 == providerTransport {
+		t.Fatalf("expected cloned transport distinct from shared providerTransport")
 	}
 	if h1.Protocols == nil || !h1.Protocols.HTTP1() || h1.Protocols.HTTP2() {
 		t.Fatalf("expected HTTP/1.1-only protocols on fallback clone, got %+v", h1.Protocols)
 	}
-	if base.Protocols != nil {
-		t.Fatalf("shared base transport must not be mutated, got %+v", base.Protocols)
+	if h1.HTTP2 != nil {
+		t.Fatalf("expected HTTP/1.1 fallback clone to clear HTTP2 config, got %+v", h1.HTTP2)
+	}
+	if providerTransport.Protocols != nil || providerTransport.HTTP2 == nil {
+		t.Fatalf("shared providerTransport must not be mutated, got protocols=%+v http2=%+v", providerTransport.Protocols, providerTransport.HTTP2)
 	}
 	if !llm.IsHTTP2ProtocolError(errors.New("stream error: stream ID 7; PROTOCOL_ERROR; received from peer")) {
 		t.Fatal("expected HTTP/2 PROTOCOL_ERROR to be detected")

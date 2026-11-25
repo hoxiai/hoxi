@@ -68,6 +68,14 @@ func readSSEFrames(ctx context.Context, body io.Reader, onFrame func(sseRawFrame
 		}
 		line, err := reader.ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
+			// If a complete JSON/DONE SSE payload was already buffered on a prior
+			// newline before the peer dropped the connection without a trailing
+			// blank line, flush it before returning the transport error.
+			if len(dataLines) > 0 && isCompleteSingleSSEPayload(strings.Join(dataLines, "\n")) {
+				if fErr := flush(); fErr != nil {
+					return fErr
+				}
+			}
 			return err
 		}
 		if line != "" {

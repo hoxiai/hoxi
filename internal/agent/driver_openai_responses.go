@@ -160,6 +160,7 @@ func parseOpenAIResponsesSSE(ctx context.Context, body io.Reader, emit func(Stre
 	emittedReasoningSig := make(map[string]bool)
 	streamedTextByItem := make(map[string]*strings.Builder)
 	var totalStreamedText strings.Builder
+	var sawDeltaWithoutItemID bool
 	var terminal bool
 	var incomplete bool
 	finishReason := "stop"
@@ -259,6 +260,8 @@ func parseOpenAIResponsesSSE(ctx context.Context, body io.Reader, emit func(Stre
 						streamedTextByItem[itemID] = sb
 					}
 					sb.WriteString(d)
+				} else {
+					sawDeltaWithoutItemID = true
 				}
 				totalStreamedText.WriteString(d)
 				emit(StreamEvent{Kind: EventTextDelta, Delta: d})
@@ -349,6 +352,7 @@ func parseOpenAIResponsesSSE(ctx context.Context, body io.Reader, emit func(Stre
 				// Backfill any output items omitted from incremental delta/output_item.done
 				// events by compatible gateways, deduplicated against already-streamed items.
 				if output, ok := respObj["output"].([]any); ok {
+					matchedAnyStreamedItem := false
 					for _, rawItem := range output {
 						item, _ := rawItem.(map[string]any)
 						if item == nil {
@@ -383,15 +387,6 @@ func parseOpenAIResponsesSSE(ctx context.Context, body io.Reader, emit func(Stre
 							}
 						case "message":
 							itemID, _ := item["id"].(string)
-							var streamedSoFar string
-							if itemID != "" {
-								if sb := streamedTextByItem[itemID]; sb != nil {
-									streamedSoFar = sb.String()
-								}
-							}
-							if streamedSoFar == "" {
-								streamedSoFar = totalStreamedText.String()
-							}
 							var fullText strings.Builder
 							if content, ok := item["content"].([]any); ok {
 								for _, rawBlk := range content {
@@ -404,7 +399,24 @@ func parseOpenAIResponsesSSE(ctx context.Context, body io.Reader, emit func(Stre
 								}
 							}
 							completed := fullText.String()
-							if completed != "" && strings.HasPrefix(completed, streamedSoFar) {
+							if completed == "" {
+								continue
+							}
+							var streamedSoFar string
+							if itemID != "" {
+								if sb := streamedTextByItem[itemID]; sb != nil {
+									streamedSoFar = sb.String()
+									matchedAnyStreamedItem = true
+								} else if sawDeltaWithoutItemID || len(streamedTextByItem) == 0 {
+									streamedSoFar = totalStreamedText.String()
+								} else if totalStreamedText.Len() > 0 && !matchedAnyStreamedItem && strings.HasPrefix(completed, totalStreamedText.String()) {
+									streamedSoFar = totalStreamedText.String()
+									matchedAnyStreamedItem = true
+								}
+							} else {
+								streamedSoFar = totalStreamedText.String()
+							}
+							if strings.HasPrefix(completed, streamedSoFar) {
 								if rem := strings.TrimPrefix(completed, streamedSoFar); rem != "" {
 									sealReasoningBlock()
 									if itemID != "" {
@@ -440,8 +452,16 @@ func parseOpenAIResponsesSSE(ctx context.Context, body io.Reader, emit func(Stre
 		}
 		return nil
 	})
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err != nil {
-		return err
+		// Once an explicit terminal event (response.completed / response.incomplete)
+		// has already delivered final output and usage, a subsequent transport reset
+		// before clean EOF must not discard or re-run the completed step.
+		if !terminal || !isPostTerminalDisconnectError(err) {
+			return err
+		}
 	}
 	if !terminal {
 		return ErrIncompleteStream

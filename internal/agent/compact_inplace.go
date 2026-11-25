@@ -4,14 +4,22 @@ import (
 	"context"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/hoxiai/hoxi/internal/llm"
 )
 
-const inPlaceCompactionPromptText = `<context_compaction_request>
+func buildInPlaceCompactionPrompt(tail []Message) string {
+	var scope string
+	if role, quote := retainedTailAnchor(tail); quote != "" {
+		scope = "Messages from the " + role + " message beginning \"" + quote + "\" onward will be retained verbatim after this checkpoint; summarize only earlier history and do not repeat those retained messages.\n\n"
+	} else if len(tail) > 0 {
+		scope = "The most recent message/tool exchange will be retained verbatim after this checkpoint; summarize only earlier history and do not repeat its raw payloads.\n\n"
+	}
+	return `<context_compaction_request>
 This conversation is approaching the context budget and is being compacted into a technical checkpoint so work can continue seamlessly without older raw messages.
 
-Do NOT call any tools. Respond with plain Markdown only.
+` + scope + `Do NOT call any tools. Respond with plain Markdown only.
 
 Produce a dense, lossless technical checkpoint preserving verbatim:
 1. Core user goal, active requirements, and explicit constraints/preferences.
@@ -21,6 +29,31 @@ Produce a dense, lossless technical checkpoint preserving verbatim:
 
 Later explicit user corrections supersede earlier instructions. Output only the checkpoint content.
 </context_compaction_request>`
+}
+
+func retainedTailAnchor(tail []Message) (role, quote string) {
+	for _, m := range tail {
+		if m.Role != RoleUser && m.Role != RoleAssistant {
+			continue
+		}
+		for _, b := range m.Content {
+			if b.Type != ContentText {
+				continue
+			}
+			line := strings.Join(strings.FieldsFunc(b.Text, unicode.IsSpace), " ")
+			line = strings.ReplaceAll(line, "\"", "'")
+			if line == "" {
+				continue
+			}
+			if runes := []rune(line); len(runes) > 120 {
+				line = string(runes[:120]) + "…"
+			}
+			return string(m.Role), line
+		}
+		return "", ""
+	}
+	return "", ""
+}
 
 // inPlaceCompactionContext carries the active main-turn prefix parameters so
 // proactive compaction can request a handoff summary in-place, reusing the
@@ -58,12 +91,12 @@ func (c *inPlaceCompactionContext) eligible() bool {
 // buildInPlaceCompactionMessages clones msgs and appends the compaction prompt
 // while keeping messages[0 : len(msgs)-1] byte-identical (preserving upstream
 // prompt-cache checkpoints) and maintaining strict user/assistant alternation.
-func buildInPlaceCompactionMessages(msgs []Message) []Message {
+func buildInPlaceCompactionMessages(msgs, tail []Message) []Message {
 	out := make([]Message, len(msgs), len(msgs)+1)
 	copy(out, msgs)
 	promptBlock := ContentBlock{
 		Type: ContentText,
-		Text: inPlaceCompactionPromptText,
+		Text: buildInPlaceCompactionPrompt(tail),
 	}
 	if len(out) > 0 && out[len(out)-1].Role == RoleUser {
 		last := out[len(out)-1]
@@ -88,7 +121,7 @@ func buildInPlaceCompactionMessages(msgs []Message) []Message {
 func (e *Engine) tryInPlaceCompaction(
 	ctx context.Context,
 	inPlace *inPlaceCompactionContext,
-	msgs []Message,
+	msgs, tail []Message,
 	record func(TokenUsage),
 ) (string, bool) {
 	if e == nil || e.stream == nil || !inPlace.eligible() || ctx.Err() != nil {
@@ -107,7 +140,7 @@ func (e *Engine) tryInPlaceCompaction(
 		Target:       inPlace.Target,
 		System:       inPlace.System,
 		SystemSuffix: inPlace.SystemSuffix,
-		Messages:     buildInPlaceCompactionMessages(sourceMsgs),
+		Messages:     buildInPlaceCompactionMessages(sourceMsgs, tail),
 		Tools:        inPlace.Tools,
 		MaxTokens:    inPlace.MaxTokens,
 		Effort:       inPlace.Effort,

@@ -276,7 +276,7 @@ func (d *openaiDriver) ParseSSE(ctx context.Context, body io.Reader, emit func(S
 	return parseOpenAIChatSSE(ctx, body, emit)
 }
 
-func isLostChatUsageTrailerError(err error) bool {
+func isPostTerminalDisconnectError(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -415,7 +415,7 @@ func parseOpenAIChatSSE(ctx context.Context, body io.Reader, emit func(StreamEve
 	if err != nil {
 		// Losing only the optional include_usage trailer / [DONE] after a valid
 		// finish_reason must not discard completed choices or re-run the step.
-		if finishReason == "" || !isLostChatUsageTrailerError(err) {
+		if finishReason == "" || !isPostTerminalDisconnectError(err) {
 			return err
 		}
 	}

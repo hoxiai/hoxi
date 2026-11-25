@@ -269,7 +269,7 @@ func (e *Engine) compactContextOverflowWithInPlace(
 		}
 		var trimmedSummary string
 		if inPlace != nil && inPlace.eligible() {
-			if summary, ok := e.tryInPlaceCompaction(ctx, inPlace, msgs, record); ok {
+			if summary, ok := e.tryInPlaceCompaction(ctx, inPlace, msgs, msgs[tailStart:], record); ok {
 				trimmedSummary = strings.TrimSpace(summary)
 			} else if ctx.Err() != nil {
 				return nil, nil, false

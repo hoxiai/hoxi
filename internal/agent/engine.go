@@ -562,8 +562,16 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 
 		if streamed.usage != nil {
 			tokenTracker.ObserveStep(msgs, fullSystem, toolSpecs, *streamed.usage)
+			cacheKey := strings.TrimSpace(req.CacheKey)
+			if cacheKey == "" {
+				cacheKey = strings.TrimSpace(req.SessionID)
+			}
+			tokenTracker.ObservePrefixCacheStability(req.SessionID, target, cacheKey, fullSystem, toolSpecs, msgs, *streamed.usage)
 		}
 
+		if len(streamed.toolCalls) > 0 {
+			streamed.asstBlocks, streamed.toolCalls = disambiguateToolCallIDs(msgs, streamed.asstBlocks, streamed.toolCalls)
+		}
 		if len(streamed.asstBlocks) > 0 {
 			msgs = append(msgs, Message{Role: RoleAssistant, Content: streamed.asstBlocks})
 		}

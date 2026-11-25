@@ -1,10 +1,14 @@
 package agent
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 
+	"github.com/hoxiai/hoxi/internal/diagnostics"
 	"github.com/hoxiai/hoxi/internal/llm"
 )
 
@@ -180,6 +184,15 @@ func resolveTurnContextThresholds(target llm.StreamTarget) turnContextThresholds
 // contextTokenTracker anchors context accounting to provider-reported prompt
 // token usage from the latest completed main model step, adding calibrated
 // estimates only for messages appended after that step.
+type prefixFingerprint struct {
+	valid        bool
+	systemHash   [32]byte
+	toolsHash    [32]byte
+	cacheKeyHash [32]byte
+	msgHashes    [][32]byte
+	cacheRead    int
+}
+
 type contextTokenTracker struct {
 	anchored        bool
 	anchorPrompt    int
@@ -189,6 +202,7 @@ type contextTokenTracker struct {
 	scale           float64
 	prefixCacheWarm bool
 	lastUsage       TokenUsage
+	lastFingerprint prefixFingerprint
 }
 
 func newContextTokenTracker() *contextTokenTracker {
@@ -416,4 +430,110 @@ func compactionTailAnchor(msgs []Message, historyLen, currentStep int) (tailStar
 		return tailStart - 1, true
 	}
 	return tailStart, false
+}
+
+const minCacheDropBaselineTokens = 2048
+
+func computePrefixFingerprint(cacheKey, fullSystem string, toolSpecs []ToolSpec, msgs []Message, cacheRead int) prefixFingerprint {
+	fp := prefixFingerprint{
+		valid:        true,
+		systemHash:   sha256.Sum256([]byte(fullSystem)),
+		cacheKeyHash: sha256.Sum256([]byte(cacheKey)),
+		msgHashes:    make([][32]byte, len(msgs)),
+		cacheRead:    cacheRead,
+	}
+	th := sha256.New()
+	var lenBuf [8]byte
+	for _, spec := range toolSpecs {
+		raw, _ := json.Marshal(spec)
+		binary.BigEndian.PutUint64(lenBuf[:], uint64(len(raw)))
+		th.Write(lenBuf[:])
+		th.Write(raw)
+	}
+	copy(fp.toolsHash[:], th.Sum(nil))
+	for i, m := range msgs {
+		mh := sha256.New()
+		mh.Write([]byte(m.Role))
+		mh.Write([]byte{0})
+		for _, b := range m.Content {
+			mh.Write([]byte(b.Type))
+			mh.Write([]byte{0})
+			for _, part := range []string{b.ID, b.Name, b.ToolUseID, b.Text, b.Signature, b.MimeType, b.Filename} {
+				binary.BigEndian.PutUint64(lenBuf[:], uint64(len(part)))
+				mh.Write(lenBuf[:])
+				mh.Write([]byte(part))
+			}
+			binary.BigEndian.PutUint64(lenBuf[:], uint64(len(b.Input)))
+			mh.Write(lenBuf[:])
+			mh.Write(b.Input)
+			binary.BigEndian.PutUint64(lenBuf[:], uint64(len(b.Data)))
+			mh.Write(lenBuf[:])
+			mh.Write([]byte(b.Data))
+			if b.IsError {
+				mh.Write([]byte{1})
+			} else {
+				mh.Write([]byte{0})
+			}
+		}
+		copy(fp.msgHashes[i][:], mh.Sum(nil))
+	}
+	return fp
+}
+
+func classifyPrefixCacheChange(prev, cur prefixFingerprint) (cause string, sharedMsgs int) {
+	limit := min(len(prev.msgHashes), len(cur.msgHashes))
+	for sharedMsgs < limit && prev.msgHashes[sharedMsgs] == cur.msgHashes[sharedMsgs] {
+		sharedMsgs++
+	}
+	var reasons []string
+	if prev.cacheKeyHash != cur.cacheKeyHash {
+		reasons = append(reasons, "cache_key_changed")
+	}
+	if prev.systemHash != cur.systemHash {
+		reasons = append(reasons, "system_changed")
+	}
+	if prev.toolsHash != cur.toolsHash {
+		reasons = append(reasons, "tools_changed")
+	}
+	if sharedMsgs < len(prev.msgHashes) {
+		reasons = append(reasons, fmt.Sprintf("history_mutated_at=%d/%d", sharedMsgs, len(prev.msgHashes)))
+	}
+	if len(reasons) == 0 {
+		return "upstream_evicted_prefix_unchanged", sharedMsgs
+	}
+	return strings.Join(reasons, "+"), sharedMsgs
+}
+
+// ObservePrefixCacheStability compares SHA-256 digests of the current step's
+// prompt prefix against the previous step without retaining any raw prompt or
+// message bodies. When a previously warm prompt cache drops by >50%, it logs
+// a metadata-only diagnostic pinpointing whether Hoxi mutated the prefix or
+// the upstream cache evicted an unchanged prefix.
+func (t *contextTokenTracker) ObservePrefixCacheStability(
+	sessionID string,
+	target llm.StreamTarget,
+	cacheKey, fullSystem string,
+	toolSpecs []ToolSpec,
+	sentMsgs []Message,
+	u TokenUsage,
+) {
+	if t == nil {
+		return
+	}
+	cur := computePrefixFingerprint(cacheKey, fullSystem, toolSpecs, sentMsgs, u.CacheRead)
+	prev := t.lastFingerprint
+	t.lastFingerprint = cur
+	if !prev.valid || prev.cacheRead < minCacheDropBaselineTokens || cur.cacheRead >= prev.cacheRead/2 {
+		return
+	}
+	cause, shared := classifyPrefixCacheChange(prev, cur)
+	diagnostics.Record(diagnostics.Entry{
+		Kind:       "cache",
+		Level:      "warn",
+		Source:     "agent",
+		SessionID:  sessionID,
+		ProviderID: target.ProviderID,
+		ModelID:    target.ModelID,
+		Message:    fmt.Sprintf("prompt cache drop: %s (cacheRead %d -> %d, sharedMsgs %d/%d)", cause, prev.cacheRead, cur.cacheRead, shared, len(prev.msgHashes)),
+	})
 }

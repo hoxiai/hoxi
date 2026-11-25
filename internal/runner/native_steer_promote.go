@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/llm"
 	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
@@ -50,9 +51,10 @@ func currentRunnerSteerPromoteGrace() time.Duration {
 }
 
 // NativeBackgroundPromotedError signals that a running foreground bash command
-// was seamlessly adopted into s.bgProcs because a user steering message arrived.
+// was seamlessly adopted into s.bgProcs (on user steering or foreground timeout).
 type NativeBackgroundPromotedError struct {
-	Proc NativeBackgroundProc
+	Proc   NativeBackgroundProc
+	Reason string
 }
 
 func (e *NativeBackgroundPromotedError) Error() string {
@@ -438,6 +440,11 @@ func (s *Service) nativePromotableStreamCommandRunner(
 				}
 
 			case <-ctx.Done():
+				if errors.Is(context.Cause(ctx), llm.ErrForegroundCommandTimeout) {
+					if proc, ok := tryPromote(); ok {
+						return proc.Output, 0, &NativeBackgroundPromotedError{Proc: proc, Reason: "timeout"}
+					}
+				}
 				stateMu.Lock()
 				canCancel := !exited && mode == runnerFgModeActive
 				if canCancel {

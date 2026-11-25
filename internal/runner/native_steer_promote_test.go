@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/llm"
 )
 
 func TestRunnerPromotableForegroundCommandAdoptsIntoSessionBgProcsOnSteer(t *testing.T) {
@@ -130,5 +132,75 @@ func TestRunnerPromotableForegroundCommandAdoptsIntoSessionBgProcsOnSteer(t *tes
 func TestRunnerThinkingSignatureErrorRecognizesEncryptedContent(t *testing.T) {
 	if !isThinkingSignatureErrorText("HTTP 400: invalid encrypted_content signature for reasoning item") {
 		t.Fatal("expected encrypted_content error text to trigger signature reset on retry")
+	}
+}
+
+func TestRunnerPromotableForegroundCommandPromotesOnTimeoutCauseAndKillsOnCancel(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell timing test")
+	}
+	root := t.TempDir()
+	ws := filepath.Join(root, "ws")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(ws, nil, nil, filepath.Join(root, "sessions.json"))
+	defer svc.CloseAll()
+
+	rec := SessionRecord{
+		ID:           "ses_runner_timeout_promote",
+		Runtime:      string(RuntimeNative),
+		ProviderID:   "openai",
+		ModelID:      "gpt-5",
+		ProjectDir:   ws,
+		WorktreePath: ws,
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+	ap := &activeProcess{
+		sessionID:  rec.ID,
+		runtime:    string(RuntimeNative),
+		done:       make(chan struct{}),
+		abortCh:    make(chan struct{}),
+		steerQueue: &nativeSteerQueue{},
+	}
+	runFn := svc.nativePromotableStreamCommandRunner(rec, ap)
+	bgMgr := svc.nativeBackgroundManager(rec)
+
+	// 1. Timeout caused by llm.ErrForegroundCommandTimeout promotes instead of killing.
+	tCtx, tCancel := context.WithTimeoutCause(context.Background(), 60*time.Millisecond, llm.ErrForegroundCommandTimeout)
+	defer tCancel()
+	_, _, err := runFn(tCtx, ws, "printf 'rt-before\\n'; sleep 0.25; printf 'rt-after\\n'", nil, nil)
+	var promErr *NativeBackgroundPromotedError
+	if !errors.As(err, &promErr) || promErr == nil || promErr.Reason != "timeout" {
+		t.Fatalf("expected timeout NativeBackgroundPromotedError, got %v", err)
+	}
+	var afterOut strings.Builder
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		st, oErr := bgMgr.Output(context.Background(), promErr.Proc.ProcID, 200*time.Millisecond)
+		if oErr != nil {
+			t.Fatalf("bgMgr.Output failed: %v", oErr)
+		}
+		afterOut.WriteString(st.Output)
+		if !st.Running {
+			break
+		}
+	}
+	if full := promErr.Proc.Output + "\n" + afterOut.String(); !strings.Contains(full, "rt-before") || !strings.Contains(full, "rt-after") {
+		t.Fatalf("expected full pre/post output across runner timeout promotion, got:\n%s", full)
+	}
+
+	// 2. Rejection path: explicit context.Canceled must kill, NOT promote.
+	cCtx, cCancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(40 * time.Millisecond)
+		cCancel()
+	}()
+	_, _, cancelErr := runFn(cCtx, ws, "sleep 5", nil, nil)
+	var cancelProm *NativeBackgroundPromotedError
+	if cancelErr == nil || errors.As(cancelErr, &cancelProm) {
+		t.Fatalf("expected explicit cancel to kill command instead of promoting, got %v", cancelErr)
 	}
 }

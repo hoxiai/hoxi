@@ -339,8 +339,15 @@ func (d *anthropicDriver) ParseSSE(ctx context.Context, body io.Reader, emit fun
 		}
 		return nil
 	})
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err != nil {
-		return err
+		// Once message_delta(stop_reason) or message_stop has arrived, a trailing
+		// transport reset before clean EOF must not discard the completed step.
+		if !sawTerminal || !isPostTerminalDisconnectError(err) {
+			return err
+		}
 	}
 	if !sawTerminal {
 		return ErrIncompleteStream
