@@ -37,6 +37,7 @@ export const leftNav: LeftNavI18n = {
   confirmDelete: "确认",
   cancelDelete: "取消",
   exportSessionTooltip: "导出会话为 Markdown",
+  shareSessionImageTooltip: "生成分享图片",
   renamePlaceholder: "输入会话标题…",
   dragToReorder: "拖动调整项目顺序",
   workspaceActions: "工作区操作",

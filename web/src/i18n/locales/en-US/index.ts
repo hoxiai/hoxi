@@ -22,6 +22,7 @@ import { relay } from "./relay";
 import { tasks } from "./tasks";
 import { schedules } from "./schedules";
 import { companion } from "./companion";
+import { share } from "./share";
 
 export const enUS = {
   common,
@@ -47,6 +48,7 @@ export const enUS = {
   tasks,
   schedules,
   companion,
+  share,
 };
 
 export default enUS;

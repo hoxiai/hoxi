@@ -21,7 +21,7 @@ export const commandPalette = {
   actionOpenBrowser: "打开浏览器",
   actionHandoff: "导入外部会话",
   actionExportSession: "导出当前会话",
-  actionCopySessionLink: "复制会话链接",
+  actionShareSessionImage: "生成分享图片",
   actionStop: "停止当前任务",
   actionProviders: "管理模型与提供商",
   actionAgents: "Agent 角色",

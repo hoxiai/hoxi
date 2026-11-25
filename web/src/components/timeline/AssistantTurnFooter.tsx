@@ -1,5 +1,6 @@
 // web/src/components/timeline/AssistantTurnFooter.tsx
 import { createMemo, createSignal, onCleanup, Show } from "solid-js";
+import { ImageDown } from "lucide-solid";
 import { hasLeakedReasoningToolMarkup, normalizeReasoningText } from "./ThoughtBox";
 import { extractVisibleAssistantText } from "./context-activity-parts";
 import { isTodoToolPart as isTodoTool } from "./ContextActivityGroupView";
@@ -7,6 +8,7 @@ import type { MessageInfo, MessagePart } from "../../services/sse-types";
 import {
   canRevertSession,
   isUserAbortError,
+  openShareImageModal,
   resumePausedSession,
   retryLastUserPrompt,
   revertToHere,
@@ -14,7 +16,6 @@ import {
 } from "../../store/workspace";
 import { Icon } from "../icons";
 import { t } from "../../i18n";
-import { copyMessageLink } from "./session-export";
 import { ActionIconButton } from "./tool-card-helpers";
 import {
   collectCycleChangedFiles,
@@ -40,18 +41,15 @@ export function AssistantTurnFooter(props: {
   isSessionBusy?: boolean;
 }) {
   const [copied, setCopied] = createSignal(false);
-  const [linkCopied, setLinkCopied] = createSignal(false);
   const [downloaded, setDownloaded] = createSignal(false);
   const [resuming, setResuming] = createSignal(false);
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
-  let linkTimer: ReturnType<typeof setTimeout> | undefined;
   let downloadTimer: ReturnType<typeof setTimeout> | undefined;
   let revokeTimer: ReturnType<typeof setTimeout> | undefined;
   let activeBlobURL: string | undefined;
 
   onCleanup(() => {
     if (copyTimer !== undefined) clearTimeout(copyTimer);
-    if (linkTimer !== undefined) clearTimeout(linkTimer);
     if (downloadTimer !== undefined) clearTimeout(downloadTimer);
     if (revokeTimer !== undefined) clearTimeout(revokeTimer);
     if (activeBlobURL) {
@@ -265,12 +263,11 @@ export function AssistantTurnFooter(props: {
     }
   };
 
-  const copyLink = async () => {
-    const ok = await copyMessageLink(props.info.sessionID, props.info.id);
-    if (!ok) return;
-    setLinkCopied(true);
-    if (linkTimer !== undefined) clearTimeout(linkTimer);
-    linkTimer = setTimeout(() => setLinkCopied(false), 1800);
+  const openShareImage = () => {
+    openShareImageModal({
+      sessionID: props.info.sessionID,
+      focusMessageID: props.info.id,
+    });
   };
 
   const downloadMarkdown = () => {
@@ -389,10 +386,8 @@ export function AssistantTurnFooter(props: {
                         <Icon name="check" size="small" class="text-[var(--ok-text)]" />
                       </Show>
                     </ActionIconButton>
-                    <ActionIconButton label={linkCopied() ? t("common.copied") : t("commandPalette.actionCopySessionLink")} onClick={() => void copyLink()}>
-                      <Show when={linkCopied()} fallback={<Icon name="link" size="small" />}>
-                        <Icon name="check" size="small" class="text-[var(--ok-text)]" />
-                      </Show>
+                    <ActionIconButton label={t("share.shareTurnTooltip")} onClick={openShareImage}>
+                      <ImageDown size={13} />
                     </ActionIconButton>
                   </div>
                 </Show>

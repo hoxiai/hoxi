@@ -1,12 +1,13 @@
 // web/src/components/layout/SessionNavItem.tsx
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
-import { Bot, Pencil, Square } from "lucide-solid";
+import { Bot, ImageDown, Pencil, Square } from "lucide-solid";
 import {
   countRunningSubagents,
   getSubagentVisibleLimit,
   isPlaceholderSessionTitle,
   isSubagentDrawerExpanded,
   loadMoreSubagents,
+  openShareImageModal,
   partitionVisibleSubagents,
   renameSessionTitle,
   selectSession,
@@ -381,6 +382,17 @@ export function SessionNavItem(props: SessionNavItemProps) {
                     onClick={(ev) => startEditing(ev)}
                   >
                     <Pencil size={11} class="shrink-0 block" />
+                  </button>
+                  <button
+                    type="button"
+                    class="inline-flex h-5 w-5 items-center justify-center rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      openShareImageModal({ sessionID: props.session.id, session: props.session });
+                    }}
+                    title={t("leftNav.shareSessionImageTooltip")}
+                  >
+                    <ImageDown size={11.5} class="shrink-0 block" />
                   </button>
                   <button
                     type="button"

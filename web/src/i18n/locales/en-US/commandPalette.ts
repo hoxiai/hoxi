@@ -21,7 +21,7 @@ export const commandPalette = {
   actionOpenBrowser: "Open browser",
   actionHandoff: "Import external session",
   actionExportSession: "Export session",
-  actionCopySessionLink: "Copy session link",
+  actionShareSessionImage: "Share session as image",
   actionStop: "Stop current task",
   actionProviders: "Manage models & providers",
   actionAgents: "Agent roles",

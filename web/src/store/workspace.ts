@@ -95,6 +95,7 @@ export * from "./relay";
 export * from "./deep-link";
 export * from "./subagent-config";
 export * from "./image-viewer";
+export * from "./share-image";
 export * from "./document-viewer";
 export * from "./markdown-images";
 export * from "./media-options";

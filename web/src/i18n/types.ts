@@ -20,6 +20,7 @@ export type NetworkI18n = I18nDictionary["network"];
 export type SkillsI18n = I18nDictionary["skills"];
 export type CommandPaletteI18n = I18nDictionary["commandPalette"];
 export type RelayI18n = I18nDictionary["relay"];
+export type ShareI18n = I18nDictionary["share"];
 
 export type Locale = "zh-CN" | "en-US";
 

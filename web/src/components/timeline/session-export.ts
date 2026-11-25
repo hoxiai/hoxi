@@ -149,17 +149,3 @@ export async function downloadSessionExport(sessionID: string, format: "markdown
     return false;
   }
 }
-
-export function buildMessageLink(sessionID: string, messageID?: string): string {
-  const query = messageID ? `?message=${encodeURIComponent(messageID)}` : "";
-  return `hoxi://session/${encodeURIComponent(sessionID)}${query}`;
-}
-
-export async function copyMessageLink(sessionID: string, messageID?: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(buildMessageLink(sessionID, messageID));
-    return true;
-  } catch {
-    return false;
-  }
-}

@@ -41,6 +41,7 @@ import {
   setLeftWidth,
   setRightWidth,
   setWorkspace,
+  shareImageModalOpen,
   startDeepLinkNavigation,
   startDesktopWindowSync,
   syncDesktopWindowThemeFromDOM,
@@ -56,6 +57,7 @@ const DocumentPreviewOverlay = lazy(() => import("../preview/DocumentPreviewOver
 const WorkspaceModal = lazy(() => import("./WorkspaceModal"));
 const ExternalHandoffModal = lazy(() => import("../handoff/ExternalHandoffModal"));
 const ScheduleManagerModal = lazy(() => import("../schedules/ScheduleManagerModal"));
+const ShareImageModal = lazy(() => import("../share/ShareImageModal"));
 const SettingsModal = lazy(() => import("../settings/SettingsModal"));
 
 interface ThreePaneShellProps {
@@ -83,6 +85,7 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
   const workspaceModalEverOpened = useEverOpened(() => workspace.workspaceModalMode !== null);
   const handoffModalEverOpened = useEverOpened(() => workspace.handoffModalOpen);
   const scheduleModalEverOpened = useEverOpened(scheduleModalOpen);
+  const shareImageModalEverOpened = useEverOpened(shareImageModalOpen);
   const settingsEverOpened = useEverOpened(() => appSettings.modalOpen);
 
   const effectiveLeftWidth = () => (leftNavOpen() ? leftWidth() : 0);
@@ -167,6 +170,7 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
         !isUpdateModalOpen() &&
         !workspace.handoffModalOpen &&
         !scheduleModalOpen() &&
+        !shareImageModalOpen() &&
         workspace.workspaceModalMode === null
       ) {
         ev.preventDefault();
@@ -526,6 +530,9 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
         </Show>
         <Show when={scheduleModalEverOpened()}>
           <ScheduleManagerModal />
+        </Show>
+        <Show when={shareImageModalEverOpened()}>
+          <ShareImageModal />
         </Show>
         <Show when={settingsEverOpened()}>
           <SettingsModal />

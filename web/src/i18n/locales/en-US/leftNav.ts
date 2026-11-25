@@ -36,6 +36,7 @@ export const leftNav = {
   confirmDelete: "Delete",
   cancelDelete: "Cancel",
   exportSessionTooltip: "Export session to Markdown",
+  shareSessionImageTooltip: "Share session as image",
   renamePlaceholder: "Session title…",
   dragToReorder: "Drag to reorder project",
   workspaceActions: "Workspace actions",

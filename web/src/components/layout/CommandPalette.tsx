@@ -13,8 +13,8 @@ import {
   FileText,
   GitCompare,
   Globe,
+  ImageDown,
   Monitor,
-  Link2,
   ListChecks,
   MessageSquare,
   Moon,
@@ -38,6 +38,7 @@ import {
   openHandoffModal,
   openScheduleModal,
   openSettingsModal,
+  openShareImageModal,
   selectSession,
   sessionDirectory,
   setWorkspace,
@@ -48,7 +49,7 @@ import {
 } from "../../store/workspace";
 import { t } from "../../i18n";
 import { readDirectorySlashCommands } from "../timeline/composer-autocomplete";
-import { copyMessageLink, downloadSessionExport } from "../timeline/session-export";
+import { downloadSessionExport } from "../timeline/session-export";
 
 export type CommandPaletteMode = "actions" | "files";
 
@@ -262,11 +263,11 @@ export default function CommandPalette(props: CommandPaletteProps) {
           run: async () => { await downloadSessionExport(sessionID); },
         },
         {
-          id: "copy-session-link",
+          id: "share-session-image",
           group: "actions",
-          label: t("commandPalette.actionCopySessionLink"),
-          icon: Link2,
-          run: () => { void copyMessageLink(sessionID); },
+          label: t("commandPalette.actionShareSessionImage"),
+          icon: ImageDown,
+          run: () => openShareImageModal({ sessionID }),
         },
       );
       if (isSessionBusy(sessionID)) {
