@@ -33,6 +33,8 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleStatus(w, r)
 	case path == "/start" && r.Method == http.MethodPost:
 		h.handleStart(w, r)
+	case path == "/cancel" && r.Method == http.MethodPost:
+		h.handleCancel(w, r)
 	case path == "/exchange" && r.Method == http.MethodPost:
 		h.handleExchange(w, r)
 	case path == "/logout" && r.Method == http.MethodPost:
@@ -63,6 +65,11 @@ func (h *HTTPHandler) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.NewEncoder(w).Encode(res)
+}
+
+func (h *HTTPHandler) handleCancel(w http.ResponseWriter, _ *http.Request) {
+	h.service.CancelAuthorization()
+	_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
 func (h *HTTPHandler) handleExchange(w http.ResponseWriter, r *http.Request) {

@@ -2,6 +2,8 @@ import { authAPI } from "../services/api";
 import { errorMessageOf } from "../services/http";
 import type { MemberCheckinStatus } from "../services/platform-api";
 import {
+  cancelDesktopAuthorization,
+  clearDesktopAuthError,
   desktopAuth,
   desktopCheckinSubtitle,
   desktopCheckinTitle,
@@ -18,6 +20,7 @@ import {
   refreshDesktopMemberIfStale,
   sessionLastTurnUsedOfficialModel,
   setDesktopAuth,
+  startDesktopAuthorization,
 } from "../store/auth-state";
 import { officialChannelState, setOfficialChannelState } from "../store/provider-official";
 import { appSettings, setAppSettings } from "../store/settings";
@@ -383,6 +386,124 @@ describe("readable server error text", () => {
       assertEqual(desktopAuth.member.checkingIn, false);
     } finally {
       authAPI.checkin = origCheckin;
+    }
+  });
+});
+
+describe("desktop authorization start and cancel flow", () => {
+  it("cancels backend pending state and ignores stale authorizing poll snapshots", async () => {
+    const origStart = authAPI.startAuth;
+    const origCancel = authAPI.cancelAuth;
+    const origStatus = authAPI.getStatus;
+    let cancelCalls = 0;
+    try {
+      setDesktopAuth({ isLoggedIn: false, isAuthorizing: false, error: "old error" });
+      authAPI.startAuth = async () => ({
+        state: "state-1",
+        authUrl: "https://hoxi.ai/auth/authorize-desktop?state=state-1",
+      });
+      authAPI.cancelAuth = async () => {
+        cancelCalls++;
+        return { success: true };
+      };
+      let resolveStaleStatus!: (v: any) => void;
+      authAPI.getStatus = () =>
+        new Promise((resolve) => {
+          resolveStaleStatus = resolve;
+        });
+
+      const url = await startDesktopAuthorization();
+      assertEqual(url, "https://hoxi.ai/auth/authorize-desktop?state=state-1");
+      assertEqual(desktopAuth.isAuthorizing, true);
+      assertEqual(desktopAuth.error, null);
+
+      const staleRefresh = refreshAuthStatus();
+      await cancelDesktopAuthorization();
+      assertEqual(cancelCalls, 1);
+      assertEqual(desktopAuth.isAuthorizing, false);
+
+      // Even if an earlier /status response resolves later with isAuthorizing: true, cancel stays honored.
+      resolveStaleStatus({
+        isLoggedIn: false,
+        isAuthorizing: true,
+        serverBaseUrl: "https://hoxi.ai",
+      });
+      await staleRefresh;
+      assertEqual(desktopAuth.isAuthorizing, false);
+    } finally {
+      authAPI.startAuth = origStart;
+      authAPI.cancelAuth = origCancel;
+      authAPI.getStatus = origStatus;
+    }
+  });
+
+  it("cancels backend if user cancels while startAuth is still in flight", async () => {
+    const origStart = authAPI.startAuth;
+    const origCancel = authAPI.cancelAuth;
+    let cancelCalls = 0;
+    let resolveStart!: (v: any) => void;
+    try {
+      setDesktopAuth({ isLoggedIn: false, isAuthorizing: false, error: null });
+      authAPI.startAuth = () =>
+        new Promise((resolve) => {
+          resolveStart = resolve;
+        });
+      authAPI.cancelAuth = async () => {
+        cancelCalls++;
+        return { success: true };
+      };
+
+      const startPromise = startDesktopAuthorization();
+      assertEqual(desktopAuth.isAuthorizing, true);
+
+      await cancelDesktopAuthorization();
+      assertEqual(desktopAuth.isAuthorizing, false);
+      assertEqual(cancelCalls, 1);
+
+      resolveStart({ state: "late", authUrl: "https://hoxi.ai/auth/authorize-desktop?state=late" });
+      const url = await startPromise;
+      assertEqual(url, null);
+      assertEqual(desktopAuth.isAuthorizing, false);
+      assertEqual(cancelCalls, 2);
+    } finally {
+      authAPI.startAuth = origStart;
+      authAPI.cancelAuth = origCancel;
+    }
+  });
+
+  it("stores and clears startAuth failures", async () => {
+    const origStart = authAPI.startAuth;
+    try {
+      setDesktopAuth({ isLoggedIn: false, isAuthorizing: false, error: null });
+      authAPI.startAuth = async () => {
+        throw new Error('HTTP 503: {"error":"offline mode enabled"}');
+      };
+
+      const url = await startDesktopAuthorization();
+      assertEqual(url, null);
+      assertEqual(desktopAuth.isAuthorizing, false);
+      assertEqual(desktopAuth.error, "offline mode enabled");
+
+      clearDesktopAuthError();
+      assertEqual(desktopAuth.error, null);
+    } finally {
+      authAPI.startAuth = origStart;
+    }
+  });
+
+  it("does not surface passive refreshAuthStatus failures as user-facing auth errors", async () => {
+    const origStatus = authAPI.getStatus;
+    try {
+      setDesktopAuth({ isLoggedIn: false, isAuthorizing: false, error: null });
+      authAPI.getStatus = async () => {
+        throw new Error("Failed to fetch");
+      };
+
+      const snap = await refreshAuthStatus();
+      assertEqual(snap, null);
+      assertEqual(desktopAuth.error, null);
+    } finally {
+      authAPI.getStatus = origStatus;
     }
   });
 });

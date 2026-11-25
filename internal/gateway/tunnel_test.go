@@ -61,7 +61,7 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 		{get, "/api/hoxi/pairing/qr"}, {post, "/api/hoxi/pairing/qr"}, {post, "/api/hoxi/pairing/rotate"},
 		// The Cloudflare connector token and control must stay desktop-only.
 		{get, "/api/hoxi/cloudflared/status"}, {post, "/api/hoxi/cloudflared/enable"}, {post, "/api/hoxi/cloudflared/disable"},
-		{get, "/api/hoxi/auth"}, {get, "/api/hoxi/models-config"},
+		{get, "/api/hoxi/auth"}, {post, "/api/hoxi/auth/cancel"}, {get, "/api/hoxi/models-config"},
 		{get, "/api/hoxi/dataprofiles"}, {post, "/api/hoxi/dataprofiles"}, {http.MethodDelete, "/api/hoxi/dataprofiles/p1"},
 		// Scheduled tasks control plane stays desktop/local-host only.
 		{get, "/api/hoxi/schedules"}, {post, "/api/hoxi/schedules"}, {get, "/api/hoxi/schedules/sch_1"},

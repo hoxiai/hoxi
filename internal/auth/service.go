@@ -191,6 +191,13 @@ func (s *Service) StartAuthorization(ctx context.Context) (*StartAuthResponse, e
 	}, nil
 }
 
+// CancelAuthorization aborts any in-flight desktop browser authorization attempt.
+func (s *Service) CancelAuthorization() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cancelPendingLocked()
+}
+
 // HandleCallback accepts only the desktop login callback, never an arbitrary exchange URL.
 func (s *Service) HandleCallback(ctx context.Context, rawURL string) error {
 	u, err := url.Parse(rawURL)

@@ -86,7 +86,7 @@ func TestPOSTRequiresJSON(t *testing.T) {
 		t.Error("unexpected outbound request")
 	})
 	h := NewHTTPHandler(s)
-	for _, path := range []string{"start", "exchange", "logout"} {
+	for _, path := range []string{"start", "cancel", "exchange", "logout"} {
 		for _, contentType := range []string{"", "text/plain", "application/x-www-form-urlencoded"} {
 			r := httptest.NewRequest(http.MethodPost, "/api/hoxi/auth/"+path, strings.NewReader(`{}`))
 			r.Header.Set("Content-Type", contentType)
@@ -103,5 +103,35 @@ func TestPOSTRequiresJSON(t *testing.T) {
 	h.ServeHTTP(w, r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("JSON with charset rejected: %d", w.Code)
+	}
+}
+
+func TestCancelAuthorizationClearsPendingState(t *testing.T) {
+	s := testService(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "pending"})
+	})
+	state := startTestAuth(t, s)
+	if snap := s.Snapshot(); !snap.IsAuthorizing || snap.PendingState != state {
+		t.Fatalf("expected pending auth before cancel, got %+v", snap)
+	}
+
+	h := NewHTTPHandler(s)
+	for i := 0; i < 2; i++ {
+		r := httptest.NewRequest(http.MethodPost, "/api/hoxi/auth/cancel", strings.NewReader(`{}`))
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		var result struct{ Success bool }
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || w.Code != http.StatusOK || !result.Success {
+			t.Fatalf("cancel attempt %d failed: %d %s", i, w.Code, w.Body.String())
+		}
+	}
+
+	if snap := s.Snapshot(); snap.IsAuthorizing || snap.PendingState != "" {
+		t.Fatalf("expected pending auth cleared after cancel, got %+v", snap)
+	}
+	if _, err := s.ExchangeToken(context.Background(), "handoff-token", state); err == nil {
+		t.Fatal("expected ExchangeToken to reject cancelled authorization state")
 	}
 }

@@ -69,6 +69,8 @@ export const [desktopAuth, setDesktopAuth] = createStore<DesktopAuthState>({
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let authGeneration = 0;
+let authFlowSeq = 0;
+let startingAuth = false;
 let memberRequestSeq = 0;
 
 // Points change outside this window (official-model turns, top-ups on the
@@ -355,9 +357,11 @@ export async function openDesktopPortalPage(target: PortalTarget): Promise<void>
 
 export async function refreshAuthStatus(): Promise<AuthStatusSnapshot | null> {
   const generation = authGeneration;
+  const flowSeq = authFlowSeq;
   try {
     const snap = await authAPI.getStatus();
     if (generation !== authGeneration) return null;
+    const staleAuthFlow = flowSeq !== authFlowSeq;
     const wasLoggedIn = desktopAuth.isLoggedIn;
     const accountSwitched =
       wasLoggedIn &&
@@ -373,9 +377,11 @@ export async function refreshAuthStatus(): Promise<AuthStatusSnapshot | null> {
       memberRequestSeq++;
       if (accountSwitched) notifyAccountChanged();
     }
+    const nextAuthorizing =
+      staleAuthFlow && !snap.isLoggedIn ? desktopAuth.isAuthorizing : snap.isAuthorizing;
     setDesktopAuth({
       isLoggedIn: snap.isLoggedIn,
-      isAuthorizing: snap.isAuthorizing,
+      isAuthorizing: nextAuthorizing,
       user: snap.user || null,
       expiresAt: snap.expiresAt || null,
       serverBaseUrl: snap.serverBaseUrl,
@@ -393,7 +399,7 @@ export async function refreshAuthStatus(): Promise<AuthStatusSnapshot | null> {
       }
       stopPolling();
       void refreshDesktopMember();
-    } else if (!snap.isAuthorizing) {
+    } else if (!nextAuthorizing) {
       stopPolling();
       memberRequestSeq++;
       setDesktopAuth("member", { ...DEFAULT_MEMBER_STATE });
@@ -402,40 +408,60 @@ export async function refreshAuthStatus(): Promise<AuthStatusSnapshot | null> {
     }
 
     return snap;
-  } catch (err: any) {
-    if (generation !== authGeneration) return null;
-    setDesktopAuth("error", err?.message || "Failed to fetch auth status");
+  } catch {
+    // Passive background status sync should not pop up an unprompted login error alert.
     return null;
   }
 }
 
+export function clearDesktopAuthError(): void {
+  setDesktopAuth("error", null);
+}
+
 export async function startDesktopAuthorization(): Promise<string | null> {
+  if (startingAuth) return null;
+  startingAuth = true;
+  const seq = ++authFlowSeq;
   try {
     setDesktopAuth({ isAuthorizing: true, error: null });
     const res = await authAPI.startAuth();
+    if (seq !== authFlowSeq) {
+      void authAPI.cancelAuth().catch(() => {});
+      return null;
+    }
 
     stopPolling();
     // 开启前端每 1.5 秒轻量同步状态
     pollTimer = setInterval(async () => {
       const snap = await refreshAuthStatus();
-      if (snap?.isLoggedIn || !snap?.isAuthorizing) {
+      if (seq !== authFlowSeq || snap?.isLoggedIn || !snap?.isAuthorizing) {
         stopPolling();
       }
     }, 1500);
 
     return res.authUrl;
   } catch (err: any) {
-    setDesktopAuth({
-      isAuthorizing: false,
-      error: errorMessageOf(err, "Failed to start authorization"),
-    });
+    if (seq === authFlowSeq) {
+      setDesktopAuth({
+        isAuthorizing: false,
+        error: errorMessageOf(err, "Failed to start authorization"),
+      });
+    }
     return null;
+  } finally {
+    startingAuth = false;
   }
 }
 
-export function cancelDesktopAuthorization() {
+export async function cancelDesktopAuthorization(): Promise<void> {
+  authFlowSeq++;
   stopPolling();
-  setDesktopAuth("isAuthorizing", false);
+  setDesktopAuth({ isAuthorizing: false, error: null });
+  try {
+    await authAPI.cancelAuth();
+  } catch {
+    // Pending backend attempt still expires on its own if cancel fails.
+  }
 }
 
 export async function logoutDesktopAccount(): Promise<void> {

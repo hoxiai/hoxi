@@ -222,6 +222,9 @@ export const authAPI = {
   startAuth(): Promise<StartAuthResponse> {
     return requestJSON("/api/hoxi/auth/start", { method: "POST" });
   },
+  cancelAuth(): Promise<{ success: boolean }> {
+    return requestJSON("/api/hoxi/auth/cancel", { method: "POST" });
+  },
   exchange(
     handoffToken: string,
     state: string
