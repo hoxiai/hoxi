@@ -1,9 +1,17 @@
 // web/src/components/timeline/TaskTimelineBar.tsx
 import { createEffect, createMemo, createSignal, For, Index, mapArray, on, onCleanup, onMount, Show } from "solid-js";
-import { ListTree, Search } from "lucide-solid";
+import { ImageDown, ListTree, Search } from "lucide-solid";
 import type { MessagePart, ToolPart } from "../../services/sse-types";
 import type { MessageTurn } from "../../store/workspace";
-import { buildTimelineActivity, createTimelineActivity, formatContextPromptForClipboard, type TimelineActivityKind, type TimelineActivitySegment } from "../../store/workspace";
+import {
+  buildTimelineActivity,
+  createTimelineActivity,
+  formatContextPromptForClipboard,
+  openShareImageModal,
+  shareImageModal,
+  type TimelineActivityKind,
+  type TimelineActivitySegment,
+} from "../../store/workspace";
 import "./task-timeline.css";
 import TranscriptSearchBar from "./TranscriptSearchBar";
 import { expandInlineThinkingParts, extractVisibleAssistantText } from "./context-activity-parts";
@@ -436,7 +444,7 @@ export default function TaskTimelineBar(props: {
     <Show when={props.turns.length > 0}>
       <nav onKeyDown={onRailKeyDown} class="task-transcript-navigation" aria-label={t("timeline.timelineLabel")}>
         <div ref={actions} class="task-activity-actions"
-          classList={{ "is-visible": props.controlsVisible || navOpen() || props.searchOpen }}>
+          classList={{ "is-visible": props.controlsVisible || navOpen() || props.searchOpen || Boolean(props.sessionID && shareImageModal()?.sessionID === props.sessionID) }}>
           <TranscriptSearchBar open={props.searchOpen} turns={props.turns} sessionID={props.sessionID}
             onClose={props.onCloseSearch} onActiveTurnChange={props.onSearchMatch} />
           <button type="button" onClick={() => { setNavOpen(false); props.onToggleSearch(); }}
@@ -460,6 +468,24 @@ export default function TaskTimelineBar(props: {
             >
               <ListTree size={13} />
             </button>
+          </Show>
+          <Show when={props.sessionID}>
+            {(sessionID) => (
+              <button
+                type="button"
+                onClick={() => {
+                  props.onCloseSearch();
+                  setNavOpen(false);
+                  openShareImageModal({ sessionID: sessionID() });
+                }}
+                class="task-activity-icon"
+                classList={{ "is-active": shareImageModal()?.sessionID === sessionID() }}
+                aria-label={t("share.shareSessionTooltip")}
+                title={t("share.shareSessionTooltip")}
+              >
+                <ImageDown size={13} />
+              </button>
+            )}
           </Show>
 
           {/* MessageNav Dropdown (Prompts + on-demand Assistant Section Outline) */}

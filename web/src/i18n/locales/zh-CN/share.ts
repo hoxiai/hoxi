@@ -5,6 +5,7 @@ export const share: ShareI18n = {
   modalTitle: "生成分享图片",
   modalSubtitle: "纯本地渲染生成，不会上传任何会话内容",
   shareTurnTooltip: "生成分享图片",
+  shareSessionTooltip: "生成完整会话分享图",
   loadingSession: "正在加载会话记录…",
   renderingPreview: "正在渲染高清图片…",
   emptySelection: "请至少勾选一轮对话以生成预览",

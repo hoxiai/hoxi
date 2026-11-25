@@ -4,6 +4,7 @@ export const share = {
   modalTitle: "Share as Image",
   modalSubtitle: "Rendered locally on your device — nothing is uploaded",
   shareTurnTooltip: "Share as image",
+  shareSessionTooltip: "Share full session as image",
   loadingSession: "Loading session messages…",
   renderingPreview: "Rendering image…",
   emptySelection: "Select at least one exchange to preview",

@@ -277,12 +277,16 @@ describe("share image model & privacy", () => {
     }));
 
     const doc = buildShareDocument(undefined, "ses_big", hugeTurns, {
+      selectedExchangeIDs: resolveInitialExchangeSelection(
+        groupTurnsIntoExchanges(hugeTurns, { hideLocalPaths: true, redactSecrets: true }).exchanges
+      ),
       includeTools: true,
       includeThinking: false,
       includeImages: false,
       hideLocalPaths: true,
       redactSecrets: true,
     });
+    assertEqual(doc.exchanges.length, 20);
     const layout = buildPaginatedShareLayout({
       doc,
       palette: LIGHT_PALETTE,

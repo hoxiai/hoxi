@@ -476,10 +476,9 @@ export function resolveInitialExchangeSelection(
     const matched = exchanges.find((ex) => ex.messageIDs.includes(focusMessageID));
     if (matched) return new Set([matched.id]);
   }
-  // Default when opened at session level: select up to the latest 6 exchanges
-  // so long sessions stay crisp out of the box, while users can click "All".
-  const slice = exchanges.length > 6 ? exchanges.slice(-6) : exchanges;
-  return new Set(slice.map((ex) => ex.id));
+  // Session-level share selects the full conversation by default; ultra-long
+  // sessions are safely split into multi-page cards by the layout engine.
+  return new Set(exchanges.map((ex) => ex.id));
 }
 
 export function buildShareDocument(
