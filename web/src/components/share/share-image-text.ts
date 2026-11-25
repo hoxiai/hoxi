@@ -119,6 +119,50 @@ export const FONT_SANS =
 export const FONT_MONO =
   '"JetBrains Mono", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace';
 
+// Unified 7x8 dot-matrix H brand mark (matches HoxiActivityLogo.tsx, 20x20 viewBox).
+export const HOXI_MATRIX_BODY_DOTS: readonly [number, number][] = [
+  [3.7, 2.65], [5.8, 2.65], [14.2, 2.65], [16.3, 2.65],
+  [3.7, 4.75], [5.8, 4.75], [14.2, 4.75], [16.3, 4.75],
+  [3.7, 6.85], [5.8, 6.85], [14.2, 6.85], [16.3, 6.85],
+  [3.7, 8.95], [5.8, 8.95], [7.9, 8.95], [12.1, 8.95], [14.2, 8.95], [16.3, 8.95],
+  [3.7, 11.05], [5.8, 11.05], [7.9, 11.05], [12.1, 11.05], [14.2, 11.05], [16.3, 11.05],
+  [3.7, 13.15], [5.8, 13.15], [14.2, 13.15], [16.3, 13.15],
+  [3.7, 15.25], [5.8, 15.25], [14.2, 15.25], [16.3, 15.25],
+  [3.7, 17.35], [5.8, 17.35], [14.2, 17.35], [16.3, 17.35],
+];
+export const HOXI_MATRIX_SPARK_DOTS: readonly [number, number][] = [
+  [10, 8.95],
+  [10, 11.05],
+];
+
+export function drawHoxiMatrixMark(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  palette: ShareThemePalette
+): void {
+  const s = size / 20;
+  const drawDots = (dots: readonly [number, number][], radius: number) => {
+    ctx.beginPath();
+    for (const [cx, cy] of dots) {
+      const px = x + cx * s;
+      const py = y + cy * s;
+      ctx.moveTo(px + radius * s, py);
+      ctx.arc(px, py, radius * s, 0, Math.PI * 2);
+    }
+    ctx.fill();
+  };
+  ctx.save();
+  ctx.fillStyle = palette.textPrimary;
+  ctx.globalAlpha = 0.84;
+  drawDots(HOXI_MATRIX_BODY_DOTS, 0.78);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = palette.accent;
+  drawDots(HOXI_MATRIX_SPARK_DOTS, 0.86);
+  ctx.restore();
+}
+
 const MAX_CODE_BLOCK_LINES = 85;
 
 export interface LoadedImageInfo {

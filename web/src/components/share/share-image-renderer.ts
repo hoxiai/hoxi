@@ -9,6 +9,7 @@ import { sanitizeSvgMarkup, svgToDataURL } from "../timeline/svg-sanitizer";
 import { buildPaginatedShareLayout } from "./share-image-layout";
 import {
   DARK_PALETTE,
+  drawHoxiMatrixMark,
   FONT_MONO,
   FONT_SANS,
   LIGHT_PALETTE,
@@ -250,19 +251,6 @@ function drawWrappedLines(
   return y;
 }
 
-function drawHoxiBrandMark(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, palette: ShareThemePalette) {
-  ctx.save();
-  ctx.fillStyle = palette.accent;
-  fillRoundRect(ctx, x, y, size, size, size * 0.28);
-  ctx.fill();
-  ctx.fillStyle = "#ffffff";
-  ctx.font = `700 ${Math.round(size * 0.62)}px ${FONT_SANS}`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText("H", x + size / 2, y + size / 2 + 0.5);
-  ctx.restore();
-}
-
 function drawBlock(
   ctx: CanvasRenderingContext2D,
   block: LayoutBlock,
@@ -286,7 +274,7 @@ function drawBlock(
     }
     case "role-header": {
       const dotY = y + 12;
-      drawHoxiBrandMark(ctx, x, dotY - 8, 16, palette);
+      drawHoxiMatrixMark(ctx, x - 2, dotY - 9, 18, palette);
       ctx.font = `600 12.5px ${FONT_SANS}`;
       ctx.fillStyle = palette.textPrimary;
       ctx.textBaseline = "middle";
@@ -710,13 +698,10 @@ export async function renderShareDocumentToImages(
         const footerMidY = footerTop + 20;
         ctx.textBaseline = "middle";
         if (showBrandFooter) {
-          drawHoxiBrandMark(ctx, innerX, footerMidY - 8, 16, palette);
-          ctx.font = `600 12px ${FONT_SANS}`;
-          ctx.fillStyle = palette.textSecondary;
-          ctx.fillText("Hoxi", innerX + 22, footerMidY);
-          ctx.font = `400 12px ${FONT_SANS}`;
-          ctx.fillStyle = palette.textFaint;
-          ctx.fillText("·  hoxi.ai", innerX + 54, footerMidY);
+          drawHoxiMatrixMark(ctx, innerX - 2, footerMidY - 10, 20, palette);
+          ctx.font = `500 12px ${FONT_MONO}`;
+          ctx.fillStyle = palette.textMuted;
+          ctx.fillText("hoxi.ai", innerX + 24, footerMidY + 0.5);
         }
         if (totalPages > 1) {
           const counter = `${pageIdx + 1} / ${totalPages}`;
