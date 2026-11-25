@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -38,6 +39,8 @@ func (d *openaiDriver) BuildRequest(req ModelRequest) (llm.StreamHTTPRequest, er
 	return d.buildChatCompletionsRequest(req)
 }
 
+var openAIChatModelTokenRe = regexp.MustCompile(`(?i)(?:^|[/:_-])(?:codex|gpt-(?:4o|4\.1|5|6|7)|o[134](?:$|[._:-]))`)
+
 func isStrictOpenAIChatHost(target llm.StreamTarget) bool {
 	raw := strings.TrimSpace(target.BaseURL)
 	if raw == "" {
@@ -49,6 +52,46 @@ func isStrictOpenAIChatHost(target llm.StreamTarget) bool {
 	}
 	host := strings.ToLower(strings.TrimSpace(u.Hostname()))
 	return host == "api.openai.com" || strings.HasSuffix(host, ".openai.com") || strings.HasSuffix(host, ".openai.azure.com")
+}
+
+func isStrictNonOpenAIChatHost(target llm.StreamTarget) bool {
+	raw := strings.TrimSpace(target.BaseURL)
+	if raw == "" {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSpace(u.Hostname()))
+	for _, suffix := range []string{
+		"deepseek.com", "groq.com", "cerebras.ai", "together.xyz", "fireworks.ai",
+		"dashscope.aliyuncs.com", "siliconflow.cn", "siliconflow.com",
+		"x.ai", "googleapis.com", "mistral.ai", "anthropic.com",
+	} {
+		if host == suffix || strings.HasSuffix(host, "."+suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func isOpenAIChatModel(modelID string) bool {
+	lower := strings.ToLower(strings.TrimSpace(modelID))
+	if lower == "" || strings.Contains(lower, "gpt-oss") || strings.Contains(lower, "oss-") {
+		return false
+	}
+	return openAIChatModelTokenRe.MatchString(lower)
+}
+
+func supportsOpenAIChatPromptCacheKey(target llm.StreamTarget) bool {
+	if isStrictOpenAIChatHost(target) {
+		return true
+	}
+	if isStrictNonOpenAIChatHost(target) {
+		return false
+	}
+	return isOpenAIChatModel(target.ModelID)
 }
 
 func requiresToolReasoningField(target llm.StreamTarget, msgs []Message) bool {
@@ -81,7 +124,7 @@ func assistantMediaSummaryText(b ContentBlock) string {
 }
 
 func (d *openaiDriver) buildChatCompletionsRequest(req ModelRequest) (llm.StreamHTTPRequest, error) {
-	allowReasoningContent := !isStrictOpenAIChatHost(req.Target)
+	allowReasoningContent := !isStrictOpenAIChatHost(req.Target) && !isOpenAIChatModel(req.Target.ModelID)
 	activeTurnStart := lastPlainUserMessageIndex(req.Messages)
 	activeMsgs := req.Messages
 	if activeTurnStart >= 0 && activeTurnStart < len(req.Messages) {
@@ -196,10 +239,8 @@ func (d *openaiDriver) buildChatCompletionsRequest(req ModelRequest) (llm.Stream
 		"stream_options": map[string]any{"include_usage": true},
 	}
 	cacheKey := effectiveModelCacheKey(req)
-	if !allowReasoningContent {
-		if cacheKey != "" {
-			payload["prompt_cache_key"] = cacheKey
-		}
+	if cacheKey != "" && supportsOpenAIChatPromptCacheKey(req.Target) {
+		payload["prompt_cache_key"] = cacheKey
 	}
 	if req.MaxTokens > 0 {
 		payload["max_completion_tokens"] = req.MaxTokens

@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGlobDoublestarBracesAndGitignore(t *testing.T) {
@@ -179,5 +180,42 @@ func TestSessionTodoSeedAndDelete(t *testing.T) {
 	readRes3, _ := reg.Execute(context.Background(), ToolContext{SessionID: sid, WorktreeDir: t.TempDir()}, ToolCall{ID: "t4", Name: "todoread", Input: json.RawMessage(`{}`)}, nil)
 	if strings.TrimSpace(readRes3.Output) != "[]" {
 		t.Fatalf("expected DeleteSessionTodos to clear session checklist to [], got: %s", readRes3.Output)
+	}
+}
+
+func TestBashTimeoutClampsAboveMaxInsteadOfFallingBackToDefault(t *testing.T) {
+	for _, tc := range []struct {
+		in   int
+		want time.Duration
+	}{
+		{0, defaultBashTimeout},
+		{-100, defaultBashTimeout},
+		{30_000, 30 * time.Second},
+		{600_000, maxBashTimeout},
+		{1_800_000, maxBashTimeout},
+	} {
+		if got := resolveBashTimeout(tc.in); got != tc.want {
+			t.Fatalf("resolveBashTimeout(%d) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+
+	var observedRemaining time.Duration
+	reg := newToolRegistry()
+	res, err := reg.Execute(context.Background(), ToolContext{
+		WorktreeDir: t.TempDir(),
+		RunCommand: func(ctx context.Context, _, _ string) (string, int, error) {
+			dl, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("expected deadline on foreground bash context")
+			}
+			observedRemaining = time.Until(dl)
+			return "ok\n", 0, nil
+		},
+	}, ToolCall{ID: "bt1", Name: "bash", Input: json.RawMessage(`{"command":"./verify.sh","timeoutMs":1800000}`)}, nil)
+	if err != nil || res.IsError {
+		t.Fatalf("bash execution failed: err=%v res=%+v", err, res)
+	}
+	if observedRemaining < 550*time.Second || observedRemaining > maxBashTimeout+time.Second {
+		t.Fatalf("expected timeoutMs=1800000 to clamp to 600s, got remaining deadline %v", observedRemaining)
 	}
 }

@@ -441,3 +441,72 @@ func TestPruneStaleToolScreenshotsPreservesUserMediaAndKVCacheHysteresis(t *test
 		t.Fatalf("expected structured hoxi_computer prune summary, got: %q", gotSummary)
 	}
 }
+
+func TestCompactBudgetUTF8NoDoubleCountAndHysteresisHeadroom(t *testing.T) {
+	// 1. Multibyte CJK text (10,000 runes = 30,000 UTF-8 bytes) should estimate ~10K tokens,
+	// not ~13.3K via non-ASCII double-counting, so a 15K context window (75% trigger = 11,250)
+	// does NOT prematurely prune older reads.
+	cjkSystem := strings.Repeat("中", 10000) // 30,000 UTF-8 bytes
+	var cjkMsgs []agent.Message
+	readBody := strings.Repeat("1: func keepMe() {}\n", 150) // ~3000 bytes (~1000 est tokens)
+	cjkMsgs = append(cjkMsgs, makeToolStep("cjk_0", "read", map[string]any{"filePath": "a.go"}, readBody, false)...)
+	for i := 1; i < 8; i++ {
+		cjkMsgs = append(cjkMsgs, makeToolStep(fmt.Sprintf("cjk_%d", i), "read", map[string]any{"filePath": "b.go"}, "ok", false)...)
+	}
+	notPruned := agent.PruneOldToolResults(cjkMsgs, cjkSystem, 15000)
+	if notPruned[1].Content[0].Text != readBody {
+		t.Fatalf("CJK system prompt should not double-count UTF-8 bytes and prematurely prune at 15K limit, got: %q", notPruned[1].Content[0].Text)
+	}
+
+	// 2. Hysteresis headroom: with contextLimit=40000 (trigger=30000, 85% target=25500, keepRecent=14),
+	// build 38 messages (rawCutoff=24, quantizedCutoff=24 = 2 chunks of 12 messages).
+	// Chunk 0 has ~3500 tokens of prunable tool output; Chunk 1 has ~12000 tokens; recent tail has ~16000 tokens.
+	// Total = ~31500 (> 30000 trigger).
+	// Pruning Chunk 0 alone would leave ~28500 (still > 25500 target), so hysteresis must advance
+	// through Chunk 1 in the SAME compaction pass instead of stopping barely under 30000 and
+	// busting KV-cache again on the very next step.
+	var hystMsgs []agent.Message
+	chunk0Out := strings.Repeat("chunk zero verbose output line\n", 140) // ~4340 bytes (~1446 tok) x 3 = ~4340 tok
+	for i := 0; i < 6; i++ {
+		body := "short"
+		if i < 3 {
+			body = chunk0Out
+		}
+		hystMsgs = append(hystMsgs, makeToolStep(fmt.Sprintf("h0_%d", i), "read", map[string]any{"filePath": fmt.Sprintf("f0_%d.go", i)}, body, false)...)
+	}
+	chunk1Out := strings.Repeat("chunk one verbose output line\n", 260) // ~7800 bytes (~2600 tok) x 5 = ~13000 tok
+	for i := 0; i < 6; i++ {
+		body := "short"
+		if i < 5 {
+			body = chunk1Out
+		}
+		hystMsgs = append(hystMsgs, makeToolStep(fmt.Sprintf("h1_%d", i), "read", map[string]any{"filePath": fmt.Sprintf("f1_%d.go", i)}, body, false)...)
+	}
+	tailOut := strings.Repeat("recent active tail context line\n", 240) // ~7680 bytes (~2560 tok) x 6 = ~15360 tok
+	for i := 0; i < 7; i++ {
+		body := "short"
+		if i < 6 {
+			body = tailOut
+		}
+		hystMsgs = append(hystMsgs, makeToolStep(fmt.Sprintf("ht_%d", i), "read", map[string]any{"filePath": fmt.Sprintf("ft_%d.go", i)}, body, false)...)
+	}
+
+	prunedHyst := agent.PruneOldToolResults(hystMsgs, "sys", 40000)
+	if !strings.HasPrefix(prunedHyst[1].Content[0].Text, "[tool output pruned:") {
+		t.Fatalf("expected Chunk 0 tool output to be pruned")
+	}
+	if !strings.HasPrefix(prunedHyst[13].Content[0].Text, "[tool output pruned:") {
+		t.Fatalf("expected hysteresis target (85%% of trigger) to prune Chunk 1 in the same pass for KV-cache headroom, got len=%d", len(prunedHyst[13].Content[0].Text))
+	}
+	if prunedHyst[25].Content[0].Text != tailOut {
+		t.Fatalf("expected recent tail message [25] to stay unpruned")
+	}
+
+	// Strictly idempotent after hysteresis compaction.
+	prunedHystAgain := agent.PruneOldToolResults(prunedHyst, "sys", 40000)
+	b1, _ := json.Marshal(prunedHyst)
+	b2, _ := json.Marshal(prunedHystAgain)
+	if string(b1) != string(b2) {
+		t.Fatal("hysteresis pruning must remain strictly idempotent")
+	}
+}

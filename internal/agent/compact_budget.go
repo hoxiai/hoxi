@@ -10,6 +10,7 @@ import (
 
 const (
 	compactTriggerPercent          = 75
+	compactTargetPercent           = 85
 	compactHardCapPercent          = 90
 	maxRegularCompactTriggerTokens = 150000
 	maxRegularCompactHardCapTokens = 180000
@@ -29,14 +30,11 @@ const (
 	compactStaleReadMinLen = 320
 )
 
+// estimateTextWeight returns the UTF-8 byte length; multibyte CJK runes are
+// already 3 bytes each so dividing by 3 conservatively estimates ~1 token/rune
+// without double-counting non-ASCII leading bytes.
 func estimateTextWeight(s string) int {
-	nonASCII := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] >= 0x80 && (s[i]&0xC0) != 0x80 {
-			nonASCII++
-		}
-	}
-	return len(s) + nonASCII
+	return len(s)
 }
 
 func estimateTokens(msgs []Message, system string) int {
@@ -160,9 +158,10 @@ func pruneOldToolResultsInWorkspace(msgs []Message, system, worktreeDir string, 
 				pruned = pruneToolOutputsBeforeWithNorm(msgs, rawCutoff, minToolLen, richPreview, norm)
 			}
 		} else {
+			targetTokens := triggerTokens * compactTargetPercent / 100
 			for stride := compactChunkStride; stride <= quantizedCutoff; stride += compactChunkStride {
 				pruned = pruneToolOutputsBeforeWithNorm(msgs, stride, minToolLen, richPreview, norm)
-				if estimateTokens(pruned, system) <= triggerTokens {
+				if estimateTokens(pruned, system) <= targetTokens {
 					break
 				}
 			}

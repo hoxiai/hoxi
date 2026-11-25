@@ -204,6 +204,119 @@ func TestModelDriversPreferExplicitCacheKeyOverSessionID(t *testing.T) {
 	}
 }
 
+func TestOpenAIChatPromptCacheKeyAndReasoningForProxyCodexModels(t *testing.T) {
+	drv := newOpenAIDriver(false)
+	activeMsgs := []Message{
+		{Role: RoleUser, Content: []ContentBlock{{Type: ContentText, Text: "Audit recent commits"}}},
+		{Role: RoleAssistant, Content: []ContentBlock{
+			{Type: ContentThinking, Text: "Inspecting diff"},
+			{Type: ContentToolUse, ID: "c1", Name: "read", Input: json.RawMessage(`{"filePath":"a.go"}`)},
+		}},
+		{Role: RoleUser, Content: []ContentBlock{{Type: ContentToolResult, ToolUseID: "c1", Text: "1: ok"}}},
+	}
+
+	// Positive cases: OpenAI / Codex models on unified gateways must send prompt_cache_key
+	// and omit non-standard reasoning_content so cross-turn prefixes stay byte-identical.
+	for _, tc := range []struct {
+		name   string
+		target llm.StreamTarget
+	}{
+		{
+			name:   "subapi codex astra",
+			target: llm.StreamTarget{ProviderID: "subapi", ModelID: "openai-codex-gpt-6.2-astra", BaseURL: "http://127.0.0.1:5431/v1", Protocol: llm.ProtocolOpenAI},
+		},
+		{
+			name:   "subapi codex sol",
+			target: llm.StreamTarget{ProviderID: "subapi", ModelID: "openai-codex-gpt-6.2-sol", BaseURL: "http://127.0.0.1:5431/v1", Protocol: llm.ProtocolOpenAI},
+		},
+		{
+			name:   "openrouter gpt-5",
+			target: llm.StreamTarget{ProviderID: "openrouter", ModelID: "openai/gpt-5", BaseURL: "https://openrouter.ai/api/v1", Protocol: llm.ProtocolOpenAI},
+		},
+		{
+			name:   "official openai chat",
+			target: llm.StreamTarget{ProviderID: "openai", ModelID: "gpt-4o", BaseURL: "https://api.openai.com/v1", Protocol: llm.ProtocolOpenAI},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := drv.BuildRequest(ModelRequest{
+				SessionID: "ses_codex_cache_test",
+				Target:    tc.target,
+				Messages:  activeMsgs,
+			})
+			if err != nil {
+				t.Fatalf("BuildRequest failed: %v", err)
+			}
+			var body map[string]any
+			if err := json.Unmarshal(req.Body, &body); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := body["prompt_cache_key"].(string); got != "ses_codex_cache_test" {
+				t.Fatalf("expected prompt_cache_key=ses_codex_cache_test, got %q (body=%s)", got, req.Body)
+			}
+			if strings.Contains(string(req.Body), `"reasoning_content"`) {
+				t.Fatalf("OpenAI/Codex chat payload must not inject reasoning_content: %s", req.Body)
+			}
+		})
+	}
+
+	// Rejection cases: non-OpenAI models and strict third-party hosts must NOT receive prompt_cache_key;
+	// non-OpenAI reasoning relays must retain reasoning_content echo in the active turn.
+	for _, tc := range []struct {
+		name               string
+		target             llm.StreamTarget
+		wantReasoningField bool
+	}{
+		{
+			name:               "subapi deepseek",
+			target:             llm.StreamTarget{ProviderID: "subapi", ModelID: "Loomy-DeepSeek-V4.1-Flash", BaseURL: "http://127.0.0.1:5431/v1", Protocol: llm.ProtocolOpenAI},
+			wantReasoningField: true,
+		},
+		{
+			name:               "subapi gemini",
+			target:             llm.StreamTarget{ProviderID: "subapi", ModelID: "gemini-web-gemini-4-carbon", BaseURL: "http://127.0.0.1:5431/v1", Protocol: llm.ProtocolOpenAI},
+			wantReasoningField: true,
+		},
+		{
+			name:               "deepseek official",
+			target:             llm.StreamTarget{ProviderID: "deepseek", ModelID: "deepseek-reasoner", BaseURL: "https://api.deepseek.com/v1", Protocol: llm.ProtocolOpenAI},
+			wantReasoningField: true,
+		},
+		{
+			name:               "groq gpt-oss",
+			target:             llm.StreamTarget{ProviderID: "groq", ModelID: "openai/gpt-oss-120b", BaseURL: "https://api.groq.com/openai/v1", Protocol: llm.ProtocolOpenAI},
+			wantReasoningField: true,
+		},
+		{
+			name:               "strict third-party host with gpt-5 alias",
+			target:             llm.StreamTarget{ProviderID: "groq", ModelID: "gpt-5", BaseURL: "https://api.groq.com/openai/v1", Protocol: llm.ProtocolOpenAI},
+			wantReasoningField: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := drv.BuildRequest(ModelRequest{
+				SessionID: "ses_non_oai_test",
+				Target:    tc.target,
+				Messages:  activeMsgs,
+			})
+			if err != nil {
+				t.Fatalf("BuildRequest failed: %v", err)
+			}
+			var body map[string]any
+			if err := json.Unmarshal(req.Body, &body); err != nil {
+				t.Fatal(err)
+			}
+			if _, hasKey := body["prompt_cache_key"]; hasKey {
+				t.Fatalf("must not send prompt_cache_key to %s: %s", tc.name, req.Body)
+			}
+			hasReasoning := strings.Contains(string(req.Body), `"reasoning_content"`)
+			if hasReasoning != tc.wantReasoningField {
+				t.Fatalf("reasoning_content mismatch for %s: got %v want %v", tc.name, hasReasoning, tc.wantReasoningField)
+			}
+		})
+	}
+}
+
 func TestGeminiLocalCallIDAcrossResponses(t *testing.T) {
 	driver := newGeminiDriver()
 	seen := map[string]bool{}

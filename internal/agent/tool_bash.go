@@ -15,6 +15,11 @@ import (
 	"time"
 )
 
+const (
+	defaultBashTimeout = 120 * time.Second
+	maxBashTimeout     = 600 * time.Second
+)
+
 type bashTool struct{}
 
 func (t *bashTool) Name() string { return "bash" }
@@ -27,7 +32,7 @@ func (t *bashTool) Parameters() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"command":           map[string]any{"type": "string", "description": "Shell command to execute (required when starting a foreground or background command)"},
-			"timeoutMs":         map[string]any{"type": "integer", "description": "Timeout in milliseconds for foreground commands (default 120000)"},
+			"timeoutMs":         map[string]any{"type": "integer", "description": "Timeout in milliseconds for foreground commands (default 120000, max 600000)"},
 			"run_in_background": map[string]any{"type": "boolean", "description": "Set true ONLY for long-lived dev servers or watchers so the call returns a procId immediately while keeping the server alive across steps/turns"},
 			"action":            map[string]any{"type": "string", "enum": []string{"run", "output", "stop", "list"}, "description": "Background lifecycle action: 'output' reads unread logs for procId, 'stop' terminates procId, 'list' lists background commands in this session"},
 			"procId":            map[string]any{"type": "string", "description": "Process ID or foreground log ID returned by bash"},
@@ -134,10 +139,7 @@ func (t *bashTool) Execute(ctx context.Context, tc ToolContext, input json.RawMe
 			Metadata: map[string]any{"procId": st.ProcID, "running": st.Running, "pid": st.PID},
 		}, nil
 	}
-	timeout := 120 * time.Second
-	if args.TimeoutMs > 0 && args.TimeoutMs <= 600000 {
-		timeout = time.Duration(args.TimeoutMs) * time.Millisecond
-	}
+	timeout := resolveBashTimeout(args.TimeoutMs)
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -185,6 +187,17 @@ func (t *bashTool) Execute(ctx context.Context, tc ToolContext, input json.RawMe
 	}
 
 	return runDirectForegroundBash(runCtx, tc, cmdStr, capture)
+}
+
+func resolveBashTimeout(timeoutMs int) time.Duration {
+	if timeoutMs <= 0 {
+		return defaultBashTimeout
+	}
+	d := time.Duration(timeoutMs) * time.Millisecond
+	if d > maxBashTimeout {
+		return maxBashTimeout
+	}
+	return d
 }
 
 type limitedCmdBuffer struct {
