@@ -2,7 +2,7 @@ import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import {
   activeDirectory,
   appSettings,
-  isTesterPortalMode,
+  isAnyPortalMode,
   openExternalURL,
   openFileInInspector,
   openImagePreview,
@@ -40,7 +40,7 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
   const rawSrc = () => (props.src || "").trim();
   const isRemote = () => /^https?:\/\//i.test(rawSrc());
   const isGatewayAttachment = () =>
-    /^\/api\/hoxi\/(?:attachments|intake\/portal\/attachments)\//i.test(rawSrc());
+    /^\/api\/hoxi\/(?:attachments|[a-z0-9-]+\/portal\/attachments)\//i.test(rawSrc());
   const isDataImage = () =>
     /^data:image\/(?:png|jpe?g|gif|webp|avif|svg\+xml)(?:;charset=[^;,]+)?;(?:base64|utf8),/i.test(rawSrc()) ||
     /^data:image\/svg\+xml,/i.test(rawSrc());
@@ -72,7 +72,7 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
 
     const directory = activeDirectory() || workspace.rootDir || "";
     const sessionID = workspace.activeSessionID || undefined;
-    if (isTesterPortalMode() || (!workspace.connected && !directory)) {
+    if (isAnyPortalMode() || (!workspace.connected && !directory)) {
       setLoading(false);
       setFailed(true);
       return;
@@ -120,7 +120,7 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
 
   const handleOpen = (e: MouseEvent) => {
     e.preventDefault();
-    const portalMode = isTesterPortalMode();
+    const portalMode = isAnyPortalMode();
     const path = localPath();
     if (path && !portalMode) {
       openImagePreview({
@@ -156,7 +156,7 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
   };
 
   const openTitle = () => {
-    if (isTesterPortalMode()) {
+    if (isAnyPortalMode()) {
       return isRemote() ? t("timeline.openInExternalBrowserTooltip") : undefined;
     }
     if (localPath()) return t("timeline.openInInspectorTooltip");

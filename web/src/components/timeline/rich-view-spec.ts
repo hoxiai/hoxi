@@ -72,7 +72,7 @@ export function sanitizeRichMediaURL(raw: unknown): string | undefined {
   const trimmed = raw.trim();
   if (!trimmed || trimmed.length > 512_000 || CONTROL_CHAR_RE.test(trimmed)) return undefined;
   if (/^https?:\/\/[^\s<>"]+$/i.test(trimmed)) return trimmed;
-  if (/^\/api\/hoxi\/(?:attachments|file\/content|intake\/portal\/attachments)/i.test(trimmed)) {
+  if (/^\/api\/hoxi\/(?:attachments|file\/content|[a-z0-9-]+\/portal\/attachments)/i.test(trimmed)) {
     return trimmed;
   }
   if (/^data:image\/(?:png|jpe?g|gif|webp|avif|svg\+xml)(?:;charset=[^;,]+)?;(?:base64|utf8),/i.test(trimmed)) {

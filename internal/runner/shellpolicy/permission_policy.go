@@ -50,7 +50,7 @@ var (
 		`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?library/keychains/`,
 		`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.(?:netrc|npmrc|pypirc|git-credentials|credentials\.json|claude\.json)(?:$|[\s;&|)'"*?])`,
 		`\.claude/\.credentials\.json`,
-		`\.hoxi/(?:models|media-roles|intake|schedules|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|work-apps|dataprofiles|approval-policy|hoxi)\.(?:json|db)`,
+		`\.hoxi/(?:models|media-roles|intake|collab|schedules|auth|tunnel(?:-dev)?|node-relay(?:-dev)?|cloudflared|pairing|relay-keys|work-apps|dataprofiles|approval-policy|hoxi)\.(?:json|db)`,
 		`\.docker/config\.json`,
 		// .env / .env.* / .envrc and private key files
 		envFilePattern,
@@ -63,7 +63,7 @@ var (
 		`\bterraform\s+(?:destroy|apply)\b`,
 		`\bkubectl\s+delete\b`,
 		`\bdocker\s+(?:system\s+prune|rm|rmi)\b`,
-		`/api/hoxi/(?:tools/run|dataprofiles\b|intake\b|schedules\b|computer/(?:action|grant|pause|stop))\b`,
+		`/api/hoxi/(?:tools/run|dataprofiles\b|intake\b|collab\b|schedules\b|computer/(?:action|grant|pause|stop))\b`,
 	}, "|"))
 
 	// Git option abbreviations (`--forc`, `--har`), combined short flags

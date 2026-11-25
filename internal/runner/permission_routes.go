@@ -721,3 +721,20 @@ func (s *Service) listPendingApprovals(directory string) []map[string]interface{
 	}
 	return out
 }
+
+// HasPendingApproval reports whether sessionID currently has any pending tool approval
+// awaiting desktop or mobile owner confirmation. No command text or path metadata is exposed.
+func (s *Service) HasPendingApproval(sessionID string) bool {
+	sid := strings.TrimSpace(sessionID)
+	if sid == "" || s == nil {
+		return false
+	}
+	s.gate.mu.Lock()
+	defer s.gate.mu.Unlock()
+	for _, p := range s.gate.pending {
+		if p != nil && p.sid == sid {
+			return true
+		}
+	}
+	return false
+}

@@ -41,6 +41,7 @@ type Service struct {
 	generation    uint64
 	launchBrowser func(string)
 	onClear       func() error
+	onLogin       func()
 	// pollInterval paces device-token polling; zero means defaultPollInterval.
 	// Tests shorten it so they do not wait on real seconds.
 	pollInterval time.Duration
@@ -91,6 +92,45 @@ func (s *Service) ServerBaseURL() string {
 func (s *Service) SetOnClear(fn func() error) {
 	s.mu.Lock()
 	s.onClear = fn
+	s.mu.Unlock()
+}
+
+// AddOnClear appends a callback invoked after local desktop account credentials
+// are cleared by logout, account switch, or upstream 401 invalidation.
+func (s *Service) AddOnClear(fn func() error) {
+	if fn == nil {
+		return
+	}
+	s.mu.Lock()
+	prev := s.onClear
+	if prev == nil {
+		s.onClear = fn
+	} else {
+		s.onClear = func() error {
+			err1 := prev()
+			err2 := fn()
+			return errors.Join(err1, err2)
+		}
+	}
+	s.mu.Unlock()
+}
+
+// AddOnLogin appends a callback invoked asynchronously after desktop account
+// authorization succeeds and local credentials are persisted.
+func (s *Service) AddOnLogin(fn func()) {
+	if fn == nil {
+		return
+	}
+	s.mu.Lock()
+	prev := s.onLogin
+	if prev == nil {
+		s.onLogin = fn
+	} else {
+		s.onLogin = func() {
+			prev()
+			fn()
+		}
+	}
 	s.mu.Unlock()
 }
 
@@ -363,10 +403,10 @@ func (s *Service) pendingValidLocked(attempt *authorization) bool {
 
 func (s *Service) applyAuthorized(attempt *authorization, auth *StoredAuth) error {
 	s.credentialMu.Lock()
-	defer s.credentialMu.Unlock()
 	s.mu.Lock()
 	if !s.pendingValidLocked(attempt) {
 		s.mu.Unlock()
+		s.credentialMu.Unlock()
 		return errors.New("invalid or expired authorization state")
 	}
 	onClear := s.onClear
@@ -374,23 +414,33 @@ func (s *Service) applyAuthorized(attempt *authorization, auth *StoredAuth) erro
 	s.mu.Unlock()
 	if changingAccount && onClear != nil {
 		if err := onClear(); err != nil {
+			s.credentialMu.Unlock()
 			return fmt.Errorf("failed to clear previous account provider: %w", err)
 		}
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if !s.pendingValidLocked(attempt) {
+		s.mu.Unlock()
+		s.credentialMu.Unlock()
 		return errors.New("invalid or expired authorization state")
 	}
 	auth.ServerBaseURL = attempt.baseURL
 	// Keep persistence ordered with logout and publish only successfully saved credentials.
 	if err := s.store.SaveForServer(attempt.baseURL, auth); err != nil {
+		s.mu.Unlock()
+		s.credentialMu.Unlock()
 		return err
 	}
 	attempt.completed = auth
 	s.current = auth
 	s.generation++
 	s.cancelPendingLocked()
+	onLogin := s.onLogin
+	s.mu.Unlock()
+	s.credentialMu.Unlock()
+	if onLogin != nil {
+		go onLogin()
+	}
 	return nil
 }
 
@@ -509,6 +559,7 @@ func (s *Service) verifyBackground(auth *StoredAuth, baseURL string, generation 
 		return
 	}
 
+	var onLogin func()
 	if resp.StatusCode == http.StatusOK && verifyRes.Valid {
 		updated := *auth
 		updated.User = verifyRes.User
@@ -516,9 +567,16 @@ func (s *Service) verifyBackground(auth *StoredAuth, baseURL string, generation 
 		updated.ServerBaseURL = baseURL
 		if err := s.store.SaveForServer(baseURL, &updated); err == nil {
 			s.current = &updated
+			if strings.TrimSpace(verifyRes.User.Username) != "" &&
+				!strings.EqualFold(strings.TrimSpace(verifyRes.User.Username), strings.TrimSpace(auth.User.Username)) {
+				onLogin = s.onLogin
+			}
 		}
 	}
 	s.mu.Unlock()
+	if onLogin != nil {
+		go onLogin()
+	}
 }
 
 var ErrNotLoggedIn = errors.New("not logged in")

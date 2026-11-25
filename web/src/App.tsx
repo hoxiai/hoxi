@@ -95,6 +95,17 @@ export default function App() {
       </PaneErrorBoundary>
     );
   }
+  if (
+    surfaceExtension.enabled &&
+    surfaceExtension.isExternalPortalActive?.() &&
+    surfaceExtension.renderExternalPortal
+  ) {
+    return (
+      <PaneErrorBoundary fullPage>
+        <Suspense>{surfaceExtension.renderExternalPortal()}</Suspense>
+      </PaneErrorBoundary>
+    );
+  }
   return (
     <PaneErrorBoundary fullPage>
       <DesktopApp />

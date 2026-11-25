@@ -63,6 +63,7 @@ import {
   type TaskOverviewNode,
 } from "../../store/workspace";
 import { useAnchoredPopover } from "../layout/anchored-popover";
+import { surfaceExtension } from "../layout/surface-extension";
 import ScheduledTasksSection from "../schedules/ScheduledTasksSection";
 import IntakeLinksModal from "./IntakeLinksModal";
 import IntakeTasksSection from "./IntakeTasksSection";
@@ -391,7 +392,11 @@ export default function TaskOverviewView() {
               class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
             >
               <Link2 size={11} class="text-[var(--accent-primary)]" />
-              <span>{t("tasks.intakeLinksBtn")}</span>
+              <span>
+                {surfaceExtension.enabled && surfaceExtension.collaborationLinksButtonLabel
+                  ? surfaceExtension.collaborationLinksButtonLabel()
+                  : t("tasks.intakeLinksBtn")}
+              </span>
             </button>
           </Show>
         </div>
@@ -399,6 +404,9 @@ export default function TaskOverviewView() {
 
       <div class="min-h-0 flex-1 overflow-y-auto px-2.5 py-2">
         <ScheduledTasksSection />
+        {surfaceExtension.enabled
+          ? surfaceExtension.renderExtraTasksSection?.({ directory, visible })
+          : null}
         <IntakeTasksSection />
         <Show
           when={workspace.activeSessionID}
@@ -406,6 +414,7 @@ export default function TaskOverviewView() {
             <Show
               when={
                 intakeTasks().length === 0 &&
+                !(surfaceExtension.enabled && surfaceExtension.hasExtraTasks?.()) &&
                 schedulesForWorkspace(directory(), workspace.activeProjectID || undefined).length === 0
               }
             >
@@ -421,6 +430,7 @@ export default function TaskOverviewView() {
               <Show
                 when={
                   intakeTasks().length === 0 &&
+                  !(surfaceExtension.enabled && surfaceExtension.hasExtraTasks?.()) &&
                   schedulesForWorkspace(directory(), workspace.activeProjectID || undefined).length === 0
                 }
               >

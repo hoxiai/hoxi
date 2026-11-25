@@ -66,6 +66,12 @@ type Options struct {
 	// zero-config outbound tunnel registration when no manual tunnel credential
 	// exists yet. Empty disables auto-registration (the default in tests).
 	DefaultRelayURL string
+
+	// RetiredAutoRelayURLs lists legacy default relay controller URLs whose
+	// saved AutoRelay credentials should transparently re-register against
+	// DefaultRelayURL on startup. Manual (non-AutoRelay) pairings are never
+	// migrated.
+	RetiredAutoRelayURLs []string
 }
 
 // Status is safe to return to the UI: it never includes the tunnel token.
@@ -168,10 +174,42 @@ func (m *Manager) SetDefaultRelayURL(controllerURL string) {
 	m.mu.Unlock()
 }
 
+// SetRetiredAutoRelayURLs configures legacy default relay controller URLs whose
+// saved auto-registered credentials should re-register against DefaultRelayURL
+// on startup. Manual pairings (AutoRelay=false) are never affected.
+func (m *Manager) SetRetiredAutoRelayURLs(controllerURLs []string) {
+	cleaned := make([]string, 0, len(controllerURLs))
+	for _, raw := range controllerURLs {
+		if norm, err := normalizeControllerURL(raw); err == nil {
+			cleaned = append(cleaned, norm)
+		}
+	}
+	m.mu.Lock()
+	m.opts.RetiredAutoRelayURLs = cleaned
+	m.mu.Unlock()
+}
+
 func (m *Manager) defaultRelayURL() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return strings.TrimSpace(m.opts.DefaultRelayURL)
+}
+
+func (m *Manager) shouldMigrateAutoRelay(currentURL, targetURL string) bool {
+	curNorm, curErr := normalizeControllerURL(currentURL)
+	tgtNorm, tgtErr := normalizeControllerURL(targetURL)
+	if curErr != nil || tgtErr != nil || strings.EqualFold(curNorm, tgtNorm) {
+		return false
+	}
+	m.mu.Lock()
+	retired := append([]string(nil), m.opts.RetiredAutoRelayURLs...)
+	m.mu.Unlock()
+	for _, raw := range retired {
+		if norm, err := normalizeControllerURL(raw); err == nil && strings.EqualFold(curNorm, norm) {
+			return true
+		}
+	}
+	return false
 }
 
 // RelayProxyURL returns the public Hoxi relay proxy endpoint when this desktop
@@ -220,6 +258,11 @@ func (m *Manager) Start() {
 			status.Message = err.Error()
 		}
 		m.setStatus(status)
+		return
+	}
+	if defaultRelay := m.defaultRelayURL(); cfg.AutoRelay && defaultRelay != "" && m.shouldMigrateAutoRelay(cfg.ControllerURL, defaultRelay) {
+		go m.revokeOnController(cfg)
+		m.startAutoRegister(defaultRelay)
 		return
 	}
 	m.restart(cfg)

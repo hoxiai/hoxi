@@ -601,3 +601,26 @@ func TestConcurrentPollAndExchangeDoNotDoubleIssueToken(t *testing.T) {
 	}
 	assertStoredToken(t, s, "poll-issued-token")
 }
+
+func TestAddOnLoginInvokedAfterAuthorizationWithoutDeadlock(t *testing.T) {
+	s := testService(t, func(w http.ResponseWriter, r *http.Request) {
+		authorizedResponse(w)
+	})
+	called := make(chan string, 2)
+	s.AddOnLogin(func() {
+		// Calling back into Service inside AddOnLogin must never deadlock.
+		called <- s.CurrentDeviceToken()
+	})
+	s.AddOnLogin(func() {
+		called <- s.Snapshot().User.Email
+	})
+	state := startTestAuth(t, s)
+	if _, err := s.ExchangeToken(context.Background(), "handoff", state); err != nil {
+		t.Fatal(err)
+	}
+	got1 := await(t, called)
+	got2 := await(t, called)
+	if got1 != "new-token" || got2 != "test@example.com" {
+		t.Fatalf("AddOnLogin callbacks observed (%q, %q), want (new-token, test@example.com)", got1, got2)
+	}
+}

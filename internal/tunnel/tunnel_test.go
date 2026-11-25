@@ -699,7 +699,6 @@ func TestStartAutoRegistersWithDefaultRelayController(t *testing.T) {
 
 func TestTunnelHandlesLargeBurstRequestBody(t *testing.T) {
 	payload := strings.Repeat("B", 2*1024*1024) // 64 chunks > old 16-chunk cap
-	var receivedLen int
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(30 * time.Millisecond)
 		body, err := io.ReadAll(r.Body)
@@ -707,7 +706,10 @@ func TestTunnelHandlesLargeBurstRequestBody(t *testing.T) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		receivedLen = len(body)
+		if string(body) != payload {
+			http.Error(w, "incomplete or corrupt request body", http.StatusBadRequest)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
@@ -745,8 +747,5 @@ func TestTunnelHandlesLargeBurstRequestBody(t *testing.T) {
 	}
 	if resp.Status != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.Status)
-	}
-	if receivedLen != len(payload) {
-		t.Fatalf("receivedLen = %d, want %d", receivedLen, len(payload))
 	}
 }

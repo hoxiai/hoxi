@@ -178,3 +178,65 @@ func TestIntakePortalIsolationAndSanitizedTimeline(t *testing.T) {
 		t.Fatalf("expected EnsureSession to reject non-Git directory without committed HEAD, got: %v", ensureErr)
 	}
 }
+
+type stubRelayEndpointExt struct {
+	intakeBase string
+	remoteBase string
+}
+
+func (stubRelayEndpointExt) HasSessionContext(string) bool { return false }
+func (stubRelayEndpointExt) ForgetSession(string)          {}
+func (stubRelayEndpointExt) RegisterRoutes(*http.ServeMux) {}
+func (stubRelayEndpointExt) Close()                        {}
+func (s stubRelayEndpointExt) IntakeRelayBaseURL() string  { return s.intakeBase }
+func (s stubRelayEndpointExt) RemoteRelayBaseURL() string  { return s.remoteBase }
+
+func TestRelayEndpointExtensionAndServeIntakeRelayRequest(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOXI_HOME", filepath.Join(tmp, "hoxi-home"))
+	proj := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	distFS := fstest.MapFS{
+		"index.html":        &fstest.MapFile{Data: []byte("<!doctype html><html><body>Hoxi QA</body></html>")},
+		"assets/app-123.js": &fstest.MapFile{Data: []byte("console.log('bundle');")},
+	}
+	gw := New(0, "test-pass", proj, distFS, nil)
+	t.Cleanup(gw.CloseBrowser)
+	gw.AttachExtension(stubRelayEndpointExt{
+		intakeBase: "https://coller.node.example.test",
+		remoteBase: "https://coller.node.example.test",
+	})
+
+	createBody, _ := json.Marshal(intake.CreateLinkInput{Directory: proj, Label: "QA"})
+	linkRec := httptest.NewRecorder()
+	gw.ServeHTTP(linkRec, httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/hoxi/intake/links", bytes.NewReader(createBody)))
+	if linkRec.Code != http.StatusOK {
+		t.Fatalf("link create failed: %d %s", linkRec.Code, linkRec.Body.String())
+	}
+	var pub intake.PublicLink
+	if err := json.Unmarshal(linkRec.Body.Bytes(), &pub); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(pub.RelayURL, "https://coller.node.example.test/qa/hqa_") {
+		t.Fatalf("RelayURL = %q, want extension base prefix", pub.RelayURL)
+	}
+	if hashes := gw.ActiveIntakeTokenHashes(); len(hashes) != 1 || len(hashes[0]) != 64 {
+		t.Fatalf("expected 1 SHA-256 intake hash, got %v", hashes)
+	}
+
+	okRec := httptest.NewRecorder()
+	okReq := httptest.NewRequest(http.MethodGet, "https://coller.node.example.test"+pub.PortalPath, nil)
+	okReq.Header.Set("Cookie", "sid=untrusted")
+	gw.ServeIntakeRelayRequest(okRec, okReq)
+	if okRec.Code != http.StatusOK {
+		t.Fatalf("ServeIntakeRelayRequest page got %d, want 200", okRec.Code)
+	}
+
+	denyRec := httptest.NewRecorder()
+	gw.ServeIntakeRelayRequest(denyRec, httptest.NewRequest(http.MethodGet, "https://coller.node.example.test/api/hoxi/sessions", nil))
+	if denyRec.Code != http.StatusForbidden {
+		t.Fatalf("ServeIntakeRelayRequest must reject non-intake paths with 403, got %d", denyRec.Code)
+	}
+}

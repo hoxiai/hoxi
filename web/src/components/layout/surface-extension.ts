@@ -20,6 +20,22 @@ export interface CustomInspectorTabSpec {
   render: () => JSX.Element;
 }
 
+export interface RemoteAccessTabSpec {
+  id: string;
+  label: () => string;
+  tip: () => string;
+  render: () => JSX.Element;
+}
+
+export interface CollaborationLinkTabSpec {
+  id: string;
+  label: () => string;
+  subtitle: () => string;
+  badgeCount?: () => number;
+  onOpen?: (directory: string) => void;
+  render: (props: { directory: string; onClose: () => void }) => JSX.Element;
+}
+
 export interface SurfaceExtension {
   enabled: boolean;
   openAppIntent?: (intent: DesktopIntent) => void;
@@ -39,6 +55,13 @@ export interface SurfaceExtension {
     secondary: InspectorSurfaceTabID[];
   };
   customInspectorTabs?: () => CustomInspectorTabSpec[];
+  remoteAccessTabs?: () => RemoteAccessTabSpec[];
+  isExternalPortalActive?: () => boolean;
+  renderExternalPortal?: () => JSX.Element;
+  collaborationLinksButtonLabel?: () => string;
+  collaborationLinkTabs?: () => CollaborationLinkTabSpec[];
+  renderExtraTasksSection?: (props: { directory: () => string; visible: () => boolean }) => JSX.Element;
+  hasExtraTasks?: () => boolean;
   hideGitControls?: boolean;
   hideCodeComposerControls?: boolean;
   preferFilePreview?: boolean;

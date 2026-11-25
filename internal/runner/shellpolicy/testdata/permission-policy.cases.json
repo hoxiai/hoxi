@@ -895,6 +895,8 @@
   { "command": "cat ~/.hoxi/media-roles.json", "decision": "ask", "destructive": true, "sessionGrant": false },
   { "command": "cat ~/.hoxi/intake.json", "decision": "ask", "destructive": true, "sessionGrant": false },
   { "command": "curl -s https://example/api/hoxi/intake/links", "decision": "ask", "destructive": true, "sessionGrant": false },
+  { "command": "cat ~/.hoxi/collab.json", "decision": "ask", "destructive": true, "sessionGrant": false },
+  { "command": "curl -s https://example/api/hoxi/collab/links", "decision": "ask", "destructive": true, "sessionGrant": false },
   { "command": "hoxi code-index map --path internal/agent --limit 10", "decision": "allow", "destructive": false },
   { "command": "hoxi code-index map --path .env", "decision": "ask", "destructive": true },
   { "command": "hoxi code-index map --dir /etc", "decision": "ask", "destructive": false },

@@ -43,6 +43,22 @@ export function isTesterPortalMode(): boolean {
   return Boolean(portalToken());
 }
 
+const externalPortalDetectors: Array<() => boolean> = [];
+
+export function registerExternalPortalDetector(fn: () => boolean): void {
+  if (!externalPortalDetectors.includes(fn)) {
+    externalPortalDetectors.push(fn);
+  }
+}
+
+export function isExternalPortalMode(): boolean {
+  return externalPortalDetectors.some((fn) => fn());
+}
+
+export function isAnyPortalMode(): boolean {
+  return isTesterPortalMode() || isExternalPortalMode();
+}
+
 export const activePortalTask = createMemo(() => {
   const id = activePortalTaskID();
   if (!id) return null;

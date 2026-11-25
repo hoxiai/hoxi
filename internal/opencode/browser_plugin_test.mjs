@@ -226,8 +226,8 @@ test("standalone browser plugin", async (t) => {
       '# internal/foo.go:10-12 (of 80) [HandleFoo]\n10: func HandleFoo() string {\n11: \treturn "ok"\n12: }',
     );
 
-    // Sensitive / protected paths (including .hoxi/intake.json) require read approval first and are rejected before reaching fetch
-    for (const blockedPath of [".hoxi/cloudflared.json", ".hoxi/intake.json", ".hoxi/media-roles.json", ".claude/.credentials.json", ".env", "../outside.go", "/etc/passwd"]) {
+    // Sensitive / protected paths (including .hoxi/intake.json and .hoxi/collab.json) require read approval first and are rejected before reaching fetch
+    for (const blockedPath of [".hoxi/cloudflared.json", ".hoxi/intake.json", ".hoxi/collab.json", ".hoxi/media-roles.json", ".claude/.credentials.json", ".env", "../outside.go", "/etc/passwd"]) {
       for (const act of ["inspect", "map"]) {
         requests = [];
         asks = [];

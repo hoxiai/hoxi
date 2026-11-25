@@ -4,8 +4,11 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
+	"path"
+	"sort"
 	"strings"
 	"sync"
 
@@ -16,6 +19,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/reclaim"
 	"github.com/hoxiai/hoxi/internal/runner"
 	"github.com/hoxiai/hoxi/internal/skills"
+	"github.com/hoxiai/hoxi/internal/worktree"
 )
 
 // Extension wires an optional desktop-only host module into Gateway without
@@ -39,6 +43,49 @@ type SessionMCPExtension interface {
 // may navigate inside a cross-site iframe.
 type DesktopIframeRoutesExtension interface {
 	DesktopIframeRoutes() []string
+}
+
+// RelayEndpointExtension may be implemented by an Extension to supply public
+// relay base URLs for isolated tester intake portals and/or paired remote
+// controllers.
+type RelayEndpointExtension interface {
+	IntakeRelayBaseURL() string
+	RemoteRelayBaseURL() string
+}
+
+// RelayLifecycleExtension may be implemented by an Extension that runs a
+// background reverse relay bound to the desktop host lifecycle.
+type RelayLifecycleExtension interface {
+	StartRelay(variant string)
+	StopRelay()
+}
+
+// TunnelRelayPolicyExtension may be implemented by an Extension to supply the
+// default GoPanel-compatible tunnel relay controller URL and any retired
+// auto-relay controller URLs whose saved auto-registered credentials should
+// transparently re-register on startup.
+type TunnelRelayPolicyExtension interface {
+	DefaultTunnelRelayURL() string
+	RetiredAutoRelayURLs() []string
+}
+
+// PublicPortalEndpoints reports loopback, LAN, and public relay base URLs
+// available for isolated external portal links.
+type PublicPortalEndpoints struct {
+	LocalBaseURL string
+	LANBaseURL   string
+	RelayBaseURL string
+}
+
+// PublicPortalExtension may be implemented by an Extension to expose an
+// isolated, token-authenticated external portal (SPA shell + scoped API) over
+// loopback, LAN, reverse-proxy ingress, and relay transports.
+type PublicPortalExtension interface {
+	IsPublicPortalRequest(r *http.Request) bool
+	IsPublicPortalAPIPath(requestPath string) bool
+	ServePublicPortal(w http.ResponseWriter, r *http.Request)
+	ActivePublicPortalTokenHashes() []string
+	SetPublicPortalLinksChangedHook(fn func())
 }
 
 // ExtensionFactory constructs an Extension bound to a Gateway instance.
@@ -158,6 +205,292 @@ func (g *Gateway) closeExtensions() {
 	}
 }
 
+// StartExtensionRelays starts any background reverse relays registered by
+// optional host extensions. Only desktop/headless host processes call this.
+func (g *Gateway) StartExtensionRelays(variant string) {
+	if g == nil {
+		return
+	}
+	for _, ext := range g.extensions {
+		if relayExt, ok := ext.(RelayLifecycleExtension); ok {
+			relayExt.StartRelay(variant)
+		}
+	}
+}
+
+// StopExtensionRelays stops background reverse relays registered by extensions.
+func (g *Gateway) StopExtensionRelays() {
+	if g == nil {
+		return
+	}
+	for _, ext := range g.extensions {
+		if relayExt, ok := ext.(RelayLifecycleExtension); ok {
+			relayExt.StopRelay()
+		}
+	}
+}
+
+func (g *Gateway) extensionIntakeRelayBaseURL() string {
+	if g == nil {
+		return ""
+	}
+	for _, ext := range g.extensions {
+		if provider, ok := ext.(RelayEndpointExtension); ok {
+			if base := strings.TrimRight(strings.TrimSpace(provider.IntakeRelayBaseURL()), "/"); base != "" {
+				return base
+			}
+		}
+	}
+	return ""
+}
+
+func (g *Gateway) extensionRemoteRelayBaseURL() string {
+	if g == nil {
+		return ""
+	}
+	for _, ext := range g.extensions {
+		if provider, ok := ext.(RelayEndpointExtension); ok {
+			if base := strings.TrimRight(strings.TrimSpace(provider.RemoteRelayBaseURL()), "/"); base != "" {
+				return base
+			}
+		}
+	}
+	return ""
+}
+
+func (g *Gateway) extensionDefaultTunnelRelayURL() string {
+	if g == nil {
+		return ""
+	}
+	for _, ext := range g.extensions {
+		if provider, ok := ext.(TunnelRelayPolicyExtension); ok {
+			if base := strings.TrimRight(strings.TrimSpace(provider.DefaultTunnelRelayURL()), "/"); base != "" {
+				return base
+			}
+		}
+	}
+	return ""
+}
+
+func (g *Gateway) extensionRetiredAutoRelayURLs() []string {
+	if g == nil {
+		return nil
+	}
+	var out []string
+	for _, ext := range g.extensions {
+		if provider, ok := ext.(TunnelRelayPolicyExtension); ok {
+			for _, raw := range provider.RetiredAutoRelayURLs() {
+				if trimmed := strings.TrimRight(strings.TrimSpace(raw), "/"); trimmed != "" {
+					out = append(out, trimmed)
+				}
+			}
+		}
+	}
+	return out
+}
+
+// ActiveIntakeTokenHashes returns sorted SHA-256 hex digests of active intake
+// and extension public portal tokens so relay extensions can route multi-device
+// collaboration links without exposing raw portal tokens.
+func (g *Gateway) ActiveIntakeTokenHashes() []string {
+	if g == nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var out []string
+	appendHashes := func(hashes []string) {
+		for _, h := range hashes {
+			if h != "" && !seen[h] {
+				seen[h] = true
+				out = append(out, h)
+			}
+		}
+	}
+	if g.intake != nil {
+		appendHashes(g.intake.ActiveTokenHashes())
+	}
+	for _, ext := range g.extensions {
+		if portal, ok := ext.(PublicPortalExtension); ok {
+			appendHashes(portal.ActivePublicPortalTokenHashes())
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// SetIntakeLinksChangedHook notifies a relay extension whenever intake or
+// extension public portal links are created, updated, or deleted.
+func (g *Gateway) SetIntakeLinksChangedHook(fn func()) {
+	if g == nil {
+		return
+	}
+	if g.intake != nil {
+		g.intake.SetOnLinksChanged(fn)
+	}
+	for _, ext := range g.extensions {
+		if portal, ok := ext.(PublicPortalExtension); ok {
+			portal.SetPublicPortalLinksChangedHook(fn)
+		}
+	}
+}
+
+func (g *Gateway) isExtensionPublicPortalRequest(r *http.Request) bool {
+	if g == nil || r == nil || r.URL == nil || r.URL.RawPath != "" {
+		return false
+	}
+	for _, ext := range g.extensions {
+		if portal, ok := ext.(PublicPortalExtension); ok && portal.IsPublicPortalRequest(r) {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *Gateway) isExtensionPublicPortalAPIPath(requestPath string) bool {
+	if g == nil || requestPath == "" {
+		return false
+	}
+	for _, ext := range g.extensions {
+		if portal, ok := ext.(PublicPortalExtension); ok && portal.IsPublicPortalAPIPath(requestPath) {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *Gateway) serveExtensionPublicPortal(w http.ResponseWriter, r *http.Request) {
+	if g == nil || r == nil || r.URL == nil {
+		writeJSONError(w, http.StatusForbidden, "route is not available")
+		return
+	}
+	for _, ext := range g.extensions {
+		portal, ok := ext.(PublicPortalExtension)
+		if !ok {
+			continue
+		}
+		if portal.IsPublicPortalRequest(r) || portal.IsPublicPortalAPIPath(r.URL.Path) {
+			portal.ServePublicPortal(w, r)
+			return
+		}
+	}
+	writeJSONError(w, http.StatusForbidden, "route is not available")
+}
+
+// IsIntakePublicSurfaceRequest reports whether r targets an isolated public
+// portal SPA shell, static bundle assets, or token-authenticated portal API.
+func (g *Gateway) IsIntakePublicSurfaceRequest(r *http.Request) bool {
+	return isIntakePublicSurfaceRequest(r) || g.isExtensionPublicPortalRequest(r)
+}
+
+// ServeIntakeRelayRequest serves ONLY isolated public portal SPA shells,
+// bundle assets, and token-authenticated portal APIs over an extension reverse
+// relay. Untrusted proxy/browser headers are stripped; non-portal paths are
+// always rejected with 403.
+func (g *Gateway) ServeIntakeRelayRequest(w http.ResponseWriter, r *http.Request) {
+	if g == nil || r == nil || r.URL == nil || denyRemoteAppProtocol(w, r.URL.Path) {
+		return
+	}
+	isIntake := isIntakePublicSurfaceRequest(r)
+	isExtPortal := g.isExtensionPublicPortalRequest(r)
+	if !isIntake && !isExtPortal {
+		writeJSONError(w, http.StatusForbidden, "route is not available on this relay")
+		return
+	}
+	r.Host = "127.0.0.1"
+	isExtPortalAPI := g.isExtensionPublicPortalAPIPath(r.URL.Path)
+	for key := range r.Header {
+		lower := strings.ToLower(strings.TrimSpace(key))
+		if lower == "authorization" &&
+			(strings.HasPrefix(r.URL.Path, "/api/hoxi/intake/portal/") || isExtPortalAPI) {
+			continue
+		}
+		if droppedRemoteHeader(key) {
+			delete(r.Header, key)
+		}
+	}
+	stripGatewayTokenFromRequest(r)
+	if isExtPortal && !isIntake {
+		g.serveExtensionPublicPortal(w, r)
+		return
+	}
+	g.serveIntakePublicSurface(w, r)
+}
+
+// ResolvePublicPortalEndpoints returns the loopback, LAN, and public relay base
+// URLs currently available on this Gateway for isolated public portal links.
+func (g *Gateway) ResolvePublicPortalEndpoints() PublicPortalEndpoints {
+	if g == nil {
+		return PublicPortalEndpoints{}
+	}
+	ep := g.resolveIntakeEndpoints()
+	return PublicPortalEndpoints{
+		LocalBaseURL: ep.LocalBaseURL,
+		LANBaseURL:   ep.LANBaseURL,
+		RelayBaseURL: ep.RelayBaseURL,
+	}
+}
+
+// IsPublicPortalStaticAssetPath reports whether requestPath is a whitelisted
+// frontend bundle asset path safe to serve to isolated public portals.
+func IsPublicPortalStaticAssetPath(requestPath string) bool {
+	return isIntakeStaticAssetPath(requestPath)
+}
+
+// ServePublicPortalShell serves either index.html (when isPagePath is true) or
+// a whitelisted static bundle asset from the embedded frontend bundle for an
+// isolated extension public portal.
+func (g *Gateway) ServePublicPortalShell(w http.ResponseWriter, r *http.Request, isPagePath bool) {
+	if g == nil || g.distFS == nil || r == nil || r.URL == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if isPagePath {
+		data, err := g.distFS.Open("index.html")
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer data.Close()
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		_, _ = io.Copy(w, data)
+		return
+	}
+	if !isIntakeStaticAssetPath(r.URL.Path) {
+		http.NotFound(w, r)
+		return
+	}
+	cleanAsset := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
+	f, err := g.distFS.Open(cleanAsset)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	st, statErr := f.Stat()
+	_ = f.Close()
+	if statErr != nil || st.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if strings.HasPrefix(cleanAsset, "assets/") {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	}
+	http.FileServer(http.FS(g.distFS)).ServeHTTP(w, r)
+}
+
+// ServePairedRelayRequest serves a paired remote controller request arriving
+// over an extension reverse relay, enforcing the desktop relay pairing token,
+// optional E2EE envelope, and explicit remote route allow-list.
+func (g *Gateway) ServePairedRelayRequest(w http.ResponseWriter, r *http.Request) {
+	if g == nil || r == nil {
+		return
+	}
+	g.servePairedRequest(w, r, remoteSourceRelay)
+}
+
 // AttachExtension attaches an extension directly to an initialized or test Gateway.
 func (g *Gateway) AttachExtension(ext Extension) {
 	if g == nil || ext == nil {
@@ -169,12 +502,13 @@ func (g *Gateway) AttachExtension(ext Extension) {
 	}
 }
 
-func (g *Gateway) AuthService() *auth.Service       { return g.auth }
-func (g *Gateway) BrowserService() *browser.Service { return g.browser }
-func (g *Gateway) RunnerService() *runner.Service   { return g.runner }
-func (g *Gateway) SkillsService() *skills.Service   { return g.skills }
-func (g *Gateway) Mux() *http.ServeMux              { return g.mux }
-func (g *Gateway) RootDir() string                  { return g.rootDir }
+func (g *Gateway) AuthService() *auth.Service         { return g.auth }
+func (g *Gateway) BrowserService() *browser.Service   { return g.browser }
+func (g *Gateway) RunnerService() *runner.Service     { return g.runner }
+func (g *Gateway) SkillsService() *skills.Service     { return g.skills }
+func (g *Gateway) WorktreeManager() *worktree.Manager { return g.worktrees }
+func (g *Gateway) Mux() *http.ServeMux                { return g.mux }
+func (g *Gateway) RootDir() string                    { return g.rootDir }
 func (g *Gateway) LLMClient() llm.Client {
 	if g == nil || g.providers == nil {
 		return nil

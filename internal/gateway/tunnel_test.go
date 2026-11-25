@@ -415,3 +415,42 @@ func TestTunnelRelayTokenAuthAndBootstrapRelay(t *testing.T) {
 		t.Fatalf("valid relay token status = %d, want 200", goodRec.Code)
 	}
 }
+
+type stubTunnelRelayPolicyExt struct {
+	defaultURL  string
+	retiredURLs []string
+}
+
+func (stubTunnelRelayPolicyExt) HasSessionContext(string) bool    { return false }
+func (stubTunnelRelayPolicyExt) ForgetSession(string)             {}
+func (stubTunnelRelayPolicyExt) RegisterRoutes(*http.ServeMux)    {}
+func (stubTunnelRelayPolicyExt) Close()                           {}
+func (s stubTunnelRelayPolicyExt) DefaultTunnelRelayURL() string  { return s.defaultURL }
+func (s stubTunnelRelayPolicyExt) RetiredAutoRelayURLs() []string { return s.retiredURLs }
+
+func TestExtensionTunnelRelayPolicyIsEmptyInOSSAndSuppliedByExtension(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("HOXI_HOME", filepath.Join(home, ".hoxi"))
+	g := New(0, "test", t.TempDir(), nil, nil)
+	defer g.CloseBrowser()
+
+	if got := g.extensionDefaultTunnelRelayURL(); got != "" {
+		t.Fatalf("extensionDefaultTunnelRelayURL() without extension = %q, want empty", got)
+	}
+	if got := g.extensionRetiredAutoRelayURLs(); len(got) != 0 {
+		t.Fatalf("extensionRetiredAutoRelayURLs() without extension = %v, want empty", got)
+	}
+
+	g.AttachExtension(stubTunnelRelayPolicyExt{
+		defaultURL:  "https://relay.example.test///",
+		retiredURLs: []string{" https://legacy-relay.example.test/ ", ""},
+	})
+	if got := g.extensionDefaultTunnelRelayURL(); got != "https://relay.example.test" {
+		t.Fatalf("extensionDefaultTunnelRelayURL() = %q, want https://relay.example.test", got)
+	}
+	gotRetired := g.extensionRetiredAutoRelayURLs()
+	if len(gotRetired) != 1 || gotRetired[0] != "https://legacy-relay.example.test" {
+		t.Fatalf("extensionRetiredAutoRelayURLs() = %v, want [https://legacy-relay.example.test]", gotRetired)
+	}
+}

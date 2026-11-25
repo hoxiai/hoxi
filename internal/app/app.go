@@ -263,6 +263,8 @@ func Run(distFS fs.FS) {
 	defer gw.StopRemoteTunnel()
 	gw.StartCloudflared(hoxipaths.CloudflaredConfigPath(), logger)
 	defer gw.StopCloudflared()
+	gw.StartExtensionRelays(identity.Variant)
+	defer gw.StopExtensionRelays()
 	browserToken, err := generateRandomHex(32)
 	if err != nil {
 		logger.Error("failed to generate browser credential", "error", err)
@@ -361,6 +363,7 @@ func Run(distFS fs.FS) {
 		if app.ingressServer != nil {
 			_ = app.ingressServer.Shutdown(shutdownCtx)
 		}
+		gw.StopExtensionRelays()
 		gw.StopCloudflared()
 		gw.StopRemoteTunnel()
 		return
@@ -668,6 +671,7 @@ func (a *DesktopApp) shutdown(_ context.Context) {
 	}
 	a.killChild()
 	if a.gateway != nil {
+		a.gateway.StopExtensionRelays()
 		a.gateway.StopCloudflared()
 		a.gateway.StopRemoteTunnel()
 		a.gateway.CloseBrowser()

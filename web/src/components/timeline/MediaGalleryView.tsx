@@ -6,7 +6,7 @@ import { Check, Columns2, Download, Grid2x2, MessageSquarePlus, X } from "lucide
 import { t } from "../../i18n";
 import {
   activeDirectory,
-  isTesterPortalMode,
+  isAnyPortalMode,
   openFileInInspector,
   openImagePreview,
   workspace,
@@ -24,7 +24,7 @@ function isDirectImageSrc(src: string): boolean {
   const s = src.trim();
   return (
     /^https?:\/\//i.test(s) ||
-    /^\/api\/hoxi\/(?:attachments|file\/content|intake\/portal\/attachments)/i.test(s) ||
+    /^\/api\/hoxi\/(?:attachments|file\/content|[a-z0-9-]+\/portal\/attachments)/i.test(s) ||
     /^data:image\//i.test(s)
   );
 }
@@ -70,7 +70,7 @@ function useResolvedGallerySrc(getRawSrc: () => string) {
     const path = localPath();
     const dir = activeDirectory() || workspace.rootDir || "";
     const sid = workspace.activeSessionID || undefined;
-    if (!path || isTesterPortalMode() || (!workspace.connected && !dir)) {
+    if (!path || isAnyPortalMode() || (!workspace.connected && !dir)) {
       setResolved("");
       setFailed(true);
       return;
@@ -181,7 +181,7 @@ function GalleryTile(props: {
     const display = res.src();
     if (!display) return;
     const lp = res.localPath();
-    if (lp && !isTesterPortalMode()) {
+    if (lp && !isAnyPortalMode()) {
       openImagePreview({
         src: display,
         alt: label(),
@@ -293,7 +293,7 @@ export default function MediaGalleryView(props: {
   const [selectedIdx, setSelectedIdx] = createSignal<number[]>([]);
   const [compareOpen, setCompareOpen] = createSignal(false);
 
-  const selectable = () => !isTesterPortalMode();
+  const selectable = () => !isAnyPortalMode();
 
   const toggleSelect = (idx: number) => {
     setSelectedIdx((prev) =>

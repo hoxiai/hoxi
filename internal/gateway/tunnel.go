@@ -550,20 +550,25 @@ func (g *Gateway) tunnelSearchRootAllowed(r *http.Request) bool {
 	return g.tunnelFilePathAllowed(baseDir, sessionID)
 }
 
-const defaultHoxiRelayControllerURL = "https://work.fastd.cn"
-
 // StartRemoteTunnel enables GoPanel pairing with the credential at configPath
 // and reconnects if this desktop is already paired. targetPort is the loopback
 // bridge port reported to GoPanel for display.
+//
+// Pure open-source builds do not auto-register against any remote controller
+// unless HOXI_DEFAULT_RELAY_URL is explicitly configured; optional host
+// extensions may supply a default relay policy for commercial distributions.
 func (g *Gateway) StartRemoteTunnel(configPath string, targetPort int) {
 	g.tunnel.Configure(tunnel.NewStore(configPath), targetPort)
-	if strings.TrimSpace(os.Getenv("HOXI_DISABLE_AUTO_RELAY")) != "1" {
+	if strings.TrimSpace(os.Getenv("HOXI_DISABLE_AUTO_RELAY")) != "1" && !hoxipaths.AuxiliaryNetworkDisabled() {
 		relayController := strings.TrimSpace(os.Getenv("HOXI_DEFAULT_RELAY_URL"))
 		if relayController == "" && flag.Lookup("test.v") == nil {
-			relayController = defaultHoxiRelayControllerURL
+			relayController = g.extensionDefaultTunnelRelayURL()
 		}
 		if relayController != "" {
 			g.tunnel.SetDefaultRelayURL(relayController)
+		}
+		if retired := g.extensionRetiredAutoRelayURLs(); len(retired) > 0 {
+			g.tunnel.SetRetiredAutoRelayURLs(retired)
 		}
 	}
 	if g.status != nil {

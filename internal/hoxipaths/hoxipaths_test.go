@@ -83,7 +83,7 @@ func TestHomeOverrideServerURLAndProtectedStateFiles(t *testing.T) {
 		t.Fatalf("DataProfilesPath() = %s, want %s", got, want)
 	}
 
-	for _, name := range []string{"models.json", "media-roles.json", "media-roles.json.lock", "intake.json", "intake.json.lock", "auth.json", "auto-pools.json", "workspaces.json", "device-id", "telemetry.json", "relay-keys.json", "browser-settings.json", "window-state.json", "work-apps.json", "dataprofiles.json", "dataprofiles.json.lock", "reclaim.json", "reclaim.json.lock", "task-ledger.json", "task-ledger.json.lock"} {
+	for _, name := range []string{"models.json", "media-roles.json", "media-roles.json.lock", "intake.json", "intake.json.lock", "collab.json", "collab.json.lock", "auth.json", "auto-pools.json", "workspaces.json", "device-id", "telemetry.json", "relay-keys.json", "browser-settings.json", "window-state.json", "work-apps.json", "dataprofiles.json", "dataprofiles.json.lock", "reclaim.json", "reclaim.json.lock", "task-ledger.json", "task-ledger.json.lock"} {
 		if !IsProtectedStateFile(name) {
 			t.Fatalf("expected %s to be protected state file", name)
 		}

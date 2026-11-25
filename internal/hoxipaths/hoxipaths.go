@@ -56,6 +56,8 @@ var protectedStateFiles = []string{
 	"telemetry.json",
 	"tunnel.json",
 	"tunnel-dev.json",
+	"node-relay.json",
+	"node-relay-dev.json",
 	"pairing.json",
 	"cloudflared.json",
 	"approval-audit.json",
@@ -76,6 +78,8 @@ var protectedStateFiles = []string{
 	"remote-hosts.json.lock",
 	"intake.json",
 	"intake.json.lock",
+	"collab.json",
+	"collab.json.lock",
 	"schedules.json",
 	"schedules.json.lock",
 	"media-roles.json",
@@ -213,6 +217,16 @@ func TunnelConfigPath(variant string) string {
 	return Join("tunnel.json")
 }
 
+// NodeRelayConfigPath returns the account-bound reverse relay credential file.
+// Dev and release builds stay separate so both can run side by side without
+// evicting each other's device registration. Written 0600.
+func NodeRelayConfigPath(variant string) string {
+	if variant == "dev" {
+		return Join("node-relay-dev.json")
+	}
+	return Join("node-relay.json")
+}
+
 // PairingTokenPath returns ~/.hoxi/pairing.json, the stable token encoded in
 // the desktop's LAN pairing QR code. It is written 0600 and never leaves the
 // machine except inside the QR the user chooses to display.
@@ -299,6 +313,12 @@ func RuntimeEndpointPath() string {
 // intake links and staged QA tasks. Written 0600.
 func IntakeStorePath() string {
 	return Join("intake.json")
+}
+
+// CollabStorePath returns ~/.hoxi/collab.json, storing project-scoped product
+// co-development links and PM requirement items. Written 0600.
+func CollabStorePath() string {
+	return Join("collab.json")
 }
 
 // SchedulesPath returns ~/.hoxi/schedules.json, storing desktop/host scheduled

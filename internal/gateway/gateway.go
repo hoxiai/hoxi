@@ -266,6 +266,9 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	g.pairing = pairing.NewService(hoxipaths.PairingTokenPath(), hoxipaths.DefaultLANPairingPort)
 	g.cloudflared = cloudflared.NewManager(cloudflared.Options{IngressURL: "http://" + hoxipaths.DefaultRemoteIngressAddr})
 	g.pairing.SetRelayURL(func() string {
+		if extBase := g.extensionRemoteRelayBaseURL(); extBase != "" {
+			return extBase
+		}
 		host := strings.TrimSpace(g.cloudflared.Hostname())
 		lower := strings.ToLower(host)
 		switch {
@@ -462,6 +465,14 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		g.intake.ServePortalHTTP(w, r)
+		return
+	}
+	if !isRemoteRequest(r) && g.isExtensionPublicPortalAPIPath(r.URL.Path) {
+		if !trustedHost(r.Host) {
+			http.Error(w, "untrusted Host", http.StatusForbidden)
+			return
+		}
+		g.serveExtensionPublicPortal(w, r)
 		return
 	}
 	if !g.allowRequest(w, r) {

@@ -100,6 +100,10 @@ func (g *Gateway) resolveIntakeEndpoints() intake.EndpointInfo {
 		primary, _ := g.pairing.LanEndpoints()
 		info.LANBaseURL = strings.TrimRight(strings.TrimSpace(primary), "/")
 	}
+	if extBase := g.extensionIntakeRelayBaseURL(); extBase != "" {
+		info.RelayBaseURL = extBase
+		return info
+	}
 	if g.cloudflared != nil {
 		host := strings.TrimSpace(g.cloudflared.Hostname())
 		lower := strings.ToLower(host)

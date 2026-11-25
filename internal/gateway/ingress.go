@@ -44,5 +44,9 @@ func (g *Gateway) ServeIngressRequest(w http.ResponseWriter, r *http.Request) {
 		g.serveIntakePublicSurface(w, r)
 		return
 	}
+	if g.isExtensionPublicPortalRequest(r) {
+		g.serveExtensionPublicPortal(w, r)
+		return
+	}
 	g.servePairedRequest(w, r, remoteSourceRelay)
 }
