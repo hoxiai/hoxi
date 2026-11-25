@@ -64,39 +64,37 @@ func (e *Engine) SummarizeWithUsage(ctx context.Context, providerID, modelID, tr
 	const minAdaptiveChunkBytes = 4096
 	calls := 0
 	for pass := 0; pass < 8; pass++ {
-		chunks := splitSummaryTranscript(transcript, chunkBytes)
-		if calls+len(chunks) > maxSummaryCalls {
-			return "", fmt.Errorf("summarization exceeds %d requests; original context retained", maxSummaryCalls)
-		}
-		var checkpoints strings.Builder
-		halved := false
-		for i, chunk := range chunks {
+		pending := splitSummaryTranscript(transcript, chunkBytes)
+		var summaries []string
+		for len(pending) > 0 {
 			if err := ctx.Err(); err != nil {
 				return "", err
 			}
+			if calls+len(pending) > maxSummaryCalls {
+				return "", fmt.Errorf("summarization exceeds %d requests; original context retained", maxSummaryCalls)
+			}
+			chunk := pending[0]
 			summary, err := e.summarizeChunkWithFallback(ctx, &target, &drv, maxOut, chunk, record)
 			calls++
 			if err != nil {
-				// If an upstream gateway advertises a larger context window than it
-				// actually accepts, halve the chunk budget and re-split cleanly.
-				if ctx.Err() == nil && isContextOverflowError(err) && chunkBytes > minAdaptiveChunkBytes && len(chunk) > minAdaptiveChunkBytes {
-					nextChunk := max(minAdaptiveChunkBytes, min(chunkBytes, len(chunk))/2)
-					if nextChunk < chunkBytes {
-						chunkBytes = nextChunk
-						halved = true
-						break
-					}
+				if ctx.Err() == nil && len(chunk) > minAdaptiveChunkBytes && isContextOverflowError(err) {
+					// Earlier segments already have complete checkpoints. Resize only
+					// the rejected segment and the source that still follows it.
+					chunkBytes = max(minAdaptiveChunkBytes, len(chunk)/2)
+					pending = splitSummaryTranscript(strings.Join(pending, ""), chunkBytes)
+					continue
 				}
-				return "", fmt.Errorf("summarize segment %d/%d: %w", i+1, len(chunks), err)
+				return "", fmt.Errorf("summarize segment %d/%d: %w", len(summaries)+1, len(summaries)+len(pending), err)
 			}
-			if len(chunks) == 1 {
+			if len(summaries) == 0 && len(pending) == 1 {
 				return summary, nil
 			}
-			fmt.Fprintf(&checkpoints, "[Checkpoint %d/%d in chronological order]\n%s\n\n", i+1, len(chunks), summary)
+			summaries = append(summaries, summary)
+			pending = pending[1:]
 		}
-		if halved {
-			pass--
-			continue
+		var checkpoints strings.Builder
+		for i, summary := range summaries {
+			fmt.Fprintf(&checkpoints, "[Checkpoint %d/%d in chronological order]\n%s\n\n", i+1, len(summaries), summary)
 		}
 		next := checkpoints.String()
 		if len(next) >= len(transcript) {

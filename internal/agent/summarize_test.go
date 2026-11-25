@@ -138,6 +138,55 @@ func TestSummaryFailureNeverCommitsPartialCheckpoint(t *testing.T) {
 	}
 }
 
+func TestSummaryLateOverflowKeepsCompletedSegments(t *testing.T) {
+	const initialChunkBytes = 100000
+	first := strings.Repeat("a", initialChunkBytes)
+	transcript := first + strings.Repeat("界", 33333) + "!\n最后的要求"
+	var accepted []string
+	var mergeInput string
+	rejections := 0
+	c := &summaryTestClient{limit: 128000, reply: func(_ int, input string) (string, error) {
+		_, content, found := strings.Cut(input, "<transcript>\n")
+		if !found {
+			t.Fatal("missing transcript")
+		}
+		content = strings.TrimSuffix(content, "\n</transcript>")
+		if strings.HasPrefix(content, "[Checkpoint ") {
+			mergeInput = content
+			return "merged checkpoint", nil
+		}
+		if strings.Contains(content, "界") && len(content) > initialChunkBytes/2 {
+			rejections++
+			return "", &llm.StreamHTTPError{StatusCode: http.StatusBadRequest, Message: "context_length_exceeded"}
+		}
+		if !utf8.ValidString(content) {
+			t.Fatal("resplitting damaged UTF-8")
+		}
+		accepted = append(accepted, content)
+		return fmt.Sprintf("segment %d", len(accepted)), nil
+	}}
+	var usage TokenUsage
+	got, err := NewDefaultEngine(c).SummarizeWithUsage(context.Background(), "selected", "selected-model", transcript, usage.Add)
+	if err != nil || got != "merged checkpoint" || rejections != 1 {
+		t.Fatalf("summary=%q err=%v rejections=%d", got, err, rejections)
+	}
+	processed := strings.Join(accepted, "")
+	if processed != transcript {
+		t.Fatalf("%d requests processed %d successful source bytes for a %d-byte transcript", len(c.inputs), len(processed), len(transcript))
+	}
+	var wantMerge strings.Builder
+	for i := range accepted {
+		fmt.Fprintf(&wantMerge, "[Checkpoint %d/%d in chronological order]\nsegment %d\n\n", i+1, len(accepted), i+1)
+	}
+	if mergeInput != wantMerge.String() {
+		t.Fatalf("unexpected checkpoint order: %q", mergeInput)
+	}
+	if usage.Input != 21*(len(accepted)+1) || usage.Output != 3*(len(accepted)+1) {
+		t.Fatalf("unexpected usage for %d accepted segments and one merge: %+v", len(accepted), usage)
+	}
+	t.Logf("%d requests, %d successful source bytes", len(c.inputs), len(processed))
+}
+
 func TestSummaryCancellationAndNonConvergence(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &summaryTestClient{limit: 8192, reply: func(_ int, _ string) (string, error) {
@@ -155,6 +204,26 @@ func TestSummaryCancellationAndNonConvergence(t *testing.T) {
 	}}
 	if summary, err := NewDefaultEngine(c).Summarize(context.Background(), "selected", "selected-model", strings.Repeat("x", 20000)); err == nil || summary != "" {
 		t.Fatal("non-converging summaries must fail explicitly")
+	}
+}
+
+func TestSummaryAdaptiveSplitHonorsRemainingRequestBudget(t *testing.T) {
+	c := &summaryTestClient{limit: 16384, reply: func(n int, _ string) (string, error) {
+		if n == 1 {
+			return "completed segment", nil
+		}
+		return "", &llm.StreamHTTPError{StatusCode: http.StatusBadRequest, Message: "context_length_exceeded"}
+	}}
+	// The initial 10 KiB segments fit the request budget. After one accepted
+	// segment and one rejection, the remaining 5 KiB segments would exceed it.
+	var usage TokenUsage
+	summary, err := NewDefaultEngine(c).SummarizeWithUsage(context.Background(), "selected", "selected-model",
+		strings.Repeat("x", 1_400_000), usage.Add)
+	if err == nil || !strings.Contains(err.Error(), "exceeds 256 requests") || summary != "" {
+		t.Fatalf("summary=%q err=%v", summary, err)
+	}
+	if len(c.inputs) != 2 || usage.Input != 21 || usage.Output != 3 {
+		t.Fatalf("expected only the accepted segment and rejection, got %d calls and usage %+v", len(c.inputs), usage)
 	}
 }
 
