@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -89,17 +90,34 @@ func defaultTrustedProxyPrefixes() []netip.Prefix {
 	return prefixes
 }
 
-func isLoopbackListenAddr(addr string) bool {
+func isLocalOrWildcardListenAddr(addr string) bool {
 	host, _, err := net.SplitHostPort(strings.TrimSpace(addr))
 	if err != nil {
 		return false
 	}
 	host = strings.Trim(strings.TrimSpace(host), "[]")
-	if strings.EqualFold(host, "localhost") {
+	if host == "" || strings.EqualFold(host, "localhost") {
 		return true
 	}
 	ip, err := netip.ParseAddr(host)
-	return err == nil && ip.Unmap().IsLoopback()
+	if err != nil {
+		return false
+	}
+	clean := ip.Unmap()
+	return clean.IsLoopback() || clean.IsUnspecified()
+}
+
+func hasForwardedHeadersFromTrustedProxy(r *http.Request, trusted []netip.Prefix) bool {
+	if r == nil {
+		return false
+	}
+	if r.Header.Get("X-Forwarded-For") == "" &&
+		r.Header.Get("X-Real-IP") == "" &&
+		r.Header.Get("CF-Connecting-IP") == "" {
+		return false
+	}
+	peerAddr, ok := parseSingleAddr(r.RemoteAddr)
+	return ok && addrInPrefixes(peerAddr, trusted)
 }
 
 func loadConfig(args []string) (relayConfig, error) {
@@ -144,6 +162,7 @@ func buildHandlerWithConfig(exchange *pairing.ShortCodeExchange, cfg relayConfig
 	if len(trusted) == 0 {
 		trusted = defaultTrustedProxyPrefixes()
 	}
+	var warnUntrustedProxyOnce sync.Once
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
@@ -156,6 +175,10 @@ func buildHandlerWithConfig(exchange *pairing.ShortCodeExchange, cfg relayConfig
 				cloned.RemoteAddr = net.JoinHostPort(forwardedIP, "0")
 				req = cloned
 			}
+		} else if hasForwardedHeadersFromTrustedProxy(r, trusted) {
+			warnUntrustedProxyOnce.Do(func() {
+				log.Printf("hoxi-pairing-relay: WARNING received forwarded headers from trusted proxy peer %s while -trust-proxy=false; all proxied clients share one rate-limit bucket (pass -trust-proxy)", r.RemoteAddr)
+			})
 		}
 		base.ServeHTTP(w, req)
 	})
@@ -249,8 +272,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("hoxi-pairing-relay: invalid flags: %v", err)
 	}
-	if !cfg.TrustProxy && isLoopbackListenAddr(cfg.Addr) {
-		log.Printf("hoxi-pairing-relay: WARNING listening on loopback %s with -trust-proxy=false; behind a reverse proxy all clients will share one loopback rate-limit bucket (pass -trust-proxy)", cfg.Addr)
+	if !cfg.TrustProxy && isLocalOrWildcardListenAddr(cfg.Addr) {
+		log.Printf("hoxi-pairing-relay: NOTE listening on %s with -trust-proxy=false; if placed behind Caddy/Nginx, pass -trust-proxy so clients do not share one loopback rate-limit bucket", cfg.Addr)
 	}
 
 	exchange := pairing.NewShortCodeExchange(nil)

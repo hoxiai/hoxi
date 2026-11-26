@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -439,14 +441,35 @@ func clientSourceIP(r *http.Request) string {
 	if r == nil {
 		return "unknown"
 	}
-	addr := strings.TrimSpace(r.RemoteAddr)
-	if addr == "" {
+	return normalizeRateLimitIP(r.RemoteAddr)
+}
+
+// normalizeRateLimitIP extracts a canonical per-client rate-limit bucket key.
+// IPv4 and loopback addresses stay exact; non-loopback IPv6 addresses are
+// aggregated to their /64 prefix so residential IPv6 interface-ID rotation
+// cannot bypass 6-digit short-code brute-force limits.
+func normalizeRateLimitIP(remoteAddr string) string {
+	raw := strings.TrimSpace(remoteAddr)
+	if raw == "" {
 		return "unknown"
 	}
-	if idx := strings.LastIndex(addr, ":"); idx > 0 {
-		return strings.Trim(addr[:idx], "[]")
+	host := raw
+	if h, _, err := net.SplitHostPort(raw); err == nil {
+		host = h
 	}
-	return addr
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if host == "" {
+		return "unknown"
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return host
+	}
+	addr = addr.Unmap()
+	if addr.Is6() && !addr.IsLoopback() {
+		return netip.PrefixFrom(addr, 64).Masked().String()
+	}
+	return addr.String()
 }
 
 func writeShortCodeError(w http.ResponseWriter, err error) {

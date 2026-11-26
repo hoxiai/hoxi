@@ -253,21 +253,40 @@ func TestIntakeManagementRoutesRequireGatewayToken(t *testing.T) {
 	const tok = "intake-boot-token-123"
 	gw.SetGatewayToken(tok)
 
-	// Unauthenticated loopback calls to management routes must return 403.
-	for _, p := range []string{"/api/hoxi/intake/links", "/api/hoxi/intake/tasks", "/api/hoxi/intake/tasks/approve"} {
+	// Unauthenticated loopback calls — including spoofed Wails Origin/Host
+	// headers — must all return 403 when a boot gateway token is configured.
+	for _, p := range []string{"/api/hoxi/intake/links", "/api/hoxi/intake/tasks", "/api/hoxi/intake/tasks/approve", "/api/hoxi/intake/tasks/status"} {
 		method := http.MethodGet
-		if strings.HasSuffix(p, "/approve") {
+		if strings.HasSuffix(p, "/approve") || strings.HasSuffix(p, "/status") {
 			method = http.MethodPost
 		}
-		rec := httptest.NewRecorder()
-		gw.ServeHTTP(rec, localRequest(method, p, nil))
-		if rec.Code != http.StatusForbidden {
-			t.Fatalf("%s %s without gateway token = %d, want 403: %s", method, p, rec.Code, rec.Body.String())
+		for _, tc := range []struct {
+			label  string
+			host   string
+			origin string
+		}{
+			{"plain", "", ""},
+			{"spoofed-wails-origin", "", "wails://wails"},
+			{"spoofed-wails-host", "wails", ""},
+		} {
+			req := localRequest(method, p, nil)
+			if tc.host != "" {
+				req.Host = tc.host
+			}
+			if tc.origin != "" {
+				req.Header.Set("Origin", tc.origin)
+			}
+			rec := httptest.NewRecorder()
+			gw.ServeHTTP(rec, req)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("%s %s (%s) without gateway token = %d, want 403: %s", method, p, tc.label, rec.Code, rec.Body.String())
+			}
 		}
 	}
 
-	// Authenticated call with X-Hoxi-Token succeeds.
+	// Authenticated call with X-Hoxi-Token (including from Wails Origin) succeeds.
 	okReq := localRequest(http.MethodGet, "/api/hoxi/intake/links?directory="+proj, nil)
+	okReq.Header.Set("Origin", "wails://wails")
 	okReq.Header.Set(gatewayTokenHeader, tok)
 	okRec := httptest.NewRecorder()
 	gw.ServeHTTP(okRec, okReq)

@@ -291,7 +291,26 @@ func TestLoadConfigAndParseBoolEnv(t *testing.T) {
 	if _, err := loadConfig([]string{"-trusted-proxies", "not-a-cidr"}); err == nil {
 		t.Fatal("expected error for invalid -trusted-proxies value")
 	}
-	if !isLoopbackListenAddr("127.0.0.1:8787") || !isLoopbackListenAddr("[::1]:8787") || isLoopbackListenAddr(":8787") {
-		t.Fatal("unexpected isLoopbackListenAddr results")
+	if !isLocalOrWildcardListenAddr("127.0.0.1:8787") ||
+		!isLocalOrWildcardListenAddr("[::1]:8787") ||
+		!isLocalOrWildcardListenAddr(":8787") ||
+		!isLocalOrWildcardListenAddr("0.0.0.0:8787") ||
+		!isLocalOrWildcardListenAddr("[::]:8787") ||
+		isLocalOrWildcardListenAddr("198.51.100.1:8787") {
+		t.Fatal("unexpected isLocalOrWildcardListenAddr results")
+	}
+
+	trusted := defaultTrustedProxyPrefixes()
+	proxied := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	proxied.RemoteAddr = "127.0.0.1:50000"
+	proxied.Header.Set("X-Forwarded-For", "198.51.100.44")
+	if !hasForwardedHeadersFromTrustedProxy(proxied, trusted) {
+		t.Fatal("expected trusted loopback proxy with XFF to trigger warning detector")
+	}
+	direct := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	direct.RemoteAddr = "198.51.100.44:50000"
+	direct.Header.Set("X-Forwarded-For", "203.0.113.1")
+	if hasForwardedHeadersFromTrustedProxy(direct, trusted) {
+		t.Fatal("untrusted public peer must not trigger trusted-proxy warning detector")
 	}
 }

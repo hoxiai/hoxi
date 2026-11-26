@@ -171,6 +171,7 @@ jobs:
             echo "present=true" >> "$GITHUB_OUTPUT"
             echo "dir=client" >> "$GITHUB_OUTPUT"
           else
+            echo "::notice::Neither mobile/ (OSS export) nor client/ (private mobile repo) is checked out in this repository; Flutter checks run on the exported hoxiai/hoxi repo and locally via verify.sh."
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
 

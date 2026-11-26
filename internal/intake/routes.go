@@ -47,7 +47,9 @@ func extractPortalToken(r *http.Request) string {
 }
 
 // RegisterRoutes mounts desktop-only management routes and portal routes on mux.
-func (s *Service) RegisterRoutes(mux *http.ServeMux, isRemote func(*http.Request) bool) {
+// Optional verifyDesktop guards enforce local desktop token/UI auth in addition
+// to remote-tunnel rejection.
+func (s *Service) RegisterRoutes(mux *http.ServeMux, isRemote func(*http.Request) bool, verifyDesktop ...func(*http.Request) error) {
 	if s == nil || mux == nil {
 		return
 	}
@@ -58,27 +60,42 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux, isRemote func(*http.Request
 		}
 		return false
 	}
+	rejectDesktopMgmt := func(w http.ResponseWriter, r *http.Request) bool {
+		if rejectRemote(w, r) {
+			return true
+		}
+		for _, verify := range verifyDesktop {
+			if verify == nil {
+				continue
+			}
+			if err := verify(r); err != nil {
+				writeJSONError(w, http.StatusForbidden, err.Error())
+				return true
+			}
+		}
+		return false
+	}
 
 	mux.HandleFunc("/api/hoxi/intake/links", func(w http.ResponseWriter, r *http.Request) {
-		if rejectRemote(w, r) {
+		if rejectDesktopMgmt(w, r) {
 			return
 		}
 		s.handleLinks(w, r)
 	})
 	mux.HandleFunc("/api/hoxi/intake/tasks", func(w http.ResponseWriter, r *http.Request) {
-		if rejectRemote(w, r) {
+		if rejectDesktopMgmt(w, r) {
 			return
 		}
 		s.handleDesktopTasks(w, r)
 	})
 	mux.HandleFunc("/api/hoxi/intake/tasks/approve", func(w http.ResponseWriter, r *http.Request) {
-		if rejectRemote(w, r) {
+		if rejectDesktopMgmt(w, r) {
 			return
 		}
 		s.handleApproveTask(w, r)
 	})
 	mux.HandleFunc("/api/hoxi/intake/tasks/status", func(w http.ResponseWriter, r *http.Request) {
-		if rejectRemote(w, r) {
+		if rejectDesktopMgmt(w, r) {
 			return
 		}
 		s.handleUpdateTaskStatus(w, r)

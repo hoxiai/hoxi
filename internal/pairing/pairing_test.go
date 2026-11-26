@@ -481,3 +481,58 @@ func TestServiceShortCodeDesktopFlowStripsE2EEKey(t *testing.T) {
 		t.Fatalf("DELETE short-code = %d %s", delRec.Code, delRec.Body.String())
 	}
 }
+
+func TestShortCodeRateLimitAggregatesIPv6Slash64(t *testing.T) {
+	if got := normalizeRateLimitIP("[2001:db8:1:2::1]:44321"); got != "2001:db8:1:2::/64" {
+		t.Fatalf("IPv6 with port = %q, want 2001:db8:1:2::/64", got)
+	}
+	if got := normalizeRateLimitIP("2001:db8:1:2::ffff"); got != "2001:db8:1:2::/64" {
+		t.Fatalf("bare IPv6 = %q, want 2001:db8:1:2::/64", got)
+	}
+	if got := normalizeRateLimitIP("[2001:db8:1:3::1]:44321"); got != "2001:db8:1:3::/64" {
+		t.Fatalf("distinct /64 = %q, want 2001:db8:1:3::/64", got)
+	}
+	if got := normalizeRateLimitIP("[::1]:54321"); got != "::1" {
+		t.Fatalf("loopback IPv6 = %q, want ::1", got)
+	}
+	if got := normalizeRateLimitIP("[::ffff:198.51.100.42]:54321"); got != "198.51.100.42" {
+		t.Fatalf("IPv4-mapped IPv6 = %q, want 198.51.100.42", got)
+	}
+
+	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	ex := NewShortCodeExchange(func() time.Time { return now })
+	handler := ex.Handler()
+
+	// Rotating interface IDs inside the same /64 must share one publish bucket.
+	for i := 0; i < shortCodePublishPerMinLimit; i++ {
+		id, _ := NewShortCodeRequestID(now)
+		body, _ := json.Marshal(map[string]any{"request_id": id, "ticket": "t"})
+		req := httptest.NewRequest(http.MethodPost, "/v1/codes", bytes.NewReader(body))
+		req.RemoteAddr = "[2001:db8:1:2::" + string(rune('1'+i)) + "]:50000"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("ipv6 attempt %d status = %d, want 201", i+1, rec.Code)
+		}
+	}
+	overID, _ := NewShortCodeRequestID(now)
+	overBody, _ := json.Marshal(map[string]any{"request_id": overID, "ticket": "t"})
+	overReq := httptest.NewRequest(http.MethodPost, "/v1/codes", bytes.NewReader(overBody))
+	overReq.RemoteAddr = "[2001:db8:1:2::beef]:50000"
+	overRec := httptest.NewRecorder()
+	handler.ServeHTTP(overRec, overReq)
+	if overRec.Code != http.StatusTooManyRequests {
+		t.Fatalf("7th attempt from same IPv6 /64 status = %d, want 429", overRec.Code)
+	}
+
+	// A client in a different /64 remains unaffected.
+	otherID, _ := NewShortCodeRequestID(now)
+	otherBody, _ := json.Marshal(map[string]any{"request_id": otherID, "ticket": "t"})
+	otherReq := httptest.NewRequest(http.MethodPost, "/v1/codes", bytes.NewReader(otherBody))
+	otherReq.RemoteAddr = "[2001:db8:1:9::1]:50000"
+	otherRec := httptest.NewRecorder()
+	handler.ServeHTTP(otherRec, otherReq)
+	if otherRec.Code != http.StatusCreated {
+		t.Fatalf("different IPv6 /64 status = %d, want 201", otherRec.Code)
+	}
+}

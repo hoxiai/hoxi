@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"net"
 	"net/http"
 	"net/url"
@@ -48,6 +49,29 @@ func hasVerifiedGatewayToken(r *http.Request) bool {
 	}
 	ok, _ := r.Context().Value(verifiedGatewayTokenKey{}).(bool)
 	return ok
+}
+
+// verifyStrictDesktopTokenRequest enforces that a local desktop management
+// endpoint carries the real per-boot gateway token whenever configured, and
+// never trusts spoofable Wails Host/Origin headers alone.
+func (g *Gateway) verifyStrictDesktopTokenRequest(surfaceName string) func(*http.Request) error {
+	return func(r *http.Request) error {
+		if isRemoteRequest(r) || !trustedHost(r.Host) {
+			return errors.New(surfaceName + " requires the desktop UI")
+		}
+		tok := g.GatewayToken()
+		if tok == "" {
+			return nil
+		}
+		if hasVerifiedGatewayToken(r) {
+			return nil
+		}
+		got := requestGatewayToken(r)
+		if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(tok)) != 1 {
+			return errors.New(surfaceName + " requires the local gateway token")
+		}
+		return nil
+	}
 }
 
 var openCodeProxyPrefixes = []string{

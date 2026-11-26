@@ -665,7 +665,7 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 		g.orchestration.RegisterRoutes(g.mux)
 	}
 	if g.intake != nil {
-		g.intake.RegisterRoutes(g.mux, isRemoteRequest)
+		g.intake.RegisterRoutes(g.mux, isRemoteRequest, g.verifyStrictDesktopTokenRequest("Intake management"))
 	}
 	if g.scheduler != nil {
 		g.scheduler.RegisterRoutes(g.mux, isRemoteRequest)
