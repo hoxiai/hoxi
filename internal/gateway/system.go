@@ -139,7 +139,97 @@ type clipboardImageItem struct {
 	DataURL  string `json:"dataUrl"`
 }
 
-const maxClipboardImageBytes = attachment.MaxAttachmentBytes
+const (
+	maxClipboardImageBytes        = attachment.MaxAttachmentBytes
+	maxClipboardImageRequestBytes = int64(maxClipboardImageBytes)*4/3 + 8192
+)
+
+var macWritePasteboardJXA = `
+ObjC.import("AppKit");
+ObjC.import("Foundation");
+const path = ObjC.unwrap($.NSProcessInfo.processInfo.environment.objectForKey("HOXI_CLIP_IN"));
+if (!path) throw new Error("missing image path");
+const data = $.NSData.dataWithContentsOfFile(path);
+if (!data || data.length === 0) throw new Error("failed to read image data");
+const img = $.NSImage.alloc.initWithData(data);
+if (!img || !img.isValid) throw new Error("invalid image data");
+const pb = $.NSPasteboard.generalPasteboard;
+if (!pb || pb.isNil()) throw new Error("pasteboard unavailable");
+pb.clearContents;
+const item = $.NSPasteboardItem.alloc.init;
+let pngData = null;
+const tiff = img.TIFFRepresentation;
+if (tiff && tiff.length > 0) {
+  item.setDataForType(tiff, "public.tiff");
+  const rep = $.NSBitmapImageRep.imageRepWithData(tiff);
+  if (rep) {
+    pngData = rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $.NSDictionary.dictionary);
+  }
+}
+if (pngData && pngData.length > 0) {
+  item.setDataForType(pngData, "public.png");
+} else {
+  item.setDataForType(data, "public.png");
+}
+if (!pb.writeObjects($.NSArray.arrayWithObject(item))) {
+  throw new Error("failed to write image to pasteboard");
+}
+"ok";
+`
+
+const winWritePasteboardPS = `
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$bytes = [System.IO.File]::ReadAllBytes($env:HOXI_CLIP_IN)
+$ms = New-Object System.IO.MemoryStream(,$bytes)
+try {
+  $img = [System.Drawing.Image]::FromStream($ms)
+  try {
+    $bmp = New-Object System.Drawing.Bitmap($img)
+    try {
+      [System.Windows.Forms.Clipboard]::SetImage($bmp)
+    } finally {
+      $bmp.Dispose()
+    }
+  } finally {
+    $img.Dispose()
+  }
+} finally {
+  $ms.Dispose()
+}
+`
+
+var writeClipboardImageFn = writeImageFileToSystemClipboard
+
+func writeImageFileToSystemClipboard(ctx context.Context, imagePath string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = subproc.CommandContext(ctx, "osascript", "-l", "JavaScript", "-e", macWritePasteboardJXA)
+	case "windows":
+		cmd = subproc.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-STA", "-WindowStyle", "Hidden", "-Command", winWritePasteboardPS)
+	default:
+		return os.ErrInvalid
+	}
+	cmd.Env = append(os.Environ(), "HOXI_CLIP_IN="+imagePath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg != "" {
+			return &os.PathError{Op: "clipboard", Path: runtime.GOOS, Err: &clipboardWriteError{msg: msg}}
+		}
+		return err
+	}
+	return nil
+}
+
+type clipboardWriteError struct {
+	msg string
+}
+
+func (e *clipboardWriteError) Error() string {
+	return e.msg
+}
 
 var macPasteboardJXA = `
 ObjC.import("AppKit");
@@ -350,6 +440,88 @@ func (g *Gateway) handleClipboardImages(w http.ResponseWriter, r *http.Request) 
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"images": images})
+}
+
+func clipboardImageTempExt(mimeType string) string {
+	switch strings.ToLower(strings.TrimSpace(mimeType)) {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	case "image/bmp":
+		return ".bmp"
+	default:
+		return ".png"
+	}
+}
+
+func isAllowedClipboardImageSniff(sniffed string) bool {
+	switch strings.ToLower(strings.TrimSpace(strings.Split(sniffed, ";")[0])) {
+	case "image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/x-icon":
+		return true
+	default:
+		return false
+	}
+}
+
+func (g *Gateway) handleClipboardImageWrite(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if err := g.verifyStrictDesktopTokenRequest("Clipboard image write")(r); err != nil {
+		writeJSONError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
+	var body struct {
+		DataURL string `json:"dataUrl"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxClipboardImageRequestBytes)).Decode(&body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	mimeType, raw, err := attachment.DecodeDataURL(body.DataURL, "")
+	if err != nil || len(raw) == 0 {
+		writeJSONError(w, http.StatusBadRequest, "invalid image dataUrl")
+		return
+	}
+	if len(raw) > maxClipboardImageBytes {
+		writeJSONError(w, http.StatusRequestEntityTooLarge, "image exceeds clipboard size limit")
+		return
+	}
+	if !attachment.IsBinaryImageMime(mimeType) || !isAllowedClipboardImageSniff(http.DetectContentType(raw)) {
+		writeJSONError(w, http.StatusBadRequest, "unsupported clipboard image format")
+		return
+	}
+
+	tmp, err := os.CreateTemp("", "hoxi-clip-*"+clipboardImageTempExt(mimeType))
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "failed to stage clipboard image")
+		return
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	_ = tmp.Chmod(0o600)
+	if _, err := tmp.Write(raw); err != nil {
+		_ = tmp.Close()
+		writeJSONError(w, http.StatusInternalServerError, "failed to write clipboard image")
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "failed to finalize clipboard image")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	if err := writeClipboardImageFn(ctx, tmpPath); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "failed to copy image to clipboard")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (g *Gateway) handleKeepAwake(w http.ResponseWriter, r *http.Request) {

@@ -77,7 +77,7 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 		{get, "/api/hoxi/provider/config"}, {http.MethodPatch, "/api/hoxi/provider/config"}, {post, "/api/hoxi/provider/dispose"},
 		{get, "/api/hoxi/pty"}, {post, "/api/hoxi/pty"}, {get, "/api/hoxi/pty/1/connect"},
 		{get, "/api/hoxi/agents"}, {get, "/api/hoxi/commands"}, {get, "/api/hoxi/lsp"},
-		{get, "/api/hoxi/browser"}, {get, "/api/hoxi/clipboard/images"}, {get, "/api/hoxi/sessionsx"},
+		{get, "/api/hoxi/browser"}, {get, "/api/hoxi/clipboard/images"}, {post, "/api/hoxi/clipboard/image"}, {get, "/api/hoxi/clipboard/image"}, {get, "/api/hoxi/sessionsx"},
 		{get, "/api/hoxi/sessions/../tunnel/pair"}, {get, "/session"}, {get, "/pty/1/connect"}, {get, "/config"}, {get, "/auth/openai"},
 		{post, "/api/hoxi/desktop/notify"}, {post, "/api/hoxi/desktop/focus"}, {get, "/api/hoxi/dev-pulse"},
 		{post, "/api/hoxi/desktop/window/close"}, {get, "/api/hoxi/desktop/window/close"},

@@ -189,6 +189,13 @@ export const hoxiAPI = {
     return Array.isArray(res?.images) ? res.images : [];
   },
 
+  writeClipboardImage(dataUrl: string): Promise<{ ok: boolean }> {
+    return requestJSON("/api/hoxi/clipboard/image", {
+      method: "POST",
+      body: JSON.stringify({ dataUrl }),
+    });
+  },
+
   uploadAttachment(req: {
     sessionID?: string;
     directory?: string;

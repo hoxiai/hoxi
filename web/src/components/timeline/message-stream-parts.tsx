@@ -26,6 +26,7 @@ import type { MessageInfo, MessagePart } from "../../services/sse-types";
 import {
   defaultWorkspaceDir,
   isLoopbackMediaURL,
+  openAttachmentContextMenu,
   openAttachmentInInspector,
   openImagePreview,
   openStagedMediaExternally,
@@ -295,6 +296,14 @@ export function MediaAttachmentPlayer(props: {
       <Match when={audio()}>
         <div
           data-part-id={props.part.id}
+          onContextMenu={(e) =>
+            openAttachmentContextMenu(e, {
+              kind: "audio",
+              src: props.part.url,
+              filename: props.part.filename,
+              mime: props.part.mime,
+            })
+          }
           class={`my-1 flex flex-col gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2 ${
             props.compact ? "w-[260px] max-w-full" : "w-[320px] max-w-full"
           }`}
@@ -324,6 +333,14 @@ export function MediaAttachmentPlayer(props: {
       <Match when={video()}>
         <div
           data-part-id={props.part.id}
+          onContextMenu={(e) =>
+            openAttachmentContextMenu(e, {
+              kind: "video",
+              src: props.part.url,
+              filename: props.part.filename,
+              mime: props.part.mime,
+            })
+          }
           class={`my-1 overflow-hidden rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] ${
             props.compact ? "max-w-[280px]" : "max-w-[460px]"
           }`}
@@ -405,6 +422,14 @@ function AssistantFilePartView(props: { part: Extract<MessagePart, { type: "file
               target="_blank"
               rel="noreferrer"
               download={props.part.filename || "attachment"}
+              onContextMenu={(e) =>
+                openAttachmentContextMenu(e, {
+                  kind: "file",
+                  src: props.part.url,
+                  filename: props.part.filename,
+                  mime: props.part.mime,
+                })
+              }
               onClick={(e) => {
                 if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
                 if (openAttachmentInInspector(props.part.url, props.part.filename)) {
@@ -429,6 +454,21 @@ function AssistantFilePartView(props: { part: Extract<MessagePart, { type: "file
             openImagePreview({
               src: props.part.url,
               alt: props.part.filename || "generated-image",
+              filename: props.part.filename,
+            })
+          }
+          onContextMenu={(e) =>
+            openAttachmentContextMenu(e, {
+              kind: "image",
+              src: props.part.url,
+              filename: props.part.filename,
+              mime: props.part.mime,
+              onPreview: () =>
+                openImagePreview({
+                  src: props.part.url,
+                  alt: props.part.filename || "generated-image",
+                  filename: props.part.filename,
+                }),
             })
           }
           title={t("timeline.previewImageTooltip")}

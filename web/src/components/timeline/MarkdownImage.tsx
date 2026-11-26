@@ -3,6 +3,7 @@ import {
   activeDirectory,
   appSettings,
   isAnyPortalMode,
+  openAttachmentContextMenu,
   openExternalURL,
   openFileInInspector,
   openImagePreview,
@@ -118,14 +119,15 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
       });
   });
 
-  const handleOpen = (e: MouseEvent) => {
-    e.preventDefault();
+  const handleOpen = (e?: MouseEvent) => {
+    e?.preventDefault();
     const portalMode = isAnyPortalMode();
     const path = localPath();
     if (path && !portalMode) {
       openImagePreview({
         src: displaySrc(),
         alt: props.alt || path,
+        localPath: path,
         originalLabel: t("timeline.openInInspectorTooltip"),
         onOpenOriginal: () => openFileInInspector(path),
       });
@@ -138,7 +140,7 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
     }
     const target = portalMode
       ? "external"
-      : e.metaKey || e.ctrlKey
+      : e && (e.metaKey || e.ctrlKey)
         ? appSettings.linkOpenTarget === "external"
           ? "inspector"
           : "external"
@@ -152,6 +154,38 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
           : t("timeline.openInBrowserTooltip"),
       onOpenOriginal: () =>
         target === "external" ? openExternalURL(rawSrc()) : openURLInInspector(rawSrc()),
+    });
+  };
+
+  const handleContextMenu = (e: MouseEvent) => {
+    const src = displaySrc();
+    if (!src) return;
+    const path = localPath();
+    const portalMode = isAnyPortalMode();
+    const remoteTarget =
+      portalMode || appSettings.linkOpenTarget === "external" ? "external" : "inspector";
+    openAttachmentContextMenu(e, {
+      kind: "image",
+      src,
+      localPath: path || undefined,
+      filename: props.alt || undefined,
+      onPreview: canOpen() ? () => handleOpen() : undefined,
+      originalLabel: path
+        ? t("timeline.openInInspectorTooltip")
+        : isRemote()
+          ? remoteTarget === "external"
+            ? t("timeline.openInExternalBrowserDirectTooltip")
+            : t("timeline.openInBrowserTooltip")
+          : undefined,
+      onOpenOriginal:
+        path && !portalMode
+          ? () => openFileInInspector(path)
+          : isRemote()
+            ? () =>
+                remoteTarget === "external"
+                  ? openExternalURL(rawSrc())
+                  : openURLInInspector(rawSrc())
+            : undefined,
     });
   };
 
@@ -184,6 +218,7 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
         type="button"
         disabled={!canOpen()}
         onClick={handleOpen}
+        onContextMenu={handleContextMenu}
         title={canOpen() ? openTitle() : undefined}
         class={`my-1 block max-w-full overflow-hidden rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] text-left transition-colors ${
           canOpen()

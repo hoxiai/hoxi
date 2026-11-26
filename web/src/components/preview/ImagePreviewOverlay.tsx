@@ -1,9 +1,18 @@
 // web/src/components/preview/ImagePreviewOverlay.tsx
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { Portal } from "solid-js/web";
-import { X, ZoomIn, ZoomOut, Maximize2, ExternalLink } from "lucide-solid";
+import { Check, Copy, Download, ExternalLink, Maximize2, X, ZoomIn, ZoomOut } from "lucide-solid";
 import { Presence } from "../motion/Presence";
-import { closeImagePreview, imageViewer } from "../../store/workspace";
+import {
+  attachmentContextMenu,
+  closeAttachmentContextMenu,
+  closeImagePreview,
+  copyImageSourceToClipboard,
+  downloadAttachmentTarget,
+  imageViewer,
+  openAttachmentContextMenu,
+  showAttachmentActionFeedback,
+} from "../../store/workspace";
 import { t } from "../../i18n";
 
 const MIN_SCALE = 0.25;
@@ -17,20 +26,80 @@ export default function ImagePreviewOverlay() {
   const [scale, setScale] = createSignal(1);
   const [offset, setOffset] = createSignal({ x: 0, y: 0 });
   const [dragging, setDragging] = createSignal(false);
+  const [copied, setCopied] = createSignal(false);
   let dragOrigin = { x: 0, y: 0 };
   let offsetOrigin = { x: 0, y: 0 };
+  let copyTimer: ReturnType<typeof setTimeout> | undefined;
 
   const reset = () => {
     setScale(1);
     setOffset({ x: 0, y: 0 });
+    setCopied(false);
   };
 
   createEffect(() => {
     if (imageViewer()) reset();
   });
 
+  onCleanup(() => {
+    if (copyTimer !== undefined) clearTimeout(copyTimer);
+  });
+
   const zoomBy = (factor: number) =>
     setScale((prev) => clampScale(prev * factor));
+
+  const handleCopyImage = () => {
+    const payload = imageViewer();
+    if (!payload?.src) return;
+    void copyImageSourceToClipboard(payload.src).then((ok) => {
+      if (ok) {
+        setCopied(true);
+        if (copyTimer !== undefined) clearTimeout(copyTimer);
+        copyTimer = setTimeout(() => {
+          copyTimer = undefined;
+          setCopied(false);
+        }, 1800);
+        showAttachmentActionFeedback(t("timeline.copiedImage"), "ok");
+      } else {
+        showAttachmentActionFeedback(t("timeline.copyImageFailed"), "error");
+      }
+    });
+  };
+
+  const handleDownloadImage = () => {
+    const payload = imageViewer();
+    if (!payload?.src) return;
+    void downloadAttachmentTarget({
+      kind: "image",
+      src: payload.src,
+      filename: payload.filename || payload.alt,
+      localPath: payload.localPath,
+      downloadUrl: payload.downloadUrl,
+    }).then((ok) => {
+      if (!ok) {
+        showAttachmentActionFeedback(t("timeline.downloadFailed"), "error");
+      }
+    });
+  };
+
+  const handleContextMenu = (ev: MouseEvent) => {
+    const payload = imageViewer();
+    if (!payload?.src) return;
+    openAttachmentContextMenu(ev, {
+      kind: "image",
+      src: payload.src,
+      filename: payload.filename || payload.alt,
+      localPath: payload.localPath,
+      downloadUrl: payload.downloadUrl,
+      onOpenOriginal: payload.onOpenOriginal
+        ? () => {
+            payload.onOpenOriginal?.();
+            closeImagePreview();
+          }
+        : undefined,
+      originalLabel: payload.originalLabel,
+    });
+  };
 
   const handleWheel = (ev: WheelEvent) => {
     ev.preventDefault();
@@ -61,7 +130,19 @@ export default function ImagePreviewOverlay() {
     if (ev.key === "Escape") {
       ev.preventDefault();
       ev.stopImmediatePropagation();
-      closeImagePreview();
+      if (attachmentContextMenu()) {
+        closeAttachmentContextMenu();
+      } else {
+        closeImagePreview();
+      }
+      return;
+    }
+    if ((ev.metaKey || ev.ctrlKey) && !ev.altKey && ev.key.toLowerCase() === "c") {
+      const sel = typeof window !== "undefined" ? window.getSelection()?.toString() : "";
+      if (!sel) {
+        ev.preventDefault();
+        handleCopyImage();
+      }
       return;
     }
     if (ev.key === "+" || ev.key === "=") {
@@ -101,7 +182,7 @@ export default function ImagePreviewOverlay() {
               >
                 <div class="flex shrink-0 items-center justify-between gap-3 border-b border-white/5 px-3.5 py-2 text-white/80">
                   <div class="min-w-0 truncate text-[12px] font-medium text-white/60">
-                    {payload()?.alt || ""}
+                    {payload()?.filename || payload()?.alt || ""}
                   </div>
                   <div class="flex shrink-0 items-center gap-0.5">
                     <Show when={payload()?.onOpenOriginal}>
@@ -120,6 +201,26 @@ export default function ImagePreviewOverlay() {
                         </span>
                       </button>
                     </Show>
+                    <button
+                      type="button"
+                      onClick={handleCopyImage}
+                      aria-label={copied() ? t("timeline.copiedImage") : t("timeline.copyImage")}
+                      title={copied() ? t("timeline.copiedImage") : t("timeline.copyImage")}
+                      class="rounded-lg p-2 text-white/80 hover:bg-white/10 hover:text-white cursor-pointer"
+                    >
+                      <Show when={copied()} fallback={<Copy size={15} />}>
+                        <Check size={15} class="text-emerald-400" />
+                      </Show>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDownloadImage}
+                      aria-label={t("timeline.downloadImage")}
+                      title={t("timeline.downloadImage")}
+                      class="rounded-lg p-2 text-white/80 hover:bg-white/10 hover:text-white cursor-pointer"
+                    >
+                      <Download size={15} />
+                    </button>
                     <button
                       type="button"
                       onClick={() => zoomBy(1 / 1.25)}
@@ -164,6 +265,7 @@ export default function ImagePreviewOverlay() {
                   onPointerMove={handlePointerMove}
                   onPointerUp={handlePointerUp}
                   onPointerCancel={handlePointerUp}
+                  onContextMenu={handleContextMenu}
                   classList={{
                     "cursor-grab": scale() > 1,
                     "cursor-grabbing": dragging(),

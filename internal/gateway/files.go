@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/attachment"
 	"github.com/hoxiai/hoxi/internal/osopen"
 )
 
@@ -599,6 +600,41 @@ func (g *Gateway) handleFileList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, nodes)
 }
 
+func (g *Gateway) resolveAttachmentStorePath(rawPath string) string {
+	if g.runner == nil || g.runner.Attachments() == nil {
+		return ""
+	}
+	attStore := g.runner.Attachments()
+	candidates := make([]string, 0, 2)
+	if directID := attachment.ResolveRefID(rawPath); directID != "" {
+		candidates = append(candidates, directID)
+	} else {
+		cleaned := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(strings.TrimSpace(rawPath))), "./")
+		if strings.HasPrefix(cleaned, ".hoxi/attachments/") {
+			base := strings.TrimPrefix(cleaned, ".hoxi/attachments/")
+			if base != "" && !strings.Contains(base, "/") && strings.HasPrefix(base, "att_") {
+				parts := strings.SplitN(base, "_", 4)
+				if len(parts) >= 3 {
+					if id3 := attachment.ResolveRefID("/api/hoxi/attachments/" + strings.Join(parts[:3], "_")); id3 != "" {
+						candidates = append(candidates, id3)
+					}
+				}
+				if len(parts) >= 2 {
+					if id2 := attachment.ResolveRefID("/api/hoxi/attachments/" + parts[0] + "_" + parts[1]); id2 != "" {
+						candidates = append(candidates, id2)
+					}
+				}
+			}
+		}
+	}
+	for _, attID := range candidates {
+		if _, blobPath, err := attStore.Get(attID); err == nil && strings.TrimSpace(blobPath) != "" {
+			return blobPath
+		}
+	}
+	return ""
+}
+
 func (g *Gateway) handleFileOpen(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
@@ -624,11 +660,19 @@ func (g *Gateway) handleFileOpen(w http.ResponseWriter, r *http.Request) {
 	targetPath, _, _, err := g.resolveLocalFileTarget(rawPath, body.Directory, body.SessionID, true)
 	if err != nil {
 		if os.IsNotExist(err) {
-			writeJSONError(w, http.StatusNotFound, "file not found: "+rawPath)
+			if attBlobPath := g.resolveAttachmentStorePath(rawPath); attBlobPath != "" {
+				targetPath = attBlobPath
+				err = nil
+			}
+		}
+		if err != nil {
+			if os.IsNotExist(err) {
+				writeJSONError(w, http.StatusNotFound, "file not found: "+rawPath)
+				return
+			}
+			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		writeJSONError(w, http.StatusBadRequest, err.Error())
-		return
 	}
 	action := strings.ToLower(strings.TrimSpace(body.Action))
 	if action != "reveal" {

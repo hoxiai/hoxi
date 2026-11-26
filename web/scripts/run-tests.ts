@@ -49,6 +49,7 @@ import "../src/__tests__/markdown-image.test";
 import "../src/__tests__/markdown-performance.test";
 import "../src/__tests__/stream-reveal.test";
 import "../src/__tests__/image-viewer.test";
+import "../src/__tests__/attachment-context-menu.test";
 import "../src/__tests__/image-memory.test";
 import "../src/__tests__/composer-keyboard.test";
 import "../src/__tests__/notification-sound.test";

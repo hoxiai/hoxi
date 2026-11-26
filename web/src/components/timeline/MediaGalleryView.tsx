@@ -7,6 +7,7 @@ import { t } from "../../i18n";
 import {
   activeDirectory,
   isAnyPortalMode,
+  openAttachmentContextMenu,
   openFileInInspector,
   openImagePreview,
   workspace,
@@ -185,12 +186,36 @@ function GalleryTile(props: {
       openImagePreview({
         src: display,
         alt: label(),
+        filename: props.image.filename,
+        localPath: lp,
+        downloadUrl: downloadHref() || undefined,
         originalLabel: t("timeline.openInInspectorTooltip"),
         onOpenOriginal: () => openFileInInspector(lp),
       });
       return;
     }
-    openImagePreview({ src: display, alt: label() });
+    openImagePreview({
+      src: display,
+      alt: label(),
+      filename: props.image.filename,
+      downloadUrl: downloadHref() || undefined,
+    });
+  };
+
+  const handleContextMenu = (e: MouseEvent) => {
+    const display = res.src();
+    if (!display) return;
+    const lp = res.localPath();
+    openAttachmentContextMenu(e, {
+      kind: "image",
+      src: display,
+      filename: props.image.filename || label(),
+      localPath: lp || undefined,
+      downloadUrl: downloadHref() || undefined,
+      onPreview: handleOpen,
+      originalLabel: lp ? t("timeline.openInInspectorTooltip") : undefined,
+      onOpenOriginal: lp && !isAnyPortalMode() ? () => openFileInInspector(lp) : undefined,
+    });
   };
 
   return (
@@ -237,6 +262,7 @@ function GalleryTile(props: {
       <button
         type="button"
         onClick={handleOpen}
+        onContextMenu={handleContextMenu}
         title={t("timeline.previewImageTooltip")}
         class="relative flex aspect-square w-full items-center justify-center overflow-hidden bg-[var(--bg-code)]/50 cursor-zoom-in"
       >

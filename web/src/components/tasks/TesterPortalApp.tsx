@@ -56,6 +56,7 @@ import {
 } from "./TesterPortalComposer";
 
 const ImagePreviewOverlay = lazy(() => import("../preview/ImagePreviewOverlay"));
+import AttachmentContextMenu from "../preview/AttachmentContextMenu";
 
 function portalStatusText(status: IntakeTaskStatus): string {
   switch (status) {
@@ -600,6 +601,7 @@ export default function TesterPortalApp() {
           </Show>
         </main>
 
+        <AttachmentContextMenu />
         <Suspense>
           <Show when={imageViewerEverOpened()}>
             <ImagePreviewOverlay />

@@ -5,6 +5,9 @@ import { createSignal } from "solid-js";
 export interface ImageViewerPayload {
   src: string;
   alt: string;
+  filename?: string;
+  localPath?: string;
+  downloadUrl?: string;
   originalLabel?: string;
   onOpenOriginal?: () => void;
 }
@@ -20,6 +23,9 @@ export function openImagePreview(payload: ImageViewerPayload): void {
   setViewer({
     src,
     alt: payload.alt || "",
+    filename: payload.filename,
+    localPath: payload.localPath,
+    downloadUrl: payload.downloadUrl,
     originalLabel: payload.originalLabel,
     onOpenOriginal: payload.onOpenOriginal,
   });

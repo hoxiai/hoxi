@@ -1,7 +1,7 @@
 // web/src/components/timeline/tool-card-helpers.tsx
 import { createMemo, For, type JSX, Show } from "solid-js";
 import type { MessagePart, SnapshotFileDiff, ToolState } from "../../services/sse-types";
-import { getFullToolOutput, isLoopbackMediaURL, openDiffInInspector, openImagePreview, resolveMediaPlaybackURL, setWorkspace, stripRootPrefix, workspace } from "../../store/workspace";
+import { getFullToolOutput, isLoopbackMediaURL, openAttachmentContextMenu, openDiffInInspector, openImagePreview, resolveMediaPlaybackURL, setWorkspace, stripRootPrefix, workspace } from "../../store/workspace";
 import { findQuestionReply, questionSummaryText } from "../../store/question-answers";
 import { Icon, type IconName } from "../icons";
 import FileDiffBlock from "../inspector/LazyFileDiffBlock";
@@ -737,16 +737,17 @@ export function ToolCardExpandedBody(props: {
                   const mediaSrc = resolveMediaPlaybackURL(att.url);
                   const cors = isLoopbackMediaURL(mediaSrc) ? "anonymous" : undefined;
                   return att.mime.startsWith("video/") ? (
-                    <video controls preload="metadata" playsinline crossOrigin={cors} src={mediaSrc} class="max-h-56 w-auto rounded-lg border border-[var(--border-subtle)] bg-black/85 object-contain block" />
+                    <video controls preload="metadata" playsinline crossOrigin={cors} src={mediaSrc} onContextMenu={(e) => openAttachmentContextMenu(e, { kind: "video", src: att.url, filename: att.filename, mime: att.mime })} class="max-h-56 w-auto rounded-lg border border-[var(--border-subtle)] bg-black/85 object-contain block" />
                   ) : att.mime.startsWith("audio/") ? (
-                    <audio controls preload="metadata" crossOrigin={cors} src={mediaSrc} class="h-8 w-64 max-w-full" />
+                    <audio controls preload="metadata" crossOrigin={cors} src={mediaSrc} onContextMenu={(e) => openAttachmentContextMenu(e, { kind: "audio", src: att.url, filename: att.filename, mime: att.mime })} class="h-8 w-64 max-w-full" />
                   ) : (
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        openImagePreview({ src: att.url, alt: att.filename || props.part.tool });
+                        openImagePreview({ src: att.url, alt: att.filename || props.part.tool, filename: att.filename });
                       }}
+                      onContextMenu={(e) => openAttachmentContextMenu(e, { kind: "image", src: att.url, filename: att.filename, mime: att.mime, onPreview: () => openImagePreview({ src: att.url, alt: att.filename || props.part.tool, filename: att.filename }) })}
                       class="overflow-hidden rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:border-[var(--accent-border)] transition-colors cursor-zoom-in"
                     >
                       <img

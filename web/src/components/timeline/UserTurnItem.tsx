@@ -7,6 +7,7 @@ import {
   canRevertSession,
   forkFromMessage,
   formatContextPromptForClipboard,
+  openAttachmentContextMenu,
   openAttachmentInInspector,
   openImagePreview,
   resolveTurnSkillStatus,
@@ -185,6 +186,14 @@ export function UserTurnItem(props: {
                               target="_blank"
                               rel="noreferrer"
                               download={fp.filename || "attachment"}
+                              onContextMenu={(e) =>
+                                openAttachmentContextMenu(e, {
+                                  kind: "file",
+                                  src: fp.url,
+                                  filename: fp.filename,
+                                  mime: fp.mime,
+                                })
+                              }
                               onClick={(e) => {
                                 if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
                                 if (openAttachmentInInspector(fp.url, fp.filename)) {
@@ -220,6 +229,21 @@ export function UserTurnItem(props: {
                           openImagePreview({
                             src: fp.url,
                             alt: fp.filename || "attachment",
+                            filename: fp.filename,
+                          })
+                        }
+                        onContextMenu={(e) =>
+                          openAttachmentContextMenu(e, {
+                            kind: "image",
+                            src: fp.url,
+                            filename: fp.filename,
+                            mime: fp.mime,
+                            onPreview: () =>
+                              openImagePreview({
+                                src: fp.url,
+                                alt: fp.filename || "attachment",
+                                filename: fp.filename,
+                              }),
                           })
                         }
                         title={t("timeline.previewImageTooltip")}

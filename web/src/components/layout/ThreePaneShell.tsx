@@ -54,6 +54,7 @@ const CommandPalette = lazy(() => import("./CommandPalette"));
 const UpdateModal = lazy(() => import("./UpdateModal"));
 const ImagePreviewOverlay = lazy(() => import("../preview/ImagePreviewOverlay"));
 const DocumentPreviewOverlay = lazy(() => import("../preview/DocumentPreviewOverlay"));
+import AttachmentContextMenu from "../preview/AttachmentContextMenu";
 const WorkspaceModal = lazy(() => import("./WorkspaceModal"));
 const ExternalHandoffModal = lazy(() => import("../handoff/ExternalHandoffModal"));
 const ScheduleManagerModal = lazy(() => import("../schedules/ScheduleManagerModal"));
@@ -520,6 +521,7 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
       />
       <UpdateWatcher />
       <AppLinkConfirmation />
+      <AttachmentContextMenu />
 
       {/* On-demand overlays, Workspace, Session Handoff & Full-Screen Settings Control Center */}
       <Suspense>

@@ -5,6 +5,7 @@ import {
   canSteerSession,
   editQueuedPrompt,
   isSessionBusy,
+  openAttachmentContextMenu,
   openAttachmentInInspector,
   openImagePreview,
   parseHoxiContextPrompt,
@@ -83,6 +84,14 @@ export default function QueuedPromptsList(props: {
                                       target="_blank"
                                       rel="noreferrer"
                                       download={att.filename || "attachment"}
+                                      onContextMenu={(e) =>
+                                        openAttachmentContextMenu(e, {
+                                          kind: "file",
+                                          src: att.url,
+                                          filename: att.filename,
+                                          mime: att.mime,
+                                        })
+                                      }
                                       onClick={(e) => {
                                         if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
                                         if (openAttachmentInInspector(att.url, att.filename)) {
@@ -122,6 +131,21 @@ export default function QueuedPromptsList(props: {
                                   openImagePreview({
                                     src: att.url,
                                     alt: att.filename || "attachment",
+                                    filename: att.filename,
+                                  })
+                                }
+                                onContextMenu={(e) =>
+                                  openAttachmentContextMenu(e, {
+                                    kind: "image",
+                                    src: att.url,
+                                    filename: att.filename,
+                                    mime: att.mime,
+                                    onPreview: () =>
+                                      openImagePreview({
+                                        src: att.url,
+                                        alt: att.filename || "attachment",
+                                        filename: att.filename,
+                                      }),
                                   })
                                 }
                                 title={t("timeline.previewImageTooltip")}
