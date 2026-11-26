@@ -14,6 +14,7 @@ import {
 } from "../services/intake-api";
 import {
   isIntakeTaskExpanded,
+  parseScopedPathInput,
   toggleIntakeTaskExpanded,
 } from "../store/workspace";
 import { assertEqual, assertTrue, describe, it } from "./test-harness";
@@ -205,5 +206,13 @@ describe("QA intake portal route & store helpers", () => {
     if (segments[0].kind === "activity") assertEqual(segments[0].toolCount, 1);
     if (segments[1].kind === "notice") assertEqual(segments[1].category, "developer_followup");
     if (segments[2].kind === "activity") assertEqual(segments[2].toolCount, 1);
+  });
+
+  it("parses comma, CJK delimiter, and newline scoped path lists without duplicates", () => {
+    assertEqual(
+      parseScopedPathInput("internal/auth, config，migrations、internal/auth\nweb/src/policy; ").join(","),
+      "internal/auth,config,migrations,web/src/policy"
+    );
+    assertEqual(parseScopedPathInput("   \n , ").length, 0);
   });
 });

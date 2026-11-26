@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/sandbox"
 )
 
 // The /api/hoxi/sessions collection: Hoxi conversations plus the OpenCode
@@ -560,6 +562,13 @@ func (s *Service) CreateConversation(ctx context.Context, body CreateSessionRequ
 	if err != nil {
 		return SessionInfo{}, http.StatusBadRequest, err
 	}
+	readOnlyPaths, writablePaths, err := normalizeCreatePathScope(projDir, body.ReadOnlyPaths, body.DeniedPaths, body.WritablePaths)
+	if err != nil {
+		return SessionInfo{}, http.StatusBadRequest, err
+	}
+	if (len(readOnlyPaths) > 0 || len(writablePaths) > 0) && !commandSandbox && sandbox.CanApply() {
+		commandSandbox = true
+	}
 	projectID, err := s.ensureProjectID(projDir)
 	if err != nil {
 		return SessionInfo{}, http.StatusBadRequest, err
@@ -577,6 +586,8 @@ func (s *Service) CreateConversation(ctx context.Context, body CreateSessionRequ
 		ProjectDir:     projDir,
 		SandboxMode:    sandboxMode,
 		CommandSandbox: commandSandbox,
+		ReadOnlyPaths:  readOnlyPaths,
+		WritablePaths:  writablePaths,
 		ModelID:        strings.TrimSpace(body.ModelID),
 		ProviderID:     strings.TrimSpace(body.ProviderID),
 		Mode:           firstNonEmptyStr(body.Mode, "build"),

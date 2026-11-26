@@ -60,7 +60,11 @@ func (s *Service) onDemandSandboxProfile(sessionID, directory, command string) s
 	if isDestructivePermissionRequest(plain) || !sandboxContainable(plain, directory) {
 		return ""
 	}
-	profile, err := sandbox.NewManager("").WriteOnDemand(directory, s.sandboxControlPorts())
+	var scope sandbox.PathScope
+	if rec, ok := s.effectiveSessionRecord(hoxiID); ok {
+		scope = sessionPathScope(rec)
+	}
+	profile, err := sandbox.NewManager("").WriteOnDemandWithScope(directory, s.sandboxControlPorts(), scope)
 	if err != nil {
 		return ""
 	}

@@ -215,7 +215,25 @@ Thanks!`;
     assertEqual(meta!.workspace, "local");
     assertEqual(meta!.mode, "build");
     assertEqual(meta!.deniedPaths.join(","), "config");
+    assertEqual(meta!.readOnlyPaths.join(","), "config");
+    assertEqual(meta!.writablePaths.length, 0);
     assertEqual(meta!.title, "\u9996\u9875\u6587\u6848\u5fae\u8c03");
+
+    const scopedQASession: SessionInfo = {
+      id: "ses_qa_scoped",
+      title: "QA · \u5bfc\u51fa\u5f02\u5e38",
+      directory: "/repo",
+      sandboxMode: "worktree",
+      readOnlyPaths: ["internal/auth", "config"],
+      writablePaths: ["web/src/pages"],
+      time: { created: 1, updated: 2 },
+    };
+    const qaMeta = resolveCollabSessionMeta(scopedQASession, []);
+    assertTrue(qaMeta !== null);
+    assertEqual(qaMeta!.role, "qa");
+    assertEqual(qaMeta!.readOnlyPaths.join(","), "internal/auth,config");
+    assertEqual(qaMeta!.deniedPaths.join(","), "internal/auth,config");
+    assertEqual(qaMeta!.writablePaths.join(","), "web/src/pages");
 
     const normalSession: SessionInfo = {
       id: "ses_normal",

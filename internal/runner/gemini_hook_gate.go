@@ -259,6 +259,13 @@ func (s *Service) decideGeminiHookCall(r *http.Request, cred hookCredential, p g
 	if !ok {
 		return "deny", "Hoxi session no longer exists"
 	}
+	if eff, eOK := s.effectiveSessionRecord(cred.sessionID); eOK && eff.HasPathScope() {
+		rec.ReadOnlyPaths = eff.ReadOnlyPaths
+		rec.WritablePaths = eff.WritablePaths
+		if eff.CommandSandbox {
+			rec.CommandSandbox = true
+		}
+	}
 	if p.SessionID != "" && rec.ExternalID != "" && p.SessionID != rec.ExternalID {
 		return "deny", "Gemini CLI session does not belong to this Hoxi session"
 	}
@@ -276,6 +283,9 @@ func (s *Service) decideGeminiHookCall(r *http.Request, cred hookCredential, p g
 		return s.gateQuestion(r, cred, rec, p.ToolName, argsMap, callID)
 	}
 	baseDir := firstNonEmptyStr(strings.TrimSpace(p.Cwd), rec.WorktreePath)
+	if reason, denied := sessionToolWriteViolation(rec, baseDir, p.ToolName, argsMap); denied {
+		return "deny", reason
+	}
 
 	if lowerTool == "run_shell_command" || lowerTool == "bash" || lowerTool == "shell" || lowerTool == "run_command" {
 		cmd := firstString(argsMap["command"], argsMap["cmd"], argsMap["CommandLine"])

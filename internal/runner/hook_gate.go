@@ -258,6 +258,13 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 	if !ok {
 		return hookDecisionDeny, "Hoxi session no longer exists"
 	}
+	if eff, eOK := s.effectiveSessionRecord(cred.sessionID); eOK {
+		rec.ReadOnlyPaths = eff.ReadOnlyPaths
+		rec.WritablePaths = eff.WritablePaths
+		if eff.CommandSandbox {
+			rec.CommandSandbox = true
+		}
+	}
 	origin, ok := s.resolveAgyHookOrigin(r, rec, p.ConversationID)
 	if !ok {
 		return hookDecisionDeny, "Antigravity conversation does not belong to this Hoxi session"
@@ -274,6 +281,9 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 		if reason := agyHookForeignBrainReason(rec.WorktreePath, activeConvID, p.ToolCall.Args); reason != "" {
 			return hookDecisionDeny, reason
 		}
+	}
+	if reason, denied := sessionToolWriteViolation(rec, rec.WorktreePath, p.ToolCall.Name, p.ToolCall.Args); denied {
+		return hookDecisionDeny, reason
 	}
 	_, _, destructive, _ := s.inspectHookToolRisk(cred.sessionID, p.ToolCall.Name, p.ToolCall.Args)
 	if !destructive &&
@@ -373,10 +383,31 @@ func (s *Service) gateCommand(r *http.Request, cred hookCredential, rec SessionR
 		return false, "command working directory is outside this session's directory"
 	}
 	effectiveRoot := rec.WorktreePath
+	if eff, ok := s.effectiveSessionRecord(cred.sessionID); ok && eff.HasPathScope() {
+		rec.ReadOnlyPaths = eff.ReadOnlyPaths
+		rec.WritablePaths = eff.WritablePaths
+		if eff.CommandSandbox {
+			rec.CommandSandbox = true
+		}
+	}
 	item := map[string]interface{}{
 		"permission": "bash",
 		"patterns":   []string{ask.command},
 		"metadata":   map[string]interface{}{"command": ask.command, "source": ask.source},
+	}
+	if scopeAction, scopeReason := sessionShellPolicyCheck(rec, effectiveRoot, ask.command); scopeAction == "deny" {
+		item["id"] = runnerPermissionID + randomHex(12)
+		s.recordRunnerApprovalAudit(cred, item, "reject", approvalReply{Reply: "reject", Message: scopeReason, Source: approvalSourcePathScope})
+		return false, scopeReason
+	} else if scopeAction == "require_approval" {
+		if s.ApprovalPolicy().Mode == ApprovalModeUnattended {
+			s.recordUnattendedDeny(cred, item, unattendedCategoryTool)
+			return false, scopeReason
+		}
+		if strings.TrimSpace(ask.description) == "" {
+			ask.description = scopeReason
+		}
+		return s.awaitApproval(r, cred, ask)
 	}
 	// The hard-refuse classes come before any session grant: a command allowed
 	// for the session in another mode is still refused while unattended.

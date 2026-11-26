@@ -56,31 +56,35 @@ type EndpointInfo struct {
 
 // Link persists a single-project scoped QA / task intake token on disk (0600).
 type Link struct {
-	ID          string `json:"id"`
-	Token       string `json:"token"`
-	Directory   string `json:"directory"`
-	ProjectName string `json:"projectName"`
-	Label       string `json:"label"`
-	Enabled     bool   `json:"enabled"`
-	CreatedAt   int64  `json:"createdAt"`
-	UpdatedAt   int64  `json:"updatedAt"`
-	ExpiresAt   int64  `json:"expiresAt,omitempty"`
+	ID            string   `json:"id"`
+	Token         string   `json:"token"`
+	Directory     string   `json:"directory"`
+	ProjectName   string   `json:"projectName"`
+	Label         string   `json:"label"`
+	ReadOnlyPaths []string `json:"readOnlyPaths,omitempty"`
+	WritablePaths []string `json:"writablePaths,omitempty"`
+	Enabled       bool     `json:"enabled"`
+	CreatedAt     int64    `json:"createdAt"`
+	UpdatedAt     int64    `json:"updatedAt"`
+	ExpiresAt     int64    `json:"expiresAt,omitempty"`
 }
 
 // PublicLink is returned to the desktop owner in the Tasks Link Manager modal.
 type PublicLink struct {
-	ID          string `json:"id"`
-	Directory   string `json:"directory"`
-	ProjectName string `json:"projectName"`
-	Label       string `json:"label"`
-	Enabled     bool   `json:"enabled"`
-	PortalPath  string `json:"portalPath"`
-	LocalURL    string `json:"localUrl,omitempty"`
-	LANURL      string `json:"lanUrl,omitempty"`
-	RelayURL    string `json:"relayUrl,omitempty"`
-	CreatedAt   int64  `json:"createdAt"`
-	UpdatedAt   int64  `json:"updatedAt"`
-	ExpiresAt   int64  `json:"expiresAt,omitempty"`
+	ID            string   `json:"id"`
+	Directory     string   `json:"directory"`
+	ProjectName   string   `json:"projectName"`
+	Label         string   `json:"label"`
+	ReadOnlyPaths []string `json:"readOnlyPaths,omitempty"`
+	WritablePaths []string `json:"writablePaths,omitempty"`
+	Enabled       bool     `json:"enabled"`
+	PortalPath    string   `json:"portalPath"`
+	LocalURL      string   `json:"localUrl,omitempty"`
+	LANURL        string   `json:"lanUrl,omitempty"`
+	RelayURL      string   `json:"relayUrl,omitempty"`
+	CreatedAt     int64    `json:"createdAt"`
+	UpdatedAt     int64    `json:"updatedAt"`
+	ExpiresAt     int64    `json:"expiresAt,omitempty"`
 }
 
 // AttachmentRef references an uploaded screenshot/log stored via the host attachment store.
@@ -120,6 +124,8 @@ type TaskItem struct {
 	SubmitterLabel string          `json:"submitterLabel"`
 	Directory      string          `json:"directory"`
 	ProjectName    string          `json:"projectName"`
+	ReadOnlyPaths  []string        `json:"readOnlyPaths,omitempty"`
+	WritablePaths  []string        `json:"writablePaths,omitempty"`
 	Title          string          `json:"title"`
 	Description    string          `json:"description"`
 	Steps          string          `json:"steps,omitempty"`
@@ -231,15 +237,17 @@ type SanitizedStreamEvent struct {
 
 // RunSessionRequest asks the runner host to create or continue an isolated fix session.
 type RunSessionRequest struct {
-	Directory   string
-	SessionID   string
-	Title       string
-	System      string
-	Prompt      string
-	Attachments []AttachmentRef
-	Mode        string
-	Provider    string
-	Model       string
+	Directory     string
+	SessionID     string
+	Title         string
+	System        string
+	Prompt        string
+	Attachments   []AttachmentRef
+	Mode          string
+	Provider      string
+	Model         string
+	ReadOnlyPaths []string
+	WritablePaths []string
 }
 
 // Sessions bridges intake task execution and sanitized timeline projection onto runner.Service.
@@ -249,6 +257,12 @@ type Sessions interface {
 	SanitizedTimeline(sessionID string) (SanitizedTimeline, bool)
 	SubscribeSession(sessionID string) (<-chan struct{}, func())
 	Abort(sessionID string)
+}
+
+// PathScopeVerifier may be implemented by Sessions to check post-turn worktree
+// diffs against session ReadOnlyPaths / WritablePaths boundaries.
+type PathScopeVerifier interface {
+	VerifyPathScope(sessionID string) ([]string, error)
 }
 
 func randomID(prefix string, numBytes int) string {

@@ -60,7 +60,11 @@ func (s *Service) nativeOnDemandSandboxProfile(sessionID, rootDir, command strin
 	if isDestructivePermissionRequest(plain) || !sandboxContainable(plain, rootDir) {
 		return ""
 	}
-	profile, err := sandbox.NewManager("").WriteOnDemand(rootDir, s.sandboxControlPorts())
+	var scope sandbox.PathScope
+	if rec, ok := s.effectiveSessionRecord(sessionID); ok {
+		scope = sessionPathScope(rec)
+	}
+	profile, err := sandbox.NewManager("").WriteOnDemandWithScope(rootDir, s.sandboxControlPorts(), scope)
 	if err != nil {
 		return ""
 	}
@@ -126,6 +130,9 @@ func (s *Service) isPathOwnedByCurrentTurn(sessionID, absTarget string) bool {
 //  3. deleting or git-restoring <= 16 concrete regular files (<= 4 MiB each)
 //     whose exact bytes are already preserved in this turn's Git snapshot.
 func (s *Service) nativeCheckpointRecoverable(rec SessionRecord, ask approvalAsk, rootDir string) ([]string, bool) {
+	if rec.HasPathScope() {
+		return nil, false
+	}
 	pol := s.ApprovalPolicy()
 	if (pol.Mode != ApprovalModeAuto && pol.Mode != ApprovalModeTrusted) || pol.EffectiveRule(permissionCategoryBash) != "allow" {
 		return nil, false

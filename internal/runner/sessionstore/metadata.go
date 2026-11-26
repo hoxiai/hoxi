@@ -15,6 +15,8 @@ type SessionMetadata struct {
 	ArchivedAt                                              int64
 	ContextTurnCount                                        int
 	ContextPending                                          bool
+	ReadOnlyPaths                                           []string
+	WritablePaths                                           []string
 	CLISystemDigests                                        map[string][]string
 }
 
@@ -31,13 +33,31 @@ func (s *Store) updateMetadata(id string, touch bool, fn func(*SessionMetadata))
 	}
 	defer s.finishSession(ss)
 	next := ss.rec
+	var roCopy, rwCopy []string
+	if len(next.ReadOnlyPaths) > 0 {
+		roCopy = append([]string(nil), next.ReadOnlyPaths...)
+	}
+	if len(next.WritablePaths) > 0 {
+		rwCopy = append([]string(nil), next.WritablePaths...)
+	}
 	meta := SessionMetadata{Title: next.Title, ProjectID: next.ProjectID, ProviderID: next.ProviderID,
 		ModelID: next.ModelID, Mode: next.Mode, ExternalID: next.ExternalID, ArchivedAt: next.ArchivedAt,
-		ContextTurnCount: next.ContextTurnCount, ContextPending: next.ContextPending, CLISystemDigests: CloneStringSliceMap(next.CLISystemDigests)}
+		ContextTurnCount: next.ContextTurnCount, ContextPending: next.ContextPending,
+		ReadOnlyPaths: roCopy, WritablePaths: rwCopy, CLISystemDigests: CloneStringSliceMap(next.CLISystemDigests)}
 	fn(&meta)
 	next.Title, next.ProjectID, next.ProviderID = meta.Title, meta.ProjectID, meta.ProviderID
 	next.ModelID, next.Mode, next.ExternalID = meta.ModelID, meta.Mode, meta.ExternalID
 	next.ArchivedAt, next.ContextPending, next.ContextTurnCount = meta.ArchivedAt, meta.ContextPending, meta.ContextTurnCount
+	if len(meta.ReadOnlyPaths) > 0 {
+		next.ReadOnlyPaths = append([]string(nil), meta.ReadOnlyPaths...)
+	} else {
+		next.ReadOnlyPaths = nil
+	}
+	if len(meta.WritablePaths) > 0 {
+		next.WritablePaths = append([]string(nil), meta.WritablePaths...)
+	} else {
+		next.WritablePaths = nil
+	}
 	next.CLISystemDigests = CloneStringSliceMap(meta.CLISystemDigests)
 	if touch {
 		next.UpdatedAt = time.Now().UnixMilli()

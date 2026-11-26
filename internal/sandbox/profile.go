@@ -29,11 +29,21 @@ type PathRule struct {
 	Kind PathKind
 }
 
+type WriteScopeRestriction struct {
+	Root       PathRule
+	AllowWrite []PathRule
+}
+
 type FilesystemProfile struct {
 	AllowWrite []PathRule
 	DenyWrite  []PathRule
 	DenyRead   []PathRule
-	DenyNames  []string
+	DenyExec   []PathRule
+	// WriteRestrictions narrow writes inside Root solely to AllowWrite,
+	// even when an ancestor of Root (such as /private/tmp or /private/var/folders)
+	// is present in AllowWrite.
+	WriteRestrictions []WriteScopeRestriction
+	DenyNames         []string
 	// NameDenyExemptions lists explicitly granted roots where DenyNames do not
 	// apply, e.g. the repository's .git directory for a worktree session.
 	NameDenyExemptions []PathRule

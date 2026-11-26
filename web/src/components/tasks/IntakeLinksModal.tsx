@@ -1,6 +1,19 @@
 // web/src/components/tasks/IntakeLinksModal.tsx
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
-import { Check, ClipboardCheck, Copy, Link2, Plus, Sparkles, Trash2, X } from "lucide-solid";
+import {
+  Check,
+  ChevronDown,
+  ClipboardCheck,
+  Copy,
+  FolderLock,
+  Link2,
+  Lock,
+  Pencil,
+  Plus,
+  Sparkles,
+  Trash2,
+  X,
+} from "lucide-solid";
 import { Presence } from "../motion/Presence";
 import { surfaceExtension } from "../layout/surface-extension";
 import { t } from "../../i18n";
@@ -10,7 +23,9 @@ import {
   intakeLinks,
   loadIntakeLinks,
   openSettingsModal,
+  parseScopedPathInput,
   removeIntakeLink,
+  updateIntakeLink,
   type IntakeLinkItem,
 } from "../../store/workspace";
 
@@ -54,6 +69,75 @@ function CopyUrlRow(props: { badge: string; url: string }) {
   );
 }
 
+type PathScopeMode = "readonly" | "writable";
+
+function PathScopeEditor(props: {
+  mode: PathScopeMode;
+  onModeChange: (mode: PathScopeMode) => void;
+  readOnlyText: string;
+  onReadOnlyChange: (value: string) => void;
+  writableText: string;
+  onWritableChange: (value: string) => void;
+}) {
+  return (
+    <div class="space-y-2">
+      <div class="flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => props.onModeChange("readonly")}
+          class={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
+            props.mode === "readonly"
+              ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+              : "border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+          }`}
+        >
+          <Lock size={11} />
+          <span>{t("tasks.intakeScopeModeReadOnly")}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => props.onModeChange("writable")}
+          class={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
+            props.mode === "writable"
+              ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+              : "border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+          }`}
+        >
+          <FolderLock size={11} />
+          <span>{t("tasks.intakeScopeModeWritable")}</span>
+        </button>
+      </div>
+
+      <p class="text-[11px] leading-relaxed text-[var(--text-muted)]">
+        {props.mode === "writable"
+          ? t("tasks.intakeScopeWritableHint")
+          : t("tasks.intakeScopeReadOnlyHint")}
+      </p>
+
+      <Show when={props.mode === "writable"}>
+        <input
+          type="text"
+          value={props.writableText}
+          onInput={(e) => props.onWritableChange(e.currentTarget.value)}
+          placeholder={t("tasks.intakeScopeWritablePlaceholder")}
+          class="w-full rounded-lg border border-[var(--border-strong)] bg-[var(--bg-panel)] px-2.5 py-1.5 font-mono text-[11.5px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+        />
+        <div class="text-[10.5px] text-[var(--text-muted)]">
+          {t("tasks.intakeScopeExtraReadOnlyLabel")}
+        </div>
+      </Show>
+
+      <input
+        type="text"
+        value={props.readOnlyText}
+        onInput={(e) => props.onReadOnlyChange(e.currentTarget.value)}
+        placeholder={t("tasks.intakeScopeReadOnlyPlaceholder")}
+        class="w-full rounded-lg border border-[var(--border-strong)] bg-[var(--bg-panel)] px-2.5 py-1.5 font-mono text-[11.5px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+      />
+    </div>
+  );
+}
+
 export default function IntakeLinksModal(props: {
   open: boolean;
   directory: string;
@@ -64,7 +148,16 @@ export default function IntakeLinksModal(props: {
   );
   const [activeTab, setActiveTab] = createSignal<string>(extraTabs()[0]?.id ?? "qa");
   const [label, setLabel] = createSignal("");
+  const [scopeOpen, setScopeOpen] = createSignal(false);
+  const [scopeMode, setScopeMode] = createSignal<PathScopeMode>("readonly");
+  const [readOnlyInput, setReadOnlyInput] = createSignal("");
+  const [writableInput, setWritableInput] = createSignal("");
   const [creating, setCreating] = createSignal(false);
+  const [editingLinkID, setEditingLinkID] = createSignal<string | null>(null);
+  const [editScopeMode, setEditScopeMode] = createSignal<PathScopeMode>("readonly");
+  const [editReadOnlyInput, setEditReadOnlyInput] = createSignal("");
+  const [editWritableInput, setEditWritableInput] = createSignal("");
+  const [savingScope, setSavingScope] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
 
   const selectedExtraTab = createMemo(
@@ -75,8 +168,10 @@ export default function IntakeLinksModal(props: {
     const dir = props.directory.trim();
     if (!props.open || !dir) {
       setError(null);
+      setEditingLinkID(null);
       return;
     }
+    setEditingLinkID(null);
     if (activeTab() !== "qa" && !extraTabs().some((tab) => tab.id === activeTab())) {
       setActiveTab(extraTabs()[0]?.id ?? "qa");
     }
@@ -95,11 +190,20 @@ export default function IntakeLinksModal(props: {
     setCreating(true);
     setError(null);
     try {
+      const readOnlyPaths = parseScopedPathInput(readOnlyInput());
+      const writablePaths =
+        scopeMode() === "writable" ? parseScopedPathInput(writableInput()) : [];
       await createIntakeLink({
         directory: dir,
         label: label().trim() || t("tasks.intakeLinksBtn"),
+        readOnlyPaths: readOnlyPaths.length > 0 ? readOnlyPaths : undefined,
+        writablePaths: writablePaths.length > 0 ? writablePaths : undefined,
       });
       setLabel("");
+      setReadOnlyInput("");
+      setWritableInput("");
+      setScopeMode("readonly");
+      setScopeOpen(false);
     } catch (err) {
       setError(formatIntakeError(err, "Failed to create link"));
     } finally {
@@ -107,14 +211,55 @@ export default function IntakeLinksModal(props: {
     }
   };
 
+  const startEditScope = (item: IntakeLinkItem) => {
+    setError(null);
+    setEditingLinkID(item.id);
+    const rw = item.writablePaths ?? [];
+    const ro = item.readOnlyPaths ?? [];
+    setEditScopeMode(rw.length > 0 ? "writable" : "readonly");
+    setEditWritableInput(rw.join(", "));
+    setEditReadOnlyInput(ro.join(", "));
+  };
+
+  const onSaveScope = async (item: IntakeLinkItem) => {
+    if (savingScope()) return;
+    setSavingScope(true);
+    setError(null);
+    try {
+      const readOnlyPaths = parseScopedPathInput(editReadOnlyInput());
+      const writablePaths =
+        editScopeMode() === "writable" ? parseScopedPathInput(editWritableInput()) : [];
+      await updateIntakeLink({
+        id: item.id,
+        directory: props.directory,
+        readOnlyPaths,
+        writablePaths,
+      });
+      setEditingLinkID(null);
+    } catch (err) {
+      setError(formatIntakeError(err, "Failed to update path boundaries"));
+    } finally {
+      setSavingScope(false);
+    }
+  };
+
   const onDelete = async (item: IntakeLinkItem) => {
     setError(null);
+    if (editingLinkID() === item.id) {
+      setEditingLinkID(null);
+    }
     try {
       await removeIntakeLink(item.id, props.directory);
     } catch (err) {
       setError(formatIntakeError(err, "Failed to delete link"));
     }
   };
+
+  const configuredScopeCount = createMemo(
+    () =>
+      parseScopedPathInput(readOnlyInput()).length +
+      (scopeMode() === "writable" ? parseScopedPathInput(writableInput()).length : 0)
+  );
 
   const hasAnyRelay = () => intakeLinks().some((item) => Boolean(item.relayUrl));
 
@@ -212,24 +357,62 @@ export default function IntakeLinksModal(props: {
                 when={selectedExtraTab()}
                 fallback={
                   <>
-                    <form onSubmit={(e) => void onCreate(e)} class="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={label()}
-                        onInput={(e) => setLabel(e.currentTarget.value)}
-                        placeholder={t("tasks.intakeLabelPlaceholder")}
-                        class="min-w-0 flex-1 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] px-3 py-1.5 text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
-                      />
-                      <button
-                        type="submit"
-                        disabled={creating() || !props.directory.trim()}
-                        class="inline-flex shrink-0 items-center gap-1 rounded-xl bg-[var(--accent-primary)] px-3.5 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] disabled:opacity-40 cursor-pointer"
-                      >
-                        <Plus size={13} />
-                        <span>
-                          {creating() ? t("tasks.intakeCreatingBtn") : t("tasks.intakeCreateBtn")}
-                        </span>
-                      </button>
+                    <form onSubmit={(e) => void onCreate(e)} class="space-y-2.5">
+                      <div class="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={label()}
+                          onInput={(e) => setLabel(e.currentTarget.value)}
+                          placeholder={t("tasks.intakeLabelPlaceholder")}
+                          class="min-w-0 flex-1 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] px-3 py-1.5 text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                        />
+                        <button
+                          type="submit"
+                          disabled={creating() || !props.directory.trim()}
+                          class="inline-flex shrink-0 items-center gap-1 rounded-xl bg-[var(--accent-primary)] px-3.5 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] disabled:opacity-40 cursor-pointer"
+                        >
+                          <Plus size={13} />
+                          <span>
+                            {creating() ? t("tasks.intakeCreatingBtn") : t("tasks.intakeCreateBtn")}
+                          </span>
+                        </button>
+                      </div>
+
+                      <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/70 px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => setScopeOpen((prev) => !prev)}
+                          class="flex w-full items-center justify-between gap-2 text-left text-[11.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                        >
+                          <span class="inline-flex items-center gap-1.5">
+                            <Lock size={12} class="shrink-0 text-[var(--accent-primary)]" />
+                            <span>{t("tasks.intakeScopeTitle")}</span>
+                            <Show when={configuredScopeCount() > 0}>
+                              <span class="rounded bg-[var(--accent-surface)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--accent-primary)]">
+                                {configuredScopeCount()}
+                              </span>
+                            </Show>
+                          </span>
+                          <ChevronDown
+                            size={13}
+                            class={`shrink-0 transition-transform duration-150 ${
+                              scopeOpen() ? "rotate-180" : ""
+                            }`}
+                          />
+                        </button>
+                        <Show when={scopeOpen()}>
+                          <div class="mt-2.5 border-t border-[var(--border-subtle)]/70 pt-2.5">
+                            <PathScopeEditor
+                              mode={scopeMode()}
+                              onModeChange={setScopeMode}
+                              readOnlyText={readOnlyInput()}
+                              onReadOnlyChange={setReadOnlyInput}
+                              writableText={writableInput()}
+                              onWritableChange={setWritableInput}
+                            />
+                          </div>
+                        </Show>
+                      </div>
                     </form>
 
                     <Show when={error()}>
@@ -259,14 +442,91 @@ export default function IntakeLinksModal(props: {
                                     {item.projectName}
                                   </span>
                                 </div>
-                                <button
-                                  type="button"
-                                  onClick={() => void onDelete(item)}
-                                  class="rounded p-1 text-[var(--text-muted)] hover:text-[var(--danger-text)] cursor-pointer"
-                                >
-                                  <Trash2 size={13} />
-                                </button>
+                                <div class="flex shrink-0 items-center gap-1">
+                                  <button
+                                    type="button"
+                                    title={t("tasks.intakeScopeEditBtn")}
+                                    onClick={() =>
+                                      editingLinkID() === item.id
+                                        ? setEditingLinkID(null)
+                                        : startEditScope(item)
+                                    }
+                                    class="rounded p-1 text-[var(--text-muted)] hover:bg-[var(--bg-panel)] hover:text-[var(--text-primary)] cursor-pointer"
+                                  >
+                                    <Pencil size={12} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void onDelete(item)}
+                                    class="rounded p-1 text-[var(--text-muted)] hover:text-[var(--danger-text)] cursor-pointer"
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </div>
                               </div>
+
+                              <Show
+                                when={
+                                  editingLinkID() !== item.id &&
+                                  ((item.writablePaths?.length ?? 0) > 0 ||
+                                    (item.readOnlyPaths?.length ?? 0) > 0)
+                                }
+                              >
+                                <div class="flex flex-wrap items-center gap-1.5">
+                                  <Show when={(item.writablePaths?.length ?? 0) > 0}>
+                                    <span class="inline-flex max-w-full items-center gap-1 truncate rounded-md border border-[var(--accent-border)]/70 bg-[var(--accent-surface)]/55 px-1.5 py-0.5 font-mono text-[10.5px] text-[var(--accent-primary)]">
+                                      <FolderLock size={10} class="shrink-0" />
+                                      <span class="truncate">
+                                        {t("tasks.intakeScopeWritableBadge", {
+                                          paths: (item.writablePaths ?? []).join(", "),
+                                        })}
+                                      </span>
+                                    </span>
+                                  </Show>
+                                  <Show when={(item.readOnlyPaths?.length ?? 0) > 0}>
+                                    <span class="inline-flex max-w-full items-center gap-1 truncate rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-1.5 py-0.5 font-mono text-[10.5px] text-[var(--text-secondary)]">
+                                      <Lock size={10} class="shrink-0" />
+                                      <span class="truncate">
+                                        {t("tasks.intakeScopeReadOnlyBadge", {
+                                          paths: (item.readOnlyPaths ?? []).join(", "),
+                                        })}
+                                      </span>
+                                    </span>
+                                  </Show>
+                                </div>
+                              </Show>
+
+                              <Show when={editingLinkID() === item.id}>
+                                <div class="space-y-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)]/70 p-2.5">
+                                  <PathScopeEditor
+                                    mode={editScopeMode()}
+                                    onModeChange={setEditScopeMode}
+                                    readOnlyText={editReadOnlyInput()}
+                                    onReadOnlyChange={setEditReadOnlyInput}
+                                    writableText={editWritableInput()}
+                                    onWritableChange={setEditWritableInput}
+                                  />
+                                  <div class="flex items-center justify-end gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingLinkID(null)}
+                                      class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                                    >
+                                      {t("tasks.intakeScopeCancelBtn")}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={savingScope()}
+                                      onClick={() => void onSaveScope(item)}
+                                      class="rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-foreground)] disabled:opacity-40 cursor-pointer"
+                                    >
+                                      {savingScope()
+                                        ? t("tasks.intakeScopeSavingBtn")
+                                        : t("tasks.intakeScopeSaveBtn")}
+                                    </button>
+                                  </div>
+                                </div>
+                              </Show>
 
                               <div class="space-y-1.5">
                                 <Show when={item.relayUrl}>

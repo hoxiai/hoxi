@@ -22,10 +22,20 @@ var (
 
 // CreateLinkInput creates a scoped tester intake link for one project directory.
 type CreateLinkInput struct {
-	Directory   string `json:"directory"`
-	ProjectName string `json:"projectName,omitempty"`
-	Label       string `json:"label"`
-	ExpiresInHr int    `json:"expiresInHours,omitempty"`
+	Directory     string   `json:"directory"`
+	ProjectName   string   `json:"projectName,omitempty"`
+	Label         string   `json:"label"`
+	ReadOnlyPaths []string `json:"readOnlyPaths,omitempty"`
+	WritablePaths []string `json:"writablePaths,omitempty"`
+	ExpiresInHr   int      `json:"expiresInHours,omitempty"`
+}
+
+// UpdateLinkInput updates editable desktop-managed properties of an existing intake link.
+type UpdateLinkInput struct {
+	ID            string   `json:"id"`
+	Label         *string  `json:"label,omitempty"`
+	ReadOnlyPaths []string `json:"readOnlyPaths"`
+	WritablePaths []string `json:"writablePaths"`
 }
 
 // SubmitTaskInput is submitted by a part-time tester (never auto-executes).
@@ -238,7 +248,7 @@ func (s *Service) snapshotLocked() (uint64, storeDoc) {
 	s.seq++
 	links := make(map[string]Link, len(s.links))
 	for k, v := range s.links {
-		links[k] = v
+		links[k] = cloneLink(v)
 	}
 	tasks := make(map[string]TaskItem, len(s.tasks))
 	for k, v := range s.tasks {

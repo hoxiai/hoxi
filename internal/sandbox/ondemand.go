@@ -263,19 +263,55 @@ func uniquePorts(ports []int) []int {
 // profile is one of them and is unchanged on disk.
 var onDemandWritten sync.Map // path -> [32]byte
 
+// OnDemandProfileWithScope extends OnDemandProfile with session-level read-only
+// and writable path boundaries inside workspace.
+func OnDemandProfileWithScope(workspace string, denyPorts []int, scope PathScope) (Profile, error) {
+	profile, err := OnDemandProfile(workspace, denyPorts)
+	if err != nil {
+		return Profile{}, err
+	}
+	if scope.IsEmpty() {
+		return profile, nil
+	}
+	return ApplyPathScope(profile, workspace, scope)
+}
+
 // OnDemandProfilePath is where the on-demand profile for workspace lives.
 func (m *Manager) OnDemandProfilePath(workspace string) (string, error) {
+	return m.OnDemandProfilePathWithScope(workspace, PathScope{})
+}
+
+// OnDemandProfilePathWithScope returns the on-demand profile path keyed by
+// canonical workspace and optional PathScope so scoped sessions never clobber
+// unscoped workspace profiles.
+func (m *Manager) OnDemandProfilePathWithScope(workspace string, scope PathScope) (string, error) {
 	canonical, err := canonicalDirectory(workspace)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(m.root, "profiles", "on-demand-"+hash(canonical)+".sb"), nil
+	key := canonical
+	if !scope.IsEmpty() {
+		norm, err := NormalizePathScope(canonical, scope)
+		if err != nil {
+			return "", err
+		}
+		if sk := norm.CanonicalKey(); sk != "" {
+			key = canonical + "\x00" + sk
+		}
+	}
+	return filepath.Join(m.root, "profiles", "on-demand-"+hash(key)+".sb"), nil
 }
 
 // WriteOnDemand renders the on-demand profile for workspace and returns its
 // path. The file is rewritten only when its text changed.
 func (m *Manager) WriteOnDemand(workspace string, denyPorts []int) (string, error) {
-	profile, err := OnDemandProfile(workspace, denyPorts)
+	return m.WriteOnDemandWithScope(workspace, denyPorts, PathScope{})
+}
+
+// WriteOnDemandWithScope renders a scoped on-demand profile for workspace and
+// returns its path.
+func (m *Manager) WriteOnDemandWithScope(workspace string, denyPorts []int, scope PathScope) (string, error) {
+	profile, err := OnDemandProfileWithScope(workspace, denyPorts, scope)
 	if err != nil {
 		return "", err
 	}
@@ -283,7 +319,7 @@ func (m *Manager) WriteOnDemand(workspace string, denyPorts []int) (string, erro
 	if err != nil {
 		return "", err
 	}
-	path, err := m.OnDemandProfilePath(workspace)
+	path, err := m.OnDemandProfilePathWithScope(workspace, scope)
 	if err != nil {
 		return "", err
 	}
@@ -304,7 +340,13 @@ func (m *Manager) WriteOnDemand(workspace string, denyPorts []int) (string, erro
 // OnDemandTrusted reports whether profilePath is the on-demand profile this
 // process wrote for workspace and is still unchanged on disk.
 func (m *Manager) OnDemandTrusted(profilePath, workspace string) bool {
-	want, err := m.OnDemandProfilePath(workspace)
+	return m.OnDemandTrustedWithScope(profilePath, workspace, PathScope{})
+}
+
+// OnDemandTrustedWithScope reports whether profilePath is the scoped on-demand
+// profile this process wrote for workspace and scope, unchanged on disk.
+func (m *Manager) OnDemandTrustedWithScope(profilePath, workspace string, scope PathScope) bool {
+	want, err := m.OnDemandProfilePathWithScope(workspace, scope)
 	if err != nil || profilePath != want {
 		return false
 	}

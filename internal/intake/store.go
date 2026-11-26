@@ -149,7 +149,24 @@ func cloneAttachments(in []AttachmentRef) []AttachmentRef {
 	return out
 }
 
+func cloneStringSlice(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, len(in))
+	copy(out, in)
+	return out
+}
+
+func cloneLink(l Link) Link {
+	l.ReadOnlyPaths = cloneStringSlice(l.ReadOnlyPaths)
+	l.WritablePaths = cloneStringSlice(l.WritablePaths)
+	return l
+}
+
 func cloneTask(t TaskItem) TaskItem {
+	t.ReadOnlyPaths = cloneStringSlice(t.ReadOnlyPaths)
+	t.WritablePaths = cloneStringSlice(t.WritablePaths)
 	t.Attachments = cloneAttachments(t.Attachments)
 	if len(t.Comments) > 0 {
 		comments := make([]TaskComment, len(t.Comments))

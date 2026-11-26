@@ -9,22 +9,26 @@ import (
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/agentcli"
+	"github.com/hoxiai/hoxi/internal/sandbox"
 )
 
 // CreateSessionRequest describes a new Hoxi conversation: the JSON body of
 // POST /api/hoxi/runner/sessions, also used in process (e.g. by convoys).
 type CreateSessionRequest struct {
-	Title          string `json:"title"`
-	Directory      string `json:"directory"`
-	ParentID       string `json:"parentID,omitempty"`
-	ScheduleID     string `json:"scheduleID,omitempty"`
-	Surface        string `json:"surface"`
-	Runtime        string `json:"runtime"`
-	ModelID        string `json:"modelID"`
-	ProviderID     string `json:"providerID"`
-	Mode           string `json:"mode"`
-	SandboxMode    string `json:"sandboxMode"`
-	CommandSandbox bool   `json:"commandSandbox"`
+	Title          string   `json:"title"`
+	Directory      string   `json:"directory"`
+	ParentID       string   `json:"parentID,omitempty"`
+	ScheduleID     string   `json:"scheduleID,omitempty"`
+	Surface        string   `json:"surface"`
+	Runtime        string   `json:"runtime"`
+	ModelID        string   `json:"modelID"`
+	ProviderID     string   `json:"providerID"`
+	Mode           string   `json:"mode"`
+	SandboxMode    string   `json:"sandboxMode"`
+	CommandSandbox bool     `json:"commandSandbox"`
+	ReadOnlyPaths  []string `json:"readOnlyPaths,omitempty"`
+	DeniedPaths    []string `json:"deniedPaths,omitempty"`
+	WritablePaths  []string `json:"writablePaths,omitempty"`
 }
 
 func (s *Service) handleCreateSession(w http.ResponseWriter, r *http.Request) {
@@ -70,6 +74,13 @@ func (s *Service) CreateSession(body CreateSessionRequest, directory string) (Se
 	sandboxMode, commandSandbox, err := s.unattendedSessionShape(body.SandboxMode, body.CommandSandbox)
 	if err != nil {
 		return SessionInfo{}, http.StatusBadRequest, err
+	}
+	readOnlyPaths, writablePaths, err := normalizeCreatePathScope(projDir, body.ReadOnlyPaths, body.DeniedPaths, body.WritablePaths)
+	if err != nil {
+		return SessionInfo{}, http.StatusBadRequest, err
+	}
+	if (len(readOnlyPaths) > 0 || len(writablePaths) > 0) && !commandSandbox && sandbox.CanApply() {
+		commandSandbox = true
 	}
 	surface := NormalizeSessionSurface(body.Surface, projDir)
 	projectID, err := s.ensureProjectIDWithSurface(projDir, surface)
@@ -153,6 +164,8 @@ func (s *Service) CreateSession(body CreateSessionRequest, directory string) (Se
 		ProjectDir:     projDir,
 		SandboxMode:    sandboxMode,
 		CommandSandbox: commandSandbox,
+		ReadOnlyPaths:  readOnlyPaths,
+		WritablePaths:  writablePaths,
 		ModelID:        modelID,
 		ProviderID:     provID,
 		Mode:           firstNonEmptyStr(body.Mode, "build"),

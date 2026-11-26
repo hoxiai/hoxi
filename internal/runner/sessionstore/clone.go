@@ -146,6 +146,14 @@ func CloneRecord(r SessionRecord) SessionRecord {
 		out.Revert = &rev
 	}
 	out.Snapshots = CloneStringMap(r.Snapshots)
+	if r.ReadOnlyPaths != nil {
+		out.ReadOnlyPaths = make([]string, len(r.ReadOnlyPaths))
+		copy(out.ReadOnlyPaths, r.ReadOnlyPaths)
+	}
+	if r.WritablePaths != nil {
+		out.WritablePaths = make([]string, len(r.WritablePaths))
+		copy(out.WritablePaths, r.WritablePaths)
+	}
 	if r.OpenCodeIDs != nil {
 		out.OpenCodeIDs = make([]string, len(r.OpenCodeIDs))
 		copy(out.OpenCodeIDs, r.OpenCodeIDs)

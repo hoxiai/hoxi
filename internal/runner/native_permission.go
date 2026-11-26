@@ -29,6 +29,14 @@ func (s *Service) nativePermissionHook(rec SessionRecord, asstMsgID string) func
 			args = map[string]interface{}{}
 		}
 
+		effRec := rec
+		if latest, ok := s.effectiveSessionRecord(rec.ID); ok {
+			effRec = latest
+		}
+		if reason, denied := sessionToolWriteViolation(effRec, effRec.WorktreePath, req.ToolName, args); denied {
+			return fmt.Errorf("%s", reason)
+		}
+
 		if req.ForceAsk {
 			approved, reason := s.gateExplicitAskToolCall(fakeHTTP, cred, req.ToolName, args, req.CallID)
 			if !approved {
@@ -156,7 +164,7 @@ func (s *Service) nativePermissionHook(rec SessionRecord, asstMsgID string) func
 			case "", "run":
 				cmd, _ := args["command"].(string)
 				cwd := strings.TrimSpace(firstString(args["workdir"], args["cwd"], rec.WorktreePath))
-				approved, reason := s.gateCommand(fakeHTTP, cred, rec, approvalAsk{
+				approved, reason := s.gateCommand(fakeHTTP, cred, effRec, approvalAsk{
 					command: cmd, cwd: cwd, callID: req.CallID, source: string(RuntimeNative),
 				})
 				if !approved {

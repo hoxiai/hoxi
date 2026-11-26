@@ -59,15 +59,50 @@ export async function loadIntakeLinks(directory: string): Promise<IntakeLinkItem
   return list;
 }
 
+export function parseScopedPathInput(raw: string): string[] {
+  if (!raw || !raw.trim()) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const piece of raw.split(/[\n,;，；、]/)) {
+    const cleaned = piece.trim();
+    if (!cleaned || seen.has(cleaned)) continue;
+    seen.add(cleaned);
+    out.push(cleaned);
+  }
+  return out;
+}
+
 export async function createIntakeLink(payload: {
   directory: string;
   label: string;
   projectName?: string;
+  readOnlyPaths?: string[];
+  writablePaths?: string[];
   expiresInHours?: number;
 }): Promise<IntakeLinkItem> {
   const created = await intakeAPI.createLink(payload);
   await loadIntakeLinks(payload.directory);
   return created;
+}
+
+export async function updateIntakeLink(payload: {
+  id: string;
+  directory: string;
+  label?: string;
+  readOnlyPaths?: string[];
+  writablePaths?: string[];
+}): Promise<IntakeLinkItem> {
+  const updated = await intakeAPI.updateLink({
+    id: payload.id,
+    label: payload.label,
+    readOnlyPaths: payload.readOnlyPaths ?? [],
+    writablePaths: payload.writablePaths ?? [],
+  });
+  setIntakeLinks((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+  if (payload.directory.trim()) {
+    void loadIntakeLinks(payload.directory).catch(() => {});
+  }
+  return updated;
 }
 
 export async function removeIntakeLink(id: string, directory: string): Promise<void> {

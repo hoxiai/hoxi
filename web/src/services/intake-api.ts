@@ -16,6 +16,8 @@ export interface IntakeLinkItem {
   directory: string;
   projectName: string;
   label: string;
+  readOnlyPaths?: string[];
+  writablePaths?: string[];
   enabled: boolean;
   portalPath: string;
   localUrl?: string;
@@ -165,10 +167,24 @@ export const intakeAPI = {
     directory: string;
     label: string;
     projectName?: string;
+    readOnlyPaths?: string[];
+    writablePaths?: string[];
     expiresInHours?: number;
   }): Promise<IntakeLinkItem> {
     return requestJSON<IntakeLinkItem>("/api/hoxi/intake/links", {
       method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async updateLink(payload: {
+    id: string;
+    label?: string;
+    readOnlyPaths?: string[];
+    writablePaths?: string[];
+  }): Promise<IntakeLinkItem> {
+    return requestJSON<IntakeLinkItem>("/api/hoxi/intake/links", {
+      method: "PUT",
       body: JSON.stringify(payload),
     });
   },

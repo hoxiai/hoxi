@@ -227,6 +227,29 @@ func (s *Service) claimOpenCodePermission(item map[string]interface{}, sessionID
 			s.broadcast(sessionID, SSEEvent{Type: "permission.asked", Properties: item})
 		}
 	}
+	if rec, ok := s.effectiveSessionRecord(sessionID); ok && rec.HasPathScope() {
+		if reason, denied := sessionOpenCodeItemViolation(rec, directory, item); denied {
+			s.autoReplyOpenCodeMessage(id, sessionID, directory, "reject", reason, approvalSourcePathScope, nil, userFallback)
+			return true
+		}
+		if permissionName(item) == "bash" {
+			for _, cmd := range commandCandidates(item) {
+				if action, reason := sessionShellPolicyCheck(rec, directory, cmd); action == "require_approval" {
+					if s.ApprovalPolicy().Mode == ApprovalModeUnattended {
+						summary := permissionSummaryText(item)
+						s.autoReplyOpenCodeMessage(id, sessionID, directory, "reject", reason, approvalSourceUnattended, func() {
+							s.rememberDeferred(sessionID, id, unattendedCategoryTool, summary)
+							s.noteTurn(sessionID, "deny")
+						}, userFallback)
+						return true
+					}
+					annotateGrantClasses(item, directory)
+					s.askOpenCodeUser(item, sessionID, directory)
+					return false
+				}
+			}
+		}
+	}
 	if s.ApprovalPolicy().Mode == ApprovalModeUnattended {
 		if allow, category := unattendedDecision(item, directory); !allow && category != "" {
 			summary := permissionSummaryText(item)

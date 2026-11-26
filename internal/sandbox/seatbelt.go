@@ -203,6 +203,27 @@ func ProfileText(profile Profile) (string, error) {
 		}
 		deny = append(deny, "(require-not "+filter+")")
 	}
+	for _, restriction := range profile.Filesystem.WriteRestrictions {
+		rootFilter, err := pathFilter(restriction.Root)
+		if err != nil {
+			return "", err
+		}
+		if len(restriction.AllowWrite) == 0 {
+			deny = append(deny, "(require-not "+rootFilter+")")
+			continue
+		}
+		allowedFilters := make([]string, 0, len(restriction.AllowWrite))
+		for _, rule := range restriction.AllowWrite {
+			filter, err := pathFilter(rule)
+			if err != nil {
+				return "", err
+			}
+			allowedFilters = append(allowedFilters, filter)
+		}
+		deny = append(deny,
+			"(require-not (require-all "+rootFilter+" (require-not (require-any "+strings.Join(allowedFilters, " ")+"))))",
+		)
+	}
 	var exempt []string
 	for _, rule := range profile.Filesystem.NameDenyExemptions {
 		filter, err := pathFilter(rule)
@@ -290,12 +311,28 @@ func ProfileText(profile Profile) (string, error) {
 			`(deny network-outbound (with message "Hoxi sandbox denied a local port it did not open") (require-any ` +
 			strings.Join(ports, " ") + "))"
 	}
-	return strings.Join([]string{
+	var denyExec []string
+	for _, rule := range profile.Filesystem.DenyExec {
+		filter, err := pathFilter(rule)
+		if err != nil {
+			return "", err
+		}
+		denyExec = append(denyExec, filter)
+	}
+	execRule := ""
+	if len(denyExec) > 0 {
+		execRule = "; protected read-only paths cannot be executed\n(deny process-exec\n  (require-any " + strings.Join(denyExec, " ") + ")\n)"
+	}
+	sections := []string{
 		seatbeltBase,
 		network,
 		"; credential directories and secret files are unreadable\n" + read,
 		write,
-	}, "\n"), nil
+	}
+	if execRule != "" {
+		sections = append(sections, execRule)
+	}
+	return strings.Join(sections, "\n"), nil
 }
 
 func pathFilter(rule PathRule) (string, error) {

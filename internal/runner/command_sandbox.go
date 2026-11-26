@@ -40,6 +40,12 @@ func (s *Service) confineRuntimeCommand(rec SessionRecord, bin string, args []st
 			}
 		}
 	}
+	if scope := sessionPathScope(rec); !scope.IsEmpty() {
+		profile, err = sandbox.ApplyPathScope(profile, rec.WorktreePath, scope, rec.ProjectDir)
+		if err != nil {
+			return "", nil, err
+		}
+	}
 	return sandbox.WrapExec(profile, bin, args)
 }
 
@@ -56,7 +62,7 @@ func (s *Service) confineNativeCommandWithOnDemandIn(rec SessionRecord, rootDir,
 			return "", nil, errors.New(sandbox.UnavailableReason())
 		}
 		trustedRoot := firstNonEmptyStr(strings.TrimSpace(rootDir), rec.WorktreePath)
-		if !sandbox.NewManager("").OnDemandTrusted(onDemandProfile, trustedRoot) {
+		if !sandbox.NewManager("").OnDemandTrustedWithScope(onDemandProfile, trustedRoot, sessionPathScope(rec)) {
 			return "", nil, errors.New("on-demand sandbox profile is not trusted for this workspace")
 		}
 		wrapped := make([]string, 0, 4+len(args))
@@ -100,7 +106,7 @@ func syncOpenCodeCommandSandbox(rec SessionRecord) error {
 	if !sandbox.Available() {
 		return errors.New(sandbox.UnavailableReason())
 	}
-	_, err := manager.Set(rec.ExternalID, rec.WorktreePath, true, sandbox.NetworkAllow)
+	_, err := manager.SetWithScope(rec.ExternalID, rec.WorktreePath, true, sandbox.NetworkAllow, sessionPathScope(rec))
 	return err
 }
 

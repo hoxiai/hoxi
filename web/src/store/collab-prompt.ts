@@ -42,6 +42,8 @@ export interface CollabSessionMeta {
   workspace?: CollabPromptWorkspace;
   branch?: string;
   deniedPaths: string[];
+  readOnlyPaths: string[];
+  writablePaths: string[];
   title: string;
 }
 
@@ -544,13 +546,32 @@ export function resolveCollabSessionMeta(
   const branch = (worktree?.branch || session?.branch || "").trim() || undefined;
   const title = titleBadge?.cleanTitle || inferredTitle || (session?.title || "").trim();
 
+  const mergedReadOnly: string[] = [];
+  const seenRO = new Set<string>();
+  for (const p of [...(session?.readOnlyPaths ?? []), ...deniedPaths]) {
+    const clean = (p || "").trim();
+    if (!clean || seenRO.has(clean)) continue;
+    seenRO.add(clean);
+    mergedReadOnly.push(clean);
+  }
+  const writablePaths: string[] = [];
+  const seenRW = new Set<string>();
+  for (const p of session?.writablePaths ?? []) {
+    const clean = (p || "").trim();
+    if (!clean || seenRW.has(clean)) continue;
+    seenRW.add(clean);
+    writablePaths.push(clean);
+  }
+
   return {
     role,
     author,
     mode,
     workspace,
     branch,
-    deniedPaths,
+    deniedPaths: mergedReadOnly,
+    readOnlyPaths: mergedReadOnly,
+    writablePaths,
     title,
   };
 }

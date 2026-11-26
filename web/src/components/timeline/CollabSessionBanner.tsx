@@ -6,6 +6,7 @@ import { createMemo, Show } from "solid-js";
 import {
   AlertTriangle,
   Bug,
+  FolderLock,
   GitBranch,
   ListTodo,
   Lock,
@@ -100,14 +101,28 @@ export function CollabSessionBanner() {
                 </span>
               </Show>
 
-              <Show when={info().deniedPaths.length > 0}>
+              <Show when={info().writablePaths.length > 0}>
                 <span
-                  title={`${t("timeline.collabDeniedPathsLabel")}: ${info().deniedPaths.join(", ")}`}
+                  title={t("timeline.collabWritablePathsTooltip", {
+                    paths: info().writablePaths.join(", "),
+                  })}
+                  class="hidden md:inline-flex shrink-0 items-center gap-1 rounded border border-[var(--accent-border)]/70 bg-[var(--accent-surface)]/60 px-1.5 py-0.5 text-[10.5px] font-medium text-[var(--accent-primary)]"
+                >
+                  <FolderLock size={10} class="shrink-0" />
+                  <span>
+                    {t("timeline.collabWritablePathsLabel")} ({info().writablePaths.length})
+                  </span>
+                </span>
+              </Show>
+
+              <Show when={info().readOnlyPaths.length > 0}>
+                <span
+                  title={`${t("timeline.collabDeniedPathsLabel")}: ${info().readOnlyPaths.join(", ")}`}
                   class="hidden md:inline-flex shrink-0 items-center gap-1 rounded bg-[var(--bg-inset)] px-1.5 py-0.5 text-[10.5px] text-[var(--text-muted)]"
                 >
                   <Lock size={10} class="shrink-0" />
                   <span>
-                    {t("timeline.collabDeniedPathsLabel")} ({info().deniedPaths.length})
+                    {t("timeline.collabDeniedPathsLabel")} ({info().readOnlyPaths.length})
                   </span>
                 </span>
               </Show>

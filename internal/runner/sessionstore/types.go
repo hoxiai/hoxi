@@ -171,6 +171,8 @@ type SessionInfo struct {
 	ExternalID     string               `json:"externalID,omitempty"`
 	SandboxMode    string               `json:"sandboxMode,omitempty"`
 	CommandSandbox bool                 `json:"commandSandbox,omitempty"`
+	ReadOnlyPaths  []string             `json:"readOnlyPaths,omitempty"`
+	WritablePaths  []string             `json:"writablePaths,omitempty"`
 	Branch         string               `json:"branch,omitempty"`
 	Managed        bool                 `json:"managed,omitempty"`
 	Revert         *SessionRevert       `json:"revert,omitempty"`
@@ -320,6 +322,8 @@ type SessionRecord struct {
 	BaseCommit     string         `json:"baseCommit,omitempty"`
 	SandboxMode    string         `json:"sandboxMode,omitempty"`
 	CommandSandbox bool           `json:"commandSandbox,omitempty"`
+	ReadOnlyPaths  []string       `json:"readOnlyPaths,omitempty"`
+	WritablePaths  []string       `json:"writablePaths,omitempty"`
 	RetainedBranch string         `json:"retainedBranch,omitempty"`
 	ModelID        string         `json:"modelID"`
 	ProviderID     string         `json:"providerID"`
@@ -361,12 +365,25 @@ func (r SessionRecord) SandboxModeValue() string {
 	return "worktree"
 }
 
+// HasPathScope reports whether this session restricts writes via read-only or
+// writable path boundaries.
+func (r SessionRecord) HasPathScope() bool {
+	return len(r.ReadOnlyPaths) > 0 || len(r.WritablePaths) > 0
+}
+
 func (r SessionRecord) ToSessionInfo() SessionInfo {
 	dir := r.WorktreePath
 	if dir == "" {
 		dir = r.ProjectDir
 	}
 	caps := RuntimeCapabilities(r.Runtime, r.Subagent)
+	var readOnlyPaths, writablePaths []string
+	if len(r.ReadOnlyPaths) > 0 {
+		readOnlyPaths = append([]string(nil), r.ReadOnlyPaths...)
+	}
+	if len(r.WritablePaths) > 0 {
+		writablePaths = append([]string(nil), r.WritablePaths...)
+	}
 	return SessionInfo{
 		ID:             r.ID,
 		ParentID:       r.ParentID,
@@ -385,6 +402,8 @@ func (r SessionRecord) ToSessionInfo() SessionInfo {
 		ExternalID:     r.ExternalID,
 		SandboxMode:    r.SandboxModeValue(),
 		CommandSandbox: r.CommandSandbox,
+		ReadOnlyPaths:  readOnlyPaths,
+		WritablePaths:  writablePaths,
 		Branch:         r.Branch,
 		Revert:         r.Revert,
 		Capabilities:   &caps,

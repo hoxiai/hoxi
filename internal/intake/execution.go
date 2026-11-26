@@ -115,29 +115,40 @@ func (s *Service) ApproveAndRun(ctx context.Context, in ApproveTaskInput) (TaskI
 	s.approving[taskID] = true
 	prevStatus := item.Status
 	existingSid := strings.TrimSpace(item.SessionID)
+	readOnlyPaths := cloneStringSlice(item.ReadOnlyPaths)
+	writablePaths := cloneStringSlice(item.WritablePaths)
+	if lnk, hasLink := s.links[item.LinkID]; hasLink {
+		readOnlyPaths = cloneStringSlice(lnk.ReadOnlyPaths)
+		writablePaths = cloneStringSlice(lnk.WritablePaths)
+	}
+	scopedItem := cloneTask(item)
+	scopedItem.ReadOnlyPaths = readOnlyPaths
+	scopedItem.WritablePaths = writablePaths
 	var system, prompt string
 	var atts []AttachmentRef
 	if existingSid != "" && prevStatus == StatusReopened {
-		system, prompt = BuildFollowupFixTurn(item)
-		atts = latestTesterAttachments(item)
+		system, prompt = BuildFollowupFixTurn(scopedItem)
+		atts = latestTesterAttachments(scopedItem)
 	} else {
-		system, prompt = BuildInitialFixTurn(item)
-		atts = collectInitialTaskAttachments(item)
+		system, prompt = BuildInitialFixTurn(scopedItem)
+		atts = collectInitialTaskAttachments(scopedItem)
 	}
 	mode := strings.TrimSpace(in.Mode)
 	if mode == "" {
 		mode = "build"
 	}
 	runReq := RunSessionRequest{
-		Directory:   item.Directory,
-		SessionID:   existingSid,
-		Title:       "QA · " + item.Title,
-		System:      system,
-		Prompt:      prompt,
-		Attachments: atts,
-		Mode:        mode,
-		Provider:    strings.TrimSpace(in.Provider),
-		Model:       strings.TrimSpace(in.Model),
+		Directory:     item.Directory,
+		SessionID:     existingSid,
+		Title:         "QA · " + item.Title,
+		System:        system,
+		Prompt:        prompt,
+		Attachments:   atts,
+		Mode:          mode,
+		Provider:      strings.TrimSpace(in.Provider),
+		Model:         strings.TrimSpace(in.Model),
+		ReadOnlyPaths: cloneStringSlice(readOnlyPaths),
+		WritablePaths: cloneStringSlice(writablePaths),
 	}
 	s.mu.Unlock()
 
@@ -167,6 +178,8 @@ func (s *Service) ApproveAndRun(ctx context.Context, in ApproveTaskInput) (TaskI
 	s.running[taskID] = cancel
 	delete(s.externalRuns, taskID)
 	cur.SessionID = sid
+	cur.ReadOnlyPaths = cloneStringSlice(readOnlyPaths)
+	cur.WritablePaths = cloneStringSlice(writablePaths)
 	cur.Status = StatusRunning
 	cur.Error = ""
 	cur.ApprovedAt = now
@@ -222,6 +235,16 @@ func (s *Service) executeApprovedTurn(ctx context.Context, taskID, linkID, sessi
 
 	summary, runErr := s.sessions.RunTurn(ctx, sessionID, req)
 	close(stopRelay)
+	if runErr == nil && (len(req.ReadOnlyPaths) > 0 || len(req.WritablePaths) > 0) {
+		if verifier, ok := s.sessions.(PathScopeVerifier); ok {
+			violations, vErr := verifier.VerifyPathScope(sessionID)
+			if vErr != nil {
+				runErr = errors.New("目录保护边界核验失败，已暂停等待研发检查")
+			} else if len(violations) > 0 {
+				runErr = errors.New("检测到只读保护或允许修改范围外的文件变更，已拦截等待研发核查")
+			}
+		}
+	}
 
 	s.mu.Lock()
 	now := s.now().UnixMilli()

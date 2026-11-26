@@ -132,6 +132,25 @@ func (s *Service) handleLinks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, pub)
+	case http.MethodPut, http.MethodPatch:
+		var in UpdateLinkInput
+		if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&in); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON payload")
+			return
+		}
+		if strings.TrimSpace(in.ID) == "" {
+			in.ID = strings.TrimSpace(r.URL.Query().Get("id"))
+		}
+		pub, err := s.UpdateLink(in)
+		if err != nil {
+			if errors.Is(err, ErrLinkNotFound) {
+				writeJSONError(w, http.StatusNotFound, err.Error())
+				return
+			}
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, pub)
 	case http.MethodDelete:
 		id := strings.TrimSpace(r.URL.Query().Get("id"))
 		if err := s.DeleteLink(id); err != nil {

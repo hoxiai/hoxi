@@ -30,6 +30,9 @@ export interface SessionInfo {
   mode?: string;
   managed?: boolean;
   sandboxMode?: "local" | "worktree";
+  commandSandbox?: boolean;
+  readOnlyPaths?: string[];
+  writablePaths?: string[];
   branch?: string;
   modelID?: string;
   providerID?: string;

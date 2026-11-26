@@ -240,7 +240,12 @@ func (b *gatewayIntakeSessions) EnsureSession(ctx context.Context, req intake.Ru
 		return "", errors.New("runner is unavailable")
 	}
 	if existing := strings.TrimSpace(req.SessionID); existing != "" {
-		if _, ok := b.runner.Store().Get(existing); ok {
+		if existingRec, ok := b.runner.Store().Meta(existing); ok {
+			if len(req.ReadOnlyPaths) > 0 || len(req.WritablePaths) > 0 || existingRec.HasPathScope() {
+				if _, err := b.runner.SetSessionPathScope(existing, req.ReadOnlyPaths, req.WritablePaths); err != nil {
+					return "", err
+				}
+			}
 			return existing, nil
 		}
 	}
@@ -258,18 +263,27 @@ func (b *gatewayIntakeSessions) EnsureSession(ctx context.Context, req intake.Ru
 		runtime = provider
 	}
 	info, _, err := b.runner.CreateConversation(ctx, runner.CreateSessionRequest{
-		Title:       req.Title,
-		Directory:   req.Directory,
-		Runtime:     runtime,
-		Mode:        req.Mode,
-		ProviderID:  provider,
-		ModelID:     model,
-		SandboxMode: "worktree",
+		Title:         req.Title,
+		Directory:     req.Directory,
+		Runtime:       runtime,
+		Mode:          req.Mode,
+		ProviderID:    provider,
+		ModelID:       model,
+		SandboxMode:   "worktree",
+		ReadOnlyPaths: req.ReadOnlyPaths,
+		WritablePaths: req.WritablePaths,
 	}, req.Directory)
 	if err != nil {
 		return "", err
 	}
 	return info.ID, nil
+}
+
+func (b *gatewayIntakeSessions) VerifyPathScope(sessionID string) ([]string, error) {
+	if b.runner == nil {
+		return nil, nil
+	}
+	return b.runner.VerifySessionPathScope(sessionID)
 }
 
 func (b *gatewayIntakeSessions) RunTurn(ctx context.Context, sessionID string, req intake.RunSessionRequest) (string, error) {

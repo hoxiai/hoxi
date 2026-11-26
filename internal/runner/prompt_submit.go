@@ -330,7 +330,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 			}
 		}
 	}
-	body.System = strings.TrimSpace(effectiveCommandExecutionGuidance() + "\n\n" + callerSystem)
+	body.System = buildTurnSystemPrompt(rec, callerSystem)
 	var resolvedSkill ResolvedSkill
 	if body.SkillSelection != nil {
 		resolved, err := s.resolveSkillSelection(ctx, rec.WorktreePath, rec.ID, rec.Runtime, *body.SkillSelection)
@@ -455,7 +455,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	modelID = resolvedModelID
 	if nextCallerSys != callerSystem {
 		callerSystem = nextCallerSys
-		body.System = strings.TrimSpace(effectiveCommandExecutionGuidance() + "\n\n" + callerSystem)
+		body.System = buildTurnSystemPrompt(rec, callerSystem)
 	}
 	effort := strings.TrimSpace(body.Variant)
 	if rec.Runtime == string(RuntimeAntigravity) {

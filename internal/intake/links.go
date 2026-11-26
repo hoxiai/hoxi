@@ -5,11 +5,121 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 )
+
+const (
+	maxIntakeScopePaths      = 64
+	maxIntakeScopePathLength = 256
+)
+
+func resolveExistingAncestorSymlinks(p string) string {
+	cleaned := filepath.Clean(p)
+	if resolved, err := filepath.EvalSymlinks(cleaned); err == nil {
+		return resolved
+	}
+	cur := cleaned
+	var tail []string
+	for {
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return cleaned
+		}
+		tail = append(tail, filepath.Base(cur))
+		cur = parent
+		if resolved, err := filepath.EvalSymlinks(cur); err == nil {
+			for i := len(tail) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, tail[i])
+			}
+			return resolved
+		}
+	}
+}
+
+func normalizeIntakeScopePaths(projectDir string, raw []string) ([]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	canonRoot := filepath.Clean(projectDir)
+	if resolved, err := filepath.EvalSymlinks(canonRoot); err == nil && resolved != "" {
+		canonRoot = resolved
+	}
+	seen := make(map[string]bool, len(raw))
+	out := make([]string, 0, len(raw))
+	for _, entry := range raw {
+		trimmed := strings.TrimSpace(entry)
+		if trimmed == "" {
+			continue
+		}
+		if len(trimmed) > maxIntakeScopePathLength {
+			return nil, fmt.Errorf("path %q exceeds maximum length (%d)", trimmed, maxIntakeScopePathLength)
+		}
+		for _, r := range trimmed {
+			if r < 0x20 || r == 0x7f {
+				return nil, fmt.Errorf("path %q contains a control character", trimmed)
+			}
+		}
+		if strings.ContainsAny(trimmed, "*?[\"'`") {
+			return nil, fmt.Errorf("path %q must be a literal relative path without wildcards or quotes", trimmed)
+		}
+		slashed := strings.ReplaceAll(trimmed, `\`, "/")
+		if strings.HasPrefix(slashed, "/") || strings.HasPrefix(slashed, "~") {
+			return nil, fmt.Errorf("path %q must be relative to the project root", trimmed)
+		}
+		if len(slashed) >= 2 && ((slashed[0] >= 'a' && slashed[0] <= 'z') || (slashed[0] >= 'A' && slashed[0] <= 'Z')) && slashed[1] == ':' {
+			return nil, fmt.Errorf("path %q must be relative to the project root", trimmed)
+		}
+		for _, seg := range strings.Split(slashed, "/") {
+			if seg == ".." {
+				return nil, fmt.Errorf("path %q cannot traverse outside the project root", trimmed)
+			}
+		}
+		cleaned := strings.TrimPrefix(path.Clean(slashed), "./")
+		cleaned = strings.Trim(cleaned, "/")
+		if cleaned == "" || cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+			return nil, fmt.Errorf("path %q must name a subdirectory or file inside the project", trimmed)
+		}
+		if canonRoot != "" {
+			joined := filepath.Join(canonRoot, filepath.FromSlash(cleaned))
+			resolved := resolveExistingAncestorSymlinks(joined)
+			rel, err := filepath.Rel(canonRoot, resolved)
+			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return nil, fmt.Errorf("path %q resolves outside the project root", trimmed)
+			}
+			// Guard against broken symlinks pointing outside the project.
+			if info, lErr := os.Lstat(joined); lErr == nil && info.Mode()&os.ModeSymlink != 0 {
+				if linkTarget, rErr := os.Readlink(joined); rErr == nil {
+					if !filepath.IsAbs(linkTarget) {
+						linkTarget = filepath.Join(filepath.Dir(joined), linkTarget)
+					}
+					linkResolved := resolveExistingAncestorSymlinks(linkTarget)
+					lRel, relErr := filepath.Rel(canonRoot, linkResolved)
+					if relErr != nil || lRel == ".." || strings.HasPrefix(lRel, ".."+string(filepath.Separator)) {
+						return nil, fmt.Errorf("path %q resolves outside the project root", trimmed)
+					}
+				}
+			}
+		}
+		if seen[cleaned] {
+			continue
+		}
+		if len(out) >= maxIntakeScopePaths {
+			return nil, fmt.Errorf("at most %d scoped paths are allowed", maxIntakeScopePaths)
+		}
+		seen[cleaned] = true
+		out = append(out, cleaned)
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
 
 // SetOnLinksChanged registers a callback invoked after an intake link is
 // created or deleted so relay routers can refresh their hashed routing tables.
@@ -53,15 +163,17 @@ func (s *Service) ActiveTokenHashes() []string {
 func (s *Service) toPublicLink(l Link) PublicLink {
 	portalPath := "/qa/" + l.Token
 	pub := PublicLink{
-		ID:          l.ID,
-		Directory:   l.Directory,
-		ProjectName: l.ProjectName,
-		Label:       l.Label,
-		Enabled:     l.Enabled,
-		PortalPath:  portalPath,
-		CreatedAt:   l.CreatedAt,
-		UpdatedAt:   l.UpdatedAt,
-		ExpiresAt:   l.ExpiresAt,
+		ID:            l.ID,
+		Directory:     l.Directory,
+		ProjectName:   l.ProjectName,
+		Label:         l.Label,
+		ReadOnlyPaths: cloneStringSlice(l.ReadOnlyPaths),
+		WritablePaths: cloneStringSlice(l.WritablePaths),
+		Enabled:       l.Enabled,
+		PortalPath:    portalPath,
+		CreatedAt:     l.CreatedAt,
+		UpdatedAt:     l.UpdatedAt,
+		ExpiresAt:     l.ExpiresAt,
 	}
 	if s.endpoints != nil {
 		ep := s.endpoints()
@@ -128,6 +240,14 @@ func (s *Service) CreateLink(in CreateLinkInput) (PublicLink, error) {
 	if projName == "" {
 		projName = filepath.Base(dir)
 	}
+	readOnlyPaths, err := normalizeIntakeScopePaths(dir, in.ReadOnlyPaths)
+	if err != nil {
+		return PublicLink{}, fmt.Errorf("readOnlyPaths: %w", err)
+	}
+	writablePaths, err := normalizeIntakeScopePaths(dir, in.WritablePaths)
+	if err != nil {
+		return PublicLink{}, fmt.Errorf("writablePaths: %w", err)
+	}
 
 	s.mu.Lock()
 	if s.loadErr != nil {
@@ -140,15 +260,17 @@ func (s *Service) CreateLink(in CreateLinkInput) (PublicLink, error) {
 		expiresAt = now + int64(in.ExpiresInHr)*int64(time.Hour/time.Millisecond)
 	}
 	link := Link{
-		ID:          randomID("lnk_", 6),
-		Token:       tok,
-		Directory:   dir,
-		ProjectName: projName,
-		Label:       label,
-		Enabled:     true,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-		ExpiresAt:   expiresAt,
+		ID:            randomID("lnk_", 6),
+		Token:         tok,
+		Directory:     dir,
+		ProjectName:   projName,
+		Label:         label,
+		ReadOnlyPaths: readOnlyPaths,
+		WritablePaths: writablePaths,
+		Enabled:       true,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+		ExpiresAt:     expiresAt,
 	}
 	s.links[link.ID] = link
 	seq, snap := s.snapshotLocked()
@@ -162,6 +284,75 @@ func (s *Service) CreateLink(in CreateLinkInput) (PublicLink, error) {
 	}
 	s.notifyLinksChanged()
 	return s.toPublicLink(link), nil
+}
+
+// UpdateLink updates editable desktop-managed properties (label, readOnlyPaths,
+// writablePaths) of an existing intake link without rotating its portal URL.
+func (s *Service) UpdateLink(in UpdateLinkInput) (PublicLink, error) {
+	id := strings.TrimSpace(in.ID)
+	if id == "" {
+		return PublicLink{}, ErrLinkNotFound
+	}
+	s.mu.Lock()
+	if s.loadErr != nil {
+		s.mu.Unlock()
+		return PublicLink{}, s.loadErr
+	}
+	cur, ok := s.links[id]
+	if !ok {
+		s.mu.Unlock()
+		return PublicLink{}, ErrLinkNotFound
+	}
+	dir := cur.Directory
+	s.mu.Unlock()
+
+	readOnlyPaths, err := normalizeIntakeScopePaths(dir, in.ReadOnlyPaths)
+	if err != nil {
+		return PublicLink{}, fmt.Errorf("readOnlyPaths: %w", err)
+	}
+	writablePaths, err := normalizeIntakeScopePaths(dir, in.WritablePaths)
+	if err != nil {
+		return PublicLink{}, fmt.Errorf("writablePaths: %w", err)
+	}
+
+	s.mu.Lock()
+	if s.loadErr != nil {
+		s.mu.Unlock()
+		return PublicLink{}, s.loadErr
+	}
+	cur, ok = s.links[id]
+	if !ok {
+		s.mu.Unlock()
+		return PublicLink{}, ErrLinkNotFound
+	}
+	prev := cloneLink(cur)
+	if in.Label != nil {
+		label := strings.TrimSpace(*in.Label)
+		if label == "" {
+			label = "兼职测试"
+		}
+		if len(label) > 64 {
+			label = label[:64]
+		}
+		cur.Label = label
+	}
+	cur.ReadOnlyPaths = readOnlyPaths
+	cur.WritablePaths = writablePaths
+	cur.UpdatedAt = s.now().UnixMilli()
+	s.links[id] = cur
+	pub := s.toPublicLink(cur)
+	seq, snap := s.snapshotLocked()
+	s.mu.Unlock()
+
+	if err := s.store.saveSnapshot(seq, snap); err != nil {
+		s.mu.Lock()
+		if latest, exists := s.links[id]; exists && latest.UpdatedAt == cur.UpdatedAt {
+			s.links[id] = prev
+		}
+		s.mu.Unlock()
+		return PublicLink{}, err
+	}
+	return pub, nil
 }
 
 // ListLinks lists intake links for directory (or all links when directory is empty).

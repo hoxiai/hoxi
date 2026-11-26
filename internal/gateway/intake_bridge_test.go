@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -615,5 +616,95 @@ drained:
 doneCheck:
 	if !sawTimeline || !sawTask {
 		t.Fatalf("expected portal SSE timeline.updated and task.updated events, got timeline=%v task=%v", sawTimeline, sawTask)
+	}
+}
+
+func TestIntakeBridgePropagatesPathScopeAndRejectsTunnelPUT(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOXI_HOME", filepath.Join(tmp, "hoxi-home"))
+	proj := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(filepath.Join(proj, "internal", "auth"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(proj, "web", "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, "internal", "auth", "token.go"), []byte("package auth\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, "web", "src", "app.ts"), []byte("export {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = proj
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test",
+			"GIT_AUTHOR_EMAIL=test@example.com",
+			"GIT_COMMITTER_NAME=test",
+			"GIT_COMMITTER_EMAIL=test@example.com",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, string(out))
+		}
+	}
+	runGit("init", "-q")
+	runGit("add", ".")
+	runGit("commit", "-q", "-m", "init")
+
+	gw := New(0, "test-pass", proj, nil, nil)
+	t.Cleanup(gw.CloseBrowser)
+
+	// Tunnel callers MUST get 403 on PUT /api/hoxi/intake/links.
+	tunRec := httptest.NewRecorder()
+	gw.serveTunnelRequest(tunRec, httptest.NewRequest(http.MethodPut, "http://127.0.0.1/api/hoxi/intake/links", strings.NewReader(`{"id":"lnk_1","readOnlyPaths":[]}`)))
+	if tunRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for tunnel PUT /api/hoxi/intake/links, got %d", tunRec.Code)
+	}
+
+	bridge := &gatewayIntakeSessions{runner: gw.runner}
+	sid, err := bridge.EnsureSession(context.Background(), intake.RunSessionRequest{
+		Directory:     proj,
+		Title:         "QA · scoped",
+		Mode:          "build",
+		ReadOnlyPaths: []string{"internal/auth"},
+		WritablePaths: []string{"web/src"},
+	})
+	if err != nil {
+		t.Fatalf("EnsureSession failed: %v", err)
+	}
+	rec, ok := gw.runner.Store().Meta(sid)
+	if !ok {
+		t.Fatalf("session %s missing from runner store", sid)
+	}
+	if strings.Join(rec.ReadOnlyPaths, ",") != "internal/auth" || strings.Join(rec.WritablePaths, ",") != "web/src" {
+		t.Fatalf("EnsureSession dropped scope: ro=%v rw=%v", rec.ReadOnlyPaths, rec.WritablePaths)
+	}
+
+	// Simulate an out-of-scope file modification inside the worktree and verify VerifyPathScope catches it.
+	if err := os.WriteFile(filepath.Join(rec.WorktreePath, "internal", "auth", "token.go"), []byte("package hacked\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	violations, err := bridge.VerifyPathScope(sid)
+	if err != nil {
+		t.Fatalf("VerifyPathScope failed: %v", err)
+	}
+	if strings.Join(violations, ",") != "internal/auth/token.go" {
+		t.Fatalf("expected internal/auth/token.go violation, got %v", violations)
+	}
+
+	// Reopening with updated link scope refreshes the existing session's boundaries.
+	sid2, err := bridge.EnsureSession(context.Background(), intake.RunSessionRequest{
+		Directory:     proj,
+		SessionID:     sid,
+		ReadOnlyPaths: []string{"internal/auth", "web/src/policy"},
+		WritablePaths: nil,
+	})
+	if err != nil || sid2 != sid {
+		t.Fatalf("EnsureSession existing failed: sid2=%q err=%v", sid2, err)
+	}
+	updated, _ := gw.runner.Store().Meta(sid)
+	if strings.Join(updated.ReadOnlyPaths, ",") != "internal/auth,web/src/policy" || len(updated.WritablePaths) != 0 {
+		t.Fatalf("expected refreshed scope on existing session, got ro=%v rw=%v", updated.ReadOnlyPaths, updated.WritablePaths)
 	}
 }

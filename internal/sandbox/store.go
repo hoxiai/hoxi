@@ -49,6 +49,10 @@ func (m *Manager) Root() string {
 }
 
 func (m *Manager) Set(sessionID, workspace string, enabled bool, network NetworkMode) (Snapshot, error) {
+	return m.SetWithScope(sessionID, workspace, enabled, network, PathScope{})
+}
+
+func (m *Manager) SetWithScope(sessionID, workspace string, enabled bool, network NetworkMode, scope PathScope) (Snapshot, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return Snapshot{}, errors.New("sandbox session id is required")
@@ -66,6 +70,12 @@ func (m *Manager) Set(sessionID, workspace string, enabled bool, network Network
 	if err != nil {
 		return Snapshot{}, err
 	}
+	if !scope.IsEmpty() {
+		profile, err = ApplyPathScope(profile, workspace, scope)
+		if err != nil {
+			return Snapshot{}, err
+		}
+	}
 	text, err := ProfileText(profile)
 	if err != nil {
 		return Snapshot{}, err
@@ -80,10 +90,14 @@ func (m *Manager) Set(sessionID, workspace string, enabled bool, network Network
 	if err := writeAtomic(profilePath, []byte(text), 0o600); err != nil {
 		return Snapshot{}, fmt.Errorf("write sandbox profile: %w", err)
 	}
+	canonicalWS, _ := canonicalDirectory(workspace)
+	if canonicalWS == "" {
+		canonicalWS = profileWorkspace(profile)
+	}
 	snapshot := Snapshot{
 		Enabled:     true,
 		Network:     network,
-		Workspace:   profileWorkspace(profile),
+		Workspace:   canonicalWS,
 		ProfilePath: profilePath,
 		Version:     snapshotVersion,
 		UpdatedAt:   time.Now().UnixMilli(),

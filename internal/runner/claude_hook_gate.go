@@ -168,6 +168,13 @@ func (s *Service) decideClaudeHookCall(r *http.Request, cred hookCredential, p c
 	if !ok {
 		return "deny", "Hoxi session no longer exists"
 	}
+	if eff, eOK := s.effectiveSessionRecord(cred.sessionID); eOK && eff.HasPathScope() {
+		rec.ReadOnlyPaths = eff.ReadOnlyPaths
+		rec.WritablePaths = eff.WritablePaths
+		if eff.CommandSandbox {
+			rec.CommandSandbox = true
+		}
+	}
 	if p.SessionID != "" && rec.ExternalID != "" && p.SessionID != rec.ExternalID {
 		return "deny", "Claude Code session does not belong to this Hoxi session"
 	}
@@ -202,6 +209,9 @@ func (s *Service) decideClaudeHookCall(r *http.Request, cred hookCredential, p c
 		return s.gateQuestion(r, cred, rec, p.ToolName, argsMap, p.ToolUseID)
 	}
 	baseDir := firstNonEmptyStr(strings.TrimSpace(p.Cwd), rec.WorktreePath)
+	if reason, denied := sessionToolWriteViolation(rec, baseDir, p.ToolName, argsMap); denied {
+		return "deny", reason
+	}
 
 	switch {
 	case lowerTool == "edit" || lowerTool == "multiedit" || lowerTool == "write" || lowerTool == "notebookedit":
