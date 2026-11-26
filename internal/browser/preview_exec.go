@@ -406,7 +406,7 @@ func (sc *scope) navigatePreviewBounded(reqCtx, opctx context.Context, targetURL
 	return err
 }
 
-func (sc *scope) enforcePreviewOrigin(reqCtx, opctx context.Context, allowedOrigin, fallbackURL string) (State, bool, error) {
+func (sc *scope) enforcePreviewOrigin(reqCtx, opctx context.Context, allowedOrigin, fallbackURL string, allowErrorTab bool) (State, bool, error) {
 	st, err := sc.state(opctx)
 	if err != nil {
 		return emptyState(), false, err
@@ -425,6 +425,9 @@ func (sc *scope) enforcePreviewOrigin(reqCtx, opctx context.Context, allowedOrig
 		}
 	}
 	if isPreviewErrorTabURL(st.URL) {
+		if allowErrorTab {
+			return st, false, nil
+		}
 		return st, false, errors.New("preview target is unreachable")
 	}
 	if isBlankTabURL(st.URL) || isAllowedPreviewTabURL(allowedOrigin, st.URL) {
@@ -484,7 +487,7 @@ func (s *Service) PreviewState(ctx context.Context, scopeID, directory, allowedO
 	}
 	opctx, stopOp := sc.browserOpCtx(ctx)
 	defer stopOp()
-	st, blocked, err := sc.enforcePreviewOrigin(ctx, opctx, origin, origin+"/")
+	st, blocked, err := sc.enforcePreviewOrigin(ctx, opctx, origin, origin+"/", true)
 	if err != nil {
 		return PreviewSnapshot{}, err
 	}
@@ -536,6 +539,7 @@ func (s *Service) PreviewAction(ctx context.Context, scopeID, directory, allowed
 		}
 	}
 
+	justStarted := false
 	if sc.browser == nil || sc.browser.Err() != nil {
 		if act.Action != "navigate" {
 			return PreviewSnapshot{Running: false, Width: sc.width, Height: sc.height, Path: defaultPath}, errors.New("preview browser is not running")
@@ -544,6 +548,7 @@ func (s *Service) PreviewAction(ctx context.Context, scopeID, directory, allowed
 			s.remove(key, sc)
 			return PreviewSnapshot{}, err
 		}
+		justStarted = true
 	}
 
 	opctx, stopOp := sc.browserOpCtx(ctx)
@@ -557,6 +562,9 @@ func (s *Service) PreviewAction(ctx context.Context, scopeID, directory, allowed
 	switch act.Action {
 	case "navigate":
 		if err := sc.navigatePreviewBounded(ctx, opctx, act.URL); err != nil {
+			if justStarted {
+				sc.resetBrowser()
+			}
 			return PreviewSnapshot{}, err
 		}
 		fallbackURL = act.URL
@@ -571,8 +579,11 @@ func (s *Service) PreviewAction(ctx context.Context, scopeID, directory, allowed
 		}
 	}
 
-	st, blocked, err := sc.enforcePreviewOrigin(ctx, opctx, origin, fallbackURL)
+	st, blocked, err := sc.enforcePreviewOrigin(ctx, opctx, origin, fallbackURL, act.Action == "resize")
 	if err != nil {
+		if justStarted {
+			sc.resetBrowser()
+		}
 		return PreviewSnapshot{}, err
 	}
 	return sc.previewSnapshotFromState(origin, st, blocked), nil
@@ -606,7 +617,7 @@ func (s *Service) PreviewFrame(ctx context.Context, scopeID, directory, allowedO
 	opctx, stopOp := sc.browserOpCtx(ctx)
 	defer stopOp()
 
-	st, blocked, err := sc.enforcePreviewOrigin(ctx, opctx, origin, origin+defaultPath)
+	st, blocked, err := sc.enforcePreviewOrigin(ctx, opctx, origin, origin+defaultPath, false)
 	if err != nil {
 		return nil, PreviewSnapshot{}, err
 	}
