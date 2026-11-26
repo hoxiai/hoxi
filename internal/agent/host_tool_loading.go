@@ -59,12 +59,13 @@ func requestedHostTool(input json.RawMessage) string {
 }
 
 type hostToolCatalog struct {
-	onDemand            bool
-	omitMCP             bool
-	omitCodeIndex       bool
-	omitTask            bool
-	omitDirectExecution bool
-	loaded              map[string]bool
+	onDemand                 bool
+	omitMCP                  bool
+	omitCodeIndex            bool
+	omitInteractiveQuestions bool
+	omitTask                 bool
+	omitDirectExecution      bool
+	loaded                   map[string]bool
 }
 
 // The visible transcript is already scoped to one session and includes restored turns.
@@ -119,6 +120,9 @@ func (c hostToolCatalog) specs(reg ToolRegistry, mode string, depth int) []ToolS
 		if c.omitCodeIndex && spec.Name == "hoxi_code_index" {
 			continue
 		}
+		if c.omitInteractiveQuestions && (spec.Name == "plan_consent" || spec.Name == "question") {
+			continue
+		}
 		if c.omitTask && spec.Name == "task" {
 			continue
 		}
@@ -136,6 +140,7 @@ func (c *hostToolCatalog) configureMCP(worktreeDir string, cfgDoc map[string]any
 
 func (c *hostToolCatalog) configureAppScope(callerSystem string) {
 	c.omitCodeIndex = isPackagedAppSession(callerSystem)
+	c.omitInteractiveQuestions = isExternalCollabSession(callerSystem)
 }
 
 func (c *hostToolCatalog) configureTaskPolicy(primaryMode string, agentMap map[string]llm.AgentSpec, cfgDoc map[string]any) {

@@ -75,6 +75,11 @@ func isPackagedAppSession(callerSystem string) bool {
 		!strings.Contains(callerSystem, "<hoxi_work_app_dev_mode>")
 }
 
+func isExternalCollabSession(callerSystem string) bool {
+	return strings.Contains(callerSystem, "<untrusted_pm_request>") ||
+		strings.Contains(callerSystem, "<untrusted_tester_report>")
+}
+
 func buildNativeGuidanceBlock(effectiveMode string, subtaskDepth int, cfgDoc map[string]any) string {
 	return buildNativeGuidanceBlockForSession(effectiveMode, subtaskDepth, cfgDoc, false)
 }
@@ -138,7 +143,9 @@ func buildSystemPromptWithRules(worktreeDir, callerSystem, driverPatch, effectiv
 	}
 	// Place Plan-mode consent guidance at the tail so promoting Plan -> Build
 	// preserves the entire static guidelines + environment + project_instructions prefix.
-	if strings.EqualFold(strings.TrimSpace(effectiveMode), "plan") && subtaskDepth == 0 {
+	// External PM/QA portal sessions have no desktop plan_consent UI and manage
+	// Plan -> Build transitions via their own portal workflow.
+	if strings.EqualFold(strings.TrimSpace(effectiveMode), "plan") && subtaskDepth == 0 && !isExternalCollabSession(callerSystem) {
 		b.WriteString(planModeConsentGuidance)
 		b.WriteString("\n\n")
 	}

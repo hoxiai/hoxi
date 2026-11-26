@@ -254,6 +254,10 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 	}
 	execReq := req
 	execReq.Mode = effectiveMode
+	externalCollab := isExternalCollabSession(callerSystem)
+	if externalCollab {
+		execReq.AskQuestion = nil
+	}
 	if execReq.FileRevisions == nil {
 		execReq.FileRevisions = NewFileRevisionTracker()
 	}
@@ -732,7 +736,7 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 				Text:      res.Output,
 				IsError:   res.IsError,
 			})
-			if !res.IsError && req.SubtaskDepth == 0 && strings.EqualFold(effectiveMode, "plan") {
+			if !externalCollab && !res.IsError && req.SubtaskDepth == 0 && strings.EqualFold(effectiveMode, "plan") {
 				if pm, _ := res.Metadata["promoteMode"].(string); strings.EqualFold(strings.TrimSpace(pm), "build") {
 					promoteToBuild = true
 				}

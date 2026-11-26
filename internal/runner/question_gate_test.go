@@ -67,6 +67,9 @@ func TestHookGateQuestionReplyAndToolPartDecoration(t *testing.T) {
 	if !strings.HasPrefix(qid, runnerQuestionID) {
 		t.Fatalf("expected runner question id prefix %q, got %q", runnerQuestionID, qid)
 	}
+	if !f.svc.HasPendingApproval("ses_agy_gate") {
+		t.Fatalf("expected HasPendingApproval=true while interactive question %s is pending", qid)
+	}
 
 	// Verify GET /api/hoxi/question lists the pending question with normalized options.
 	listReq := httptest.NewRequest(http.MethodGet, "/api/hoxi/question?directory="+f.dir, nil)
@@ -106,6 +109,9 @@ func TestHookGateQuestionReplyAndToolPartDecoration(t *testing.T) {
 	repliedEvt := waitForEvent(t, events, "question.replied")
 	if repliedEvt.Properties["requestID"] != qid {
 		t.Fatalf("expected question.replied for %s, got %#v", qid, repliedEvt.Properties)
+	}
+	if f.svc.HasPendingApproval("ses_agy_gate") {
+		t.Fatalf("expected HasPendingApproval=false after question %s is replied", qid)
 	}
 
 	dec := <-result

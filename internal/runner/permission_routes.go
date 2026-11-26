@@ -723,7 +723,8 @@ func (s *Service) listPendingApprovals(directory string) []map[string]interface{
 }
 
 // HasPendingApproval reports whether sessionID currently has any pending tool approval
-// awaiting desktop or mobile owner confirmation. No command text or path metadata is exposed.
+// or interactive question awaiting desktop or mobile owner confirmation. No command text
+// or path metadata is exposed.
 func (s *Service) HasPendingApproval(sessionID string) bool {
 	sid := strings.TrimSpace(sessionID)
 	if sid == "" || s == nil {
@@ -733,6 +734,11 @@ func (s *Service) HasPendingApproval(sessionID string) bool {
 	defer s.gate.mu.Unlock()
 	for _, p := range s.gate.pending {
 		if p != nil && p.sid == sid {
+			return true
+		}
+	}
+	for _, q := range s.gate.questions {
+		if q != nil && q.sid == sid {
 			return true
 		}
 	}

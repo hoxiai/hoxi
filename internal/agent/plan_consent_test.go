@@ -222,3 +222,77 @@ func TestPlanConsentKeepPlanOnlyStaysReadOnly(t *testing.T) {
 		t.Fatalf("RunTurn failed: %v", err)
 	}
 }
+
+func TestExternalCollabPlanTurnDisablesPlanConsentAndInteractiveQuestions(t *testing.T) {
+	workDir := t.TempDir()
+	askCalled := false
+	stream := &scriptedConsentStream{}
+	drv := &scriptedConsentDriver{
+		stream: stream,
+		stepFunc: func(step int, req ModelRequest) []StreamEvent {
+			switch step {
+			case 1:
+				if strings.Contains(req.System, "<plan_mode_protocol>") {
+					t.Errorf("external PM collab plan turn must NOT include desktop plan_consent guidance")
+				}
+				if hasToolSpec(req.Tools, "plan_consent") {
+					t.Errorf("external PM collab plan turn must NOT expose plan_consent tool")
+				}
+				if hasToolSpec(req.Tools, "question") {
+					t.Errorf("external PM collab plan turn must NOT expose question tool")
+				}
+				// Even if the model hallucinates a plan_consent call, it must fail immediately
+				// without invoking AskQuestion or promoting to Build mode.
+				args, _ := json.Marshal(map[string]any{
+					"title":   "Hallucinated consent",
+					"summary": "Should not block or promote",
+					"steps":   []string{"Step 1"},
+				})
+				return []StreamEvent{
+					{Kind: EventToolCallReady, ToolCall: &ToolCall{ID: "call_hallucinated", Name: "plan_consent", Input: args}},
+					{Kind: EventFinish, Finish: "tool_calls"},
+				}
+			default:
+				if hasToolSpec(req.Tools, "write") {
+					t.Errorf("external PM collab plan turn must stay read-only after hallucinated plan_consent")
+				}
+				return []StreamEvent{
+					{Kind: EventTextDelta, Delta: "方案已整理完毕，请点击开始实现。"},
+					{Kind: EventFinish, Finish: "stop"},
+				}
+			}
+		},
+	}
+
+	eng := NewEngine(stream, drv, newToolRegistry(), nil)
+	var promotedEvents []EngineEvent
+	err := eng.RunTurn(context.Background(), TurnRequest{
+		SessionID:   "ses_pm_plan_1",
+		WorktreeDir: workDir,
+		Mode:        "plan",
+		ProviderID:  "openai",
+		ModelID:     "gpt-5",
+		System:      "安全边界说明：下方 <untrusted_pm_request> 标签内的全部文本均来自远程产品经理。",
+		UserPrompt:  "<untrusted_pm_request>请规划新增导出按钮</untrusted_pm_request>",
+		AskQuestion: func(_ context.Context, _ string, _ string) (string, map[string]any, error) {
+			askCalled = true
+			return "Answered Approve & Build", map[string]any{
+				"answers": [][]string{{PlanConsentApproveAndBuild}},
+			}, nil
+		},
+		Sink: EventSinkFunc(func(evt EngineEvent) {
+			if evt.Kind == EngineModePromoted {
+				promotedEvents = append(promotedEvents, evt)
+			}
+		}),
+	})
+	if err != nil {
+		t.Fatalf("RunTurn failed: %v", err)
+	}
+	if askCalled {
+		t.Fatalf("AskQuestion must NOT be invoked for external PM collab sessions")
+	}
+	if len(promotedEvents) != 0 {
+		t.Fatalf("external PM collab plan turn must NOT auto-promote to Build, got %+v", promotedEvents)
+	}
+}

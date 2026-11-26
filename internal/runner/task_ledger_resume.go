@@ -170,6 +170,11 @@ func (s *Service) forgetLedgerSessions(seen map[string]bool) {
 	}
 }
 
+func isExternalCollabInflightEntry(entry InflightTurnEntry) bool {
+	return strings.Contains(entry.CallerSystem, "<untrusted_pm_request>") ||
+		strings.Contains(entry.CallerSystem, "<untrusted_tester_report>")
+}
+
 // settleStartupLedger inspects all in-flight turns left on disk by the previous
 // Hoxi process. Graceful-restart checkpoints within the freshness and recovery
 // budget are queued for automatic resumption; ungraceful crashes or expired
@@ -188,7 +193,7 @@ func (s *Service) settleStartupLedger() {
 			continue
 		}
 		fresh := maxAgeMs <= 0 || (entry.UpdatedAt > 0 && nowMs-entry.UpdatedAt <= maxAgeMs)
-		canAutoResume := entry.GracefulRestart && fresh && entry.RecoveryCount < maxAutoRestartRecoveries
+		canAutoResume := entry.GracefulRestart && fresh && entry.RecoveryCount < maxAutoRestartRecoveries && !isExternalCollabInflightEntry(entry)
 		if canAutoResume {
 			// Settle any interrupted tool/reasoning parts from before the restart
 			// while keeping the turn free of fatal error banners so resumption appends cleanly.

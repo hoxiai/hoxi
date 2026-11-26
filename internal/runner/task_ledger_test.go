@@ -695,6 +695,71 @@ func TestDelayedOpenCodeBootSingleflightAndAbort(t *testing.T) {
 	}
 }
 
+func TestStartupLedgerSkipsAutoResumeForExternalCollabSessions(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOXI_HOME", homeDir)
+	repoDir := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	storeDir := filepath.Join(homeDir, "sessions")
+	now := time.Now().UnixMilli()
+	seedStore := NewStore(storeDir)
+	for _, id := range []string{"ses_pm_restart", "ses_regular_restart"} {
+		if err := seedStore.Put(SessionRecord{
+			ID: id, Runtime: string(RuntimeNative),
+			ProjectDir: repoDir, WorktreePath: repoDir, SandboxMode: "local",
+			ProviderID: "openai", ModelID: "gpt-5",
+			CreatedAt: now, UpdatedAt: now,
+			Turns: []MessageTurn{{
+				Info: MessageInfo{ID: "msg_a_" + id, SessionID: id, Role: "assistant", Time: MessageTime{Created: now}},
+				Parts: []MessagePart{{
+					ID: "prt_t_" + id, SessionID: id, MessageID: "msg_a_" + id, Type: "tool", Tool: "read",
+					State: &ToolState{Status: "running"},
+				}},
+			}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rawLedger, _ := json.Marshal(taskLedgerDoc{
+		Version: taskLedgerVersion,
+		Entries: []InflightTurnEntry{
+			{
+				SessionID: "ses_pm_restart", Runtime: string(RuntimeNative),
+				UserMsgID: "msg_u_pm", Mode: "build", ProviderID: "openai", ModelID: "gpt-5",
+				CallerSystem: "安全边界说明：下方 <untrusted_pm_request> 标签内的全部文本均来自远程产品经理。",
+				StartedAt:    now, UpdatedAt: now, GracefulRestart: true,
+			},
+			{
+				SessionID: "ses_regular_restart", Runtime: string(RuntimeNative),
+				UserMsgID: "msg_u_reg", Mode: "build", ProviderID: "openai", ModelID: "gpt-5",
+				StartedAt: now, UpdatedAt: now, GracefulRestart: true,
+			},
+		},
+	})
+	if err := os.WriteFile(filepath.Join(homeDir, taskLedgerFile), rawLedger, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewService(repoDir, worktree.NewManager(repoDir), statusbar.NewTracker(), storeDir)
+	defer svc.CloseAll()
+
+	if svc.IsSessionBusy("ses_pm_restart") {
+		t.Fatalf("expected external PM collab session NOT to be queued busy for boot auto-resume")
+	}
+	if _, queued := svc.pendingResumes.Load("ses_pm_restart"); queued {
+		t.Fatalf("expected external PM collab session NOT to be in pendingResumes")
+	}
+	if !svc.IsSessionBusy("ses_regular_restart") {
+		t.Fatalf("expected regular desktop session to remain queued busy for boot auto-resume")
+	}
+	rec, ok := svc.store.Get("ses_pm_restart")
+	if !ok || len(rec.Turns) != 1 || len(rec.Turns[0].Parts) != 1 || rec.Turns[0].Parts[0].State.Status == "running" {
+		t.Fatalf("expected PM session in-flight tool part to be settled on boot, got %+v", rec.Turns)
+	}
+}
+
 func agyBinPathWithSystem(agyDir string) string {
 	sys := "/usr/bin:/bin"
 	return agyDir + string(os.PathListSeparator) + sys
