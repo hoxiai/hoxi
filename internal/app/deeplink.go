@@ -212,6 +212,20 @@ func parseProtocolDeepLink(raw string) (gateway.DesktopIntent, bool) {
 			Params: map[string]string{"path": filepath.Clean(docPath)},
 		}, true
 
+	case "join":
+		if len(segments) != 0 {
+			return gateway.DesktopIntent{}, false
+		}
+		targetURL, ok := sanitizeJoinPortalURL(q.Get("url"))
+		if !ok {
+			return gateway.DesktopIntent{}, false
+		}
+		return gateway.DesktopIntent{
+			Action: gateway.DesktopIntentActionOpenApp,
+			AppID:  "remote-collab",
+			Params: map[string]string{"url": targetURL},
+		}, true
+
 	case "settings":
 		if len(segments) != 1 {
 			return gateway.DesktopIntent{}, false
@@ -228,6 +242,50 @@ func parseProtocolDeepLink(raw string) (gateway.DesktopIntent, bool) {
 		}
 	}
 	return gateway.DesktopIntent{}, false
+}
+
+func sanitizeJoinPortalURL(raw string) (string, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || len(trimmed) > 2048 || hasControlChars(trimmed) {
+		return "", false
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return "", false
+	}
+	if parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || parsed.Opaque != "" {
+		return "", false
+	}
+	cleanPath := strings.TrimSuffix(parsed.Path, "/")
+	parts := strings.Split(strings.TrimPrefix(cleanPath, "/"), "/")
+	if len(parts) != 2 {
+		return "", false
+	}
+	kind, tok := parts[0], parts[1]
+	var prefix string
+	switch kind {
+	case "pm":
+		prefix = "hpm_"
+	case "qa":
+		prefix = "hqa_"
+	default:
+		return "", false
+	}
+	if !strings.HasPrefix(tok, prefix) {
+		return "", false
+	}
+	hexPart := strings.TrimPrefix(tok, prefix)
+	if len(hexPart) < 32 || len(hexPart) > 128 {
+		return "", false
+	}
+	for i := 0; i < len(hexPart); i++ {
+		c := hexPart[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return "", false
+		}
+	}
+	parsed.Path = "/" + kind + "/" + tok
+	return parsed.String(), true
 }
 
 func validDocDeepLinkPath(path string) bool {

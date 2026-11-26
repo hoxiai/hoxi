@@ -1,7 +1,6 @@
 // web/src/components/layout/LeftNav.tsx
 import { batch, createEffect, createMemo, createSignal, For, onCleanup, Show, untrack } from "solid-js";
-import { Presence } from "../motion/Presence";
-import { Activity, ArrowRightLeft, Bell, Check, Clock, Folder, FolderPlus, Layers, Plus, RefreshCw, Search } from "lucide-solid";
+import { Clock, FolderPlus, Plus, RefreshCw, Search } from "lucide-solid";
 import {
   archiveSession,
   createProjectSessionLists,
@@ -22,10 +21,8 @@ import {
   resolveRootSessionID,
   selectSession,
   setProjectOrder,
-  setSidebarProjectMode,
   switchSidebarNavTab,
   switchWorkspace,
-  type SidebarProjectMode,
   unarchiveSession,
   workspace,
   workspaceDisplayName,
@@ -37,6 +34,7 @@ import MultiProjectTreeItem from "./MultiProjectItem";
 import SingleProjectNavView from "./SingleProjectNavView";
 import { AttentionNavView, RecentTasksNavView, RunningNavView } from "./CrossProjectNavView";
 import UserAccountMenu from "./UserAccountMenu";
+import SidebarModeMenu from "./SidebarModeMenu";
 import { t } from "../../i18n";
 import { matchesProjectSessionSearch } from "./session-search";
 import { isWorkSurface, surfaceExtension } from "./surface-extension";
@@ -47,13 +45,12 @@ const EMPTY_SESSIONS: SessionInfo[] = [];
 export default function LeftNav() {
   const [filterQuery, setFilterQuery] = createSignal("");
   const [showSearch, setShowSearch] = createSignal(false);
-  const [modeMenuOpen, setModeMenuOpen] = createSignal(false);
   const [creatingForPath, setCreatingForPath] = createSignal<string | null>(null);
   const [creatingGlobal, setCreatingGlobal] = createSignal(false);
   const [syncingLists, setSyncingLists] = createSignal(false);
-  let modeBtnRef: HTMLButtonElement | undefined;
-  let modeMenuRef: HTMLDivElement | undefined;
   let searchInputRef: HTMLInputElement | undefined;
+  const codeExtraView = () => surfaceExtension.codeSidebarExtraView;
+  const codeExtraActive = () => !isWorkSurface() && Boolean(codeExtraView()?.active());
 
   const closeSearch = () => {
     setFilterQuery("");
@@ -77,6 +74,7 @@ export default function LeftNav() {
 
   const onCreateGlobalNewThread = async () => {
     if (creatingGlobal()) return;
+    codeExtraView()?.exit();
     setCreatingGlobal(true);
     try {
       startNewThreadDraft();
@@ -416,30 +414,7 @@ export default function LeftNav() {
     await discardSession(sessionID, true, normPath);
   };
 
-  createEffect(() => {
-    if (!modeMenuOpen()) return;
-    const handlePointerDown = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (modeMenuRef && !modeMenuRef.contains(target) && modeBtnRef && !modeBtnRef.contains(target)) {
-        setModeMenuOpen(false);
-      }
-    };
-    window.addEventListener("pointerdown", handlePointerDown);
-    onCleanup(() => window.removeEventListener("pointerdown", handlePointerDown));
-  });
-
   const currentWorkspaceName = createMemo(() => workspaceDisplayName(workspace.rootDir));
-
-  const modeOptions: Array<{
-    id: SidebarProjectMode;
-    label: () => string;
-    icon: typeof Folder;
-  }> = [
-    { id: "multi", label: () => t("leftNav.multiProject"), icon: Layers },
-    { id: "single", label: () => t("leftNav.singleProject"), icon: Folder },
-    { id: "attention", label: () => t("leftNav.attentionTasks"), icon: Bell },
-    { id: "running", label: () => t("leftNav.runningTasks"), icon: Activity },
-  ];
 
   return (
     <aside class="relative h-full w-full flex flex-col bg-transparent pl-2 select-none">
@@ -487,13 +462,14 @@ export default function LeftNav() {
           {/* Quick Toggle: Recent Tasks */}
           <button
             type="button"
-            aria-pressed={workspace.sidebarNavTab === "recent"}
+            aria-pressed={!codeExtraActive() && workspace.sidebarNavTab === "recent"}
             aria-label={t("leftNav.recentTasks")}
-            onClick={() =>
-              switchSidebarNavTab(workspace.sidebarNavTab === "recent" ? "projects" : "recent")
-            }
+            onClick={() => {
+              codeExtraView()?.exit();
+              switchSidebarNavTab(workspace.sidebarNavTab === "recent" ? "projects" : "recent");
+            }}
             class={`inline-flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg transition-colors cursor-pointer ${
-              workspace.sidebarNavTab === "recent"
+              !codeExtraActive() && workspace.sidebarNavTab === "recent"
                 ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
                 : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
             }`}
@@ -502,70 +478,8 @@ export default function LeftNav() {
             <Clock size={14} class="block shrink-0" />
           </button>
 
-          {/* Sidebar Project Layout Switcher (Multi / Single / Attention / Running) */}
-          <div class="relative flex items-center">
-            <button
-              ref={modeBtnRef}
-              type="button"
-              onClick={() => setModeMenuOpen((v) => !v)}
-              class={`inline-flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg transition-colors cursor-pointer ${
-                modeMenuOpen()
-                  ? "bg-[var(--bg-hover)] text-[var(--text-primary)]"
-                  : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
-              }`}
-              title={t("leftNav.switchSidebarMode")}
-            >
-              <ArrowRightLeft size={14} class="block shrink-0" />
-            </button>
-
-            <Presence when={modeMenuOpen()}>
-              {(state) => (
-              <div
-                ref={modeMenuRef}
-                data-state={state()}
-                style={{ "--hoxi-origin": "top right" }}
-                class="hoxi-popover absolute right-0 top-full mt-1 w-44 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1 z-50 space-y-0.5"
-              >
-                <For each={modeOptions}>
-                  {(opt) => {
-                    const OptIcon = opt.icon;
-                    const isCurrentMode = () =>
-                      workspace.sidebarNavTab === "projects" && workspace.sidebarProjectMode === opt.id;
-                    return (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSidebarProjectMode(opt.id);
-                          setModeMenuOpen(false);
-                        }}
-                        class={`w-full flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[12px] transition-colors cursor-pointer ${
-                          isCurrentMode()
-                            ? "bg-[var(--accent-surface)] text-[var(--text-primary)] font-medium"
-                            : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-                        }`}
-                      >
-                        <span class="inline-flex items-center gap-2">
-                          <OptIcon size={13} class="text-[var(--text-muted)]" />
-                          <span>{opt.label()}</span>
-                        </span>
-                        <span class="inline-flex items-center gap-1.5">
-                          <Show when={opt.id === "attention" && pendingApprovalCount() > 0}>
-                            <span class="rounded-full bg-[var(--status-warning)]/15 px-1.5 py-0.2 font-mono text-[10.5px] font-semibold text-[var(--status-warning)]">
-                              {pendingApprovalCount()}
-                            </span>
-                          </Show>
-                          <Show when={isCurrentMode()}>
-                            <Check size={13} class="text-[var(--accent-primary)]" />
-                          </Show>
-                        </span>
-                      </button>
-                    );
-                  }}
-                </For>
-              </div>
-              )}
-            </Presence>
-          </div>
+          {/* Sidebar Project Layout Switcher (Multi / Single / Attention / Running / Extra) */}
+          <SidebarModeMenu pendingApprovalCount={pendingApprovalCount} />
 
           <button
             type="button"
@@ -599,6 +513,14 @@ export default function LeftNav() {
         </div>
       </div>
 
+      <Show
+        when={!codeExtraActive()}
+        fallback={
+          <div class="flex flex-1 min-h-0 flex-col overflow-hidden pr-1">
+            {codeExtraView()?.renderNav()}
+          </div>
+        }
+      >
       {/* Pending Approvals Quick Entry */}
       <Show when={hasUnfocusedPendingApproval() && !(workspace.sidebarNavTab === "projects" && workspace.sidebarProjectMode === "attention")}>
         <div class="pl-1.5 pr-2.5 pb-1.5 shrink-0">
@@ -787,6 +709,7 @@ export default function LeftNav() {
           onArchiveSession={(p, ev, id) => void onArchiveInProject(p, ev, id)}
           onDiscardSession={(p, ev, id) => onDiscardInProject(p, ev, id)}
         />
+      </Show>
       </Show>
       </div>
 

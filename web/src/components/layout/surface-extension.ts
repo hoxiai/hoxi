@@ -36,6 +36,19 @@ export interface CollaborationLinkTabSpec {
   render: (props: { directory: string; onClose: () => void }) => JSX.Element;
 }
 
+export interface CodeSidebarExtraViewSpec {
+  id: string;
+  label: () => string;
+  active: () => boolean;
+  badgeCount?: () => number;
+  online?: () => boolean;
+  enter: () => void;
+  exit: () => void;
+  renderNav: () => JSX.Element;
+  renderMainView: () => JSX.Element;
+  renderHeaderCenter?: () => JSX.Element;
+}
+
 export interface SurfaceExtension {
   enabled: boolean;
   openAppIntent?: (intent: DesktopIntent) => void;
@@ -71,6 +84,7 @@ export interface SurfaceExtension {
   formatModeDescription?: (agentName: string, locale: string) => string | null;
   isWorkspaceVisible?: (path: string) => boolean;
   onCreateWorkspaceIntent?: () => void;
+  codeSidebarExtraView?: CodeSidebarExtraViewSpec;
 }
 
 export const surfaceExtension: SurfaceExtension = {

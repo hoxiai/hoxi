@@ -24,7 +24,7 @@ function isDirectImageSrc(src: string): boolean {
   const s = src.trim();
   return (
     /^https?:\/\//i.test(s) ||
-    /^\/api\/hoxi\/(?:attachments|file\/content|[a-z0-9-]+\/portal\/attachments)/i.test(s) ||
+    /^\/api\/hoxi\/(?:attachments|file\/content|[a-z0-9-]+\/portal\/attachments|[a-z0-9-]+\/[a-z0-9-]+\/[a-z0-9_-]+\/proxy\/attachments)/i.test(s) ||
     /^data:image\//i.test(s)
   );
 }

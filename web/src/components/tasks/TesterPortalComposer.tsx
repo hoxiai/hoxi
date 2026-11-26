@@ -87,7 +87,18 @@ function PortalAttachmentChips(props: {
   );
 }
 
-export function TesterNewTaskComposer() {
+export interface TesterNewTaskComposerProps {
+  onUpload?: (file: File) => Promise<IntakeAttachmentRef>;
+  onSubmit?: (input: {
+    title: string;
+    description: string;
+    steps?: string;
+    attachmentIds?: string[];
+  }) => Promise<unknown>;
+  onError?: (err: string | null) => void;
+}
+
+export function TesterNewTaskComposer(props: TesterNewTaskComposerProps = {}) {
   const [title, setTitle] = createSignal("");
   const [desc, setDesc] = createSignal("");
   const [steps, setSteps] = createSignal("");
@@ -101,6 +112,11 @@ export function TesterNewTaskComposer() {
   let stepsRef: HTMLTextAreaElement | undefined;
   let composing = false;
 
+  const reportError = (msg: string | null) => {
+    if (props.onError) props.onError(msg);
+    else setPortalError(msg);
+  };
+
   const canSubmit = () =>
     !submitting() &&
     !uploading() &&
@@ -111,14 +127,15 @@ export function TesterNewTaskComposer() {
     const list = Array.from(files);
     if (list.length === 0) return;
     setUploading(true);
-    setPortalError(null);
+    reportError(null);
     try {
+      const uploader = props.onUpload ?? uploadTesterAttachment;
       for (const file of list) {
-        const uploaded = await uploadTesterAttachment(file);
+        const uploaded = await uploader(file);
         setAttachments((prev) => [...prev, uploaded].slice(0, 6));
       }
     } catch (err) {
-      setPortalError(formatIntakeError(err, "Upload failed"));
+      reportError(formatIntakeError(err, "Upload failed"));
     } finally {
       setUploading(false);
     }
@@ -143,9 +160,10 @@ export function TesterNewTaskComposer() {
   const doSubmit = async () => {
     if (!canSubmit()) return;
     setSubmitting(true);
-    setPortalError(null);
+    reportError(null);
     try {
-      await submitTesterNewTask({
+      const submitter = props.onSubmit ?? submitTesterNewTask;
+      await submitter({
         title: title().trim(),
         description: desc().trim(),
         steps: steps().trim() || undefined,
@@ -158,7 +176,7 @@ export function TesterNewTaskComposer() {
       if (descRef) descRef.style.height = "auto";
       if (stepsRef) stepsRef.style.height = "auto";
     } catch (err) {
-      setPortalError(formatIntakeError(err, "Submit failed"));
+      reportError(formatIntakeError(err, "Submit failed"));
     } finally {
       setSubmitting(false);
     }
@@ -318,11 +336,21 @@ export function TesterNewTaskComposer() {
   );
 }
 
-export function TesterFloatingFeedbackComposer(props: {
+export interface TesterFloatingFeedbackComposerProps {
   taskId: string;
   status: IntakeTaskStatus;
   onHeightChange?: (heightPx: number) => void;
-}) {
+  onUpload?: (file: File) => Promise<IntakeAttachmentRef>;
+  onFeedback?: (input: {
+    taskId: string;
+    action: "pass" | "reopen" | "comment";
+    text?: string;
+    attachmentIds?: string[];
+  }) => Promise<unknown>;
+  onError?: (err: string | null) => void;
+}
+
+export function TesterFloatingFeedbackComposer(props: TesterFloatingFeedbackComposerProps) {
   const [note, setNote] = createSignal("");
   const [attachments, setAttachments] = createSignal<IntakeAttachmentRef[]>([]);
   const [uploading, setUploading] = createSignal(false);
@@ -333,6 +361,11 @@ export function TesterFloatingFeedbackComposer(props: {
   let textareaRef: HTMLTextAreaElement | undefined;
   let fileInputRef: HTMLInputElement | undefined;
   let composing = false;
+
+  const reportError = (msg: string | null) => {
+    if (props.onError) props.onError(msg);
+    else setPortalError(msg);
+  };
 
   const isRetestStage = () =>
     props.status === "awaiting_retest" || props.status === "succeeded";
@@ -365,14 +398,15 @@ export function TesterFloatingFeedbackComposer(props: {
     const list = Array.from(files);
     if (list.length === 0) return;
     setUploading(true);
-    setPortalError(null);
+    reportError(null);
     try {
+      const uploader = props.onUpload ?? uploadTesterAttachment;
       for (const file of list) {
-        const uploaded = await uploadTesterAttachment(file);
+        const uploaded = await uploader(file);
         setAttachments((prev) => [...prev, uploaded].slice(0, 6));
       }
     } catch (err) {
-      setPortalError(formatIntakeError(err, "Upload failed"));
+      reportError(formatIntakeError(err, "Upload failed"));
     } finally {
       setUploading(false);
     }
@@ -382,9 +416,10 @@ export function TesterFloatingFeedbackComposer(props: {
     if (busy() || uploading()) return;
     if ((action === "reopen" || action === "comment") && !hasContent()) return;
     setBusy(true);
-    setPortalError(null);
+    reportError(null);
     try {
-      await submitTesterTaskFeedback({
+      const sender = props.onFeedback ?? submitTesterTaskFeedback;
+      await sender({
         taskId: props.taskId,
         action,
         text: note().trim() || undefined,
@@ -394,7 +429,7 @@ export function TesterFloatingFeedbackComposer(props: {
       setAttachments([]);
       if (textareaRef) textareaRef.style.height = "auto";
     } catch (err) {
-      setPortalError(formatIntakeError(err, "Feedback failed"));
+      reportError(formatIntakeError(err, "Feedback failed"));
     } finally {
       setBusy(false);
     }

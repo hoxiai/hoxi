@@ -361,6 +361,11 @@
   text-shadow: none;
 }
 
+:root[data-wallpaper-active="true"] [data-portal-floating-composer="true"],
+:root[data-wallpaper-active="true"] [data-portal-scroll-fade="true"] {
+  background: none;
+}
+
 /* Dedicated Companion Card & Floating Dock Glass (no `container-type: inline-size` width collapse) */
 .hoxi-companion-glass {
   background-color: var(--bg-composer);

@@ -205,11 +205,15 @@ func TestLaunchURLsPicksOnlyHoxiLinks(t *testing.T) {
 
 func TestParseAppProtocolDeepLinks(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "report.pdf")
+	pmURL := "https://alice.example.com/pm/hpm_" + strings.Repeat("a", 32)
+	qaURL := "http://192.168.1.10:5417/qa/hqa_" + strings.Repeat("b", 40)
 	for _, tc := range []struct{ raw, action, key, value string }{
 		{"hoxi://app/demo.app/overview?store=store-1", gateway.DesktopIntentActionOpenApp, "store", "store-1"},
 		{"hoxi://run?prompt=Review+this&mode=confirm", gateway.DesktopIntentActionRunDraft, "prompt", "Review this"},
 		{"hoxi://browser/open?url=https%3A%2F%2Fexample.com", gateway.DesktopIntentActionOpenBrowser, "mode", "readonly"},
 		{"hoxi://doc/preview?path=" + url.QueryEscape(path), gateway.DesktopIntentActionPreviewDoc, "path", path},
+		{"hoxi://join?url=" + url.QueryEscape(pmURL), gateway.DesktopIntentActionOpenApp, "url", pmURL},
+		{"hoxi://join?url=" + url.QueryEscape(qaURL+"/"), gateway.DesktopIntentActionOpenApp, "url", qaURL},
 		{"hoxi://settings/app-grants", gateway.DesktopIntentActionSettings, "section", "app-grants"},
 		{"hoxi://connect?requestId=con_123", gateway.DesktopIntentActionConnectApp, "", ""},
 	} {
@@ -218,6 +222,11 @@ func TestParseAppProtocolDeepLinks(t *testing.T) {
 		}
 	}
 	for _, raw := range []string{"hoxi://run?prompt=test&mode=silent", "hoxi://run?prompt=" + strings.Repeat("a", 4097), "hoxi://app/demo.app/tab/extra", "hoxi://browser/open?url=javascript%3Aalert(1)",
+		"hoxi://join?url=" + url.QueryEscape("https://alice.example.com/admin/secret"),
+		"hoxi://join?url=" + url.QueryEscape("https://user:pass@alice.example.com/pm/hpm_"+strings.Repeat("a", 32)),
+		"hoxi://join?url=" + url.QueryEscape("javascript:alert(1)"),
+		"hoxi://join?url=" + url.QueryEscape("https://alice.example.com/pm/hpm_short"),
+		"hoxi://join/extra?url=" + url.QueryEscape(pmURL),
 		"hoxi://doc/preview?path=" + url.QueryEscape(filepath.Join(filepath.Dir(path), ".env")),
 		"hoxi://doc/preview?path=" + url.QueryEscape(filepath.Join(filepath.Dir(path), ".hoxi", "models.json")),
 		"hoxi://doc/preview?path=" + url.QueryEscape(filepath.Join(filepath.Dir(path), "app-grants.json"))} {

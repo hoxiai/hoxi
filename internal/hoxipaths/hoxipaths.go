@@ -80,6 +80,8 @@ var protectedStateFiles = []string{
 	"intake.json.lock",
 	"collab.json",
 	"collab.json.lock",
+	"collab-joined.json",
+	"collab-joined.json.lock",
 	"schedules.json",
 	"schedules.json.lock",
 	"media-roles.json",
@@ -319,6 +321,13 @@ func IntakeStorePath() string {
 // co-development links and PM requirement items. Written 0600.
 func CollabStorePath() string {
 	return Join("collab.json")
+}
+
+// CollabJoinedStorePath returns ~/.hoxi/collab-joined.json, storing remote
+// collaboration spaces joined by this desktop client (with scoped tokens).
+// Written 0600 and protected from agent reads or writes.
+func CollabJoinedStorePath() string {
+	return Join("collab-joined.json")
 }
 
 // SchedulesPath returns ~/.hoxi/schedules.json, storing desktop/host scheduled

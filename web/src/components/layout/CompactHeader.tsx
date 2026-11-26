@@ -57,6 +57,8 @@ export default function CompactHeader(props: CompactHeaderProps) {
 
   const isMac = isMacDesktopPlatform();
   const showWinControls = hasWindowsWindowControls();
+  const codeExtraView = () => surfaceExtension.codeSidebarExtraView;
+  const codeExtraActive = () => !isWorkSurface() && Boolean(codeExtraView()?.active());
 
   return (
     <header
@@ -94,6 +96,7 @@ export default function CompactHeader(props: CompactHeaderProps) {
 
         <Show
           when={
+            !codeExtraActive() &&
             !(
               isWorkSurface() &&
               surfaceExtension.hideGitControls &&
@@ -121,9 +124,15 @@ export default function CompactHeader(props: CompactHeaderProps) {
             {surfaceExtension.renderHeaderCenter!()}
           </div>
         </Show>
+        <Show when={codeExtraActive() && codeExtraView()?.renderHeaderCenter}>
+          <div class="contents">
+            {codeExtraView()!.renderHeaderCenter!()}
+          </div>
+        </Show>
         <div
           class={
-            isWorkSurface() && surfaceExtension.renderHeaderCenter
+            (isWorkSurface() && surfaceExtension.renderHeaderCenter) ||
+            (codeExtraActive() && codeExtraView()?.renderHeaderCenter)
               ? "hidden"
               : "contents"
           }

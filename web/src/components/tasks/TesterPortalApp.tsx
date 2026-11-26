@@ -391,10 +391,15 @@ export default function TesterPortalApp() {
             class="flex min-h-0 flex-1 flex-col overflow-y-auto"
           >
             <div
+              aria-hidden="true"
+              data-portal-scroll-fade="true"
+              class="pointer-events-none sticky top-0 z-10 -mb-6 h-6 w-full shrink-0 bg-gradient-to-b from-[var(--bg-panel)] to-transparent"
+            />
+            <div
               class="mx-auto flex w-full max-w-[calc(var(--thread-max-width)+3rem)] flex-1 flex-col space-y-4 px-4 sm:px-6 pt-6"
               style={{
                 "padding-bottom": hasFloatingComposer()
-                  ? `${Math.max(152, floatingHeight() + 20)}px`
+                  ? `${Math.max(152, floatingHeight() + 24)}px`
                   : "32px",
               }}
             >

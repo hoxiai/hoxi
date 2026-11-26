@@ -372,8 +372,21 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
           } ${resizingSide() ? "pointer-events-none select-none" : ""}`}
         >
           <Show
-            when={!(isWorkSurface() && surfaceExtension.isMainViewActive?.() && surfaceExtension.renderMainView)}
-            fallback={<PaneErrorBoundary>{surfaceExtension.renderMainView?.()}</PaneErrorBoundary>}
+            when={
+              !(
+                (isWorkSurface() && surfaceExtension.isMainViewActive?.() && surfaceExtension.renderMainView) ||
+                (!isWorkSurface() && surfaceExtension.codeSidebarExtraView?.active())
+              )
+            }
+            fallback={
+              <PaneErrorBoundary>
+                <Suspense>
+                  {!isWorkSurface() && surfaceExtension.codeSidebarExtraView?.active()
+                    ? surfaceExtension.codeSidebarExtraView.renderMainView()
+                    : surfaceExtension.renderMainView?.()}
+                </Suspense>
+              </PaneErrorBoundary>
+            }
           >
           <div
             aria-hidden={isNewConversation()}

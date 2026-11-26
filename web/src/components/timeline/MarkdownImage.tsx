@@ -40,7 +40,7 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
   const rawSrc = () => (props.src || "").trim();
   const isRemote = () => /^https?:\/\//i.test(rawSrc());
   const isGatewayAttachment = () =>
-    /^\/api\/hoxi\/(?:attachments|[a-z0-9-]+\/portal\/attachments)\//i.test(rawSrc());
+    /^\/api\/hoxi\/(?:attachments|[a-z0-9-]+\/portal\/attachments|[a-z0-9-]+\/[a-z0-9-]+\/[a-z0-9_-]+\/proxy\/attachments)\//i.test(rawSrc());
   const isDataImage = () =>
     /^data:image\/(?:png|jpe?g|gif|webp|avif|svg\+xml)(?:;charset=[^;,]+)?;(?:base64|utf8),/i.test(rawSrc()) ||
     /^data:image\/svg\+xml,/i.test(rawSrc());
