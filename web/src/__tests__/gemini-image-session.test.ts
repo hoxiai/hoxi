@@ -476,6 +476,9 @@ describe("Gemini custom endpoint & session image generation support", () => {
       assertEqual(isVideoGenerationModel("google", "veo-3.0-generate-001"), true);
       assertEqual(hasConfiguredVideoGenerationModel(), true);
       const withLocalVid = evaluatePromptModalityIntent("generate video of ocean waves");
+      assertEqual(withLocalVid.mediaRoutingDirective?.startsWith("<hoxi_turn_directive>\n"), true);
+      assertEqual(withLocalVid.mediaRoutingDirective?.endsWith("\n</hoxi_turn_directive>"), true);
+      assertEqual(evaluatePromptModalityIntent("refactor the parser").mediaRoutingDirective, undefined);
       assertEqual(Boolean(withLocalVid.mediaRoutingDirective?.includes("Invoke `hoxi_video`")), true);
 
       // Explicitly selected video model in chat must NOT be hijacked to fallbackBrain

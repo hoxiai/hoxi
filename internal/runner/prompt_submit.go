@@ -316,7 +316,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	if orchErr != nil {
 		return http.StatusBadRequest, PromptReceipt{}, orchErr
 	}
-	callerSystem := strings.TrimSpace(body.System)
+	callerSystem, turnDirective := splitTurnDirective(body.System)
 	requestedMode := firstNonEmptyStr(body.Agent, rec.Mode, "build")
 	if storeCtx := s.resolveSessionContextBlock(rec.ID, rec.WorktreePath); storeCtx != "" {
 		if isAppDevPromptMode(requestedMode, "") {
@@ -710,7 +710,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	} else if isImageTurn {
 		err = s.startImageGenerationTurn(rec, mode, modelID, userInfo, storedParts, deliveryParts, asstMsgID, promptText, body.ImageOptions)
 	} else if rec.Runtime == "opencode" && openCodeDaemonUp {
-		err = s.startOpenCodeTurn(rec, mode, modelID, effort, body.System, userInfo, storedParts, deliveryParts)
+		err = s.startOpenCodeTurn(rec, mode, modelID, effort, joinPromptSections(body.System, turnDirective), userInfo, storedParts, deliveryParts)
 	} else if rec.Runtime == string(RuntimeNative) {
 		nativeSystem := body.System
 		if clearedFailedAsst != nil {
@@ -724,7 +724,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 			resumed.ServiceTier = userInfo.ServiceTier
 			err = s.launchNativeTurn(rec, mode, modelID, effort, nativeSystem, restartContinuationPrompt, resumed, nil, asstMsgID, true, toNativeOrchestrator(orchSpec))
 		} else {
-			promptInput := cliPrompt
+			promptInput := withTurnDirective(turnDirective, cliPrompt)
 			if body.SkillSelection != nil {
 				promptInput = formatInlineSkillPrompt(body.SkillSelection.Name, resolvedSkill.Content, "") + "\n\n" + promptInput
 			}
@@ -738,7 +738,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		if cliSys := s.nativeCLISystemForTurn(rec, callerSystem, body.System); cliSys != "" {
 			input += cliSys + "\n\n"
 		}
-		err = s.startTurnProcess(rec, binPath, mode, modelID, effort, input+cliPrompt, userInfo, storedParts, deliveryParts, asstMsgID)
+		err = s.startTurnProcess(rec, binPath, mode, modelID, effort, input+withTurnDirective(turnDirective, cliPrompt), userInfo, storedParts, deliveryParts, asstMsgID)
 		if err == nil {
 			s.recordCLISystemDeliveredForTurn(rec, callerSystem)
 		}

@@ -472,15 +472,29 @@ const AUDIO_INTENT_RE =
   /\u914d\u97f3|\u53e3\u64ad\u97f3\u9891|\u8bed\u97f3\u5408\u6210|\u751f\u6210\u97f3\u9891|elevenlabs|fishaudio|tts|voiceover/i;
 const VERTICAL_ASPECT_RE = /\bportrait\b|3:4|\u7ad6\u7248/i;
 
-export function evaluatePromptModalityIntent(
-  promptText: string,
-  opts?: {
-    hasImageAttachment?: boolean;
-    skillName?: string;
-    categoryId?: string;
-    chipId?: string;
-  }
-): PromptIntentEvaluation {
+type PromptIntentOptions = {
+  hasImageAttachment?: boolean;
+  skillName?: string;
+  categoryId?: string;
+  chipId?: string;
+};
+
+// Media routing directives only apply to the turn that triggered them. Tagging
+// them lets the runner deliver them with that turn's user input instead of the
+// system prompt, so a one-off directive never invalidates the cached prefix.
+export const TURN_DIRECTIVE_OPEN = "<hoxi_turn_directive>";
+export const TURN_DIRECTIVE_CLOSE = "</hoxi_turn_directive>";
+
+export function evaluatePromptModalityIntent(promptText: string, opts?: PromptIntentOptions): PromptIntentEvaluation {
+  const res = evaluatePromptModalityIntentUntagged(promptText, opts);
+  if (!res.mediaRoutingDirective) return res;
+  return {
+    ...res,
+    mediaRoutingDirective: `${TURN_DIRECTIVE_OPEN}\n${res.mediaRoutingDirective}\n${TURN_DIRECTIVE_CLOSE}`,
+  };
+}
+
+function evaluatePromptModalityIntentUntagged(promptText: string, opts?: PromptIntentOptions): PromptIntentEvaluation {
   const raw = (promptText || "").trim();
   const combined = `${raw} ${opts?.skillName || ""} ${opts?.categoryId || ""} ${opts?.chipId || ""}`;
 
