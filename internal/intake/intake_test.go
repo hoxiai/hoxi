@@ -188,7 +188,7 @@ func TestSanitizeAssistantTextAndToolsNeverLeakCodeOrPaths(t *testing.T) {
 	cmdCat, cmdLabel, _ := ClassifyAndLabelTool("bash", map[string]interface{}{
 		"command": "CUSTOM_ENV_VAR=123 go test ./internal/...",
 	})
-	if cmdCat != "command" || strings.Contains(cmdLabel, "CUSTOM_ENV_VAR") || cmdLabel != "运行自动化测试验证" {
+	if cmdCat != "command" || strings.Contains(cmdLabel, "CUSTOM_ENV_VAR") || cmdLabel != "运行测试" {
 		t.Fatalf("unexpected command summary: cat=%q label=%q", cmdCat, cmdLabel)
 	}
 }

@@ -235,7 +235,7 @@ export function TesterNewTaskComposer(props: TesterNewTaskComposerProps = {}) {
             onCompositionEnd={() => {
               composing = false;
             }}
-            placeholder={`${t("tasks.portalTitleLabel")}：${t("tasks.portalTitlePlaceholder")}`}
+            placeholder={t("tasks.portalTitlePlaceholder")}
             class="w-full border-b border-[var(--border-subtle)] bg-transparent pb-2.5 text-[14px] font-medium text-[var(--text-primary)] placeholder:font-normal placeholder:text-[var(--text-faint)] outline-none selectable-text"
           />
 
@@ -311,9 +311,6 @@ export function TesterNewTaskComposer(props: TesterNewTaskComposerProps = {}) {
                 </Show>
                 <span>{uploading() ? t("tasks.portalUploading") : t("tasks.portalAttachBtn")}</span>
               </button>
-              <span class="hidden sm:inline text-[11px] text-[var(--text-faint)]">
-                {t("tasks.portalMarkdownHint")}
-              </span>
             </div>
 
             <button
@@ -550,9 +547,6 @@ export function TesterFloatingFeedbackComposer(props: TesterFloatingFeedbackComp
                 </Show>
                 <span>{uploading() ? t("tasks.portalUploading") : t("tasks.portalAttachBtn")}</span>
               </button>
-              <span class="hidden md:inline text-[11px] text-[var(--text-faint)]">
-                {t("tasks.portalMarkdownHint")}
-              </span>
             </div>
 
             <div class="flex flex-wrap items-center gap-2">
