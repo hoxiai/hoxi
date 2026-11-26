@@ -102,3 +102,60 @@ func TestExtractToolFileChangesAcrossToolShapes(t *testing.T) {
 		t.Fatalf("safeBasename leaked home username: %q", base)
 	}
 }
+
+func TestParsePatchFileChangesEdgeCases(t *testing.T) {
+	// 1. Multi-file unified diff without `diff --git` where file 2 is deleted and file 3 is added.
+	multiUnified := strings.Join([]string{
+		"--- a/src/first.go",
+		"+++ b/src/first.go",
+		"@@ -1 +1 @@",
+		"-old1",
+		"+new1",
+		"--- a/src/removed.go",
+		"+++ /dev/null",
+		"@@ -1,2 +0,0 @@",
+		"-gone1",
+		"-gone2",
+		"--- /dev/null",
+		"+++ b/src/added.go",
+		"@@ -0,0 +1,2 @@",
+		"+add1",
+		"+add2",
+	}, "\n")
+	files, adds, dels := parsePatchFileChanges(multiUnified)
+	if adds != 3 || dels != 3 || len(files) != 3 {
+		t.Fatalf("multi unified = %+v (+%d -%d), want 3 files (+3 -3)", files, adds, dels)
+	}
+	if files[0] != (SanitizedFileChange{File: "first.go", Additions: 1, Deletions: 1}) ||
+		files[1] != (SanitizedFileChange{File: "removed.go", Additions: 0, Deletions: 2}) ||
+		files[2] != (SanitizedFileChange{File: "added.go", Additions: 2, Deletions: 0}) {
+		t.Fatalf("unexpected multi unified breakdown: %+v", files)
+	}
+
+	// 2. diff --git with spaces and quoted paths (including deleted file).
+	spacedDiff := strings.Join([]string{
+		`diff --git a/my dir/old file.css b/my dir/old file.css`,
+		`deleted file mode 100644`,
+		`--- a/my dir/old file.css`,
+		`+++ /dev/null`,
+		`@@ -1,2 +0,0 @@`,
+		`---bg-panel: #fff;`,
+		`--- sql comment`,
+		`diff --git "a/space dir/count file.js" "b/space dir/count file.js"`,
+		`--- "a/space dir/count file.js"`,
+		`+++ "b/space dir/count file.js"`,
+		`@@ -1,2 +1,2 @@`,
+		`--- old sql`,
+		`+++ new sql`,
+		`---bg-old: 0;`,
+		`+++i;`,
+	}, "\n")
+	files, adds, dels = parsePatchFileChanges(spacedDiff)
+	if adds != 2 || dels != 4 || len(files) != 2 {
+		t.Fatalf("spaced/triple-sign diff = %+v (+%d -%d), want 2 files (+2 -4)", files, adds, dels)
+	}
+	if files[0] != (SanitizedFileChange{File: "old file.css", Additions: 0, Deletions: 2}) ||
+		files[1] != (SanitizedFileChange{File: "count file.js", Additions: 2, Deletions: 2}) {
+		t.Fatalf("unexpected spaced/triple-sign breakdown: %+v", files)
+	}
+}

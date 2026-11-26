@@ -1,4 +1,5 @@
 import {
+  countDiffLines,
   extractCommand,
   extractDescription,
   extractShellOutput,
@@ -708,5 +709,48 @@ describe("localized tool labels for CLI runtimes", () => {
     assertEqual(streamPureMove.length, 1);
     assertEqual(streamPureMove[0].file, "b.ts");
     assertEqual(streamPureMove[0].movedFrom, "a.ts");
+
+    // Hunk lines beginning with -- or ++ (CSS custom properties, SQL comments, ++i) must be counted,
+    // while multi-file unified diffs without `diff --git` still split cleanly on file boundaries.
+    const tripleSignPatch = [
+      "--- a/styles/theme.css",
+      "+++ b/styles/theme.css",
+      "@@ -1,2 +1,2 @@",
+      "---bg-panel: #fff;",
+      "--- old sql comment",
+      "+++ new sql comment",
+      "+++i;",
+      "--- a/old/removed.ts",
+      "+++ /dev/null",
+      "@@ -1,2 +0,0 @@",
+      "---legacy-var: 1;",
+      "-export const old = 1;",
+    ].join("\n");
+    assertDeepEqual(countDiffLines(tripleSignPatch), { additions: 2, deletions: 4 });
+    const parsedTriple = parseApplyPatchText(tripleSignPatch);
+    assertEqual(parsedTriple.length, 2);
+    assertEqual(parsedTriple[0].file, "styles/theme.css");
+    assertEqual(parsedTriple[0].additions, 2);
+    assertEqual(parsedTriple[0].deletions, 2);
+    assertTrue(Boolean(parsedTriple[0].patch?.includes("---bg-panel: #fff;") && parsedTriple[0].patch?.includes("+++i;")));
+    assertEqual(parsedTriple[1].file, "old/removed.ts");
+    assertEqual(parsedTriple[1].status, "deleted");
+    assertEqual(parsedTriple[1].additions, 0);
+    assertEqual(parsedTriple[1].deletions, 2);
+
+    // apply_patch hunk deleting --bg-panel and adding ++i
+    const v4aTriple = [
+      "*** Begin Patch",
+      "*** Update File: app.css",
+      "@@",
+      "---bg-panel: #000;",
+      "+++i;",
+      "*** End Patch",
+    ].join("\n");
+    assertDeepEqual(countDiffLines(v4aTriple), { additions: 1, deletions: 1 });
+    const parsedV4a = parseApplyPatchText(v4aTriple);
+    assertEqual(parsedV4a.length, 1);
+    assertEqual(parsedV4a[0].additions, 1);
+    assertEqual(parsedV4a[0].deletions, 1);
   });
 });

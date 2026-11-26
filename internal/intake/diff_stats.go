@@ -3,6 +3,7 @@ package intake
 import (
 	"encoding/json"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -96,12 +97,22 @@ func countTextDiffLines(before, after string) (int, int) {
 	return max(0, len(aLines)-prefix-suffix), max(0, len(bLines)-prefix-suffix)
 }
 
+func unquoteDiffPath(s string) string {
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		if u, err := strconv.Unquote(s); err == nil {
+			return u
+		}
+		return strings.Trim(s, `"`)
+	}
+	return s
+}
+
 func stripUnifiedDiffPrefix(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if idx := strings.IndexByte(trimmed, '\t'); idx >= 0 {
 		trimmed = strings.TrimSpace(trimmed[:idx])
 	}
-	trimmed = strings.Trim(trimmed, `"`)
+	trimmed = unquoteDiffPath(trimmed)
 	if trimmed == "/dev/null" {
 		return ""
 	}
@@ -109,6 +120,117 @@ func stripUnifiedDiffPrefix(raw string) string {
 		trimmed = trimmed[2:]
 	}
 	return safeBasename(trimmed)
+}
+
+func scanQuotedDiffToken(s string) (string, string, bool) {
+	if len(s) < 2 || s[0] != '"' {
+		return "", "", false
+	}
+	escaped := false
+	for i := 1; i < len(s); i++ {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if s[i] == '\\' {
+			escaped = true
+			continue
+		}
+		if s[i] == '"' {
+			return s[:i+1], strings.TrimSpace(s[i+1:]), true
+		}
+	}
+	return "", "", false
+}
+
+func parseDiffGitHeader(line string) string {
+	rest := strings.TrimSpace(strings.TrimPrefix(line, "diff --git "))
+	if rest == "" {
+		return ""
+	}
+	if first, rem, ok := scanQuotedDiffToken(rest); ok {
+		if rem != "" {
+			if second, _, ok2 := scanQuotedDiffToken(rem); ok2 {
+				if name := stripUnifiedDiffPrefix(second); name != "" {
+					return name
+				}
+			} else if name := stripUnifiedDiffPrefix(rem); name != "" {
+				return name
+			}
+		}
+		return stripUnifiedDiffPrefix(first)
+	}
+	// Identical unquoted paths with arbitrary spaces: "a/<p> b/<p>".
+	if strings.HasPrefix(rest, "a/") && (len(rest)-1)%2 == 0 {
+		mid := len(rest) / 2
+		if rest[mid] == ' ' && strings.HasPrefix(rest[mid+1:], "b/") && rest[2:mid] == rest[mid+3:] {
+			return stripUnifiedDiffPrefix(rest[mid+1:])
+		}
+	}
+	if idx := strings.Index(rest, ` "b/`); idx >= 0 {
+		if second, _, ok := scanQuotedDiffToken(rest[idx+1:]); ok {
+			if name := stripUnifiedDiffPrefix(second); name != "" {
+				return name
+			}
+		}
+	}
+	if idx := strings.Index(rest, " b/"); idx >= 0 {
+		if name := stripUnifiedDiffPrefix(rest[idx+1:]); name != "" {
+			return name
+		}
+	}
+	parts := strings.Fields(rest)
+	if len(parts) >= 2 {
+		if name := stripUnifiedDiffPrefix(parts[len(parts)-1]); name != "" {
+			return name
+		}
+		return stripUnifiedDiffPrefix(parts[0])
+	}
+	return ""
+}
+
+func parseHunkHeaderBounds(line string) (int, int, bool) {
+	if !strings.HasPrefix(line, "@@ -") {
+		return 0, 0, false
+	}
+	rest := line[4:]
+	sp := strings.IndexByte(rest, ' ')
+	if sp <= 0 {
+		return 0, 0, false
+	}
+	oldPart := rest[:sp]
+	rest = strings.TrimSpace(rest[sp+1:])
+	if !strings.HasPrefix(rest, "+") {
+		return 0, 0, false
+	}
+	rest = rest[1:]
+	sp2 := strings.IndexByte(rest, ' ')
+	if sp2 <= 0 {
+		return 0, 0, false
+	}
+	newPart := rest[:sp2]
+	if !strings.HasPrefix(strings.TrimSpace(rest[sp2+1:]), "@@") {
+		return 0, 0, false
+	}
+	parseRangeCount := func(spec string) (int, bool) {
+		if comma := strings.IndexByte(spec, ','); comma >= 0 {
+			if _, err := strconv.Atoi(spec[:comma]); err != nil {
+				return 0, false
+			}
+			n, err := strconv.Atoi(spec[comma+1:])
+			return n, err == nil && n >= 0
+		}
+		if _, err := strconv.Atoi(spec); err != nil {
+			return 0, false
+		}
+		return 1, true
+	}
+	oldCount, ok1 := parseRangeCount(oldPart)
+	newCount, ok2 := parseRangeCount(newPart)
+	if !ok1 || !ok2 {
+		return 0, 0, false
+	}
+	return oldCount, newCount, true
 }
 
 func mergeSanitizedFileChanges(items []SanitizedFileChange) []SanitizedFileChange {
@@ -153,6 +275,11 @@ func parsePatchFileChanges(patch string) ([]SanitizedFileChange, int, int) {
 	var files []SanitizedFileChange
 	curIdx := -1
 	totalAdds, totalDels := 0, 0
+	inHunk := false
+	hasHunkBounds := false
+	oldRem, newRem := 0, 0
+	pendingHeader := false
+	sawHeaderOrHunk := false
 
 	selectFile := func(name string) {
 		if name == "" {
@@ -162,18 +289,22 @@ func parsePatchFileChanges(patch string) ([]SanitizedFileChange, int, int) {
 		curIdx = len(files) - 1
 	}
 
-	for _, line := range lines {
+	for i, line := range lines {
 		switch {
 		case strings.HasPrefix(line, "*** Update File:"):
+			inHunk, hasHunkBounds, pendingHeader, sawHeaderOrHunk = false, false, false, true
 			selectFile(safeBasename(strings.TrimPrefix(line, "*** Update File:")))
 			continue
 		case strings.HasPrefix(line, "*** Add File:"):
+			inHunk, hasHunkBounds, pendingHeader, sawHeaderOrHunk = true, false, false, true
 			selectFile(safeBasename(strings.TrimPrefix(line, "*** Add File:")))
 			continue
 		case strings.HasPrefix(line, "*** Delete File:"):
+			inHunk, hasHunkBounds, pendingHeader, sawHeaderOrHunk = true, false, false, true
 			selectFile(safeBasename(strings.TrimPrefix(line, "*** Delete File:")))
 			continue
 		case strings.HasPrefix(line, "*** Move to:"):
+			inHunk, hasHunkBounds, pendingHeader, sawHeaderOrHunk = false, false, false, true
 			if moved := safeBasename(strings.TrimPrefix(line, "*** Move to:")); moved != "" {
 				if curIdx >= 0 {
 					files[curIdx].File = moved
@@ -183,42 +314,94 @@ func parsePatchFileChanges(patch string) ([]SanitizedFileChange, int, int) {
 			}
 			continue
 		case strings.HasPrefix(line, "*** "):
+			inHunk, hasHunkBounds, pendingHeader, sawHeaderOrHunk = false, false, false, true
 			continue
 		case strings.HasPrefix(line, "diff --git "):
-			parts := strings.Fields(line)
-			if len(parts) >= 4 {
-				selectFile(stripUnifiedDiffPrefix(parts[3]))
-			}
-			continue
-		case strings.HasPrefix(line, "+++ "):
-			if name := stripUnifiedDiffPrefix(strings.TrimPrefix(line, "+++ ")); name != "" {
-				if curIdx >= 0 && files[curIdx].Additions == 0 && files[curIdx].Deletions == 0 {
-					files[curIdx].File = name
-				} else {
-					selectFile(name)
-				}
-			}
-			continue
-		case strings.HasPrefix(line, "--- "):
-			if curIdx < 0 {
-				if name := stripUnifiedDiffPrefix(strings.TrimPrefix(line, "--- ")); name != "" {
-					selectFile(name)
-				}
-			}
+			inHunk, hasHunkBounds, pendingHeader, sawHeaderOrHunk = false, false, true, true
+			curIdx = -1
+			selectFile(parseDiffGitHeader(line))
 			continue
 		case strings.HasPrefix(line, "@@"):
+			oldC, newC, ok := parseHunkHeaderBounds(line)
+			inHunk, hasHunkBounds, pendingHeader, sawHeaderOrHunk = true, ok, false, true
+			oldRem, newRem = oldC, newC
 			continue
 		}
-		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
+
+		if inHunk && strings.HasPrefix(line, "--- ") && i+1 < len(lines) && strings.HasPrefix(lines[i+1], "+++ ") {
+			atBoundary := false
+			if hasHunkBounds {
+				atBoundary = oldRem <= 0 && newRem <= 0
+			} else if i+2 < len(lines) && strings.HasPrefix(lines[i+2], "@@") {
+				atBoundary = true
+			}
+			if atBoundary {
+				inHunk, hasHunkBounds, pendingHeader = false, false, false
+			}
+		}
+
+		if !inHunk {
+			if strings.HasPrefix(line, "--- ") {
+				sawHeaderOrHunk = true
+				name := stripUnifiedDiffPrefix(strings.TrimPrefix(line, "--- "))
+				if pendingHeader && curIdx >= 0 && files[curIdx].Additions == 0 && files[curIdx].Deletions == 0 {
+					if name != "" {
+						files[curIdx].File = name
+					}
+				} else {
+					curIdx = -1
+					selectFile(name)
+					pendingHeader = true
+				}
+				continue
+			}
+			if strings.HasPrefix(line, "+++ ") {
+				sawHeaderOrHunk = true
+				name := stripUnifiedDiffPrefix(strings.TrimPrefix(line, "+++ "))
+				if name != "" {
+					if pendingHeader && curIdx >= 0 && files[curIdx].Additions == 0 && files[curIdx].Deletions == 0 {
+						files[curIdx].File = name
+					} else {
+						selectFile(name)
+					}
+				}
+				pendingHeader = false
+				continue
+			}
+			if sawHeaderOrHunk {
+				continue
+			}
+			if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
+				totalAdds++
+				if curIdx >= 0 {
+					files[curIdx].Additions++
+				}
+			} else if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
+				totalDels++
+				if curIdx >= 0 {
+					files[curIdx].Deletions++
+				}
+			}
+			continue
+		}
+
+		if strings.HasPrefix(line, "+") {
 			totalAdds++
+			newRem--
 			if curIdx >= 0 {
 				files[curIdx].Additions++
 			}
-		} else if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
+		} else if strings.HasPrefix(line, "-") {
 			totalDels++
+			oldRem--
 			if curIdx >= 0 {
 				files[curIdx].Deletions++
 			}
+		} else if strings.HasPrefix(line, " ") || line == "" {
+			oldRem--
+			newRem--
+		} else if !strings.HasPrefix(line, `\`) && hasHunkBounds && oldRem <= 0 && newRem <= 0 {
+			inHunk, hasHunkBounds = false, false
 		}
 	}
 

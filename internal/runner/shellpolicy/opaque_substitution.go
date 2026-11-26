@@ -119,9 +119,16 @@ func opacityCandidates(item map[string]interface{}) []string {
 
 // destructiveScanForms returns the texts the destructive patterns scan.
 func destructiveScanForms(cmd string) []string {
-	baseCmd := unwrapLiteralShellCommand(joinLineContinuations(strings.TrimSpace(unwrapSandboxCommand(cmd))))
-	prepared := baseCmd
+	raw := strings.TrimSpace(unwrapSandboxCommand(cmd))
 	hadBenignHeredoc := false
+	if strings.Contains(raw, "<<") {
+		if stripped, ok := stripReadOnlyInterpreterHeredocs(raw); ok {
+			raw = stripped
+			hadBenignHeredoc = true
+		}
+	}
+	baseCmd := unwrapLiteralShellCommand(joinLineContinuations(raw))
+	prepared := baseCmd
 	if strings.Contains(prepared, "<<") {
 		if stripped, ok := stripBenignHeredocs(prepared); ok {
 			prepared = stripped

@@ -18,6 +18,7 @@ import {
   unwrapSandboxCommand,
 } from "./permission-policy.js";
 import { inlineScriptTool } from "./script-interpreter.js";
+import { stripReadOnlyInterpreterHeredocs } from "./readonly-heredoc.js";
 import { concretizeLiterals, eraseSubshells, findSubshellSpans, unwrapCommandPrefixes } from "./shell-constants.js";
 import { isReadOnlySedArgs, isSafeCurlOutputTarget, normalizeHomePrefixPath } from "./shell-loops.js";
 
@@ -117,9 +118,17 @@ export function extractProcessSubstitutions(s) {
 // The texts the destructive patterns scan: the masked command, plus its
 // unpacked form when it uses `<(…)` (`cat <(cat .env)` → `cat .env`).
 export function destructiveScanForms(cmd) {
-  let scanBase = unwrapLiteralShellCommand(joinLineContinuations(unwrapSandboxCommand(cmd).trim()));
-  let prepared = scanBase;
+  let raw = unwrapSandboxCommand(cmd).trim();
   let hadBenignHeredoc = false;
+  if (raw.includes("<<")) {
+    const strippedRo = stripReadOnlyInterpreterHeredocs(raw, inlineReadOnlyJudge, normalizeAbsoluteTool);
+    if (strippedRo !== null) {
+      raw = strippedRo;
+      hadBenignHeredoc = true;
+    }
+  }
+  let scanBase = unwrapLiteralShellCommand(joinLineContinuations(raw));
+  let prepared = scanBase;
   if (prepared.includes("<<")) {
     const benign = stripBenignHeredocs(prepared);
     if (benign !== null) {

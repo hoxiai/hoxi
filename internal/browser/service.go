@@ -87,6 +87,8 @@ type scope struct {
 	env               StoreEnvConfig
 	envFingerprint    string
 	proxyBridge       *loopbackProxyBridge
+	previewOrigin     string
+	previewProxy      *previewOriginProxy
 }
 
 type Service struct {
@@ -460,7 +462,16 @@ func (sc *scope) start(ctx context.Context) error {
 	if sc.browser != nil {
 		return nil
 	}
-	if upstreamURL != nil {
+	if strings.HasPrefix(strings.TrimSpace(sc.sessionID), previewScopePrefix) {
+		if strings.TrimSpace(sc.previewOrigin) == "" {
+			return errors.New("preview origin is required before starting preview browser")
+		}
+		pProxy, err := startPreviewOriginProxy(sc.previewOrigin)
+		if err != nil {
+			return err
+		}
+		sc.previewProxy = pProxy
+	} else if upstreamURL != nil {
 		allowLoopback := sc.service != nil && sc.service.allowLoopbackProxyTargets
 		bridge, err := startLoopbackProxyBridge(ctx, upstreamURL, allowLoopback)
 		if err != nil {

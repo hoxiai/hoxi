@@ -171,7 +171,14 @@ func (sc *scope) allocatorOptionsWithDebugPort(profile string, debugPort int) []
 		chromedp.Flag("disable-back-forward-cache", true),
 		chromedp.Flag("disk-cache-size", strconv.Itoa(diskCacheBytes)),
 	)
-	if sc.proxyBridge != nil && sc.proxyBridge.Addr() != "" {
+	if sc.previewProxy != nil && sc.previewProxy.Addr() != "" {
+		opts = append(opts,
+			chromedp.Flag("proxy-server", "http://"+sc.previewProxy.Addr()),
+			chromedp.Flag("proxy-bypass-list", "<-loopback>"),
+			chromedp.Flag("force-webrtc-ip-handling-policy", "disable_non_proxied_udp"),
+			chromedp.Flag("webrtc-ip-handling-policy", "disable_non_proxied_udp"),
+		)
+	} else if sc.proxyBridge != nil && sc.proxyBridge.Addr() != "" {
 		opts = append(opts,
 			chromedp.Flag("proxy-server", "http://"+sc.proxyBridge.Addr()),
 			chromedp.Flag("force-webrtc-ip-handling-policy", "disable_non_proxied_udp"),
@@ -432,6 +439,10 @@ func (sc *scope) resetBrowser() {
 	if sc.proxyBridge != nil {
 		sc.proxyBridge.Close()
 		sc.proxyBridge = nil
+	}
+	if sc.previewProxy != nil {
+		sc.previewProxy.Close()
+		sc.previewProxy = nil
 	}
 	sc.env = StoreEnvConfig{}
 	sc.envFingerprint = ""

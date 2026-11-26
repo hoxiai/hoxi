@@ -458,16 +458,39 @@ export function extractExitCode(state: ToolState): number | undefined {
   return typeof code === "number" ? code : undefined;
 }
 
-export function countDiffLines(
-  patch?: string,
-  before?: string,
-  after?: string
-): { additions: number; deletions: number } {
+export function parseUnifiedHunkBounds(line: string): [number, number] | null {
+  const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
+  return m ? [m[2] !== undefined ? Number(m[2]) : 1, m[4] !== undefined ? Number(m[4]) : 1] : null;
+}
+
+export function countDiffLines(patch?: string, before?: string, after?: string): { additions: number; deletions: number } {
   if (patch) {
-    let additions = 0, deletions = 0;
-    for (const line of patch.split("\n")) {
-      if (line.startsWith("+") && !line.startsWith("+++")) additions++;
-      else if (line.startsWith("-") && !line.startsWith("---")) deletions++;
+    const lines = patch.replace(/\r\n/g, "\n").split("\n");
+    let additions = 0, deletions = 0, inHunk = false, hasBounds = false, oldRem = 0, newRem = 0, sawMeta = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.startsWith("*** Add File:") || line.startsWith("*** Delete File:")) { inHunk = true; hasBounds = false; sawMeta = true; continue; }
+      if (line.startsWith("*** ") || line.startsWith("diff --git ")) { inHunk = false; hasBounds = false; sawMeta = true; continue; }
+      if (line.startsWith("@@")) {
+        const bounds = parseUnifiedHunkBounds(line);
+        inHunk = true; hasBounds = Boolean(bounds); sawMeta = true;
+        oldRem = bounds ? bounds[0] : 0; newRem = bounds ? bounds[1] : 0;
+        continue;
+      }
+      if (inHunk && line.startsWith("--- ") && lines[i + 1]?.startsWith("+++ ")) {
+        if (hasBounds ? oldRem <= 0 && newRem <= 0 : Boolean(lines[i + 2]?.startsWith("@@"))) { inHunk = false; hasBounds = false; }
+      }
+      if (!inHunk) {
+        if (line.startsWith("--- ") || line.startsWith("+++ ")) { sawMeta = true; continue; }
+        if (sawMeta) continue;
+        if (line.startsWith("+") && !line.startsWith("+++")) additions++;
+        else if (line.startsWith("-") && !line.startsWith("---")) deletions++;
+        continue;
+      }
+      if (line.startsWith("+")) { additions++; newRem--; }
+      else if (line.startsWith("-")) { deletions++; oldRem--; }
+      else if (line.startsWith(" ") || line === "") { oldRem--; newRem--; }
+      else if (!line.startsWith("\\") && hasBounds && oldRem <= 0 && newRem <= 0) { inHunk = false; hasBounds = false; }
     }
     return { additions, deletions };
   }
@@ -476,31 +499,13 @@ export function countDiffLines(
     const bLines = before ? before.replace(/\r\n/g, "\n").split("\n") : [];
     const aLines = after ? after.replace(/\r\n/g, "\n").split("\n") : [];
     let prefix = 0;
-    while (
-      prefix < bLines.length &&
-      prefix < aLines.length &&
-      bLines[prefix] === aLines[prefix]
-    ) {
-      prefix++;
-    }
+    while (prefix < bLines.length && prefix < aLines.length && bLines[prefix] === aLines[prefix]) prefix++;
     let suffix = 0;
-    while (
-      suffix < bLines.length - prefix &&
-      suffix < aLines.length - prefix &&
-      bLines[bLines.length - 1 - suffix] === aLines[aLines.length - 1 - suffix]
-    ) {
-      suffix++;
-    }
-    return {
-      additions: Math.max(0, aLines.length - prefix - suffix),
-      deletions: Math.max(0, bLines.length - prefix - suffix),
-    };
+    while (suffix < bLines.length - prefix && suffix < aLines.length - prefix && bLines[bLines.length - 1 - suffix] === aLines[aLines.length - 1 - suffix]) suffix++;
+    return { additions: Math.max(0, aLines.length - prefix - suffix), deletions: Math.max(0, bLines.length - prefix - suffix) };
   }
   if (before === undefined && typeof after === "string" && after.length > 0) {
-    return {
-      additions: after.replace(/\r\n/g, "\n").split("\n").length,
-      deletions: 0,
-    };
+    return { additions: after.replace(/\r\n/g, "\n").split("\n").length, deletions: 0 };
   }
   return { additions: 0, deletions: 0 };
 }
@@ -731,9 +736,7 @@ export function ToolCardExpandedBody(props: {
         <div class="p-3 space-y-2.5 text-[12px]">
           <Show when={Object.keys(props.part.state.input || {}).length > 0}>
             <div>
-              <div class="text-[11px] font-medium text-[var(--text-muted)] mb-1">
-                {t("toolCard.arguments")}
-              </div>
+              <div class="text-[11px] font-medium text-[var(--text-muted)] mb-1">{t("toolCard.arguments")}</div>
               <pre class="text-[12px] font-mono bg-[var(--bg-code)] border border-[var(--border-subtle)] p-2.5 rounded-lg overflow-x-auto max-h-40 text-[var(--text-secondary)] selectable-text">
                 {JSON.stringify(props.part.state.input, null, 2)}
               </pre>

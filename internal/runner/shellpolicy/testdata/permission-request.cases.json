@@ -174,5 +174,9 @@
   {"name": "hoxi schedules.json read via tool is destructive", "destructive": true, "request": {"permission": "read", "patterns": ["/Users/u/.hoxi/schedules.json"]}},
   {"name": "hoxi schedules API via curl requires approval", "destructive": true, "request": {"permission": "bash", "patterns": ["curl -s -X POST http://127.0.0.1:5410/api/hoxi/schedules"]}},
   {"name": "hoxi_schedule list is routine", "destructive": false, "request": {"permission": "tool", "patterns": ["hoxi_schedule"], "metadata": {"tool": "hoxi_schedule", "args": "{\"action\":\"list\"}"}}},
-  {"name": "hoxi_schedule create requires approval in all modes", "destructive": true, "request": {"permission": "hoxi_schedule", "patterns": ["hoxi_schedule create"], "metadata": {"tool": "hoxi_schedule", "args": "{\"action\":\"create\",\"name\":\"Daily check\"}"}}}
+  {"name": "hoxi_schedule create requires approval in all modes", "destructive": true, "request": {"permission": "hoxi_schedule", "patterns": ["hoxi_schedule create"], "metadata": {"tool": "hoxi_schedule", "args": "{\"action\":\"create\",\"name\":\"Daily check\"}"}}},
+  {"name": "read-only quoted python heredoc with chmod string literal is non-destructive", "destructive": false, "request": {"permission": "bash", "patterns": ["python3 - <<'EOF'\nprint(\"chmod\" in open(\"README.md\").read())\nEOF"]}},
+  {"name": "read-only quoted python heredoc with cd prefix and line continuation is non-destructive", "destructive": false, "request": {"permission": "bash", "patterns": ["cd sub && python3 -u - <<'PY'\nval = \"truncate\" in open(\"README.md\").read() \\\n    and \"rm\" not in open(\"README.md\").read()\nprint(val)\nPY"]}},
+  {"name": "quoted python heredoc followed by rm remains destructive", "destructive": true, "request": {"permission": "bash", "patterns": ["python3 - <<'PY'\nprint(\"chmod\")\nPY\nrm -rf /"]}},
+  {"name": "unquoted python heredoc with chmod string remains destructive", "destructive": true, "request": {"permission": "bash", "patterns": ["python3 - <<PY\nprint(\"chmod\")\nPY"]}}
 ]

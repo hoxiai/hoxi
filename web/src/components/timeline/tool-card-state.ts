@@ -17,6 +17,7 @@ import {
   extractTargetFile,
   isEditingTool,
   isTaskTool,
+  parseUnifiedHunkBounds,
   resolveToolInput,
   stripLegacyPatchStatus,
   type DiagnosticItem,
@@ -216,16 +217,16 @@ export function parseApplyPatchText(
     let currentHunk: string[] = [];
 
     for (const hl of hunkLines) {
-      if (hl.startsWith("*** ")) continue;
+      if (hl.startsWith("*** ") || hl.startsWith("\\")) continue;
       if (hl.startsWith("@@")) {
         if (currentHunk.length > 0) hunks.push(currentHunk);
         currentHunk = [];
         continue;
       }
-      if (hl.startsWith("+") && !hl.startsWith("+++")) {
+      if (hl.startsWith("+")) {
         additions++;
         currentHunk.push(hl);
-      } else if (hl.startsWith("-") && !hl.startsWith("---")) {
+      } else if (hl.startsWith("-")) {
         deletions++;
         currentHunk.push(hl);
       } else if (hl.startsWith(" ") || hl === "") {
@@ -274,8 +275,14 @@ export function parseApplyPatchText(
     results.push(enrichToolDiffMeta(entry, sessionID));
   };
 
-  const cleanUnified = (raw: string) =>
-    raw.split("\t")[0].trim().replace(/^[ab]\//, "");
+  const cleanUnified = (raw: string) => {
+    const trimmed = raw.split("\t")[0].trim();
+    const unquoted = trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')
+      ? trimmed.slice(1, -1).replace(/\\(["\\])/g, "$1")
+      : trimmed;
+    return unquoted.replace(/^[ab]\//, "");
+  };
+  let inHunk = false, hasBounds = false, oldRem = 0, newRem = 0;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -286,6 +293,7 @@ export function parseApplyPatchText(
       currentOp = op === "add" ? "add" : op === "delete" ? "delete" : "update";
       currentFile = m[2].trim();
       hunkLines = [];
+      inHunk = currentOp !== "update"; hasBounds = false;
       continue;
     }
     const moveMatch = line.match(/^\*\*\*\s+Move to:\s*(.+)$/);
@@ -295,30 +303,32 @@ export function parseApplyPatchText(
       continue;
     }
     if (line.startsWith("--- ") && i + 1 < lines.length && lines[i + 1].startsWith("+++ ")) {
+      if (!inHunk || (hasBounds ? oldRem <= 0 && newRem <= 0 : Boolean(lines[i + 2]?.startsWith("@@")))) {
+        flushCurrent();
+        const oldP = lines[i].slice(4).split("\t")[0].trim();
+        const newP = lines[i + 1].slice(4).split("\t")[0].trim();
+        currentOp = oldP === "/dev/null" ? "add" : newP === "/dev/null" ? "delete" : "update";
+        currentFile = cleanUnified(newP === "/dev/null" ? oldP : newP);
+        hunkLines = []; inHunk = false; hasBounds = false;
+        i++;
+        continue;
+      }
+    }
+    if (line.startsWith("diff --git ") || line.startsWith("*** End Patch")) {
       flushCurrent();
-      const oldP = lines[i].slice(4).trim();
-      const newP = lines[i + 1].slice(4).trim();
-      currentOp = oldP === "/dev/null" ? "add" : newP === "/dev/null" ? "delete" : "update";
-      currentFile = cleanUnified(newP === "/dev/null" ? oldP : newP);
-      hunkLines = [];
-      i++;
+      currentFile = ""; hunkLines = []; inHunk = false; hasBounds = false;
       continue;
     }
-    if (line.startsWith("diff --git ")) {
-      flushCurrent();
-      currentFile = "";
-      hunkLines = [];
-      continue;
+    if (line.startsWith("@@")) {
+      const bounds = parseUnifiedHunkBounds(line);
+      inHunk = true; hasBounds = Boolean(bounds);
+      oldRem = bounds ? bounds[0] : 0; newRem = bounds ? bounds[1] : 0;
+    } else if (inHunk) {
+      if (line.startsWith("+")) newRem--;
+      else if (line.startsWith("-")) oldRem--;
+      else if (line.startsWith(" ") || line === "") { oldRem--; newRem--; }
     }
-    if (line.startsWith("*** End Patch")) {
-      flushCurrent();
-      currentFile = "";
-      hunkLines = [];
-      continue;
-    }
-    if (currentFile) {
-      hunkLines.push(line);
-    }
+    if (currentFile) hunkLines.push(line);
   }
   flushCurrent();
   return results;

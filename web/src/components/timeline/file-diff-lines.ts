@@ -109,7 +109,8 @@ export function computeChangedFileLines(
     const hunks: Array<{ startLine: number | null; lines: string[] }> = [];
     let curr: { startLine: number | null; lines: string[] } | null = null;
     for (const line of rawLines) {
-      if (line.startsWith("*** ") || line.startsWith("--- ") || line.startsWith("+++ ")) continue;
+      if (line.startsWith("*** ")) continue;
+      if (!curr && (line.startsWith("--- ") || line.startsWith("+++ ") || line.startsWith("diff --git "))) continue;
       const m = line.match(/^@@(?:\s+-\d+(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@)?/);
       if (m) {
         if (curr && curr.lines.length > 0) hunks.push(curr);

@@ -355,10 +355,17 @@ function isOpaqueShellCommandDepth(command, worktree, options, depth, scopedDirs
   const trust = options.allowInlineScripts ? "full" : options.inlineOnly ? "readonly" : "none";
   const trimmed = unwrapSandboxCommand(command).trim();
   if (!trimmed) return true;
-  let joined = joinLineContinuations(trimmed);
+  let joined = trimmed;
   if (joined.includes("<<")) {
-    joined = stripLiteralHeredocs(joined);
-    if (joined === null) return true;
+    const stripped = stripLiteralHeredocs(joined.replaceAll("\r\n", "\n"));
+    if (stripped !== null) {
+      joined = joinLineContinuations(stripped);
+    } else {
+      joined = stripLiteralHeredocs(joinLineContinuations(joined));
+      if (joined === null) return true;
+    }
+  } else {
+    joined = joinLineContinuations(joined);
   }
   joined = normalizeNumericForHeaders(joined);
   joined = maskRemoteSSHSegments(joined);

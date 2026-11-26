@@ -82,15 +82,22 @@ func isOpaqueShellCommandDepthWith(command, worktree string, trust scriptTrust, 
 	if command == "" || strings.Contains(command, cmdSubstVar) || strings.Contains(command, seqLoopPlaceholder) || (depth == 0 && containsMktempPlaceholder(command)) {
 		return true
 	}
-	command = joinLineContinuations(command)
-	// A literal heredoc is data; whatever reads it is judged below, so
-	// `python3 - <<'EOF'` or `bash <<'EOF'` still ask.
+	// A literal heredoc is data; strip before joining line continuations so a
+	// trailing backslash inside a quoted heredoc body cannot corrupt its
+	// delimiter line, falling back to join-then-strip for header continuations.
 	if strings.Contains(command, "<<") {
-		stripped, ok := stripLiteralHeredocs(command)
-		if !ok {
-			return true
+		if stripped, ok := stripLiteralHeredocs(strings.ReplaceAll(command, "\r\n", "\n")); ok {
+			command = joinLineContinuations(stripped)
+		} else {
+			command = joinLineContinuations(command)
+			stripped, ok := stripLiteralHeredocs(command)
+			if !ok {
+				return true
+			}
+			command = stripped
 		}
-		command = stripped
+	} else {
+		command = joinLineContinuations(command)
 	}
 	command = maskRemoteSSHSegments(command)
 	if depth == 0 {
