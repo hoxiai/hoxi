@@ -52,6 +52,9 @@ func (s *Service) resolveScopeEnv(sc *scope) (StoreEnvConfig, error) {
 	if s == nil {
 		return StoreEnvConfig{}, nil
 	}
+	if sc != nil && strings.HasPrefix(strings.TrimSpace(sc.sessionID), "preview_") {
+		return StoreEnvConfig{}, nil
+	}
 	s.mu.Lock()
 	fn := s.resolveEnv
 	s.mu.Unlock()
