@@ -24,36 +24,168 @@ func sessionShellPolicyCheck(rec SessionRecord, effectiveRoot, command string) (
 	}
 	baseRoot := firstNonEmptyStr(strings.TrimSpace(effectiveRoot), rec.WorktreePath, rec.ProjectDir)
 
-	segments := splitCommandChain(unwrapped)
+	segments := splitScopeCommandChain(unwrapped)
 	curDir := baseRoot
 	opaqueCD := false
+	type dirFrame struct {
+		dir    string
+		opaque bool
+	}
+	var dirStack []dirFrame
 	for _, rawSeg := range segments {
-		seg := strings.TrimSpace(rawSeg)
-		if seg == "" {
-			continue
+		seg, openP, closeP := trimSegmentGroupDelims(rawSeg)
+		for k := 0; k < openP; k++ {
+			dirStack = append(dirStack, dirFrame{dir: curDir, opaque: opaqueCD})
 		}
-		if isCDSegment(seg) {
-			if target, ok := extractLiteralCDPath(seg); ok {
-				if nextDir := resolveShellOperand(curDir, target); nextDir != "" {
-					curDir = nextDir
-					continue
+		if seg != "" {
+			if isCDSegment(seg) {
+				if target, ok := extractLiteralCDPath(seg); ok {
+					if nextDir := resolveShellOperand(curDir, target); nextDir != "" {
+						curDir = nextDir
+					} else {
+						opaqueCD = true
+					}
+				} else {
+					opaqueCD = true
 				}
+			} else if reason, denied := checkShellSegmentScopeViolation(rec, baseRoot, curDir, seg); denied {
+				return "deny", reason
 			}
-			opaqueCD = true
-			continue
 		}
-		if reason, denied := checkShellSegmentScopeViolation(rec, baseRoot, curDir, seg); denied {
-			return "deny", reason
+		for k := 0; k < closeP && len(dirStack) > 0; k++ {
+			top := dirStack[len(dirStack)-1]
+			dirStack = dirStack[:len(dirStack)-1]
+			curDir = top.dir
+			opaqueCD = top.opaque
 		}
 	}
 
 	if !opaqueCD && decideCommandPermissionIn(unwrapped, baseRoot) == "allow" {
 		return "", ""
 	}
-	if rec.CommandSandbox && sandbox.Available() {
+	if sessionShellRuntimeConfined(rec, command) {
 		return "", ""
 	}
 	return "require_approval", "command may write outside allowed paths or touch read-only protected paths without OS sandbox confinement"
+}
+
+// splitScopeCommandChain splits a shell command on unquoted chain operators
+// while preserving grouping parentheses/braces so subshell cd scoping is exact.
+func splitScopeCommandChain(command string) []string {
+	var segments []string
+	var cur strings.Builder
+	var quote byte
+	flush := func() {
+		if seg := strings.TrimSpace(cur.String()); seg != "" {
+			segments = append(segments, seg)
+		}
+		cur.Reset()
+	}
+	for i := 0; i < len(command); i++ {
+		c := command[i]
+		next := byte(0)
+		if i+1 < len(command) {
+			next = command[i+1]
+		}
+		if quote == '\'' {
+			if c == '\'' {
+				quote = 0
+			}
+			cur.WriteByte(c)
+			continue
+		}
+		if c == '\\' && i+1 < len(command) {
+			cur.WriteByte(c)
+			cur.WriteByte(next)
+			i++
+			continue
+		}
+		if quote == '"' {
+			switch {
+			case c == '"':
+				quote = 0
+				cur.WriteByte(c)
+			case c == '$' && next == '(':
+				flush()
+				i++
+			case c == '`':
+				flush()
+			default:
+				cur.WriteByte(c)
+			}
+			continue
+		}
+		switch {
+		case c == '\'' || c == '"':
+			quote = c
+			cur.WriteByte(c)
+		case (c == '&' && next == '&') || (c == '|' && next == '|') || (c == '$' && next == '('):
+			flush()
+			i++
+		case c == '|' || c == ';' || c == '\n' || c == '`':
+			flush()
+		case c == '&' && (i == 0 || command[i-1] != '>') && next != '>':
+			flush()
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	flush()
+	return segments
+}
+
+func sessionShellRuntimeConfined(rec SessionRecord, rawCommand string) bool {
+	if !rec.CommandSandbox || !sandbox.Available() {
+		return false
+	}
+	switch rec.Runtime {
+	case string(RuntimeNative),
+		string(RuntimeClaudeCode),
+		string(RuntimeCodex),
+		string(RuntimeAntigravity),
+		string(RuntimeGeminiCLI),
+		string(RuntimeQoder),
+		string(RuntimeCodeBuddy):
+		return true
+	case string(RuntimeOpenCode):
+		trimmed := strings.TrimSpace(rawCommand)
+		unwrapped := strings.TrimSpace(unwrapSandboxCommand(trimmed))
+		return unwrapped != "" && unwrapped != trimmed && !optsOutOfOnDemandSandbox(unwrapped)
+	default:
+		return false
+	}
+}
+
+func trimSegmentGroupDelims(raw string) (string, int, int) {
+	s := strings.TrimSpace(raw)
+	openP := 0
+	closeP := 0
+	for len(s) > 0 {
+		if s[0] == '(' {
+			openP++
+			s = strings.TrimSpace(s[1:])
+			continue
+		}
+		if s[0] == '{' && (len(s) == 1 || s[1] == ' ' || s[1] == '\t' || s[1] == '\n') {
+			s = strings.TrimSpace(s[1:])
+			continue
+		}
+		break
+	}
+	for len(s) > 0 {
+		last := s[len(s)-1]
+		if last == ')' {
+			closeP++
+			s = strings.TrimSpace(s[:len(s)-1])
+			continue
+		}
+		if last == '}' && (len(s) == 1 || s[len(s)-2] == ' ' || s[len(s)-2] == '\t' || s[len(s)-2] == ';') {
+			s = strings.TrimSpace(s[:len(s)-1])
+			continue
+		}
+		break
+	}
+	return s, openP, closeP
 }
 
 type shellToken struct {

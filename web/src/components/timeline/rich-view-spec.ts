@@ -84,6 +84,28 @@ export function sanitizeRichMediaURL(raw: unknown): string | undefined {
   return trimmed;
 }
 
+/**
+ * Strict portal-safe image/download URL allowlist.
+ * Permits public http(s) URLs, scoped portal/proxy attachment routes, and
+ * base64 raster data URLs only; blocks desktop-only `/api/hoxi/file/content`,
+ * `/api/hoxi/attachments/`, `data:image/svg+xml`, and relative workspace paths.
+ */
+export function isSafePortalImageSrc(src: string | undefined): boolean {
+  if (!src) return false;
+  const trimmed = src.trim();
+  if (!trimmed || CONTROL_CHAR_RE.test(trimmed)) return false;
+  if (/^https?:\/\/[^\s<>"]+$/i.test(trimmed)) return true;
+  if (
+    !trimmed.includes("..") &&
+    /^\/api\/hoxi\/(?:[a-z0-9-]+\/portal\/attachments|[a-z0-9-]+\/[a-z0-9-]+\/[a-z0-9_-]+\/proxy\/attachments)(?:\/|\?|$)/i.test(
+      trimmed
+    )
+  ) {
+    return true;
+  }
+  return /^data:image\/(?:png|jpe?g|gif|webp|avif);base64,/i.test(trimmed);
+}
+
 function normalizeSource(raw: unknown): ContextSource | undefined {
   if (!isRecord(raw)) return undefined;
   const appId = cleanText(raw.appId, 64);

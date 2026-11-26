@@ -17,6 +17,7 @@ import (
 
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/target"
 )
 
 func TestPreviewFetchDecisionAndPublicSubresourceIPFilter(t *testing.T) {
@@ -420,5 +421,23 @@ func TestPreviewHeadlessChromeRealEndToEnd(t *testing.T) {
 	closedSnap, err := svc.PreviewState(ctx, scopeID, dir, allowedSrv.URL)
 	if err != nil || closedSnap.Running {
 		t.Fatalf("expected Running=false after ClosePreview, got %+v err=%v", closedSnap, err)
+	}
+}
+
+func TestPreviewTargetInfoFromEventCoversDeferredPopupNavigation(t *testing.T) {
+	created := &target.EventTargetCreated{
+		TargetInfo: &target.Info{TargetID: "tab-1", Type: "page", URL: "about:blank"},
+	}
+	if got := previewTargetInfoFromEvent(created); got == nil || got.TargetID != "tab-1" || got.URL != "about:blank" {
+		t.Fatalf("unexpected created target info: %+v", got)
+	}
+	changed := &target.EventTargetInfoChanged{
+		TargetInfo: &target.Info{TargetID: "tab-1", Type: "page", URL: "https://evil.example.com/phish"},
+	}
+	if got := previewTargetInfoFromEvent(changed); got == nil || got.TargetID != "tab-1" || got.URL != "https://evil.example.com/phish" {
+		t.Fatalf("unexpected changed target info: %+v", got)
+	}
+	if got := previewTargetInfoFromEvent("unrelated"); got != nil {
+		t.Fatalf("expected nil for unrelated event, got %+v", got)
 	}
 }

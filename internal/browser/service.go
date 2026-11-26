@@ -43,50 +43,50 @@ func (v viewport) action() *emulation.SetDeviceMetricsOverrideParams {
 }
 
 type scope struct {
-	service           *Service
-	sessionID         string
-	directory         string
-	diagnostics       map[string]*diagnosticTracker
-	snapshotRefs      map[string]map[string]string
-	wheelGesture      wheelGesture
-	gate              chan struct{}
-	ctx               context.Context
-	cancel            context.CancelFunc
-	allocatorCancel   context.CancelFunc
-	browser           context.Context
-	tabs              map[string]context.Context
-	tabMu             sync.Mutex
-	sessionTabs       map[string]string
-	tabOwners         map[string]string
-	workflowTabID     string
-	navigations       map[string]*navigationTracker
-	tabCancels        map[string]context.CancelFunc
-	browserCancel     context.CancelFunc
-	tabID             string
-	profile           string
-	profileRootUsed   string
-	persistentProfile bool
-	window            bool
-	ledger            *reclaim.Ledger
-	ledgerID          string
-	manual            bool
-	width             int
-	height            int
-	scale             float64
-	fullPage          bool
-	viewports         map[string]viewport
-	stream            *screencast
-	closed            bool
-	extension         *extensionBridge
-	pairToken         string
-	pairExpires       time.Time
-	lastUsed          time.Time
-	pointerState      pointerState
-	pointerHold       time.Duration
-	workflows         *workflowTracker
-	transferLedgerID  string
-	env               StoreEnvConfig
-	envFingerprint    string
+	service                *Service
+	sessionID              string
+	directory              string
+	diagnostics            map[string]*diagnosticTracker
+	snapshotRefs           map[string]map[string]string
+	wheelGesture           wheelGesture
+	gate                   chan struct{}
+	ctx                    context.Context
+	cancel                 context.CancelFunc
+	allocatorCancel        context.CancelFunc
+	browser                context.Context
+	tabs                   map[string]context.Context
+	tabMu                  sync.Mutex
+	sessionTabs            map[string]string
+	tabOwners              map[string]string
+	workflowTabID          string
+	navigations            map[string]*navigationTracker
+	tabCancels             map[string]context.CancelFunc
+	browserCancel          context.CancelFunc
+	tabID                  string
+	profile                string
+	profileRootUsed        string
+	persistentProfile      bool
+	window                 bool
+	ledger                 *reclaim.Ledger
+	ledgerID               string
+	manual                 bool
+	width                  int
+	height                 int
+	scale                  float64
+	fullPage               bool
+	viewports              map[string]viewport
+	stream                 *screencast
+	closed                 bool
+	extension              *extensionBridge
+	pairToken              string
+	pairExpires            time.Time
+	lastUsed               time.Time
+	pointerState           pointerState
+	pointerHold            time.Duration
+	workflows              *workflowTracker
+	transferLedgerID       string
+	env                    StoreEnvConfig
+	envFingerprint         string
 	proxyBridge            *loopbackProxyBridge
 	previewOrigin          string
 	previewProxy           *previewOriginProxy

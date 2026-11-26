@@ -336,6 +336,12 @@ func sessionWriteTargetViolation(rec SessionRecord, rootDir, absTarget string) (
 	}
 
 	roots := sessionScopeRoots(rec, rootDir)
+	wt := strings.TrimSpace(rec.WorktreePath)
+	wtKey := normalizeComparePath(wt)
+	realWT, okRealWT := "", false
+	if wt != "" {
+		realWT, okRealWT = resolvePathWithSymlinks(wt, 0)
+	}
 	matchedAnyRoot := false
 	lexWritable := false
 	realWritable := false
@@ -344,6 +350,8 @@ func sessionWriteTargetViolation(rec SessionRecord, rootDir, absTarget string) (
 
 	for _, base := range roots {
 		realBase, okBase := resolvePathWithSymlinks(base, 0)
+		isActiveBase := wt == "" || normalizeComparePath(base) == wtKey ||
+			(okBase && okRealWT && normalizeComparePath(realBase) == normalizeComparePath(realWT))
 		lexRel, inLex := relWithinBase(base, cleaned)
 		if !inLex && okBase {
 			lexRel, inLex = lexicalRelUnderRealBase(realBase, cleaned)
@@ -356,7 +364,7 @@ func sessionWriteTargetViolation(rec SessionRecord, rootDir, absTarget string) (
 			if prot, hit := matchScopePattern(lexRel, rec.ReadOnlyPaths); hit {
 				return fmt.Sprintf("path %q is read-only in this session (protected by %q)", lexRel, prot), true
 			}
-			if len(rec.WritablePaths) > 0 {
+			if isActiveBase && len(rec.WritablePaths) > 0 {
 				if _, ok := matchScopePattern(lexRel, rec.WritablePaths); ok {
 					lexWritable = true
 				}
@@ -371,7 +379,7 @@ func sessionWriteTargetViolation(rec SessionRecord, rootDir, absTarget string) (
 				if prot, hit := matchScopePattern(realRel, rec.ReadOnlyPaths); hit {
 					return fmt.Sprintf("path %q is read-only in this session (protected by %q)", realRel, prot), true
 				}
-				if len(rec.WritablePaths) > 0 {
+				if isActiveBase && len(rec.WritablePaths) > 0 {
 					if _, ok := matchScopePattern(realRel, rec.WritablePaths); ok {
 						realWritable = true
 					}

@@ -110,9 +110,13 @@ func scanReadOnlyHeredocLine(rawLine string, st *heredocScan) (string, []roHered
 				out.WriteByte(c)
 				i++
 				c = rawLine[i]
+			} else if c == '`' {
+				return rawLine, nil, false
 			} else if c == '"' {
 				st.quote = 0
 			}
+		case c == '`':
+			return rawLine, nil, false
 		case c == '\\' && i+1 < len(rawLine):
 			out.WriteByte(c)
 			i++
@@ -241,7 +245,7 @@ func readOnlyHeredocOwnerFamily(line string, outPos int) (string, bool) {
 		}
 		if sepLen > 0 {
 			if outPos >= segStart && outPos <= i {
-				if pipedIn {
+				if pipedIn || nextPipe {
 					return "", false
 				}
 				return validateReadOnlyHeredocSegment(line[segStart:i])

@@ -30,6 +30,7 @@ import {
 import {
   buildContextEnvelopeFromEntities,
   buildContextEnvelopeFromMetric,
+  isSafePortalImageSrc,
 } from "./rich-view-spec";
 import MediaGalleryView from "./MediaGalleryView";
 import { useMarkdownPortalMode } from "./stream-reveal";
@@ -72,22 +73,6 @@ function openSafeLink(url: string, forceExternal?: boolean, portalMode?: boolean
   } else {
     openURLInInspector(url);
   }
-}
-
-function isSafePortalImageSrc(src: string | undefined): boolean {
-  if (!src) return false;
-  const trimmed = src.trim();
-  if (!trimmed) return false;
-  if (/^https?:\/\//i.test(trimmed)) return true;
-  if (
-    !trimmed.includes("..") &&
-    /^\/api\/hoxi\/(?:[a-z0-9-]+\/portal\/attachments|[a-z0-9-]+\/[a-z0-9-]+\/[a-z0-9_-]+\/proxy\/attachments)/i.test(
-      trimmed
-    )
-  ) {
-    return true;
-  }
-  return /^data:image\/(?:png|jpe?g|gif|webp|avif);base64,/i.test(trimmed);
 }
 
 function EntityThumbnail(props: { src: string; alt: string; compact?: boolean }) {
@@ -297,7 +282,14 @@ export default function StructuredRichView(props: {
   const metrics = () => props.spec.metrics || [];
   const gallery = () => {
     const raw = props.spec.gallery || [];
-    return isPortal() ? raw.filter((img) => isSafePortalImageSrc(img.src)) : raw;
+    if (!isPortal()) return raw;
+    return raw
+      .filter((img) => isSafePortalImageSrc(img.src))
+      .map((img) =>
+        img.downloadUrl && !isSafePortalImageSrc(img.downloadUrl)
+          ? { ...img, downloadUrl: undefined }
+          : img
+      );
   };
   const safeQrImage = () => {
     const qr = props.spec.qrImage;

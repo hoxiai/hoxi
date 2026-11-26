@@ -198,32 +198,34 @@ export default function SvgBlockCard(props: {
               </div>
             </Show>
 
-            <div class="inline-flex items-center rounded-md bg-[var(--bg-inset)] p-0.5">
-              <button
-                type="button"
-                onClick={() => setViewMode("preview")}
-                class={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition-colors cursor-pointer ${
-                  viewMode() === "preview"
-                    ? "bg-[var(--bg-panel)] text-[var(--text-primary)] font-medium shadow-2xs"
-                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                }`}
-              >
-                <Eye size={11} />
-                <span>{t("inspector.files.previewMode")}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode("source")}
-                class={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition-colors cursor-pointer ${
-                  viewMode() === "source"
-                    ? "bg-[var(--bg-panel)] text-[var(--text-primary)] font-medium shadow-2xs"
-                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                }`}
-              >
-                <Code2 size={11} />
-                <span>{t("inspector.files.sourceMode")}</span>
-              </button>
-            </div>
+            <Show when={!isPortal()}>
+              <div class="inline-flex items-center rounded-md bg-[var(--bg-inset)] p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setViewMode("preview")}
+                  class={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition-colors cursor-pointer ${
+                    viewMode() === "preview"
+                      ? "bg-[var(--bg-panel)] text-[var(--text-primary)] font-medium shadow-2xs"
+                      : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  <Eye size={11} />
+                  <span>{t("inspector.files.previewMode")}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("source")}
+                  class={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition-colors cursor-pointer ${
+                    viewMode() === "source"
+                      ? "bg-[var(--bg-panel)] text-[var(--text-primary)] font-medium shadow-2xs"
+                      : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  <Code2 size={11} />
+                  <span>{t("inspector.files.sourceMode")}</span>
+                </button>
+              </div>
+            </Show>
 
             <button
               type="button"

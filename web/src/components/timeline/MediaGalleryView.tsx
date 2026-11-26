@@ -19,10 +19,13 @@ import { getCachedMarkdownImage, loadMarkdownImage } from "../../store/markdown-
 import { Icon } from "../icons";
 import { resolveMarkdownRelativePath } from "./markdown-parser";
 import { useMarkdownBaseFilePath, useMarkdownPortalMode } from "./stream-reveal";
-import { buildContextEnvelopeFromImages } from "./rich-view-spec";
+import { buildContextEnvelopeFromImages, isSafePortalImageSrc } from "./rich-view-spec";
 
-function isDirectImageSrc(src: string): boolean {
+function isDirectImageSrc(src: string, portal = false): boolean {
   const s = src.trim();
+  if (portal) {
+    return isSafePortalImageSrc(s);
+  }
   return (
     /^https?:\/\//i.test(s) ||
     /^\/api\/hoxi\/(?:attachments|file\/content|[a-z0-9-]+\/portal\/attachments|[a-z0-9-]+\/[a-z0-9-]+\/[a-z0-9_-]+\/proxy\/attachments)/i.test(s) ||
@@ -52,18 +55,19 @@ function useResolvedGallerySrc(getRawSrc: () => string, isPortal: () => boolean)
 
   const localPath = createMemo(() => {
     const raw = (getRawSrc() || "").trim();
-    if (!raw || isDirectImageSrc(raw)) return "";
+    if (!raw || isPortal() || isDirectImageSrc(raw, false)) return "";
     return resolveMarkdownRelativePath(raw, baseFilePath());
   });
 
   createEffect(() => {
     const raw = (getRawSrc() || "").trim();
+    const portal = isPortal();
     if (!raw) {
       setResolved("");
       setFailed(true);
       return;
     }
-    if (isDirectImageSrc(raw)) {
+    if (isDirectImageSrc(raw, portal)) {
       setResolved(raw);
       setFailed(false);
       return;
@@ -71,7 +75,7 @@ function useResolvedGallerySrc(getRawSrc: () => string, isPortal: () => boolean)
     const path = localPath();
     const dir = activeDirectory() || workspace.rootDir || "";
     const sid = workspace.activeSessionID || undefined;
-    if (!path || isPortal() || (!workspace.connected && !dir)) {
+    if (!path || portal || (!workspace.connected && !dir)) {
       setResolved("");
       setFailed(true);
       return;
@@ -180,7 +184,15 @@ function GalleryTile(props: {
   const res = useResolvedGallerySrc(() => props.image.src, isPortal);
   const label = () =>
     props.image.alt || props.image.caption || props.image.filename || `Image ${props.index + 1}`;
-  const downloadHref = () => props.image.downloadUrl || res.src();
+  const downloadHref = () => {
+    const rawDownload = props.image.downloadUrl?.trim() || "";
+    if (rawDownload) {
+      if (!isPortal() || isSafePortalImageSrc(rawDownload)) {
+        return rawDownload;
+      }
+    }
+    return res.src();
+  };
 
   const handleOpen = () => {
     const display = res.src();

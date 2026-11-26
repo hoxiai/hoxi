@@ -454,3 +454,138 @@ func TestSessionPathScopeSymlinkedWorkspaceParentPrefixAndSanitizedGitEnv(t *tes
 		}
 	}
 }
+
+func TestSessionPathScopeHardenedShellWorktreeAndReconcile(t *testing.T) {
+	t.Setenv("HOXI_HOME", t.TempDir())
+	repo := initPathGuardTestRepo(t)
+	wt := filepath.Join(repo, ".hoxi", "worktrees", "wt_scope_test")
+	if err := os.MkdirAll(filepath.Join(wt, "web", "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(wt, "internal", "auth"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Isolated worktree session with WritablePaths=["web/src"] must ALLOW writes inside
+	//    worktree/web/src, and DENY writes targeting main repo/web/src outside worktree!
+	wtRec := SessionRecord{
+		ID:            "ses_wt_isolated",
+		Runtime:       string(RuntimeNative),
+		ProjectDir:    repo,
+		WorktreePath:  wt,
+		ReadOnlyPaths: []string{"internal/auth"},
+		WritablePaths: []string{"web/src"},
+	}
+	if reason, bad := sessionWriteTargetViolation(wtRec, wt, filepath.Join(wt, "web", "src", "Home.tsx")); bad {
+		t.Fatalf("expected write inside worktree writable path allowed, got: %s", reason)
+	}
+	if _, bad := sessionWriteTargetViolation(wtRec, wt, filepath.Join(repo, "web", "src", "Home.tsx")); !bad {
+		t.Fatal("expected write targeting main ProjectDir writable path from isolated worktree to be denied")
+	}
+
+	// 2. Hardened shell parser: combined flags (-lc/-ec), subshell grouping (cd ... && rm ...),
+	//    abbreviated git flags, and broad git mutations.
+	for _, cmd := range []string{
+		"bash -lc 'echo pwn > internal/auth/token.go'",
+		"sh -ec 'rm internal/auth/token.go'",
+		"(cd internal/auth && rm token.go)",
+		"{ cd internal && echo bad > auth/token.go; }",
+		"git reset --har",
+		"git diff --outpu=internal/auth/out.patch",
+		"git switch -f main",
+		"git switch --discard-changes main",
+		"git stash pop",
+		"git stash apply",
+		"git cherry-pick HEAD",
+		"git merge other",
+		"git rebase main",
+		"git revert HEAD",
+		"git am patch.mbox",
+	} {
+		if act, reason := sessionShellPolicyCheck(wtRec, wt, cmd); act != "deny" {
+			t.Errorf("expected HARD DENY for %q, got action=%q reason=%q", cmd, act, reason)
+		}
+	}
+	// Subshell cd reverts after closing paren; git stash list is not hard-denied.
+	if act, reason := sessionShellPolicyCheck(wtRec, wt, "git stash list"); act == "deny" {
+		t.Errorf("expected git stash list not hard-denied, got action=%q reason=%q", act, reason)
+	}
+	if act, reason := sessionShellPolicyCheck(wtRec, wt, "(cd internal/auth && ls) && touch web/src/Home.tsx"); act == "deny" {
+		t.Errorf("expected subshell cd to revert before writable touch, got action=%q reason=%q", act, reason)
+	}
+
+	// 3. OpenCode session with CommandSandbox=true must NOT treat unwrapped bash commands as Seatbelt-confined.
+	ocRec := SessionRecord{
+		ID:             "ses_oc_scope",
+		Runtime:        string(RuntimeOpenCode),
+		ProjectDir:     repo,
+		WorktreePath:   repo,
+		CommandSandbox: true,
+		ReadOnlyPaths:  []string{"internal/auth"},
+	}
+	if act, _ := sessionShellPolicyCheck(ocRec, repo, `python3 -c "open('internal/auth/token.go','w').write('x')"`); act != "require_approval" {
+		t.Fatalf("expected unwrapped OpenCode bash in scoped session to require_approval, got %q", act)
+	}
+
+	// 4. reconcilePendingApprovals must NOT auto-approve a path-scoped require_approval command
+	//    even when switching approval policy to Trusted mode!
+	svc := newPathGuardTestService(t, repo)
+	noSBRec := SessionRecord{
+		ID:             "ses_reconcile_scope",
+		Runtime:        string(RuntimeNative),
+		ProjectDir:     repo,
+		WorktreePath:   repo,
+		CommandSandbox: false,
+		ReadOnlyPaths:  []string{"internal/auth"},
+	}
+	if err := svc.store.Put(noSBRec); err != nil {
+		t.Fatal(err)
+	}
+	replyCh := make(chan approvalReply, 1)
+	svc.gate.mu.Lock()
+	svc.gate.pending["per_rnr_scope_1"] = &pendingApproval{
+		sid: noSBRec.ID,
+		req: map[string]interface{}{
+			"id":         "per_rnr_scope_1",
+			"permission": "bash",
+			"patterns":   []string{`python3 -c "print(1)"`},
+			"metadata":   map[string]interface{}{"command": `python3 -c "print(1)"`},
+		},
+		reply: replyCh,
+	}
+	svc.gate.mu.Unlock()
+
+	if _, err := svc.policy.set(ApprovalPolicy{Mode: ApprovalModeTrusted}); err != nil {
+		t.Fatal(err)
+	}
+	svc.reconcilePendingApprovals()
+	select {
+	case rep := <-replyCh:
+		t.Fatalf("reconcilePendingApprovals unexpectedly resolved scoped require_approval request: %+v", rep)
+	default:
+	}
+
+	// Explicit path-scope violation waiting in pending queue is rejected on reconcile.
+	denyCh := make(chan approvalReply, 1)
+	svc.gate.mu.Lock()
+	svc.gate.pending["per_rnr_scope_2"] = &pendingApproval{
+		sid: noSBRec.ID,
+		req: map[string]interface{}{
+			"id":         "per_rnr_scope_2",
+			"permission": "bash",
+			"patterns":   []string{"rm internal/auth/token.go"},
+			"metadata":   map[string]interface{}{"command": "rm internal/auth/token.go"},
+		},
+		reply: denyCh,
+	}
+	svc.gate.mu.Unlock()
+	svc.reconcilePendingApprovals()
+	select {
+	case rep := <-denyCh:
+		if rep.Reply != "reject" || rep.Source != approvalSourcePathScope {
+			t.Fatalf("expected reject/path_scope, got %+v", rep)
+		}
+	default:
+		t.Fatal("expected pending path-scope violation to be rejected during reconcile")
+	}
+}

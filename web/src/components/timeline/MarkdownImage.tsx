@@ -14,6 +14,7 @@ import { getCachedMarkdownImage, loadMarkdownImage } from "../../store/markdown-
 import { t } from "../../i18n";
 import { Icon } from "../icons";
 import { resolveMarkdownRelativePath, stripFileLineSuffix } from "./markdown-parser";
+import { isSafePortalImageSrc } from "./rich-view-spec";
 import { useMarkdownBaseFilePath, useMarkdownPortalMode } from "./stream-reveal";
 
 export default function MarkdownImage(props: { src: string; alt: string; title?: string }) {
@@ -43,11 +44,16 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
   const rawSrc = () => (props.src || "").trim();
   const isRemote = () => /^https?:\/\//i.test(rawSrc());
   const isGatewayAttachment = () =>
-    /^\/api\/hoxi\/(?:attachments|[a-z0-9-]+\/portal\/attachments|[a-z0-9-]+\/[a-z0-9-]+\/[a-z0-9_-]+\/proxy\/attachments)\//i.test(rawSrc());
+    isPortal()
+      ? isSafePortalImageSrc(rawSrc()) && !isRemote() && !/^data:image\//i.test(rawSrc())
+      : /^\/api\/hoxi\/(?:attachments|[a-z0-9-]+\/portal\/attachments|[a-z0-9-]+\/[a-z0-9-]+\/[a-z0-9_-]+\/proxy\/attachments)\//i.test(rawSrc());
   const isDataImage = () =>
-    /^data:image\/(?:png|jpe?g|gif|webp|avif|svg\+xml)(?:;charset=[^;,]+)?;(?:base64|utf8),/i.test(rawSrc()) ||
-    /^data:image\/svg\+xml,/i.test(rawSrc());
-  const isDirectImage = () => isRemote() || isGatewayAttachment() || isDataImage();
+    isPortal()
+      ? /^data:image\/(?:png|jpe?g|gif|webp|avif);base64,/i.test(rawSrc())
+      : /^data:image\/(?:png|jpe?g|gif|webp|avif|svg\+xml)(?:;charset=[^;,]+)?;(?:base64|utf8),/i.test(rawSrc()) ||
+        /^data:image\/svg\+xml,/i.test(rawSrc());
+  const isDirectImage = () =>
+    isPortal() ? isSafePortalImageSrc(rawSrc()) : isRemote() || isGatewayAttachment() || isDataImage();
   const isLocal = () =>
     !isDirectImage() &&
     (!/^[a-z][a-z0-9+.-]*:/i.test(rawSrc()) || /^[a-zA-Z]:[\\/]/.test(rawSrc()));

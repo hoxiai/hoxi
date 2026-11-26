@@ -31,6 +31,13 @@ func checkReadOnlyExecTarget(rec SessionRecord, baseRoot, absTarget string) (str
 	return "", false
 }
 
+func isShellExecCFlag(v string) bool {
+	if v == "-c" {
+		return true
+	}
+	return len(v) > 2 && v[0] == '-' && v[1] != '-' && strings.IndexByte(v[1:], 'c') >= 0
+}
+
 func checkInterpreterScriptExecDepth(rec SessionRecord, baseRoot, curDir, cmdBase string, args []shellToken, depth int) (string, bool) {
 	i := 0
 	for i < len(args) {
@@ -39,24 +46,29 @@ func checkInterpreterScriptExecDepth(rec SessionRecord, baseRoot, curDir, cmdBas
 			i++
 			break
 		}
-		if v == "-c" && (cmdBase == "sh" || cmdBase == "bash" || cmdBase == "zsh" || cmdBase == "dash" || cmdBase == "ksh") {
+		if isShellExecCFlag(v) && (cmdBase == "sh" || cmdBase == "bash" || cmdBase == "zsh" || cmdBase == "dash" || cmdBase == "ksh") {
 			if depth < 2 && i+1 < len(args) && !args[i+1].dynamic {
 				subDir := curDir
-				for _, rawSub := range splitCommandChain(args[i+1].value) {
-					sub := strings.TrimSpace(rawSub)
-					if sub == "" {
-						continue
+				var dirStack []string
+				for _, rawSub := range splitScopeCommandChain(args[i+1].value) {
+					sub, openP, closeP := trimSegmentGroupDelims(rawSub)
+					for k := 0; k < openP; k++ {
+						dirStack = append(dirStack, subDir)
 					}
-					if isCDSegment(sub) {
-						if t, ok := extractLiteralCDPath(sub); ok {
-							if next := resolveShellOperand(subDir, t); next != "" {
-								subDir = next
+					if sub != "" {
+						if isCDSegment(sub) {
+							if t, ok := extractLiteralCDPath(sub); ok {
+								if next := resolveShellOperand(subDir, t); next != "" {
+									subDir = next
+								}
 							}
+						} else if reason, bad := checkShellSegmentScopeViolationDepth(rec, baseRoot, subDir, sub, depth+1); bad {
+							return reason, true
 						}
-						continue
 					}
-					if reason, bad := checkShellSegmentScopeViolationDepth(rec, baseRoot, subDir, sub, depth+1); bad {
-						return reason, true
+					for k := 0; k < closeP && len(dirStack) > 0; k++ {
+						subDir = dirStack[len(dirStack)-1]
+						dirStack = dirStack[:len(dirStack)-1]
 					}
 				}
 			}
@@ -177,7 +189,9 @@ func checkGitMutationScope(rec SessionRecord, baseRoot, curDir string, args []sh
 			var outVal string
 			if strings.HasPrefix(v, "--output=") {
 				outVal = strings.TrimPrefix(v, "--output=")
-			} else if v == "--output" && j+1 < len(rest) {
+			} else if eq := strings.IndexByte(v, '='); eq >= 5 && strings.HasPrefix("--output", v[:eq]) {
+				outVal = v[eq+1:]
+			} else if (v == "--output" || (len(v) >= 5 && strings.HasPrefix("--output", v))) && j+1 < len(rest) {
 				outVal = rest[j+1].value
 				j++
 			}
@@ -190,9 +204,27 @@ func checkGitMutationScope(rec SessionRecord, baseRoot, curDir string, args []sh
 			}
 		}
 	case "reset":
-		if hasLongFlag(rest, "--hard", "--merge") {
+		if hasAbbrevLongFlag(rest, "--hard", 5) || hasAbbrevLongFlag(rest, "--merge", 5) {
 			return "git reset --hard is forbidden in sessions with read-only or restricted writable paths", true
 		}
+	case "switch":
+		if hasAnyFlagChar(rest, 'f', 'm') ||
+			hasAbbrevLongFlag(rest, "--force", 5) ||
+			hasAbbrevLongFlag(rest, "--discard-changes", 6) ||
+			hasAbbrevLongFlag(rest, "--merge", 5) {
+			return "git switch with force/discard/merge is forbidden in sessions with read-only or restricted writable paths", true
+		}
+	case "stash":
+		ops := nonFlagOperands(rest)
+		action := ""
+		if len(ops) > 0 {
+			action = strings.ToLower(ops[0].value)
+		}
+		if action == "" || action == "push" || action == "save" || action == "pop" || action == "apply" || action == "branch" {
+			return "git stash mutation is forbidden in sessions with read-only or restricted writable paths", true
+		}
+	case "am", "cherry-pick", "merge", "rebase", "revert":
+		return fmt.Sprintf("git %s is blocked in sessions with read-only or restricted writable paths", sub), true
 	case "clean":
 		if !hasAnyFlagChar(rest, 'n') && !hasLongFlag(rest, "--dry-run") {
 			ops := nonFlagOperands(rest)
@@ -320,6 +352,25 @@ func hasLongFlag(args []shellToken, flags ...string) bool {
 			if a.value == f || strings.HasPrefix(a.value, f+"=") {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func hasAbbrevLongFlag(args []shellToken, fullFlag string, minLen int) bool {
+	for _, a := range args {
+		if a.value == "--" {
+			break
+		}
+		if !strings.HasPrefix(a.value, "--") {
+			continue
+		}
+		name := a.value
+		if eq := strings.IndexByte(name, '='); eq > 0 {
+			name = name[:eq]
+		}
+		if len(name) >= minLen && len(name) <= len(fullFlag) && strings.HasPrefix(fullFlag, name) {
+			return true
 		}
 	}
 	return false

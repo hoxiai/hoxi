@@ -520,6 +520,45 @@ func (s *Service) reconcilePendingApprovals() {
 			continue
 		}
 		dir, isolated := s.sessionIsolated(pa.sid)
+		if effRec, ok := s.effectiveSessionRecord(pa.sid); ok && effRec.HasPathScope() {
+			if reason, denied := sessionOpenCodeItemViolation(effRec, dir, pa.req); denied {
+				select {
+				case pa.reply <- approvalReply{Reply: "reject", Message: reason, Source: approvalSourcePathScope}:
+				default:
+				}
+				continue
+			}
+			if permissionName(pa.req) == "bash" || permissionCategory(pa.req) == permissionCategoryBash {
+				blockedByScope := false
+				for _, cmd := range commandCandidates(pa.req) {
+					action, reason := sessionShellPolicyCheck(effRec, dir, cmd)
+					if action == "deny" {
+						select {
+						case pa.reply <- approvalReply{Reply: "reject", Message: reason, Source: approvalSourcePathScope}:
+						default:
+						}
+						blockedByScope = true
+						break
+					}
+					if action == "require_approval" {
+						if unattended && !isQuestionRequest(pa.req) {
+							pa.req["hoxiCategory"] = unattendedCategoryTool
+							select {
+							case pa.reply <- approvalReply{Reply: "reject", Message: reason, Source: approvalSourceUnattended}:
+								s.rememberDeferred(pa.sid, firstString(pa.req["id"]), unattendedCategoryTool, permissionSummaryText(pa.req))
+								s.noteTurn(pa.sid, "deny")
+							default:
+							}
+						}
+						blockedByScope = true
+						break
+					}
+				}
+				if blockedByScope {
+					continue
+				}
+			}
+		}
 		if unattended && !isQuestionRequest(pa.req) {
 			if allow, category := unattendedDecision(pa.req, dir); !allow && category != "" {
 				pa.req["hoxiCategory"] = category

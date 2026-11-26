@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
@@ -347,28 +348,52 @@ func decidePreviewFetchAction(
 	return true, false, host, port
 }
 
+func previewTargetInfoFromEvent(raw any) *target.Info {
+	switch ev := raw.(type) {
+	case *target.EventTargetCreated:
+		return ev.TargetInfo
+	case *target.EventTargetInfoChanged:
+		return ev.TargetInfo
+	default:
+		return nil
+	}
+}
+
 func (sc *scope) installPreviewBrowserGuard(browserCtx context.Context) {
 	if !sc.isPreviewScope() || browserCtx == nil {
 		return
 	}
 	allowedOrigin := sc.previewOrigin
+	var closedMu sync.Mutex
+	closedPopups := make(map[target.ID]struct{})
 	chromedp.ListenBrowser(browserCtx, func(raw any) {
-		ev, ok := raw.(*target.EventTargetCreated)
-		if !ok || ev.TargetInfo == nil || ev.TargetInfo.Type != "page" {
+		info := previewTargetInfoFromEvent(raw)
+		if info == nil || info.Type != "page" {
 			return
 		}
-		targetID := string(ev.TargetInfo.TargetID)
+		targetID := string(info.TargetID)
 		sc.tabMu.Lock()
 		mainTabID := sc.workflowTabID
 		sc.tabMu.Unlock()
 		if mainTabID == "" || targetID == mainTabID {
 			return
 		}
-		rawURL := strings.TrimSpace(ev.TargetInfo.URL)
+		rawURL := strings.TrimSpace(info.URL)
 		if rawURL == "" || isBlankTabURL(rawURL) || isAllowedPreviewTabURL(allowedOrigin, rawURL) {
 			return
 		}
-		// Immediately close stray cross-origin popup targets so foreign origins
+		closedMu.Lock()
+		if _, already := closedPopups[info.TargetID]; already {
+			closedMu.Unlock()
+			return
+		}
+		if len(closedPopups) >= 256 {
+			clear(closedPopups)
+		}
+		closedPopups[info.TargetID] = struct{}{}
+		closedMu.Unlock()
+		// Immediately close stray cross-origin popup targets (including popups
+		// initially opened as about:blank and navigated later) so foreign origins
 		// cannot render even transiently in a background tab.
 		sc.previewNavBlocked.Add(1)
 		go func(id target.ID) {
@@ -377,7 +402,7 @@ func (sc *scope) installPreviewBrowserGuard(browserCtx context.Context) {
 			if c := chromedp.FromContext(browserCtx); c != nil && c.Browser != nil {
 				_ = target.CloseTarget(id).Do(cdp.WithExecutor(op, c.Browser))
 			}
-		}(ev.TargetInfo.TargetID)
+		}(info.TargetID)
 	})
 }
 

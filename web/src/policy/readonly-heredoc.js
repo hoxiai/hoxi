@@ -80,9 +80,13 @@ function scanReadOnlyHeredocLine(rawLine, st) {
         out += c;
         i++;
         c = rawLine[i];
+      } else if (c === "`") {
+        return null;
       } else if (c === '"') {
         st.quote = "";
       }
+    } else if (c === "`") {
+      return null;
     } else if (c === "\\" && i + 1 < rawLine.length) {
       out += c;
       i++;
@@ -184,7 +188,7 @@ function readOnlyHeredocOwnerFamily(line, outPos, normalizeAbsoluteTool) {
     }
     if (sepLen > 0) {
       if (outPos >= segStart && outPos <= i) {
-        if (pipedIn) return "";
+        if (pipedIn || nextPipe) return "";
         return validateReadOnlyHeredocSegment(line.slice(segStart, i), normalizeAbsoluteTool);
       }
       pipedIn = nextPipe;

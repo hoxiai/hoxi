@@ -11,6 +11,8 @@ web/dist/
 /cmd/hoxi/hoxi
 build/bin/
 build/preflight/
+build/release-*/
+build/windows/wails.exe.manifest
 build/windows/installer/tmp/
 build/windows/installer/wails_tools.nsh
 

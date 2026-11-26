@@ -20,6 +20,7 @@ import {
   extractExplicitToolUiView,
   extractMarkdownParagraphGallery,
   extractSingleMarkdownImage,
+  isSafePortalImageSrc,
   normalizeStructuredRichView,
   parseRichMarkdownBlock,
   replaceRichFencesForReadableExport,
@@ -75,6 +76,18 @@ describe("rich views — URL sanitization, schema bounds & Markdown parsers", ()
     assertEqual(sanitizeRichMediaURL("../secret.png"), undefined);
     assertEqual(sanitizeRichMediaURL("javascript:alert(1)"), undefined);
     assertEqual(sanitizeRichMediaURL("data:text/html;base64,PHNjcmlwdD4="), undefined);
+
+    // Portal image allowlist blocks desktop-only file/attachment routes and SVG data URLs
+    assertEqual(isSafePortalImageSrc("https://cdn.example.com/a.webp"), true);
+    assertEqual(isSafePortalImageSrc("/api/hoxi/collab/portal/attachments/att_1"), true);
+    assertEqual(isSafePortalImageSrc("/api/hoxi/work/joined/j1/proxy/attachments/att_2"), true);
+    assertEqual(isSafePortalImageSrc("data:image/png;base64,iVBORw0KGgo="), true);
+    assertEqual(isSafePortalImageSrc("/api/hoxi/file/content?path=.env"), false);
+    assertEqual(isSafePortalImageSrc("/api/hoxi/attachments/att_desktop"), false);
+    assertEqual(isSafePortalImageSrc("data:image/svg+xml,<svg/>"), false);
+    assertEqual(isSafePortalImageSrc("data:image/svg+xml;base64,PHN2Zz4="), false);
+    assertEqual(isSafePortalImageSrc("/api/hoxi/collab/portal/attachments/../../secret"), false);
+    assertEqual(isSafePortalImageSrc("assets/hero.png"), false);
   });
 
   it("parses hoxi-cards and hoxi-metrics fenced blocks and enforces safe bounds", () => {

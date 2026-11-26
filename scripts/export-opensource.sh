@@ -79,6 +79,8 @@ rsync -a --delete \
   --exclude='/node_modules/' \
   --exclude='/build/bin/' \
   --exclude='/build/preflight/' \
+  --exclude='/build/release-*/' \
+  --exclude='/build/windows/wails.exe.manifest' \
   --exclude='/build/windows/installer/tmp/' \
   --exclude='/build/windows/installer/wails_tools.nsh' \
   --exclude='/hoxi' \

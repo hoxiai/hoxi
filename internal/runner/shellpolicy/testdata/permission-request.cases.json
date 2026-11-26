@@ -178,5 +178,8 @@
   {"name": "read-only quoted python heredoc with chmod string literal is non-destructive", "destructive": false, "request": {"permission": "bash", "patterns": ["python3 - <<'EOF'\nprint(\"chmod\" in open(\"README.md\").read())\nEOF"]}},
   {"name": "read-only quoted python heredoc with cd prefix and line continuation is non-destructive", "destructive": false, "request": {"permission": "bash", "patterns": ["cd sub && python3 -u - <<'PY'\nval = \"truncate\" in open(\"README.md\").read() \\\n    and \"rm\" not in open(\"README.md\").read()\nprint(val)\nPY"]}},
   {"name": "quoted python heredoc followed by rm remains destructive", "destructive": true, "request": {"permission": "bash", "patterns": ["python3 - <<'PY'\nprint(\"chmod\")\nPY\nrm -rf /"]}},
-  {"name": "unquoted python heredoc with chmod string remains destructive", "destructive": true, "request": {"permission": "bash", "patterns": ["python3 - <<PY\nprint(\"chmod\")\nPY"]}}
+  {"name": "unquoted python heredoc with chmod string remains destructive", "destructive": true, "request": {"permission": "bash", "patterns": ["python3 - <<PY\nprint(\"chmod\")\nPY"]}},
+  {"name": "piped-out python heredoc into sh remains destructive", "destructive": true, "request": {"permission": "bash", "patterns": ["python3 - <<'EOF' | sh\nprint(\"rm -rf /\")\nEOF"]}},
+  {"name": "piped-out python heredoc into awk system remains destructive", "destructive": true, "request": {"permission": "bash", "patterns": ["python3 - <<'EOF' | awk '{system($0)}'\nprint(\"rm -rf /\")\nEOF"]}},
+  {"name": "backtick-wrapped python heredoc remains destructive", "destructive": true, "request": {"permission": "bash", "patterns": ["`echo && python3 - <<'EOF' && echo`\nprint(\"chmod\")\nEOF"]}}
 ]
