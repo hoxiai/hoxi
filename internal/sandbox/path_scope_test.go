@@ -76,7 +76,7 @@ func TestApplyPathScopeProfileTextAndPrecedence(t *testing.T) {
 		t.Fatal(err)
 	}
 	authPath := filepath.Join(ws, "internal", "auth")
-	if !strings.Contains(roText, "(deny process-exec") || !strings.Contains(roText, authPath) {
+	if !strings.Contains(roText, "(deny process-exec") || !strings.Contains(roText, strings.ReplaceAll(authPath, `\`, `\\`)) {
 		t.Fatalf("expected DenyWrite and DenyExec for %s in profile:\n%s", authPath, roText)
 	}
 
@@ -117,25 +117,28 @@ func TestApplyPathScopeProfileTextAndPrecedence(t *testing.T) {
 	}
 
 	// Scoped on-demand profile has distinct path & trust isolation from unscoped profile
-	m := NewManager(t.TempDir())
-	pUnscoped, err := m.WriteOnDemand(ws, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	scope := PathScope{ReadOnlyPaths: []string{"internal/auth"}}
-	pScoped, err := m.WriteOnDemandWithScope(ws, nil, scope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if pScoped == pUnscoped {
-		t.Fatalf("scoped on-demand profile must not overwrite unscoped profile: %s", pScoped)
-	}
-	if !m.OnDemandTrustedWithScope(pScoped, ws, scope) {
-		t.Fatal("expected scoped on-demand profile to be trusted for its own scope")
-	}
-	if m.OnDemandTrustedWithScope(pUnscoped, ws, scope) {
-		t.Fatal("unscoped on-demand profile must NOT be trusted for a scoped session")
-	}
+	t.Run("on_demand_scope_isolation", func(t *testing.T) {
+		requirePortSnapshot(t)
+		m := NewManager(t.TempDir())
+		pUnscoped, err := m.WriteOnDemand(ws, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		scope := PathScope{ReadOnlyPaths: []string{"internal/auth"}}
+		pScoped, err := m.WriteOnDemandWithScope(ws, nil, scope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pScoped == pUnscoped {
+			t.Fatalf("scoped on-demand profile must not overwrite unscoped profile: %s", pScoped)
+		}
+		if !m.OnDemandTrustedWithScope(pScoped, ws, scope) {
+			t.Fatal("expected scoped on-demand profile to be trusted for its own scope")
+		}
+		if m.OnDemandTrustedWithScope(pUnscoped, ws, scope) {
+			t.Fatal("unscoped on-demand profile must NOT be trusted for a scoped session")
+		}
+	})
 }
 
 func TestApplyPathScopeSeatbeltEnforcement(t *testing.T) {

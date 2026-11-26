@@ -295,8 +295,8 @@ func TestWorkSetupInstallerProfileStrictlyConfinesWritesAndHardDeniesTargets(t *
 		`(^|/)\.git(/|$)`,
 		`(^|/)hoxi\.json(/|$)`,
 		".zshrc",
-		`"/usr"`,
-		`"/etc"`,
+		`"` + strings.ReplaceAll(filepath.Clean("/usr"), `\`, `\\`) + `"`,
+		`"` + strings.ReplaceAll(filepath.Clean("/etc"), `\`, `\\`) + `"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("installer Seatbelt text missing %q:\n%s", want, text)
