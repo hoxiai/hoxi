@@ -15,6 +15,21 @@ final RegExp _relayPrefixPattern = RegExp(
   r'^/api/tunnel/(?:hoxi|gopanel)-nodes/\d+/proxy(?=/|$)',
 );
 
+String _posixCleanAbsolutePath(String raw) {
+  final segments = <String>[];
+  for (final part in raw.split('/')) {
+    if (part.isEmpty || part == '.') continue;
+    if (part == '..') {
+      if (segments.isNotEmpty) {
+        segments.removeLast();
+      }
+      continue;
+    }
+    segments.add(part);
+  }
+  return segments.isEmpty ? '/' : '/${segments.join('/')}';
+}
+
 String normalizeHoxiCleanPath(String rawPathOrUrl) {
   final trimmed = rawPathOrUrl.trim();
   if (trimmed.isEmpty) return '/';
@@ -23,7 +38,11 @@ String normalizeHoxiCleanPath(String rawPathOrUrl) {
     path = Uri.tryParse(trimmed)?.path ?? '/';
   } else {
     final qIdx = trimmed.indexOf('?');
-    path = qIdx >= 0 ? trimmed.substring(0, qIdx) : trimmed;
+    final hIdx = trimmed.indexOf('#');
+    var cut = trimmed.length;
+    if (qIdx >= 0 && qIdx < cut) cut = qIdx;
+    if (hIdx >= 0 && hIdx < cut) cut = hIdx;
+    path = trimmed.substring(0, cut);
   }
   if (!path.startsWith('/')) {
     path = '/$path';
@@ -31,9 +50,9 @@ String normalizeHoxiCleanPath(String rawPathOrUrl) {
   try {
     path = Uri.decodeComponent(path);
   } catch (_) {}
+  path = _posixCleanAbsolutePath(path);
   path = path.replaceFirst(_relayPrefixPattern, '');
-  if (path.isEmpty) return '/';
-  return path;
+  return _posixCleanAbsolutePath(path);
 }
 
 bool isValidHoxiE2eeKeyHex(String? raw) {
@@ -343,28 +362,41 @@ class HoxiE2eeCipher {
     required Stream<Uint8List> source,
     required String reqId,
     required String cleanPath,
-  }) async* {
+  }) {
     var expectedSeq = 0;
-    await for (final line
-        in source
-            .cast<List<int>>()
-            .transform(utf8.decoder)
-            .transform(const LineSplitter())) {
-      if (line.startsWith('data:')) {
-        final rawPayload = line.substring(5).trimLeft();
-        if (rawPayload.startsWith('{') && rawPayload.contains('"_hoxi_e2ee"')) {
-          expectedSeq++;
-          final plain = openSseDataLine(
-            reqId: reqId,
-            cleanPath: cleanPath,
-            expectedSeq: expectedSeq,
-            rawJsonEnvelope: rawPayload,
-          );
-          yield Uint8List.fromList(utf8.encode('data: $plain\n'));
-          continue;
-        }
-      }
-      yield Uint8List.fromList(utf8.encode('$line\n'));
-    }
+    var terminated = false;
+    return source
+        .cast<List<int>>()
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .transform(
+          StreamTransformer<String, Uint8List>.fromHandlers(
+            handleData: (line, sink) {
+              if (terminated) return;
+              try {
+                if (line.startsWith('data:')) {
+                  final rawPayload = line.substring(5).trimLeft();
+                  if (rawPayload.startsWith('{') &&
+                      rawPayload.contains('"_hoxi_e2ee"')) {
+                    expectedSeq++;
+                    final plain = openSseDataLine(
+                      reqId: reqId,
+                      cleanPath: cleanPath,
+                      expectedSeq: expectedSeq,
+                      rawJsonEnvelope: rawPayload,
+                    );
+                    sink.add(Uint8List.fromList(utf8.encode('data: $plain\n')));
+                    return;
+                  }
+                }
+                sink.add(Uint8List.fromList(utf8.encode('$line\n')));
+              } catch (error, stackTrace) {
+                terminated = true;
+                sink.addError(error, stackTrace);
+                sink.close();
+              }
+            },
+          ),
+        );
   }
 }

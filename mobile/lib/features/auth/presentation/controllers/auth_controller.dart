@@ -264,6 +264,7 @@ class AuthController extends Notifier<AuthState> {
     String entrance = '',
     required String token,
     String relayToken = '',
+    String relayDeviceId = '',
     String e2eeKey = '',
     String? nodeType,
     String relayUrl = '',
@@ -318,6 +319,7 @@ class AuthController extends Notifier<AuthState> {
           server: server,
           token: token,
           relayToken: relayToken,
+          relayDeviceId: relayDeviceId,
           e2eeKey: e2eeKey,
           relayUrl: relayUrl,
           peerUrls: peerUrls,
@@ -353,6 +355,7 @@ class AuthController extends Notifier<AuthState> {
           server: server,
           token: token,
           relayToken: relayToken,
+          relayDeviceId: relayDeviceId,
           e2eeKey: e2eeKey,
           relayUrl: relayUrl,
           peerUrls: peerUrls,
@@ -378,7 +381,11 @@ class AuthController extends Notifier<AuthState> {
       if (selected == null || !StorageService.isServerActive(server)) {
         return false;
       }
-      await _saveConnection(selected, preserveExistingName: true);
+      await _saveConnection(
+        selected,
+        preserveExistingName: true,
+        matchByIdOnly: true,
+      );
       return true;
     } catch (_) {
       return false;
@@ -506,6 +513,7 @@ class AuthController extends Notifier<AuthState> {
   Future<bool> _saveAndFinish(
     ServerConnection server, {
     bool preserveExistingName = false,
+    bool matchByIdOnly = false,
   }) async {
     if (_replacingConnectionId != null) {
       final target = StorageService.getServerList()
@@ -519,7 +527,7 @@ class AuthController extends Notifier<AuthState> {
     await _saveConnection(
       server,
       preserveExistingName: preserveExistingName,
-      matchByIdOnly: _replacingConnectionId != null,
+      matchByIdOnly: _replacingConnectionId != null || matchByIdOnly,
     ).timeout(_storageTimeout);
     state = state.copyWith(isLoading: false, isAuthenticated: true);
     return true;

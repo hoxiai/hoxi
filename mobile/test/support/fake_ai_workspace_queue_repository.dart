@@ -19,6 +19,7 @@ class FakeAiWorkspaceQueueRepository extends AiWorkspaceRepository {
   String sessionStatus = 'active';
   AiInstruction? latestInstruction;
   bool failNextSend = false;
+  bool failNextUpload = false;
   bool failNextRetry = false;
   bool failNextRefresh = false;
   bool busyGraceActive = false;
@@ -27,6 +28,7 @@ class FakeAiWorkspaceQueueRepository extends AiWorkspaceRepository {
   Completer<AiInstructionSendResult>? pendingSendCompleter;
   Completer<AiSessionStateInfo>? pendingStateCompleter;
   final List<String> sentCommands = <String>[];
+  final List<NodeSkillSelection?> sentSkills = [];
   StreamController<Uint8List> stream = StreamController<Uint8List>.broadcast();
 
   Map<String, dynamic> get _sessionJson => <String, dynamic>{
@@ -131,6 +133,26 @@ class FakeAiWorkspaceQueueRepository extends AiWorkspaceRepository {
   }) async => ResponseBody(stream.stream, 200);
 
   @override
+  Future<Map<String, dynamic>> uploadAttachment({
+    required int sessionId,
+    required String filename,
+    required String mime,
+    required String dataUrl,
+  }) async {
+    if (failNextUpload) {
+      failNextUpload = false;
+      throw Exception('upload failed');
+    }
+    return {
+      'id': 'att_test_1',
+      'filename': filename,
+      'mime': mime,
+      'url': '/api/hoxi/attachments/att_test_1/content',
+      'kind': 'image',
+    };
+  }
+
+  @override
   Future<AiInstructionSendResult> sendAiCommand({
     required int sessionId,
     required String command,
@@ -141,6 +163,7 @@ class FakeAiWorkspaceQueueRepository extends AiWorkspaceRepository {
     String? clientRequestId,
   }) async {
     sentCommands.add(command);
+    sentSkills.add(skillSelection);
     if (failNextSend) {
       failNextSend = false;
       throw Exception('send failed');

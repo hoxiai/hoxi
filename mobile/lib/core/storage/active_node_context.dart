@@ -5,6 +5,7 @@ class ActiveNodeContext {
   final String? url;
   final String nodeType;
   final String? token;
+  final String? relayDeviceId;
   final String? e2eeKey;
   final String? entrance;
   final String? cookie;
@@ -14,6 +15,7 @@ class ActiveNodeContext {
     this.url,
     this.nodeType = 'gopanel',
     this.token,
+    this.relayDeviceId,
     this.e2eeKey,
     this.entrance,
     this.cookie,

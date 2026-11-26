@@ -21,9 +21,10 @@ mixin _AiWorkspaceConvoyAndQueue on Notifier<AiWorkspaceState> {
     List<LocalPickedDocument> localDocuments,
     NodeSkillSelection? skillSelection,
     bool bypassQueue,
+    bool useComposerSkill,
   });
 
-  bool _drainingQueue = false;
+  String? _sendingQueuedPromptId;
 
   void selectComposerSkill(NodeSkillSelection? skill) {
     if (skill == null) {
@@ -207,71 +208,74 @@ mixin _AiWorkspaceConvoyAndQueue on Notifier<AiWorkspaceState> {
   }
 
   void removeQueuedPrompt(String id) {
+    if (_sendingQueuedPromptId == id) return;
     state = state.copyWith(
       queuedPrompts: state.queuedPrompts.where((q) => q.id != id).toList(),
     );
   }
 
   CodeQueuedPromptItem? popQueuedPromptForEdit(String id) {
+    if (_sendingQueuedPromptId == id) return null;
     final item = state.queuedPrompts.where((q) => q.id == id).firstOrNull;
-    if (item == null) return null;
+    if (item == null || item.sessionId != state.currentSession?.id) return null;
     state = state.copyWith(
       queuedPrompts: state.queuedPrompts.where((q) => q.id != id).toList(),
       selectedSkill: item.skillSelection,
+      clearSelectedSkill: item.skillSelection == null,
     );
     return item;
   }
 
-  Future<bool> sendQueuedPromptNow(String id) async {
+  Future<bool> sendQueuedPromptNow(String id) => _sendQueuedPrompt(id);
+
+  Future<bool> _sendQueuedPrompt(String id, {bool automatic = false}) async {
+    if (!ref.mounted || _sendingQueuedPromptId != null || state.isSending ||
+        (automatic && state.isAiThinking)) {
+      return false;
+    }
     final item = state.queuedPrompts.where((q) => q.id == id).firstOrNull;
-    if (item == null) return false;
-    state = state.copyWith(
-      queuedPrompts: state.queuedPrompts.where((q) => q.id != id).toList(),
-    );
-    return sendMessage(
-      item.text,
-      options: item.options,
-      imageDataUrl: item.imageDataUrl,
-      attachedFiles: item.attachedFiles,
-      localDocuments: item.localDocuments,
-      skillSelection: item.skillSelection,
-      bypassQueue: true,
-    );
+    if (item == null || item.sessionId != state.currentSession?.id ||
+        (automatic && item.requiresManualRetry)) {
+      return false;
+    }
+    final nodeRequest = NodeRequestGuard(_repo);
+    _sendingQueuedPromptId = id;
+    var sent = false;
+    try {
+      sent = await sendMessage(
+        item.text,
+        options: item.options,
+        imageDataUrl: item.imageDataUrl,
+        attachedFiles: item.attachedFiles,
+        localDocuments: item.localDocuments,
+        skillSelection: item.skillSelection,
+        bypassQueue: true,
+        useComposerSkill: false,
+      );
+      return sent;
+    } finally {
+      _sendingQueuedPromptId = null;
+      if (ref.mounted && nodeRequest.isCurrent(_repo)) {
+        state = state.copyWith(queuedPrompts: [
+          for (final queued in state.queuedPrompts)
+            if (queued.id != id) queued else if (!sent) queued.waitForManualRetry(),
+        ]);
+        if (sent) drainNextQueuedPromptIfIdle();
+      }
+    }
   }
 
   void drainNextQueuedPromptIfIdle() {
-    if (_drainingQueue || !ref.mounted) return;
-    if (state.isAiThinking || state.isSending) return;
-    final sid = state.currentSession?.id;
-    if (sid == null) return;
-    final next = state.queuedPrompts
-        .where((q) => q.sessionId == sid)
-        .firstOrNull;
-    if (next == null) return;
-    _drainingQueue = true;
-    state = state.copyWith(
-      queuedPrompts: state.queuedPrompts.where((q) => q.id != next.id).toList(),
-    );
-    Future.microtask(() async {
-      var sent = false;
-      try {
-        if (!ref.mounted || state.currentSession?.id != sid) return;
-        sent = await sendMessage(
-          next.text,
-          options: next.options,
-          imageDataUrl: next.imageDataUrl,
-          attachedFiles: next.attachedFiles,
-          localDocuments: next.localDocuments,
-          skillSelection: next.skillSelection,
-          bypassQueue: true,
-        );
-      } finally {
-        _drainingQueue = false;
-        if (sent && ref.mounted && !state.isAiThinking && !state.isSending) {
-          drainNextQueuedPromptIfIdle();
-        }
+    if (!ref.mounted || _sendingQueuedPromptId != null || state.isAiThinking) return;
+    final next = state.currentSessionQueuedPrompts.firstOrNull;
+    if (next == null || next.requiresManualRetry) return;
+    final nodeRequest = NodeRequestGuard(_repo);
+    unawaited(Future.microtask(() async {
+      if (ref.mounted && nodeRequest.isCurrent(_repo) &&
+          state.currentSessionQueuedPrompts.firstOrNull?.id == next.id) {
+        await _sendQueuedPrompt(next.id, automatic: true);
       }
-    });
+    }));
   }
 
   Future<bool> startConvoyPlan(CodeConvoyPlan draft) async {

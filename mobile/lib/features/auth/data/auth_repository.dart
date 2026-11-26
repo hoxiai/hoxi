@@ -260,6 +260,7 @@ class AuthRepository {
     required String serverUrl,
     String entrance = '',
     String token = '',
+    String relayDeviceId = '',
     String e2eeKey = '',
   }) async {
     try {
@@ -302,6 +303,9 @@ class AuthRepository {
         options: buildHoxiProbeOptions(
           entrance: entrance,
           token: trimmedToken,
+          relayDeviceId: supportsHoxiRelayDeviceHeader(serverUrl)
+              ? relayDeviceId
+              : '',
           e2eeKey: e2eeKey,
           kexPublicKey: kexPair?.publicKeyBase64Url ?? '',
           connectTimeout: probeTimeout,

@@ -188,6 +188,9 @@ class HoxiTransportFailover {
               options: buildHoxiProbeOptions(
                 entrance: node.entrance,
                 token: candidateToken,
+                relayDeviceId: isRelay && extractHoxiRelayNodeId(url) == null
+                    ? node.relayDeviceId
+                    : '',
                 e2eeKey: node.e2eeKey,
               ),
             );

@@ -378,6 +378,9 @@ class AppLocalizationsEn extends AppLocalizations {
       'Live connection lost. Reconnecting…';
 
   @override
+  String get codeWsStageFailed => 'Failed';
+
+  @override
   String get codeWsChatRefresh => 'Refresh status';
 
   @override
@@ -402,6 +405,9 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get codeWsSessionNoExecutors => 'No available executors';
+
+  @override
   String get codeWsSessionSettingsTitle => 'Session settings';
 
   @override
@@ -418,6 +424,17 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get codeWsSessionSettingsPolicyFullAuto => 'Full auto';
+
+  @override
+  String get codeWsSessionSettingsPolicyManualDesc =>
+      'Confirm before running actions';
+
+  @override
+  String get codeWsSessionSettingsPolicySafeAutoDesc =>
+      'Confirm high-risk actions only';
+
+  @override
+  String get codeWsSessionSettingsPolicyFullAutoDesc => 'Run without pausing';
 
   @override
   String codeWsSessionSettingsPolicyRejectsInConversation(String executor) {

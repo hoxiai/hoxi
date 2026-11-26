@@ -15,8 +15,8 @@ bool codeTerminalBlockedByRelay(String serverUrl) =>
 
 String codeTerminalRelayUnsupportedMessage(String serverUrl) {
   final panel = hoxiRelayControllerUrl(serverUrl);
-  final via = panel == null || panel.isEmpty ? 'GoPanel 隧道' : 'GoPanel 隧道（$panel）';
-  return '经 $via 不支持交互终端：隧道只中继 HTTP 与 SSE，终端 WebSocket 会返回 501。'
+  final via = panel == null || panel.isEmpty ? '远程中继' : '远程中继（$panel）';
+  return '经 $via 不支持交互终端：中继只转发 HTTP 与 SSE，终端 WebSocket 会返回 501。'
       '请改用局域网直连的 Hoxi 桌面端，或到桌面端操作终端。';
 }
 

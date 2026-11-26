@@ -22,7 +22,7 @@ class CodeSessionSheet extends ConsumerStatefulWidget {
 
 class _CodeSessionSheetState extends ConsumerState<CodeSessionSheet> {
   final _titleController = TextEditingController();
-  final _modelController = TextEditingController();
+  String _selectedModel = '';
   int? _projectId;
   String? _executorId;
   String _approvalPolicy = 'safe_auto';
@@ -33,6 +33,7 @@ class _CodeSessionSheetState extends ConsumerState<CodeSessionSheet> {
   String? _capabilityError;
   int _capabilityRequest = 0;
   bool _userModifiedModel = false;
+  String? _submitError;
 
   @override
   void initState() {
@@ -58,7 +59,6 @@ class _CodeSessionSheetState extends ConsumerState<CodeSessionSheet> {
   void dispose() {
     _capabilityRequest++;
     _titleController.dispose();
-    _modelController.dispose();
     super.dispose();
   }
 
@@ -116,12 +116,17 @@ class _CodeSessionSheetState extends ConsumerState<CodeSessionSheet> {
       preferredExecutor: selectedExec,
       fallbackSession: fallbackSession,
     );
-    final effectiveModel = _modelController.text.trim().isNotEmpty
-        ? _modelController.text.trim()
-        : (defaultModel?.value ?? '');
+    final effectiveModel = _effectiveModel(
+      available,
+      preferredExecutor: selectedExec,
+      fallbackSession: fallbackSession,
+    );
+    final explicitExecutorId = _userModifiedModel
+        ? _executorId
+        : defaultModel?.executorId;
     final resolvedExecutorId = CodeModelCatalog.resolveRuntimeForModel(
       model: effectiveModel,
-      explicitExecutorId: _executorId ?? defaultModel?.executorId,
+      explicitExecutorId: explicitExecutorId ?? defaultModel?.executorId,
       executors: available,
       fallbackRuntime: selectedExec?.id ?? 'opencode',
     );
@@ -137,6 +142,9 @@ class _CodeSessionSheetState extends ConsumerState<CodeSessionSheet> {
     final policy = executor.approvalPolicies.contains(_approvalPolicy)
         ? _approvalPolicy
         : executor.approvalPolicies.firstOrNull ?? 'full_auto';
+    if (_submitError != null) {
+      setState(() => _submitError = null);
+    }
     try {
       final controller = ref.read(aiWorkspaceControllerProvider.notifier);
       final session = await controller.createSession(
@@ -162,12 +170,39 @@ class _CodeSessionSheetState extends ConsumerState<CodeSessionSheet> {
         } catch (_) {}
       }
       if (mounted) Navigator.of(context).pop(session);
-    } catch (_) {}
+    } catch (error) {
+      if (!mounted) return;
+      final message =
+          ref.read(aiWorkspaceControllerProvider).errorMessage?.trim() ?? '';
+      setState(() {
+        _submitError = message.isNotEmpty ? message : '$error';
+      });
+    }
   }
 
   int? _selectedProjectId(List<CodeProject> projects) {
     if (projects.any((item) => item.id == _projectId)) return _projectId;
     return projects.firstOrNull?.id;
+  }
+
+  String _effectiveModel(
+    List<CodeExecutor> availableExecutors, {
+    AiDevSession? fallbackSession,
+    CodeExecutor? preferredExecutor,
+  }) {
+    final explicit = _selectedModel.trim();
+    if (_userModifiedModel && explicit.isNotEmpty) {
+      return explicit;
+    }
+    final defaultModel = CodeModelCatalog.resolvePreferredModelForExecutors(
+      availableExecutors,
+      preferredExecutor: preferredExecutor,
+      fallbackSession: fallbackSession,
+    );
+    if (defaultModel != null && defaultModel.value.trim().isNotEmpty) {
+      return defaultModel.value.trim();
+    }
+    return explicit;
   }
 
   CodeExecutor? _selectedExecutor(
@@ -177,15 +212,15 @@ class _CodeSessionSheetState extends ConsumerState<CodeSessionSheet> {
     final available = executors
         .where((item) => item.available && item.supportsAutomation)
         .toList();
-    final currentModel = _modelController.text.trim();
-    if (_executorId != null && _executorId!.isNotEmpty) {
+    if (_userModifiedModel && _executorId != null && _executorId!.isNotEmpty) {
       final matched = available.cast<CodeExecutor?>().firstWhere(
         (item) => item?.id == _executorId,
         orElse: () => null,
       );
       if (matched != null) return matched;
     }
-    if (currentModel.isNotEmpty) {
+    final currentModel = _selectedModel.trim();
+    if (_userModifiedModel && currentModel.isNotEmpty) {
       final resolvedId = CodeModelCatalog.resolveRuntimeForModel(
         model: currentModel,
         executors: available,
@@ -221,18 +256,6 @@ class _CodeSessionSheetState extends ConsumerState<CodeSessionSheet> {
       state.currentSession,
       state.sessions,
     );
-    final defaultModel = CodeModelCatalog.resolvePreferredModelForExecutors(
-      availableExecutors,
-      fallbackSession: fallbackSession,
-    );
-    if (!_userModifiedModel &&
-        availableExecutors.isNotEmpty &&
-        defaultModel != null) {
-      if (_modelController.text.trim() != defaultModel.value) {
-        _modelController.text = defaultModel.value;
-      }
-      _executorId = defaultModel.executorId;
-    }
     final selectedExecutor = _selectedExecutor(
       state.executors,
       fallbackSession: fallbackSession,
@@ -242,10 +265,10 @@ class _CodeSessionSheetState extends ConsumerState<CodeSessionSheet> {
         ? _approvalPolicy
         : policies.firstOrNull;
     final selectedProjectId = _selectedProjectId(projects);
-    if (_projectId == null && selectedProjectId != null) {
-      _projectId = selectedProjectId;
-    }
-    final currentModelValue = _modelController.text.trim();
+    final currentModelValue = _effectiveModel(
+      availableExecutors,
+      fallbackSession: fallbackSession,
+    );
     final effortOptions = CodeModelCatalog.effectiveReasoningEfforts(
       selectedExecutor,
       currentEffort: _reasoningEffort,
@@ -292,7 +315,7 @@ class _CodeSessionSheetState extends ConsumerState<CodeSessionSheet> {
               else if (projects.isEmpty)
                 _EmptyHint(text: context.l10n.codeWsTerminalNoProjects)
               else if (availableExecutors.isEmpty)
-                const _EmptyHint(text: '暂无执行器')
+                _EmptyHint(text: context.l10n.codeWsSessionNoExecutors)
               else ...[
                 CodeProjectSelectorField(
                   projects: projects,
@@ -363,7 +386,7 @@ class _CodeSessionSheetState extends ConsumerState<CodeSessionSheet> {
                   onSelected: (selection) {
                     setState(() {
                       _userModifiedModel = true;
-                      _modelController.text = selection.model;
+                      _selectedModel = selection.model;
                       if (selection.reasoningEffort != null) {
                         _reasoningEffort = selection.reasoningEffort!;
                       }
@@ -456,7 +479,7 @@ class _CodeSessionSheetState extends ConsumerState<CodeSessionSheet> {
                 if (selectedPolicy != null) ...[
                   const SizedBox(height: 8),
                   Text(
-                    _policyDescription(selectedPolicy),
+                    _policyDescription(context, selectedPolicy),
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
@@ -464,6 +487,14 @@ class _CodeSessionSheetState extends ConsumerState<CodeSessionSheet> {
                   executor: selectedExecutor,
                   policy: selectedPolicy,
                 ),
+                if (_submitError != null && _submitError!.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    _submitError!,
+                    key: const ValueKey('code_session_sheet_error'),
+                    style: const TextStyle(color: AppTheme.error, fontSize: 12),
+                  ),
+                ],
                 const SizedBox(height: 8),
                 SizedBox(
                   width: double.infinity,
@@ -495,12 +526,13 @@ class _CodeSessionSheetState extends ConsumerState<CodeSessionSheet> {
     _ => policy,
   };
 
-  String _policyDescription(String policy) => switch (policy) {
-    'manual' => '执行前确认',
-    'safe_auto' => '仅高风险确认',
-    'full_auto' => '不暂停',
-    _ => '',
-  };
+  String _policyDescription(BuildContext context, String policy) =>
+      switch (policy) {
+        'manual' => context.l10n.codeWsSessionSettingsPolicyManualDesc,
+        'safe_auto' => context.l10n.codeWsSessionSettingsPolicySafeAutoDesc,
+        'full_auto' => context.l10n.codeWsSessionSettingsPolicyFullAutoDesc,
+        _ => '',
+      };
 }
 
 class _EmptyHint extends StatelessWidget {

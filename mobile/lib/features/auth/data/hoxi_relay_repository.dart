@@ -98,7 +98,10 @@ class HoxiRelayRepository {
             token: s.token.trim(),
           ),
       if (defaultCtrl.isNotEmpty &&
-          (conn.relayToken.trim().isNotEmpty || conn.token.trim().isNotEmpty))
+          (conn.relayToken.trim().isNotEmpty ||
+              ((isHoxiRelayUrl(conn.url) ||
+                      conn.transports.any((t) => t.isRelay)) &&
+                  conn.token.trim().isNotEmpty)))
         (
           url: defaultCtrl,
           entrance: conn.entrance,
@@ -214,11 +217,17 @@ String resolveSavedGoPanelRelayToken(
 }
 
 /// Merges `/api/hoxi/bootstrap` relay metadata, direct peers, E2EE keys, and saved GoPanel tokens.
-({List<NodeTransport> transports, String relayToken, String e2eeKey})
+({
+  List<NodeTransport> transports,
+  String relayToken,
+  String relayDeviceId,
+  String e2eeKey,
+})
 mergeHoxiBootstrapRelay({
   required Map<String, dynamic> bootstrap,
   required Iterable<NodeTransport> baseTransports,
   required String currentRelayToken,
+  String currentRelayDeviceId = '',
   String currentE2eeKey = '',
   required List<ServerConnection> savedServers,
 }) {
@@ -226,15 +235,34 @@ mergeHoxiBootstrapRelay({
   var relayToken = currentRelayToken.trim().isNotEmpty
       ? currentRelayToken.trim()
       : extracted.relayToken;
+  final relayDeviceId = extracted.relayUrl.isNotEmpty
+      ? extracted.relayDeviceId.trim()
+      : currentRelayDeviceId.trim();
   final e2eeKey = extracted.e2eeKey.trim().isNotEmpty
       ? extracted.e2eeKey.trim()
       : currentE2eeKey.trim();
+  final freshController = extracted.relayUrl.isNotEmpty
+      ? hoxiRelayControllerUrl(extracted.relayUrl)
+      : null;
+  final freshNodeId = extracted.relayUrl.isNotEmpty
+      ? extractHoxiRelayNodeId(extracted.relayUrl)
+      : null;
+  final filteredBase = <NodeTransport>[
+    for (final t in baseTransports)
+      if (!isRetiredHoxiRelayUrl(t.url) &&
+          !(freshController != null &&
+              freshNodeId != null &&
+              hoxiRelayControllerUrl(t.url) == freshController &&
+              extractHoxiRelayNodeId(t.url) != null &&
+              extractHoxiRelayNodeId(t.url) != freshNodeId))
+        t,
+  ];
   final transports = NodeTransport.ordered([
     for (final p in extracted.peerUrls)
       NodeTransport(url: p, kind: isHoxiRelayUrl(p) ? 'relay' : 'lan'),
-    ...baseTransports,
     if (extracted.relayUrl.isNotEmpty)
       NodeTransport(url: extracted.relayUrl, kind: 'relay'),
+    ...filteredBase,
   ]);
   if (relayToken.isEmpty) {
     for (final t in transports.where((t) => t.isRelay)) {
@@ -245,5 +273,10 @@ mergeHoxiBootstrapRelay({
       }
     }
   }
-  return (transports: transports, relayToken: relayToken, e2eeKey: e2eeKey);
+  return (
+    transports: transports,
+    relayToken: relayToken,
+    relayDeviceId: relayDeviceId,
+    e2eeKey: e2eeKey,
+  );
 }

@@ -758,6 +758,12 @@ abstract class AppLocalizations {
   /// **'Live connection lost. Reconnecting…'**
   String get codeWsChatStreamReconnecting;
 
+  /// No description provided for @codeWsStageFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed'**
+  String get codeWsStageFailed;
+
   /// No description provided for @codeWsChatRefresh.
   ///
   /// In en, this message translates to:
@@ -800,6 +806,12 @@ abstract class AppLocalizations {
   /// **'Development #{id}'**
   String codeWsChatSessionFallback(int id);
 
+  /// No description provided for @codeWsSessionNoExecutors.
+  ///
+  /// In en, this message translates to:
+  /// **'No available executors'**
+  String get codeWsSessionNoExecutors;
+
   /// No description provided for @codeWsSessionSettingsTitle.
   ///
   /// In en, this message translates to:
@@ -835,6 +847,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Full auto'**
   String get codeWsSessionSettingsPolicyFullAuto;
+
+  /// No description provided for @codeWsSessionSettingsPolicyManualDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm before running actions'**
+  String get codeWsSessionSettingsPolicyManualDesc;
+
+  /// No description provided for @codeWsSessionSettingsPolicySafeAutoDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm high-risk actions only'**
+  String get codeWsSessionSettingsPolicySafeAutoDesc;
+
+  /// No description provided for @codeWsSessionSettingsPolicyFullAutoDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Run without pausing'**
+  String get codeWsSessionSettingsPolicyFullAutoDesc;
 
   /// No description provided for @codeWsSessionSettingsPolicyRejectsInConversation.
   ///

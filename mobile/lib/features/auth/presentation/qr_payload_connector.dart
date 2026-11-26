@@ -62,6 +62,7 @@ Future<String?> connectWithQrPayload({
     String? url;
     String token = '';
     String relayToken = '';
+    String relayDeviceId = '';
     String e2eeSecret = '';
     String entrance = '';
     String relay = '';
@@ -85,6 +86,8 @@ Future<String?> connectWithQrPayload({
       token = (data['token']?.toString() ?? '').trim();
       relayToken = (data['relayToken']?.toString() ?? '').trim();
       if (relayToken.isEmpty) relayToken = extracted.relayToken;
+      relayDeviceId = (data['relayDeviceId']?.toString() ?? '').trim();
+      if (relayDeviceId.isEmpty) relayDeviceId = extracted.relayDeviceId;
       e2eeSecret = extracted.e2eeKey;
       entrance = (data['entrance']?.toString() ?? '').trim();
       relay = (data['relay'] is String ? data['relay'].toString() : '').trim();
@@ -187,6 +190,7 @@ Future<String?> connectWithQrPayload({
                     uri.queryParameters['tunnelToken'] ??
                     '')
                 .trim();
+        relayDeviceId = (uri.queryParameters['relayDeviceId'] ?? '').trim();
         e2eeSecret = extractHoxiBootstrapRelay(uri.queryParameters).e2eeKey;
         entrance = (uri.queryParameters['entrance'] ?? '').trim();
         final panelParam =
@@ -218,6 +222,7 @@ Future<String?> connectWithQrPayload({
         final cleanParams = Map<String, String>.from(uri.queryParameters)
           ..remove('token')
           ..remove('relayToken')
+          ..remove('relayDeviceId')
           ..remove('tunnelToken')
           ..removeWhere((k, _) => k.toLowerCase() == 'e2eekey')
           ..remove('entrance')
@@ -302,6 +307,7 @@ Future<String?> connectWithQrPayload({
       entrance: entrance,
       token: token,
       relayToken: relayToken,
+      relayDeviceId: relayDeviceId,
       e2eeKey: e2eeSecret,
       nodeType: resolvedNodeType,
       relayUrl: relay,

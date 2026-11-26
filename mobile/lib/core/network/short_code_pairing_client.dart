@@ -5,15 +5,11 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 
+export '../storage/hoxi_relay_defaults.dart'
+    show defaultPairingRelayUrl, resolveInitialPairingRelayUrl;
+
 const String reservedDemoShortCode = '888888';
 const String pairingRelayUrlPrefsKey = 'hoxi.pairing.relayUrl';
-
-/// Build-time default pairing relay origin. Empty in OSS builds; official
-/// commercial builds inject `--dart-define=HOXI_PAIRING_RELAY_URL=https://link.hoxi.ai`.
-const String defaultPairingRelayUrl = String.fromEnvironment(
-  'HOXI_PAIRING_RELAY_URL',
-  defaultValue: '',
-);
 
 enum ShortCodePairingErrorKind {
   invalidInput,

@@ -91,6 +91,15 @@ class AuthInterceptor extends Interceptor {
       }
     }
 
+    final relayDeviceId = node.relayDeviceId?.trim();
+    if (node.isHoxi &&
+        relayDeviceId != null &&
+        relayDeviceId.isNotEmpty &&
+        baseUrl != null &&
+        supportsHoxiRelayDeviceHeader(baseUrl)) {
+      options.headers['X-Hoxi-Device-Id'] = relayDeviceId;
+    }
+
     final entrance = node.entrance;
     if (entrance != null && entrance.isNotEmpty) {
       options.headers['EntranceCode'] = base64Encode(utf8.encode(entrance));

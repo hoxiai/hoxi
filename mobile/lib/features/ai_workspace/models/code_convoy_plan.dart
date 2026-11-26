@@ -408,6 +408,7 @@ class CodeQueuedPromptItem {
   final NodeSkillSelection? skillSelection;
   final CodeInstructionOptions options;
   final DateTime createdAt;
+  final bool requiresManualRetry;
 
   const CodeQueuedPromptItem({
     required this.id,
@@ -419,7 +420,21 @@ class CodeQueuedPromptItem {
     this.skillSelection,
     this.options = const CodeInstructionOptions(),
     required this.createdAt,
+    this.requiresManualRetry = false,
   });
+
+  CodeQueuedPromptItem waitForManualRetry() => CodeQueuedPromptItem(
+    id: id,
+    sessionId: sessionId,
+    text: text,
+    imageDataUrl: imageDataUrl,
+    attachedFiles: attachedFiles,
+    localDocuments: localDocuments,
+    skillSelection: skillSelection,
+    options: options,
+    createdAt: createdAt,
+    requiresManualRetry: true,
+  );
 }
 
 class CodeSubagentItem {

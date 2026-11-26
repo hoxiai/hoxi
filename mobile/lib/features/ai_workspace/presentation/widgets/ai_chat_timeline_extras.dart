@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/l10n/l10n.dart';
 import '../../../../core/models/node_skill.dart';
 import '../../../../core/storage/storage_service.dart';
 import '../../../../core/theme/app_theme.dart';
@@ -121,7 +122,9 @@ class AiQueuedPromptsList extends StatelessWidget {
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        '排队待发',
+                        item.requiresManualRetry
+                            ? context.l10n.codeWsStageFailed
+                            : '排队待发',
                         style: TextStyle(
                           color: AppTheme.textSecondary,
                           fontSize: 11,
@@ -131,7 +134,9 @@ class AiQueuedPromptsList extends StatelessWidget {
                       _QueueActionChip(
                         key: ValueKey('queued_prompt_send_now_${item.id}'),
                         icon: Icons.arrow_upward_rounded,
-                        label: '立即发送',
+                        label: item.requiresManualRetry
+                            ? context.l10n.commonRetry
+                            : '立即发送',
                         color: AppTheme.primaryBlueText,
                         onTap: () => onSendNow(item.id),
                       ),

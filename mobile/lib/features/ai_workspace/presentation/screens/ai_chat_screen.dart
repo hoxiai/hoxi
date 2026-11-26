@@ -102,7 +102,7 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    unawaited(_workspaceController.onChatScreenExited());
+    unawaited(Future<void>.microtask(_workspaceController.onChatScreenExited));
     _draftTimer?.cancel();
     _convoyPollTimer?.cancel();
     final sessionId = _draftSessionId;

@@ -148,7 +148,7 @@ class _CodeHubScreenState extends ConsumerState<CodeHubScreen> {
       builder: (_) => const CodeSessionSheet(),
     );
     if (!mounted || session == null) return;
-    await _openSession(session);
+    await _openSession(session, selectIfNeeded: true);
   }
 
   Future<void> _openProjectTerminal() async {
@@ -171,10 +171,16 @@ class _CodeHubScreenState extends ConsumerState<CodeHubScreen> {
     );
   }
 
-  Future<void> _openSession(AiDevSession session) async {
-    unawaited(
-      ref.read(aiWorkspaceControllerProvider.notifier).selectSession(session),
-    );
+  Future<void> _openSession(
+    AiDevSession session, {
+    bool selectIfNeeded = false,
+  }) async {
+    final currentId = ref.read(aiWorkspaceControllerProvider).currentSession?.id;
+    if (!selectIfNeeded || currentId != session.id) {
+      unawaited(
+        ref.read(aiWorkspaceControllerProvider.notifier).selectSession(session),
+      );
+    }
     if (!mounted) return;
     await AppNavigationGuard.push(
       context,

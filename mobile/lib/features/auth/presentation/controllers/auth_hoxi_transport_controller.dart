@@ -5,6 +5,7 @@ extension _AuthHoxiTransportExt on AuthController {
     required ({String baseUrl, String entrance}) server,
     required String token,
     required String relayToken,
+    String relayDeviceId = '',
     String e2eeKey = '',
     required String relayUrl,
     List<String> peerUrls = const [],
@@ -18,6 +19,9 @@ extension _AuthHoxiTransportExt on AuthController {
     final effectiveRelayToken = relayToken.isNotEmpty
         ? relayToken
         : (existing?.relayToken ?? '');
+    final effectiveRelayDeviceId = relayDeviceId.trim().isNotEmpty
+        ? relayDeviceId.trim()
+        : (existing?.relayDeviceId ?? '');
     final effectiveE2eeKey = e2eeKey.trim().isNotEmpty
         ? e2eeKey.trim()
         : (existing?.e2eeKey ?? '');
@@ -109,6 +113,7 @@ extension _AuthHoxiTransportExt on AuthController {
             entrance: server.entrance,
             primaryToken: candidateToken,
             secondaryToken: token,
+            relayDeviceId: effectiveRelayDeviceId,
             e2eeKey: effectiveE2eeKey,
           );
         } catch (error) {
@@ -139,12 +144,14 @@ extension _AuthHoxiTransportExt on AuthController {
       bootstrap: bootstrap,
       baseTransports: mergedTransports,
       currentRelayToken: effectiveRelayToken,
+      currentRelayDeviceId: effectiveRelayDeviceId,
       currentE2eeKey: effectiveE2eeKey,
       savedServers: StorageService.getServerList(),
     );
     final trimmedCustom = customName.trim();
     final connection = ServerConnection(
       id: existing?.id ?? DateTime.now().millisecondsSinceEpoch.toString(),
+      accountScope: existing?.accountScope,
       name: trimmedCustom.isNotEmpty
           ? trimmedCustom
           : buildHoxiNodeName(bootstrap, bootstrapUrl),
@@ -152,13 +159,18 @@ extension _AuthHoxiTransportExt on AuthController {
       entrance: server.entrance,
       token: token,
       relayToken: merged.relayToken,
+      relayDeviceId: merged.relayDeviceId,
       e2eeKey: merged.e2eeKey,
       nodeType: 'hoxi',
       lastConnectedAt: DateTime.now(),
       transports: merged.transports,
     );
     final selected = await _resolveHoxiTransport(connection) ?? connection;
-    return _saveAndFinish(selected, preserveExistingName: trimmedCustom.isEmpty);
+    return _saveAndFinish(
+      selected,
+      preserveExistingName: trimmedCustom.isEmpty,
+      matchByIdOnly: existing != null,
+    );
   }
 
   Future<bool> _connectHoxi({
@@ -170,12 +182,14 @@ extension _AuthHoxiTransportExt on AuthController {
   }) async {
     final resolvedToken = resolveBasicOrRawToken(username, password, token);
     final existing = _findExistingHoxi(server.baseUrl, '');
+    final existingRelayDeviceId = existing?.relayDeviceId ?? '';
     final existingE2eeKey = existing?.e2eeKey ?? '';
     var resolvedUrl = server.baseUrl;
     var bootstrap = await _probeHoxiCandidate(
       serverUrl: resolvedUrl,
       entrance: server.entrance,
       token: resolvedToken,
+      relayDeviceId: existingRelayDeviceId,
       e2eeKey: existingE2eeKey,
       hasFallback: !isHoxiRelayUrl(resolvedUrl),
     );
@@ -229,6 +243,7 @@ extension _AuthHoxiTransportExt on AuthController {
             entrance: server.entrance,
             primaryToken: candidateRelayToken,
             secondaryToken: resolvedToken,
+            relayDeviceId: existingRelayDeviceId,
             e2eeKey: existingE2eeKey,
           );
         } catch (_) {
@@ -254,6 +269,7 @@ extension _AuthHoxiTransportExt on AuthController {
         ...?existing?.transports,
       ],
       currentRelayToken: existing?.relayToken ?? '',
+      currentRelayDeviceId: existing?.relayDeviceId ?? '',
       currentE2eeKey: existingE2eeKey,
       savedServers: StorageService.getServerList(),
     );
@@ -261,6 +277,7 @@ extension _AuthHoxiTransportExt on AuthController {
     return _saveAndFinish(
       ServerConnection(
         id: existing?.id ?? DateTime.now().millisecondsSinceEpoch.toString(),
+        accountScope: existing?.accountScope,
         name: trimmedCustom.isNotEmpty
             ? trimmedCustom
             : buildHoxiNodeName(bootstrap, resolvedUrl),
@@ -268,12 +285,14 @@ extension _AuthHoxiTransportExt on AuthController {
         entrance: server.entrance,
         token: resolvedToken,
         relayToken: merged.relayToken,
+        relayDeviceId: merged.relayDeviceId,
         e2eeKey: merged.e2eeKey,
         nodeType: 'hoxi',
         lastConnectedAt: DateTime.now(),
         transports: merged.transports,
       ),
       preserveExistingName: trimmedCustom.isEmpty,
+      matchByIdOnly: existing != null,
     );
   }
 
@@ -324,6 +343,7 @@ extension _AuthHoxiTransportExt on AuthController {
     required String entrance,
     required String primaryToken,
     required String secondaryToken,
+    String relayDeviceId = '',
     String e2eeKey = '',
   }) async {
     Object? credentialError;
@@ -339,6 +359,7 @@ extension _AuthHoxiTransportExt on AuthController {
           serverUrl: serverUrl,
           entrance: entrance,
           token: candidateToken,
+          relayDeviceId: relayDeviceId,
           e2eeKey: e2eeKey,
           hasFallback: true,
           isRelay: true,
@@ -358,6 +379,7 @@ extension _AuthHoxiTransportExt on AuthController {
     required String serverUrl,
     required String entrance,
     required String token,
+    String relayDeviceId = '',
     String e2eeKey = '',
     required bool hasFallback,
     bool isRelay = false,
@@ -373,6 +395,9 @@ extension _AuthHoxiTransportExt on AuthController {
             serverUrl: serverUrl,
             entrance: entrance,
             token: token,
+            relayDeviceId: (isRelay || isHoxiRelayUrl(serverUrl))
+                ? relayDeviceId
+                : '',
             e2eeKey: e2eeKey,
           )
           .timeout(timeout);
@@ -414,6 +439,7 @@ extension _AuthHoxiTransportExt on AuthController {
               serverUrl: url,
               entrance: conn.entrance,
               token: candidateToken,
+              relayDeviceId: isRelay ? conn.relayDeviceId : '',
               e2eeKey: conn.e2eeKey,
             )
             .timeout(timeout);
@@ -515,8 +541,9 @@ extension _AuthHoxiTransportExt on AuthController {
                 ? inheritedToken
                 : conn.relayToken,
             transports: NodeTransport.ordered([
-              ...transports,
               NodeTransport(url: fallback.url, kind: 'relay'),
+              for (final t in transports)
+                if (!isRetiredHoxiRelayUrl(t.url)) t,
             ]),
           );
         }

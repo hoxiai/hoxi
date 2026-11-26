@@ -155,7 +155,9 @@ extension _HoxiSessionTurnParsing on HoxiWorkspaceAdapter {
   Future<CodeSessionHistory> _loadSessionHistory(int sessionId, {int page = 1, int limit = 20}) async {
     var ref = await _resolveSessionRef(sessionId);
     final statusMap = await _fetchSessionStatuses(ref.directory);
-    final rawBusy = isBusySessionStatusValue(statusMap[ref.hoxiId]);
+    final rawBusy = isBusySessionStatusValue(
+      statusMap == null ? _knownStageBySessionId[sessionId] : statusMap[ref.hoxiId],
+    );
     if (rawBusy) _startedUntilBySessionId.remove(sessionId);
     final isBusy = (rawBusy || _isRecentlyStartedBusy(sessionId)) && !_isSuppressedBusy(sessionId);
     final parsed = await _loadParsedSessionTurns(sessionId, ref, isBusy: isBusy);
@@ -492,7 +494,7 @@ extension _HoxiSessionTurnParsing on HoxiWorkspaceAdapter {
     return (input: input, output: output, cachedInput: cachedInput, reasoning: reasoning, total: total);
   }
 
-  Future<Map<String, String>> _fetchSessionStatuses(String directory) {
+  Future<Map<String, String>?> _fetchSessionStatuses(String directory) {
     final existing = _inflightSessionStatuses[directory];
     if (existing != null) return existing;
     final future = _fetchSessionStatusesInternal(directory);
@@ -502,21 +504,27 @@ extension _HoxiSessionTurnParsing on HoxiWorkspaceAdapter {
     });
   }
 
-  Future<Map<String, String>> _fetchSessionStatusesInternal(String directory) async {
+  Future<Map<String, String>?> _fetchSessionStatusesInternal(String directory) async {
     try {
       final res = await _apiClient.get<Map<String, dynamic>>('/api/hoxi/sessions/status', queryParameters: {'directory': directory});
+      final data = res.data;
+      if (data == null) return null;
       final out = <String, String>{};
-      res.data?.forEach((key, value) {
-        if (value is Map) {
-          final raw = value['type'] ?? value['status'] ?? (value['busy'] == true ? 'busy' : 'idle');
-          out[key] = raw.toString().toLowerCase().trim();
-        } else if (value is String) {
-          out[key] = value.toLowerCase().trim();
-        }
-      });
+      for (final entry in data.entries) {
+        final value = entry.value;
+        final raw = value is Map
+            ? value['type'] ?? value['status'] ?? switch (value['busy']) {
+                true => 'busy', false => 'idle', _ => null,
+              }
+            : value;
+        if (raw is! String) return null;
+        final status = raw.toLowerCase().trim();
+        if (status != 'idle' && !isBusySessionStatusValue(status)) return null;
+        out[entry.key] = status;
+      }
       return out;
     } catch (_) {
-      return const {};
+      return null;
     }
   }
 
@@ -632,7 +640,7 @@ extension _HoxiSessionTurnParsing on HoxiWorkspaceAdapter {
             _apiClient.get<dynamic>('/api/hoxi/sessions', queryParameters: {'directory': proj.workDir}),
             _fetchSessionStatuses(proj.workDir),
           ]);
-          return (proj: proj, res: results[0] as dynamic, statusMap: results[1] as Map<String, String>);
+          return (proj: proj, res: results[0] as dynamic, statusMap: results[1] as Map<String, String>?);
         } catch (_) {
           return null;
         }
@@ -642,8 +650,8 @@ extension _HoxiSessionTurnParsing on HoxiWorkspaceAdapter {
     final rawItems = <({CodeProject proj, Map<String, dynamic> map, String hoxiId, String parentHoxiId, int intId, String workDir, DateTime? createdAt, DateTime? updatedAt})>[];
     final hotWorktreeDirs = <String>{};
 
-    for (final item in projectResults.whereType<({CodeProject proj, dynamic res, Map<String, String> statusMap})>()) {
-      statusByDir[item.proj.workDir] = item.statusMap;
+    for (final item in projectResults.whereType<({CodeProject proj, dynamic res, Map<String, String>? statusMap})>()) {
+      if (item.statusMap case final statusMap?) statusByDir[item.proj.workDir] = statusMap;
       final list = item.res.data is List ? (item.res.data as List) : const [];
       var projectWorktreeRank = 0;
       for (final raw in list.whereType<Map>()) {
@@ -676,7 +684,7 @@ extension _HoxiSessionTurnParsing on HoxiWorkspaceAdapter {
     if (hotWorktreeDirs.isNotEmpty) {
       final extraEntries = await Future.wait(hotWorktreeDirs.map((dir) async => MapEntry(dir, await _fetchSessionStatuses(dir))));
       for (final entry in extraEntries) {
-        statusByDir[entry.key] = entry.value;
+        if (entry.value case final statusMap?) statusByDir[entry.key] = statusMap;
       }
     }
 
@@ -694,7 +702,9 @@ extension _HoxiSessionTurnParsing on HoxiWorkspaceAdapter {
       final modelId = extractSessionModelFromMap(map, runtime: runtime);
       final diffStats = extractSessionDiffStats(map), rawEffort = (map['reasoningEffort'] ?? '').toString().trim();
       final rawStatus = statusByDir[effectiveDir]?[hoxiId] ?? statusByDir[proj.workDir]?[hoxiId] ?? (map['status'] ?? (map['busy'] == true ? 'busy' : '')).toString();
-      final rawBusy = isBusySessionStatusValue(rawStatus);
+      final rawBusy = isBusySessionStatusValue(rawStatus) ||
+          (!statusByDir.containsKey(effectiveDir) &&
+              isBusySessionStatusValue(_knownStageBySessionId[intId]));
       if (rawBusy) _startedUntilBySessionId.remove(intId);
       final isBusy = (rawBusy || _isRecentlyStartedBusy(intId)) && !_isSuppressedBusy(intId);
       final prev = _sessionsById[intId];

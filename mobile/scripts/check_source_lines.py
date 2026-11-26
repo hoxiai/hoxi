@@ -10,6 +10,7 @@ violations = []
 for folder in [
     'lib',
     'test',
+    'tool',
     'scripts',
     'ios/Runner',
     'macos/Runner',

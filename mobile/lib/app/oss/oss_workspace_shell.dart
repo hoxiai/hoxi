@@ -127,16 +127,22 @@ class _OssWorkspaceShellScreenState
       builder: (_) => const CodeSessionSheet(),
     );
     if (!mounted || session == null) return;
-    await ref
-        .read(aiWorkspaceControllerProvider.notifier)
-        .selectSession(session);
-    if (!mounted) return;
+    final currentId = ref.read(aiWorkspaceControllerProvider).currentSession?.id;
+    if (currentId != session.id) {
+      unawaited(
+        ref.read(aiWorkspaceControllerProvider.notifier).selectSession(session),
+      );
+    }
     await AppNavigationGuard.push<void>(
       context,
       MaterialPageRoute<void>(builder: (_) => const AiChatScreen()),
     );
     if (mounted) {
-      unawaited(ref.read(aiWorkspaceControllerProvider.notifier).loadWorkspace());
+      unawaited(
+        ref
+            .read(aiWorkspaceControllerProvider.notifier)
+            .refreshSessionsAndWorkspace(),
+      );
     }
   }
 

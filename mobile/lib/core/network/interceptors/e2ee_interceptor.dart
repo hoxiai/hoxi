@@ -150,8 +150,31 @@ class E2eeInterceptor extends Interceptor {
         } catch (_) {
           // Leave original error response intact if unauthenticated 401/502 came from proxy.
         }
+      } else if (_looksLikeStrippedE2eeHeaderError(err, resp)) {
+        resp.data = const <String, dynamic>{
+          'error': '中继服务器未透传端到端加密请求头 (X-Hoxi-E2EE)，请升级中继服务后重试',
+        };
       }
     }
     super.onError(err, handler);
+  }
+
+  static bool _looksLikeStrippedE2eeHeaderError(
+    DioException err,
+    Response<dynamic> resp,
+  ) {
+    if ((resp.statusCode ?? 0) != 400) return false;
+    final sentBody = err.requestOptions.data;
+    if (sentBody is! Map || sentBody['_hoxi_e2ee'] != 1) return false;
+    final raw = resp.data;
+    final msg = (raw is Map ? (raw['error'] ?? raw['msg'] ?? raw['message']) : raw)
+        ?.toString()
+        .toLowerCase() ??
+        '';
+    return msg.contains('x-hoxi-e2ee') ||
+        msg.contains('prompt text is required') ||
+        msg.contains('attachment data') ||
+        msg.contains('empty file') ||
+        msg.contains('dataurl');
   }
 }

@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 
 import 'api_exception.dart';
@@ -151,7 +154,44 @@ class ExternalApiClient {
       if (stream == null) throw ApiException(msg: '未收到 SSE 响应流');
       return stream;
     } on DioException catch (error) {
+      final resp = error.response;
+      if (resp != null && resp.data is ResponseBody) {
+        resp.data = await _readErrorResponseBody(resp.data as ResponseBody);
+      }
       throw ApiException.fromDioException(error);
     }
+  }
+
+  static const int _maxErrorBodyBytes = 16 * 1024;
+
+  Future<Object?> _readErrorResponseBody(ResponseBody body) async {
+    try {
+      final collected = <int>[];
+      await for (final chunk in body.stream.timeout(
+        const Duration(seconds: 2),
+      )) {
+        final remaining = _maxErrorBodyBytes - collected.length;
+        if (remaining <= 0) break;
+        if (chunk.length <= remaining) {
+          collected.addAll(chunk);
+        } else {
+          collected.addAll(chunk.sublist(0, remaining));
+          break;
+        }
+      }
+      final raw = utf8.decode(collected, allowMalformed: true).trim();
+      if (raw.isEmpty) return body;
+      if (raw.startsWith('{')) {
+        try {
+          final parsed = jsonDecode(raw);
+          if (parsed is Map) return parsed;
+        } catch (_) {}
+      }
+      final lower = raw.toLowerCase();
+      if (!lower.startsWith('<!doctype') && !lower.startsWith('<html')) {
+        return <String, dynamic>{'error': raw};
+      }
+    } catch (_) {}
+    return body;
   }
 }

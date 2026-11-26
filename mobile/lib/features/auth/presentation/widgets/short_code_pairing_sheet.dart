@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../../core/l10n/l10n.dart';
+import '../../../../core/network/network_providers.dart';
 import '../../../../core/network/short_code_pairing_client.dart';
 import '../../models/node_link_kind.dart';
 import '../qr_payload_connector.dart';
@@ -47,7 +48,6 @@ class _ShortCodePairingSheet extends StatefulWidget {
 class _ShortCodePairingSheetState extends State<_ShortCodePairingSheet> {
   final TextEditingController _relayController = TextEditingController();
   final TextEditingController _codeController = TextEditingController();
-  final ShortCodePairingClient _client = ShortCodePairingClient();
   final ShortCodeClaim _claim = ShortCodeClaim();
 
   bool _submitting = false;
@@ -63,8 +63,7 @@ class _ShortCodePairingSheetState extends State<_ShortCodePairingSheet> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final saved = (prefs.getString(pairingRelayUrlPrefsKey) ?? '').trim();
-      final fallback = defaultPairingRelayUrl.trim();
-      final initial = saved.isNotEmpty ? saved : fallback;
+      final initial = resolveInitialPairingRelayUrl(saved);
       if (initial.isNotEmpty && mounted && _relayController.text.isEmpty) {
         _relayController.text = initial;
       }
@@ -125,14 +124,16 @@ class _ShortCodePairingSheetState extends State<_ShortCodePairingSheet> {
     });
 
     try {
-      final redeemed = await _client.redeem(
-        relayOrigin: relayUrl,
+      final canonicalOrigin = parseShortCodeRelayOrigin(relayUrl).toString();
+      final client = widget.parentRef.read(shortCodePairingClientProvider);
+      final redeemed = await client.redeem(
+        relayOrigin: canonicalOrigin,
         code: pin,
         claim: _claim,
       );
       try {
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString(pairingRelayUrlPrefsKey, relayUrl);
+        await prefs.setString(pairingRelayUrlPrefsKey, canonicalOrigin);
       } catch (_) {}
 
       if (!mounted) return;
@@ -199,7 +200,7 @@ class _ShortCodePairingSheetState extends State<_ShortCodePairingSheet> {
             autocorrect: false,
             decoration: InputDecoration(
               labelText: isZh ? '配对中继地址' : 'Pairing relay URL',
-              hintText: 'https://link.example.com',
+              hintText: 'https://relay.example.com',
               border: const OutlineInputBorder(),
               isDense: true,
             ),

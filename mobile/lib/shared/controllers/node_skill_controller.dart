@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/network/network_providers.dart';
+import '../../core/storage/node_request_guard.dart';
 import '../services/node_skill_repository.dart';
 import '../../core/models/node_skill.dart';
 
@@ -12,7 +13,8 @@ class NodeSkillState {
   final NodeSkillCatalog catalog;
   final bool isLoading;
 
-  /// 上一次请求的节点类型 + 目录 + 会话，用来避免每次 build 重复拉取。
+  /// 上一次请求的节点代次 + 节点类型 + 目录 + 会话，避免跨节点命中缓存或迟到响应互串。
+  final int nodeGeneration;
   final bool requestedAsHoxi;
   final String requestedDirectory;
   final String requestedSessionId;
@@ -20,6 +22,7 @@ class NodeSkillState {
   const NodeSkillState({
     this.catalog = const NodeSkillCatalog.idle(),
     this.isLoading = false,
+    this.nodeGeneration = -1,
     this.requestedAsHoxi = false,
     this.requestedDirectory = '',
     this.requestedSessionId = '',
@@ -28,6 +31,7 @@ class NodeSkillState {
   NodeSkillState copyWith({
     NodeSkillCatalog? catalog,
     bool? isLoading,
+    int? nodeGeneration,
     bool? requestedAsHoxi,
     String? requestedDirectory,
     String? requestedSessionId,
@@ -35,6 +39,7 @@ class NodeSkillState {
     return NodeSkillState(
       catalog: catalog ?? this.catalog,
       isLoading: isLoading ?? this.isLoading,
+      nodeGeneration: nodeGeneration ?? this.nodeGeneration,
       requestedAsHoxi: requestedAsHoxi ?? this.requestedAsHoxi,
       requestedDirectory: requestedDirectory ?? this.requestedDirectory,
       requestedSessionId: requestedSessionId ?? this.requestedSessionId,
@@ -42,10 +47,12 @@ class NodeSkillState {
   }
 
   bool matches({
+    required int currentGeneration,
     required bool isHoxi,
     required String directory,
     required String sessionId,
   }) =>
+      nodeGeneration == currentGeneration &&
       requestedAsHoxi == isHoxi &&
       requestedDirectory == directory.trim() &&
       requestedSessionId == sessionId;
@@ -77,30 +84,38 @@ class NodeSkillController extends Notifier<NodeSkillState> {
     required bool isHoxi,
     String sessionId = '',
   }) async {
+    final nodeRequest = NodeRequestGuard(_repository);
+    if (!ref.mounted || !nodeRequest.isCurrent(_repository)) {
+      return;
+    }
+    final generation = nodeRequest.node.generation;
     if (state.matches(
+      currentGeneration: generation,
       isHoxi: isHoxi,
       directory: directory,
       sessionId: sessionId,
     )) {
       return;
     }
-    final request = NodeSkillState(
+    final preservePrevious = isHoxi && state.nodeGeneration == generation;
+    state = NodeSkillState(
       isLoading: isHoxi,
+      nodeGeneration: generation,
       requestedAsHoxi: isHoxi,
       requestedDirectory: directory.trim(),
       requestedSessionId: sessionId,
       catalog: isHoxi
-          ? state.catalog
+          ? (preservePrevious ? state.catalog : const NodeSkillCatalog.idle())
           : NodeSkillCatalog.unavailable('Skill 目录只在 Hoxi 桌面端提供'),
     );
-    state = request;
     if (!isHoxi) return;
-    final catalog = await _repository.list(
+    final catalog = await nodeRequest.repository.list(
       directory: directory,
       sessionId: sessionId,
     );
-    if (!ref.mounted) return;
+    if (!ref.mounted || !nodeRequest.isCurrent(_repository)) return;
     if (!state.matches(
+      currentGeneration: generation,
       isHoxi: isHoxi,
       directory: directory,
       sessionId: sessionId,

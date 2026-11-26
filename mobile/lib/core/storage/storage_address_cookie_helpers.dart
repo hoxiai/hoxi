@@ -171,6 +171,9 @@ ServerConnection buildSavedServerConnection(
     relayToken: incoming.relayToken.isNotEmpty
         ? incoming.relayToken
         : previous.relayToken,
+    relayDeviceId: incoming.relayDeviceId.isNotEmpty
+        ? incoming.relayDeviceId
+        : previous.relayDeviceId,
     e2eeKey: incoming.e2eeKey.isNotEmpty
         ? incoming.e2eeKey
         : previous.e2eeKey,
@@ -178,9 +181,86 @@ ServerConnection buildSavedServerConnection(
     lastConnectedAt: incoming.lastConnectedAt,
     transports: NodeTransport.ordered([
       ...incoming.transports,
-      ...previous.transports,
+      for (final t in previous.transports)
+        if (!isRetiredHoxiRelayUrl(t.url)) t,
     ]),
   );
+}
+
+/// Migrates or prunes retired default relay URLs from a persisted Hoxi server
+/// list JSON entry in place.
+///
+/// - If the entry already carries a newer non-retired relay transport, retired
+///   relays are dropped without replacing them.
+/// - Otherwise, retired tunnel proxy URLs (`/api/tunnel/.../proxy`) are
+///   rewritten onto [defaultHoxiRelayControllerUrl], and retired bare origins
+///   are pruned in favor of remaining transports.
+({bool changed, String previousUrl, String nextUrl})
+migrateRetiredHoxiServerEntry(Map<String, dynamic> entry) {
+  final rawUrl = (entry['url'] ?? '').toString().trim();
+  final nodeType = (entry['nodeType'] ?? '').toString().trim().toLowerCase();
+  if (nodeType != 'hoxi' || rawUrl.isEmpty) {
+    return (changed: false, previousUrl: rawUrl, nextUrl: rawUrl);
+  }
+  final rawTransports = entry['transports'];
+  final parsedTransports = rawTransports is List
+      ? rawTransports
+            .map(NodeTransport.fromJson)
+            .whereType<NodeTransport>()
+            .toList()
+      : <NodeTransport>[];
+  final urlRetired = isRetiredHoxiRelayUrl(rawUrl);
+  final hasRetiredTransport = parsedTransports.any(
+    (t) => isRetiredHoxiRelayUrl(t.url),
+  );
+  if (!urlRetired && !hasRetiredTransport) {
+    return (changed: false, previousUrl: rawUrl, nextUrl: rawUrl);
+  }
+
+  final nonRetired = parsedTransports
+      .where((t) => !isRetiredHoxiRelayUrl(t.url))
+      .toList();
+  final hasFreshRelay = nonRetired.any((t) => t.isRelay);
+  final rebuilt = <NodeTransport>[...nonRetired];
+  if (!hasFreshRelay) {
+    for (final t in parsedTransports) {
+      if (!isRetiredHoxiRelayUrl(t.url)) continue;
+      final migrated = migrateRetiredHoxiRelayUrl(t.url);
+      if (migrated != null && migrated.isNotEmpty) {
+        rebuilt.add(NodeTransport(url: migrated, kind: 'relay'));
+      }
+    }
+  }
+  var ordered = NodeTransport.ordered(rebuilt);
+
+  var nextUrl = rawUrl;
+  if (urlRetired) {
+    final preferredRelay = ordered.where((t) => t.isRelay).firstOrNull;
+    if (preferredRelay != null) {
+      nextUrl = preferredRelay.url;
+    } else {
+      final migratedUrl = migrateRetiredHoxiRelayUrl(rawUrl);
+      if (migratedUrl != null && migratedUrl.isNotEmpty) {
+        nextUrl = migratedUrl;
+        if (ordered.isNotEmpty) {
+          ordered = NodeTransport.ordered([
+            ...ordered,
+            NodeTransport(url: migratedUrl, kind: 'relay'),
+          ]);
+        }
+      } else if (ordered.isNotEmpty) {
+        nextUrl = ordered.first.url;
+      }
+    }
+  }
+
+  entry['url'] = nextUrl;
+  if (ordered.isNotEmpty) {
+    entry['transports'] = ordered.map((t) => t.toJson()).toList();
+  } else {
+    entry.remove('transports');
+  }
+  return (changed: true, previousUrl: rawUrl, nextUrl: nextUrl);
 }
 
 /// Preserves both the previous and newly selected transport addresses when
@@ -195,16 +275,17 @@ ServerConnection buildAddressSwitchedServerConnection(
   if (base.isHoxi && trimmedNext.isNotEmpty) {
     if (updatedTransports.isNotEmpty || base.url != trimmedNext) {
       updatedTransports = NodeTransport.ordered([
-        ...updatedTransports,
-        if (base.url.trim().isNotEmpty)
-          NodeTransport(
-            url: base.url.trim(),
-            kind: isHoxiRelayUrl(base.url) ? 'relay' : 'lan',
-          ),
         NodeTransport(
           url: trimmedNext,
           kind: isHoxiRelayUrl(trimmedNext) ? 'relay' : 'lan',
         ),
+        for (final t in updatedTransports)
+          if (!isRetiredHoxiRelayUrl(t.url)) t,
+        if (base.url.trim().isNotEmpty && !isRetiredHoxiRelayUrl(base.url))
+          NodeTransport(
+            url: base.url.trim(),
+            kind: isHoxiRelayUrl(base.url) ? 'relay' : 'lan',
+          ),
       ]);
     }
   }

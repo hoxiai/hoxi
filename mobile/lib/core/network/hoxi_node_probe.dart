@@ -97,6 +97,7 @@ Options buildConnectionOptions({
 Options buildHoxiProbeOptions({
   required String entrance,
   String token = '',
+  String relayDeviceId = '',
   String e2eeKey = '',
   String kexPublicKey = '',
   Duration? connectTimeout,
@@ -104,6 +105,7 @@ Options buildHoxiProbeOptions({
 }) {
   final normalizedEntrance = entrance.trim();
   final trimmedToken = token.trim();
+  final trimmedDeviceId = relayDeviceId.trim();
   final trimmedE2ee = e2eeKey.trim();
   final trimmedKexPub = kexPublicKey.trim();
   return Options(
@@ -125,6 +127,7 @@ Options buildHoxiProbeOptions({
           'Authorization': 'Bearer $trimmedToken',
         },
       },
+      if (trimmedDeviceId.isNotEmpty) 'X-Hoxi-Device-Id': trimmedDeviceId,
       if (trimmedKexPub.isNotEmpty) 'X-Hoxi-KEX-Pub': trimmedKexPub,
       if (normalizedEntrance.isNotEmpty)
         'EntranceCode': base64Encode(utf8.encode(normalizedEntrance)),
@@ -137,6 +140,7 @@ Options buildHoxiProbeOptions({
 ({
   String relayUrl,
   String relayToken,
+  String relayDeviceId,
   String e2eeKey,
   int? nodeId,
   List<String> peerUrls,
@@ -149,6 +153,7 @@ extractHoxiBootstrapRelay(
     return (
       relayUrl: '',
       relayToken: '',
+      relayDeviceId: '',
       e2eeKey: '',
       nodeId: null,
       peerUrls: const [],
@@ -232,6 +237,12 @@ extractHoxiBootstrapRelay(
     tunnel?['accessToken'],
   ]);
 
+  final relayDeviceId = firstNonEmpty([
+    payload['relayDeviceId'],
+    tunnel?['relayDeviceId'],
+    tunnel?['deviceId'],
+  ]);
+
   final e2eeKey = firstNonEmpty([
     payload['e2eeKey'],
     tunnel?['e2eeKey'],
@@ -264,6 +275,7 @@ extractHoxiBootstrapRelay(
   return (
     relayUrl: resolvedRelay,
     relayToken: relayToken,
+    relayDeviceId: relayDeviceId,
     e2eeKey: e2eeKey,
     nodeId: nodeId,
     peerUrls: peerUrls,

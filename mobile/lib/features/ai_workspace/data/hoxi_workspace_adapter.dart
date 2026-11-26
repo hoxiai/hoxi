@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 
 import '../../../core/network/api_client.dart';
+import '../../../core/network/api_exception.dart';
 import '../models/ai_dev_session.dart';
 import '../models/ai_session_state_info.dart';
 import '../models/chat_message.dart';
@@ -49,7 +50,7 @@ class HoxiWorkspaceAdapter {
   final Map<int, HoxiSessionDiffScope> _latestTurnDiffScopesBySessionId = {};
   final Map<(int?, bool), Future<List<AiDevSession>>> _inflightSessions = {};
   final Map<int, Future<_HoxiParsedSessionTurns>> _inflightParsedTurns = {};
-  final Map<String, Future<Map<String, String>>> _inflightSessionStatuses = {};
+  final Map<String, Future<Map<String, String>?>> _inflightSessionStatuses = {};
   final Map<int, DateTime> _stoppedUntilBySessionId = {};
   final Map<int, DateTime> _startedUntilBySessionId = {};
   final Map<int, String> _knownStageBySessionId = {};
@@ -281,7 +282,9 @@ class HoxiWorkspaceAdapter {
     ]);
     final approvals = parallelResults[0] as List<AiApproval>;
     final pendingApproval = approvals.where((a) => a.sessionId == sessionId).firstOrNull;
-    final statusMap = parallelResults[1] as Map<String, String>;
+    final statusMap = parallelResults[1] as Map<String, String>?;
+    // Only a successful status response can establish that a session is idle.
+    if (statusMap == null) throw ApiException(msg: 'Session status unavailable');
     final rawBusy = isBusySessionStatusValue(statusMap[ref.hoxiId]);
     if (rawBusy) _startedUntilBySessionId.remove(sessionId);
     final isBusy = (rawBusy || _isRecentlyStartedBusy(sessionId)) && !_isSuppressedBusy(sessionId);

@@ -4,6 +4,7 @@ import '../storage/active_node_provider.dart';
 import '../storage/storage_service.dart';
 import 'api_client.dart';
 import 'external_api_client.dart';
+import 'short_code_pairing_client.dart';
 
 /// 节点与外部网关网络入口的唯一 provider 注入点。feature 层一律 `ref.watch` 这里，
 /// 不要在仓库或控制器里直接 `ApiClient()` / `ExternalApiClient()`。
@@ -17,4 +18,9 @@ final nodeApiClientProvider = Provider<ApiClient>((ref) {
 /// 第三方（模型网关 / Hoxi 网关）：调用方显式传完整 URL 与密钥，不落节点凭据。
 final externalApiClientProvider = Provider<ExternalApiClient>(
   (_) => ExternalApiClient(),
+);
+
+/// 6 位一次性短码零知识配对客户端：统一经 provider 注入以便测试替换与边界收口。
+final shortCodePairingClientProvider = Provider<ShortCodePairingClient>(
+  (_) => ShortCodePairingClient(),
 );

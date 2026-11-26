@@ -17,12 +17,13 @@ mixin _AiWorkspaceTurnActions
     List<LocalPickedDocument> localDocuments = const [],
     NodeSkillSelection? skillSelection,
     bool bypassQueue = false,
+    bool useComposerSkill = true,
   }) async {
     final nodeRequest = NodeRequestGuard(_repo);
     final rawText = text.trim();
     final hasImage = imageDataUrl != null && imageDataUrl.trim().isNotEmpty;
     final hasDocuments = localDocuments.isNotEmpty;
-    final effectiveSkill = skillSelection ?? state.selectedSkill;
+    final effectiveSkill = skillSelection ?? (useComposerSkill ? state.selectedSkill : null);
     final fileRefs = attachedFiles
         .map((f) => f.trim())
         .where((f) => f.isNotEmpty && !rawText.contains('@$f'))
@@ -57,8 +58,15 @@ mixin _AiWorkspaceTurnActions
     ].join('\n');
     final userMessage = ChatMessage(
       id: 'local-${now.microsecondsSinceEpoch}',
-      text: bubbleText.isNotEmpty ? bubbleText : '[@Skill: ${effectiveSkill?.name ?? ""}]',
-      isUser: true, timestamp: now,
+      text: bubbleText.isNotEmpty
+          ? bubbleText
+          : (hasImage
+                ? ''
+                : (effectiveSkill != null
+                      ? '[@Skill: ${effectiveSkill.name}]'
+                      : '')),
+      isUser: true,
+      timestamp: now,
       imageDataUrl: hasImage ? imageDataUrl.trim() : null,
     );
     final agentLabel = [
@@ -88,7 +96,7 @@ mixin _AiWorkspaceTurnActions
       tasks: syncWorkspaceTasksWithSession(state.tasks, runningSession, stageOverride: 'running'),
       turnChangedFiles: const [], turnChangedFileStats: const [],
       turnDiffAdditions: 0, turnDiffDeletions: 0, todos: const [],
-      clearError: true, clearSelectedSkill: true,
+      clearError: true, clearSelectedSkill: useComposerSkill,
       chatHistory: [
         ...state.chatHistory.where((m) => !m.id.startsWith('stream-')),
         userMessage, streamPlaceholder,
@@ -222,8 +230,16 @@ mixin _AiWorkspaceTurnActions
             stageOverride: revertedStage,
           ),
           chatHistory: state.chatHistory
-              .where((m) => m.id != 'stream-current' || m.text.trim().isNotEmpty)
+              .where(
+                (m) =>
+                    m.id != userMessage.id &&
+                    (m.id != 'stream-current' || m.text.trim().isNotEmpty),
+              )
               .toList(),
+          selectedSkill:
+              useComposerSkill && skillSelection == null && state.selectedSkill == null
+              ? effectiveSkill
+              : state.selectedSkill,
           errorMessage: '指令发送失败：$error',
         );
         _notifyTaskCenterSession(revertedSession, currentStage: revertedStage);

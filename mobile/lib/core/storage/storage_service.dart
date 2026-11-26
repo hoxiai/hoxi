@@ -28,6 +28,7 @@ class StorageService {
   static final Map<String, String> _serverEntrances = {};
   static List<ServerConnection>? _cachedServerList;
   static String? _activeServerToken;
+  static String? _activeServerRelayDeviceId;
   static String? _activeServerE2eeKey;
   static String? _activeServerCookie;
   static String? _activeServerEntrance;
@@ -41,6 +42,7 @@ class StorageService {
     url: _activeServerUrl,
     nodeType: _activeServerNodeType,
     token: _activeServerToken,
+    relayDeviceId: _activeServerRelayDeviceId,
     e2eeKey: _activeServerE2eeKey,
     entrance: _activeServerEntrance,
     cookie: _activeServerCookie,
@@ -61,6 +63,7 @@ class StorageService {
     }
     final previous = activeNodeContext;
     final activeToken = server.tokenForUrl(server.url);
+    final activeRelayDeviceId = server.relayDeviceId.trim();
     final activeE2ee = server.e2eeKey.trim();
     try {
       await _secureStorage.write(key: _secureActiveToken, value: activeToken);
@@ -70,6 +73,11 @@ class StorageService {
       if (!await _prefs.setString(_keyActiveServerUrl, server.url) ||
           !await _prefs.setString(_keyActiveServerNodeType, server.nodeType)) {
         throw StateError('无法保存节点连接');
+      }
+      if (activeRelayDeviceId.isEmpty) {
+        await _prefs.remove(_keyActiveServerRelayDeviceId);
+      } else {
+        await _prefs.setString(_keyActiveServerRelayDeviceId, activeRelayDeviceId);
       }
     } catch (_) {
       await _secureStorage.write(key: _secureActiveToken, value: previous.token);
@@ -81,12 +89,18 @@ class StorageService {
       } else {
         await _prefs.setString(_keyActiveServerUrl, previous.url!);
       }
+      if (previous.relayDeviceId == null || previous.relayDeviceId!.isEmpty) {
+        await _prefs.remove(_keyActiveServerRelayDeviceId);
+      } else {
+        await _prefs.setString(_keyActiveServerRelayDeviceId, previous.relayDeviceId!);
+      }
       await _prefs.setString(_keyActiveServerNodeType, previous.nodeType);
       rethrow;
     }
     _activeServerUrl = server.url;
     _activeServerNodeType = server.nodeType;
     _activeServerToken = activeToken;
+    _activeServerRelayDeviceId = activeRelayDeviceId.isEmpty ? null : activeRelayDeviceId;
     _activeServerE2eeKey = activeE2ee.isEmpty ? null : activeE2ee;
     _activeServerEntrance = normalizeServerEntrance(server.entrance);
     _activeServerCookie = null;
@@ -104,6 +118,7 @@ class StorageService {
       name: '当前设备',
       url: url,
       token: node.token ?? '',
+      relayDeviceId: node.relayDeviceId ?? '',
       e2eeKey: node.e2eeKey ?? '',
       entrance: entrance ?? node.entrance ?? '',
       nodeType: node.nodeType,
@@ -117,6 +132,7 @@ class StorageService {
   static const String _keyServerList = 'server_list';
   static const String _keyActiveServerUrl = 'active_server_url';
   static const String _keyActiveServerNodeType = 'active_server_node_type';
+  static const String _keyActiveServerRelayDeviceId = 'active_server_relay_device_id';
   static const String _keyActiveServerToken = 'active_server_token';
   static const String _keyActiveServerCookie = 'active_server_cookie';
   static const String _secureActiveToken = 'secure_active_server_token';
@@ -136,6 +152,8 @@ class StorageService {
     _serverEntrances.clear();
     _cachedServerList = null;
     _activeServerUrl = _prefs.getString(_keyActiveServerUrl);
+    final savedDeviceId = (_prefs.getString(_keyActiveServerRelayDeviceId) ?? '').trim();
+    _activeServerRelayDeviceId = savedDeviceId.isEmpty ? null : savedDeviceId;
     await _migrateActiveCredentials();
     final activeCreds = await Future.wait([
       _secureStorage.read(key: _secureActiveToken),
@@ -150,6 +168,13 @@ class StorageService {
     _activeServerNodeType = _prefs.getString(_keyActiveServerNodeType) ?? 'gopanel';
     await _migrateActiveServerAddress();
     await _loadServerCredentials();
+    if (_activeServerNodeType == 'hoxi' && _activeServerUrl != null && isRetiredHoxiRelayUrl(_activeServerUrl!)) {
+      final migratedActive = migrateRetiredHoxiRelayUrl(_activeServerUrl!);
+      if (migratedActive != null && migratedActive.isNotEmpty) {
+        await _prefs.setString(_keyActiveServerUrl, migratedActive);
+        _activeServerUrl = migratedActive;
+      }
+    }
     await _restoreActiveServerEntrance();
     nodeGeneration.value++;
   }
@@ -353,6 +378,7 @@ class StorageService {
       entrance: server.entrance,
       token: server.token,
       relayToken: server.relayToken.isNotEmpty ? server.relayToken : previous.relayToken,
+      relayDeviceId: server.relayDeviceId.isNotEmpty ? server.relayDeviceId : previous.relayDeviceId,
       e2eeKey: server.e2eeKey.isNotEmpty ? server.e2eeKey : previous.e2eeKey,
       nodeType: server.nodeType,
       lastConnectedAt: server.lastConnectedAt,
@@ -435,6 +461,7 @@ class StorageService {
     if (_prefsInitialized) {
       await _prefs.remove(_keyActiveServerUrl);
       await _prefs.remove(_keyActiveServerNodeType);
+      await _prefs.remove(_keyActiveServerRelayDeviceId);
     }
     await Future.wait([
       _deleteSecure(_secureActiveToken),
@@ -443,6 +470,7 @@ class StorageService {
       _deleteSecure(_secureActiveEntrance),
     ]);
     _activeServerToken = null;
+    _activeServerRelayDeviceId = null;
     _activeServerE2eeKey = null;
     _activeServerCookie = null;
     _activeServerEntrance = null;
@@ -531,6 +559,8 @@ class StorageService {
   static Future<void> _loadServerCredentials() async {
     final entries = _readServerEntries();
     var needsRewrite = false;
+    final originalActiveUrl = _activeServerUrl;
+    String? migratedActiveUrl;
     await Future.wait(entries.map((entry) async {
       final id = (entry['id'] ?? '').toString().trim();
       final rawUrl = (entry['url'] ?? '').toString().trim();
@@ -548,6 +578,15 @@ class StorageService {
         }
       } on FormatException {
         // Keep the raw legacy URL when URI parsing fails.
+      }
+      final migration = migrateRetiredHoxiServerEntry(entry);
+      if (migration.changed) {
+        needsRewrite = true;
+        if (migratedActiveUrl == null &&
+            originalActiveUrl == migration.previousUrl &&
+            migration.nextUrl != migration.previousUrl) {
+          migratedActiveUrl = migration.nextUrl;
+        }
       }
       final storedCreds = await Future.wait([
         _secureStorage.read(key: _serverTokenKey(id)),
@@ -584,6 +623,10 @@ class StorageService {
       }
     }));
     _cachedServerList = null;
+    if (migratedActiveUrl != null) {
+      await _prefs.setString(_keyActiveServerUrl, migratedActiveUrl!);
+      _activeServerUrl = migratedActiveUrl;
+    }
     if (needsRewrite) await _prefs.setString(_keyServerList, jsonEncode(entries));
   }
 

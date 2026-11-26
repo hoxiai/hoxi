@@ -144,8 +144,11 @@ mixin _AiWorkspaceStream on Notifier<AiWorkspaceState> {
     _streamConnecting = true;
     _streamCancelToken?.cancel();
     _streamCancelToken = CancelToken();
-    _streamSubscription?.cancel();
+    final previousSub = _streamSubscription;
     _streamSubscription = null;
+    if (previousSub != null) {
+      unawaited(previousSub.cancel().catchError((_) {}));
+    }
     final resumeAfterSeq = _lastSseSeqBySessionId[sessionId];
     _repo
         .openConversationStream(
@@ -166,12 +169,15 @@ mixin _AiWorkspaceStream on Notifier<AiWorkspaceState> {
             targetSessionIntId: sessionId,
             lastSeq: resumeAfterSeq ?? 0,
           );
-          _streamSubscription = body.stream
+          late final StreamSubscription<String> sub;
+          sub = body.stream
               .cast<List<int>>()
               .transform(utf8.decoder)
               .listen(
                 (chunk) {
-                  if (!ref.mounted) return;
+                  if (!ref.mounted || !identical(_streamSubscription, sub)) {
+                    return;
+                  }
                   // 服务端连上就先推快照，收到数据说明流已恢复
                   if (_streamReconnectAttempts != 0 ||
                       state.isStreamReconnecting) {
@@ -186,10 +192,17 @@ mixin _AiWorkspaceStream on Notifier<AiWorkspaceState> {
                     _applyConversationStreamEvent(sessionId, event);
                   }
                 },
-                onError: (_) => _scheduleStreamReconnect(sessionId),
-                onDone: () => _scheduleStreamReconnect(sessionId),
+                onError: (_) {
+                  if (!identical(_streamSubscription, sub)) return;
+                  _scheduleStreamReconnect(sessionId);
+                },
+                onDone: () {
+                  if (!identical(_streamSubscription, sub)) return;
+                  _scheduleStreamReconnect(sessionId);
+                },
                 cancelOnError: true,
               );
+          _streamSubscription = sub;
         })
         .catchError((_) {
           _streamConnecting = false;
@@ -229,19 +242,27 @@ mixin _AiWorkspaceStream on Notifier<AiWorkspaceState> {
     _clearLiveSseRunning();
     _streamCancelToken?.cancel();
     _streamCancelToken = null;
-    await _streamSubscription?.cancel();
+    final previousSub = _streamSubscription;
     _streamSubscription = null;
     _streamConnecting = false;
     _streamReconnectAttempts = 0;
+    if (previousSub != null) {
+      unawaited(previousSub.cancel().catchError((_) {}));
+    }
     if (!ref.mounted || !nodeRequest.isCurrent(_repo)) {
       return;
     }
-    state = state.copyWith(
-      isStreaming: false,
-      isStreamReconnecting: false,
-      streamActivityKind: '',
-      streamActivity: '',
-    );
+    if (state.isStreaming ||
+        state.isStreamReconnecting ||
+        state.streamActivityKind.isNotEmpty ||
+        state.streamActivity.isNotEmpty) {
+      state = state.copyWith(
+        isStreaming: false,
+        isStreamReconnecting: false,
+        streamActivityKind: '',
+        streamActivity: '',
+      );
+    }
   }
 
   Future<void> suspendConversationStream() async {
@@ -250,6 +271,7 @@ mixin _AiWorkspaceStream on Notifier<AiWorkspaceState> {
   }
 
   Future<void> onChatScreenExited() async {
+    if (!ref.mounted) return;
     final onEngineeringTab =
         ref.read(mainScaffoldIndexProvider) ==
         MainScaffoldIndexController.engineeringIndex;

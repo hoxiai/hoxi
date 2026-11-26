@@ -352,6 +352,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get codeWsChatStreamReconnecting => '重连中…';
 
   @override
+  String get codeWsStageFailed => '失败';
+
+  @override
   String get codeWsChatRefresh => '刷新状态';
 
   @override
@@ -375,6 +378,9 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get codeWsSessionNoExecutors => '暂无执行器';
+
+  @override
   String get codeWsSessionSettingsTitle => '会话设置';
 
   @override
@@ -391,6 +397,15 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get codeWsSessionSettingsPolicyFullAuto => '全自动';
+
+  @override
+  String get codeWsSessionSettingsPolicyManualDesc => '执行前确认';
+
+  @override
+  String get codeWsSessionSettingsPolicySafeAutoDesc => '仅高风险确认';
+
+  @override
+  String get codeWsSessionSettingsPolicyFullAutoDesc => '不暂停';
 
   @override
   String codeWsSessionSettingsPolicyRejectsInConversation(String executor) {

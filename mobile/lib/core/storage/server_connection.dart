@@ -2,7 +2,11 @@ import 'hoxi_relay_defaults.dart';
 import 'node_transport.dart';
 import 'node_type_spec.dart';
 
-export 'hoxi_relay_defaults.dart' show defaultHoxiRelayControllerUrl;
+export 'hoxi_relay_defaults.dart'
+    show
+        defaultHoxiRelayControllerUrl,
+        isRetiredHoxiRelayUrl,
+        migrateRetiredHoxiRelayUrl;
 
 class ServerConnection {
   final String id;
@@ -18,6 +22,10 @@ class ServerConnection {
   /// separate from the cleartext LAN pairing [token] so a LAN leak cannot
   /// authorize requests over the public relay ingress.
   final String relayToken;
+
+  /// Optional stable per-device relay identifier sent via `X-Hoxi-Device-Id`
+  /// when multiple desktops share a single account relay hostname.
+  final String relayDeviceId;
 
   /// Optional 256-bit hex master key for end-to-end payload encryption (`hoxi-e2ee-v1`).
   /// Persisted in secure storage only; never written to SharedPreferences JSON.
@@ -38,6 +46,7 @@ class ServerConnection {
     this.entrance = '',
     required this.token,
     this.relayToken = '',
+    this.relayDeviceId = '',
     this.e2eeKey = '',
     this.nodeType = 'gopanel',
     required this.lastConnectedAt,
@@ -68,8 +77,9 @@ class ServerConnection {
     return isRelay ? trimmedRelay : token;
   }
 
-  /// A copy with the given fields replaced; [transports], [relayToken], and
-  /// [e2eeKey] are preserved unless explicitly overridden, so callers never silently drop them.
+  /// A copy with the given fields replaced; [transports], [relayToken],
+  /// [relayDeviceId], and [e2eeKey] are preserved unless explicitly overridden,
+  /// so callers never silently drop them.
   ServerConnection copyWith({
     String? id,
     String? accountScope,
@@ -79,6 +89,7 @@ class ServerConnection {
     String? entrance,
     String? token,
     String? relayToken,
+    String? relayDeviceId,
     String? e2eeKey,
     String? nodeType,
     DateTime? lastConnectedAt,
@@ -94,6 +105,7 @@ class ServerConnection {
       entrance: entrance ?? this.entrance,
       token: token ?? this.token,
       relayToken: relayToken ?? this.relayToken,
+      relayDeviceId: relayDeviceId ?? this.relayDeviceId,
       e2eeKey: e2eeKey ?? this.e2eeKey,
       nodeType: nodeType ?? this.nodeType,
       lastConnectedAt: lastConnectedAt ?? this.lastConnectedAt,
@@ -109,6 +121,8 @@ class ServerConnection {
       'url': url,
       'nodeType': nodeType,
       'hasEntrance': entrance.isNotEmpty,
+      if (relayDeviceId.trim().isNotEmpty)
+        'relayDeviceId': relayDeviceId.trim(),
       'lastConnectedAt': lastConnectedAt.toIso8601String(),
       if (transports.isNotEmpty)
         'transports': transports.map((t) => t.toJson()).toList(),
@@ -152,6 +166,7 @@ class ServerConnection {
       entrance: (json['entrance'] ?? '').toString(),
       token: (json['token'] ?? '').toString(),
       relayToken: (json['relayToken'] ?? '').toString(),
+      relayDeviceId: (json['relayDeviceId'] ?? '').toString().trim(),
       e2eeKey: (json['e2eeKey'] ?? '').toString(),
       nodeType: NodeTypeSpec.normalizeNodeType(rawNodeType),
       lastConnectedAt: lastConnectedAt,
@@ -202,6 +217,12 @@ bool isHoxiRelayUrl(String url) {
   }
   return false;
 }
+
+/// Whether [url] is a shared-host Hoxi relay (not a LAN address and not a
+/// `/api/tunnel/.../proxy` path that already encodes a single node ID) that
+/// accepts `X-Hoxi-Device-Id` for multi-device routing.
+bool supportsHoxiRelayDeviceHeader(String url) =>
+    isHoxiRelayUrl(url) && extractHoxiRelayNodeId(url) == null;
 
 int? extractHoxiRelayNodeId(String url) {
   final uri = Uri.tryParse(url.trim());
@@ -270,15 +291,9 @@ List<NodeTransport> buildHoxiFallbackRelayTransports(
   }
   for (final extra in extraRelayUrls) {
     final trimmed = extra.trim().replaceAll(RegExp(r'/+$'), '');
-    if (trimmed.isNotEmpty) {
+    if (trimmed.isNotEmpty && !isRetiredHoxiRelayUrl(trimmed)) {
       candidates.add(NodeTransport(url: trimmed, kind: 'relay'));
     }
-  }
-  if (effectiveController.isNotEmpty) {
-    candidates.add(NodeTransport(url: effectiveController, kind: 'relay'));
-  }
-  if (defaultCtrl.isNotEmpty && effectiveController != defaultCtrl) {
-    candidates.add(NodeTransport(url: defaultCtrl, kind: 'relay'));
   }
   return NodeTransport.ordered(candidates);
 }

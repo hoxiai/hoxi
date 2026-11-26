@@ -88,15 +88,6 @@ class _ContextPalette {
   }
 }
 
-bool _isLongQuote(String text) {
-  if (text.length > 110) return true;
-  var nl = 0;
-  for (var i = 0; i < text.length; i++) {
-    if (text.codeUnitAt(i) == 10 && ++nl >= 2) return true;
-  }
-  return false;
-}
-
 IconData _iconForEnvelope(HoxiContextEnvelope envelope) {
   final first = envelope.items.isNotEmpty ? envelope.items.first : null;
   if (envelope.items.length > 1) {
@@ -136,7 +127,10 @@ class _ContextEnvelopeViewState extends State<_ContextEnvelopeView> {
     final isSingleQuote =
         env.items.length == 1 && env.items.first.kind == HoxiContextKind.quote;
     if (isSingleQuote) {
-      return _buildQuoteBar(context, env, env.items.first, palette);
+      return LayoutBuilder(
+        builder: (context, constraints) =>
+            _buildQuoteBar(context, env, env.items.first, palette, constraints),
+      );
     }
     return _buildStructuredCard(context, env, palette);
   }
@@ -146,12 +140,39 @@ class _ContextEnvelopeViewState extends State<_ContextEnvelopeView> {
     HoxiContextEnvelope env,
     HoxiContextItem item,
     _ContextPalette palette,
+    BoxConstraints constraints,
   ) {
     final l10n = context.l10n;
     final body = item.bodyText.isNotEmpty
         ? item.bodyText
         : (item.subtitle ?? item.title ?? '');
-    final expandable = _isLongQuote(body);
+    final style = TextStyle(color: palette.secondaryText, fontSize: 12.5, height: 1.4);
+    const padding = EdgeInsets.fromLTRB(10, 7, 10, 7);
+    final decoration = BoxDecoration(
+      color: palette.surface,
+      borderRadius: BorderRadius.circular(10),
+      border: Border(left: BorderSide(color: palette.accent, width: 3)),
+    );
+    final contentWidth = (constraints.maxWidth -
+            decoration.padding.horizontal - padding.horizontal)
+        .clamp(0.0, double.infinity);
+    final painter = TextPainter(
+      text: TextSpan(
+        text: body,
+        style: DefaultTextStyle.of(context).style.merge(
+          MediaQuery.boldTextOf(context)
+              ? style.merge(const TextStyle(fontWeight: FontWeight.bold))
+              : style,
+        ),
+      ),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      locale: Localizations.maybeLocaleOf(context),
+      maxLines: 2,
+      ellipsis: '…',
+    )..layout(maxWidth: contentWidth);
+    final expandable = painter.didExceedMaxLines;
+    painter.dispose();
     final sourceLabel = env.source?.displayLabel ?? '';
     final headerText = [
       if (sourceLabel.isNotEmpty) sourceLabel,
@@ -166,14 +187,8 @@ class _ContextEnvelopeViewState extends State<_ContextEnvelopeView> {
             ? () => setState(() => _expanded = !_expanded)
             : null,
         child: Container(
-          padding: const EdgeInsets.fromLTRB(10, 7, 10, 7),
-          decoration: BoxDecoration(
-            color: palette.surface,
-            borderRadius: BorderRadius.circular(10),
-            border: Border(
-              left: BorderSide(color: palette.accent, width: 3),
-            ),
-          ),
+          padding: padding,
+          decoration: decoration,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
@@ -216,11 +231,7 @@ class _ContextEnvelopeViewState extends State<_ContextEnvelopeView> {
                   overflow: _expanded
                       ? TextOverflow.visible
                       : TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: palette.secondaryText,
-                    fontSize: 12.5,
-                    height: 1.4,
-                  ),
+                  style: style,
                 ),
               ],
             ],

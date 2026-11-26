@@ -269,7 +269,7 @@ class AiWorkspaceController extends Notifier<AiWorkspaceState>
         tasks: syncWorkspaceTasksWithSession(state.tasks, session),
       );
       _notifyTaskCenterSession(session);
-      await selectSession(session);
+      unawaited(selectSession(session));
       return session;
     } catch (error) {
       if (!ref.mounted || !nodeRequest.isCurrent(_repo)) throw StateError('节点已切换');
@@ -349,6 +349,7 @@ class AiWorkspaceController extends Notifier<AiWorkspaceState>
     final titleBeforeRefresh = state.currentSession?.title ?? '';
     final wasStreamingBeforeRefresh = state.isStreaming;
     final refreshTerminalSeq = _streamTerminalSeq;
+    var refreshed = false;
     try {
       final results = await Future.wait<Object>([
         nodeRequest.repository.getSessionState(sessionId),
@@ -461,6 +462,7 @@ class AiWorkspaceController extends Notifier<AiWorkspaceState>
       _syncStreamQuietWatchdog();
       _notifyTaskCenterSession(syncedSession, currentStage: effectiveStage, stateInfo: sessionState);
       _syncDeliveryPolling();
+      refreshed = true;
     } catch (error) {
       if (state.currentSession?.id != sessionId || !ref.mounted || !nodeRequest.isCurrent(_repo)) {
         return;
@@ -479,7 +481,8 @@ class AiWorkspaceController extends Notifier<AiWorkspaceState>
               refreshCurrentSession(trustServerState: nextTrustServer),
             );
           }
-        } else if (ref.mounted &&
+        } else if ((refreshed || _isRecentlyTerminal(sessionId)) &&
+            ref.mounted &&
             nodeRequest.isCurrent(_repo) &&
             state.currentSession?.id == sessionId) {
           drainNextQueuedPromptIfIdle();

@@ -56,11 +56,13 @@ ServerConnection applyBootstrapRelayToConnection(
     bootstrap: bootstrap,
     baseTransports: conn.transports,
     currentRelayToken: conn.relayToken,
+    currentRelayDeviceId: conn.relayDeviceId,
     currentE2eeKey: conn.e2eeKey,
     savedServers: savedServers,
   );
   return conn.copyWith(
     relayToken: merged.relayToken,
+    relayDeviceId: merged.relayDeviceId,
     e2eeKey: merged.e2eeKey,
     transports: merged.transports,
   );

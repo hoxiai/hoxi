@@ -5,26 +5,16 @@ import 'package:dio/dio.dart';
 import '../../../core/network/api_client.dart';
 import '../models/ai_dev_session.dart';
 import '../models/code_model_catalog.dart';
-import 'hoxi_request_ledger_helper.dart';
+import 'hoxi_approval_gate_helper.dart';
 
-class HoxiApprovalRef {
-  final String permissionId;
-  final String sessionId;
-  final String directory;
-  final AiApproval approval;
-  final bool isQuestion;
+export 'hoxi_approval_gate_helper.dart' show HoxiApprovalRef;
 
-  const HoxiApprovalRef({
-    required this.permissionId,
-    required this.sessionId,
-    required this.directory,
-    required this.approval,
-    this.isQuestion = false,
-  });
-}
-
-/// Hoxi 节点的工作区目录、多运行时执行器发现与安全审批门控适配器
+/// Hoxi 节点的工作区目录、多运行时执行器发现与会话附件适配器。
+///
+/// 审批与交互提问门控由 `HoxiApprovalGateHelper` 独立承载，本类仅保留轻量转发接口以兼容调用方。
 class HoxiCatalogApprovalAdapter {
+  static const int _maxCachedAttachmentKeys = 48;
+
   final ApiClient _apiClient;
   final int Function(String raw) _stableId;
   List<CodeExecutor> _cachedExecutors = const [];
@@ -33,6 +23,20 @@ class HoxiCatalogApprovalAdapter {
   HoxiCatalogApprovalAdapter(this._apiClient, this._stableId);
 
   List<CodeExecutor> get cachedExecutors => _cachedExecutors;
+
+  static final Options _uploadOptions = Options(
+    sendTimeout: const Duration(seconds: 60),
+    receiveTimeout: const Duration(seconds: 60),
+  );
+
+  void _cacheAttachmentDataUrl(String key, String dataUrl) {
+    if (key.isEmpty || dataUrl.isEmpty) return;
+    _attachmentDataUrls.remove(key);
+    while (_attachmentDataUrls.length >= _maxCachedAttachmentKeys) {
+      _attachmentDataUrls.remove(_attachmentDataUrls.keys.first);
+    }
+    _attachmentDataUrls[key] = dataUrl;
+  }
 
   Future<Map<String, dynamic>> uploadAttachment({
     required String sessionId,
@@ -44,6 +48,7 @@ class HoxiCatalogApprovalAdapter {
     final res = await _apiClient.post<Map<String, dynamic>>(
       '/api/hoxi/attachments',
       queryParameters: {'directory': directory, 'sessionID': sessionId},
+      options: _uploadOptions,
       data: {
         'sessionID': sessionId,
         'directory': directory,
@@ -58,10 +63,10 @@ class HoxiCatalogApprovalAdapter {
       final id = (data['id'] ?? data['attachmentId'] ?? '').toString().trim();
       final url = (data['url'] ?? '').toString().trim();
       if (id.isNotEmpty) {
-        _attachmentDataUrls[id] = trimmed;
-        _attachmentDataUrls['/api/hoxi/attachments/$id/content'] = trimmed;
+        _cacheAttachmentDataUrl(id, trimmed);
+        _cacheAttachmentDataUrl('/api/hoxi/attachments/$id/content', trimmed);
       }
-      if (url.isNotEmpty) _attachmentDataUrls[url] = trimmed;
+      if (url.isNotEmpty) _cacheAttachmentDataUrl(url, trimmed);
     }
     return data;
   }
@@ -74,7 +79,9 @@ class HoxiCatalogApprovalAdapter {
     required List<int> bytes,
     bool useJsonEnvelope = false,
   }) async {
-    final safeMime = mime.trim().isNotEmpty ? mime.trim() : 'application/octet-stream';
+    final safeMime = mime.trim().isNotEmpty
+        ? mime.trim()
+        : 'application/octet-stream';
     if (useJsonEnvelope) {
       return uploadAttachment(
         sessionId: sessionId,
@@ -87,11 +94,16 @@ class HoxiCatalogApprovalAdapter {
     final formData = FormData.fromMap({
       'sessionID': sessionId,
       'directory': directory,
-      'file': MultipartFile.fromBytes(bytes, filename: filename, contentType: DioMediaType.parse(safeMime)),
+      'file': MultipartFile.fromBytes(
+        bytes,
+        filename: filename,
+        contentType: DioMediaType.parse(safeMime),
+      ),
     });
     final res = await _apiClient.post<Map<String, dynamic>>(
       '/api/hoxi/attachments',
       queryParameters: {'directory': directory, 'sessionID': sessionId},
+      options: _uploadOptions,
       data: formData,
     );
     return res.data ?? const <String, dynamic>{};
@@ -150,9 +162,9 @@ class HoxiCatalogApprovalAdapter {
         dataUrl = raw.trim();
       }
       if (dataUrl == null || dataUrl.isEmpty) return null;
-      _attachmentDataUrls[contentPath] = dataUrl;
-      if (rawUrl.isNotEmpty) _attachmentDataUrls[rawUrl] = dataUrl;
-      if (attId.isNotEmpty) _attachmentDataUrls[attId] = dataUrl;
+      _cacheAttachmentDataUrl(contentPath, dataUrl);
+      if (rawUrl.isNotEmpty) _cacheAttachmentDataUrl(rawUrl, dataUrl);
+      if (attId.isNotEmpty) _cacheAttachmentDataUrl(attId, dataUrl);
       return dataUrl;
     } catch (_) {
       return null;
@@ -502,120 +514,18 @@ class HoxiCatalogApprovalAdapter {
   Future<List<AiApproval>> getApprovals({
     required Map<int, HoxiApprovalRef> approvalsById,
     required String Function(int sessionIntId) resolveSessionDir,
-  }) async {
-    final results = <AiApproval>[];
-    try {
-      final res = await _apiClient.get<dynamic>('/api/hoxi/permission');
-      final list = res.data is List ? (res.data as List) : const [];
-      for (final raw in list.whereType<Map>()) {
-        final map = raw.cast<String, dynamic>();
-        final permId = (map['id'] ?? '').toString().trim();
-        if (permId.isEmpty) continue;
-        final hoxiSessionId =
-            (map['sessionID'] ?? map['sessionId'] ?? '').toString().trim();
-        final sessionIntId = hoxiSessionId.isNotEmpty
-            ? _stableId(hoxiSessionId)
-            : 0;
-        final approvalIntId = _stableId(permId);
-        final parsed = formatApprovalDetails(map);
-        final approval = AiApproval(
-          id: approvalIntId,
-          sessionId: sessionIntId,
-          taskId: sessionIntId,
-          instructionId: 0,
-          requestUserId: 1,
-          approveUserId: 0,
-          title: parsed.title,
-          content: parsed.content,
-          riskLevel: parsed.riskLevel,
-          status: 'pending',
-          decision: '',
-          decisionReason: '',
-          createdAt: DateTime.now(),
-          updatedAt: DateTime.now(),
-          decisionAt: null,
-        );
-        final sessionDir = resolveSessionDir(sessionIntId);
-        approvalsById[approvalIntId] = HoxiApprovalRef(
-          permissionId: permId,
-          sessionId: hoxiSessionId,
-          directory: sessionDir,
-          approval: approval,
-        );
-        results.add(approval);
-      }
-    } catch (_) {}
-    try {
-      final qRes = await _apiClient.get<dynamic>('/api/hoxi/question');
-      final qList = qRes.data is List ? (qRes.data as List) : const [];
-      for (final raw in qList.whereType<Map>()) {
-        final map = raw.cast<String, dynamic>();
-        final qId = (map['id'] ?? '').toString().trim();
-        final questions = parseQuestionItems(map);
-        if (qId.isEmpty || questions.isEmpty) continue;
-        final hoxiSessionId =
-            (map['sessionID'] ?? map['sessionId'] ?? '').toString().trim();
-        final sessionIntId =
-            hoxiSessionId.isNotEmpty ? _stableId(hoxiSessionId) : 0;
-        final approvalIntId = _stableId(qId);
-        final now = DateTime.now();
-        final approval = AiApproval(
-          id: approvalIntId,
-          sessionId: sessionIntId,
-          taskId: sessionIntId,
-          instructionId: 0,
-          requestUserId: 1,
-          approveUserId: 0,
-          title: questions.length > 1
-              ? '待回答问题 (${questions.length})'
-              : '待回答问题',
-          content: formatQuestionSummary(questions),
-          riskLevel: 'normal',
-          status: 'pending',
-          decision: '',
-          decisionReason: '',
-          createdAt: now,
-          updatedAt: now,
-          decisionAt: null,
-          questions: questions,
-        );
-        final explicitDir = (map['directory'] ?? '').toString().trim();
-        approvalsById[approvalIntId] = HoxiApprovalRef(
-          permissionId: qId,
-          sessionId: hoxiSessionId,
-          directory: explicitDir.isNotEmpty
-              ? explicitDir
-              : resolveSessionDir(sessionIntId),
-          approval: approval,
-          isQuestion: true,
-        );
-        results.add(approval);
-      }
-    } catch (_) {}
-    return results;
-  }
+  }) => HoxiApprovalGateHelper.fetchApprovals(
+    _apiClient,
+    stableId: _stableId,
+    approvalsById: approvalsById,
+    resolveSessionDir: resolveSessionDir,
+  );
 
-  static List<AiQuestionItem> parseQuestionItems(Map<String, dynamic> map) {
-    final raw = map['questions'];
-    if (raw is! List) return const <AiQuestionItem>[];
-    return raw
-        .whereType<Map>()
-        .map((m) => AiQuestionItem.fromMap(m.cast<String, dynamic>()))
-        .where((q) => q.question.isNotEmpty || q.options.isNotEmpty)
-        .toList();
-  }
+  static List<AiQuestionItem> parseQuestionItems(Map<String, dynamic> map) =>
+      HoxiApprovalGateHelper.parseQuestionItems(map);
 
-  static String formatQuestionSummary(List<AiQuestionItem> questions) {
-    final lines = <String>[];
-    for (final q in questions) {
-      final title = q.question.isNotEmpty ? q.question : q.header;
-      final opts = q.options.map((o) => o.label).where((s) => s.isNotEmpty).join(' / ');
-      if (title.isNotEmpty) {
-        lines.add(opts.isNotEmpty ? '$title ($opts)' : title);
-      }
-    }
-    return lines.isNotEmpty ? lines.join('\n') : '请选择一个选项继续执行';
-  }
+  static String formatQuestionSummary(List<AiQuestionItem> questions) =>
+      HoxiApprovalGateHelper.formatQuestionSummary(questions);
 
   static Future<void> postQuestionReply(
     ApiClient apiClient, {
@@ -624,45 +534,14 @@ class HoxiCatalogApprovalAdapter {
     String directory = '',
     String? reason,
     int questionCount = 1,
-  }) async {
-    final query = <String, dynamic>{
-      if (directory.trim().isNotEmpty) 'directory': directory.trim(),
-    };
-    final action = approve ? 'reply' : 'reject';
-    final data = approve
-        ? <String, dynamic>{'answers': decodeQuestionAnswers(reason, questionCount)}
-        : const <String, dynamic>{};
-    await apiClient.post<dynamic>(
-      '/api/hoxi/question/$questionId/$action',
-      queryParameters: query,
-      data: data,
-    );
-  }
-
-  static List<List<String>> decodeQuestionAnswers(String? rawReason, int questionCount) {
-    final count = questionCount > 0 ? questionCount : 1;
-    final trimmed = (rawReason ?? '').trim();
-    if (trimmed.startsWith('[')) {
-      try {
-        final decoded = jsonDecode(trimmed);
-        if (decoded is List) {
-          final parsed = decoded.map<List<String>>((entry) {
-            if (entry is List) {
-              return entry.map((e) => e.toString().trim()).where((s) => s.isNotEmpty).toList();
-            }
-            final s = entry?.toString().trim() ?? '';
-            return s.isEmpty ? const <String>[] : <String>[s];
-          }).toList();
-          while (parsed.length < count) {
-            parsed.add(const <String>[]);
-          }
-          return parsed;
-        }
-      } catch (_) {}
-    }
-    final fallback = trimmed.isEmpty ? const <String>[] : <String>[trimmed];
-    return List<List<String>>.generate(count, (idx) => idx == 0 ? fallback : const <String>[]);
-  }
+  }) => HoxiApprovalGateHelper.postQuestionReply(
+    apiClient,
+    questionId: questionId,
+    approve: approve,
+    directory: directory,
+    reason: reason,
+    questionCount: questionCount,
+  );
 
   static Future<void> postPermissionReply(
     ApiClient apiClient, {
@@ -671,16 +550,14 @@ class HoxiCatalogApprovalAdapter {
     String directory = '',
     String? reason,
     String? clientRequestId,
-  }) {
-    return HoxiRequestLedgerHelper.replyPermissionWithRecovery(
-      apiClient,
-      permissionId: permissionId,
-      approve: approve,
-      directory: directory,
-      reason: reason,
-      clientRequestId: clientRequestId,
-    );
-  }
+  }) => HoxiApprovalGateHelper.postPermissionReply(
+    apiClient,
+    permissionId: permissionId,
+    approve: approve,
+    directory: directory,
+    reason: reason,
+    clientRequestId: clientRequestId,
+  );
 
   Future<AiApproval> replyApproval(
     int approvalId, {
@@ -689,105 +566,19 @@ class HoxiCatalogApprovalAdapter {
     String? clientRequestId,
     required Map<int, HoxiApprovalRef> approvalsById,
     required Future<List<AiApproval>> Function() reloadApprovals,
-  }) async {
-    var ref = approvalsById[approvalId];
-    if (ref == null) {
-      await reloadApprovals();
-      ref = approvalsById[approvalId];
-    }
-    if (ref == null) {
-      throw Exception('未找到对应的 Hoxi 审批项');
-    }
-    if (ref.isQuestion) {
-      await postQuestionReply(
-        _apiClient,
-        questionId: ref.permissionId,
-        approve: approve,
-        directory: ref.directory,
-        reason: reason,
-        questionCount: ref.approval.questions.length,
-      );
-    } else {
-      await postPermissionReply(
-        _apiClient,
-        permissionId: ref.permissionId,
-        approve: approve,
-        directory: ref.directory,
-        reason: reason,
-        clientRequestId: clientRequestId,
-      );
-    }
-    approvalsById.remove(approvalId);
-    return AiApproval(
-      id: ref.approval.id,
-      sessionId: ref.approval.sessionId,
-      taskId: ref.approval.taskId,
-      instructionId: ref.approval.instructionId,
-      requestUserId: ref.approval.requestUserId,
-      approveUserId: 1,
-      title: ref.approval.title,
-      content: ref.approval.content,
-      riskLevel: ref.approval.riskLevel,
-      status: approve ? 'approved' : 'rejected',
-      decision: approve ? 'approve' : 'reject',
-      decisionReason: reason ?? '',
-      createdAt: ref.approval.createdAt,
-      updatedAt: DateTime.now(),
-      decisionAt: DateTime.now(),
-    );
-  }
-
-  static final RegExp _destructiveCmdRe = RegExp(
-    r'(\b(rm|sudo|su|chmod|chown|chgrp|dd|mkfs|fdisk|diskutil|shutdown|reboot|kill|killall|pkill|kubectl\s+delete|terraform\s+(destroy|apply)|docker\s+(rm|rmi|system\s+prune)|(npm|pnpm|yarn|cargo)\s+publish)\b|git\s+(push\b.*(-f|--force)|reset\s+--hard|clean\b.*-f|checkout\s+--\s+\.|restore\b.*\s+\.|branch\b.*(-D|-d|--delete)|worktree\s+(remove|prune)))',
-    caseSensitive: false,
+  }) => HoxiApprovalGateHelper.replyApproval(
+    _apiClient,
+    approvalId,
+    approve: approve,
+    reason: reason,
+    clientRequestId: clientRequestId,
+    approvalsById: approvalsById,
+    reloadApprovals: reloadApprovals,
   );
 
   static ({String title, String content, String riskLevel})
-  formatApprovalDetails(Map<String, dynamic> map) {
-    final perm = (map['permission'] ?? '').toString().trim();
-    final meta = map['metadata'] is Map
-        ? (map['metadata'] as Map).cast<String, dynamic>()
-        : const <String, dynamic>{};
-    final patterns = (map['patterns'] is List ? map['patterns'] as List : const [])
-        .map((e) => e.toString().trim())
-        .where((s) => s.isNotEmpty)
-        .toList();
-    final cmd = (meta['command'] ?? map['command'] ?? '').toString().trim();
-    final desc = (meta['description'] ?? '').toString().trim();
-    final toolName = (meta['tool'] ?? (patterns.isNotEmpty ? patterns.first : perm))
-        .toString()
-        .trim();
-
-    String body = cmd;
-    if (body.isEmpty && perm == 'tool' && meta['args'] != null) {
-      try {
-        body = const JsonEncoder.withIndent('  ').convert(meta['args']);
-      } catch (_) {
-        body = meta['args'].toString();
-      }
-    }
-    if (body.isEmpty && patterns.isNotEmpty) {
-      body = patterns.join('\n');
-    }
-    if (body.isEmpty && meta.isNotEmpty) {
-      body = jsonEncode(meta);
-    }
-    if (desc.isNotEmpty && body.isNotEmpty && body != desc) {
-      body = '$desc\n$body';
-    }
-    final isDestructive = _destructiveCmdRe.hasMatch(cmd.isNotEmpty ? cmd : body);
-    final rawTitle = (map['title'] ?? '').toString().trim();
-    final title = rawTitle.isNotEmpty
-        ? rawTitle
-        : (perm == 'tool' && toolName.isNotEmpty
-              ? '工具调用确认 · $toolName'
-              : (perm.isNotEmpty ? '安全确认 · $perm' : '高风险操作待确认'));
-    return (
-      title: title,
-      content: body.isNotEmpty ? body : title,
-      riskLevel: isDestructive ? 'critical' : 'high',
-    );
-  }
+  formatApprovalDetails(Map<String, dynamic> map) =>
+      HoxiApprovalGateHelper.formatApprovalDetails(map);
 
   static String _basename(String path) {
     final parts = path.split(RegExp(r'[/\\]')).where((s) => s.isNotEmpty);

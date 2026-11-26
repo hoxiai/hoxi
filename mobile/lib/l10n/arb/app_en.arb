@@ -148,6 +148,7 @@
   "codeWsActionDismiss": "Dismiss",
   "codeWsChatTitle": "Hoxi Development",
   "codeWsChatStreamReconnecting": "Live connection lost. Reconnecting…",
+  "codeWsStageFailed": "Failed",
   "codeWsChatRefresh": "Refresh status",
   "codeWsChatGitReview": "Review changes",
   "codeWsChatChooseSession": "Choose or create session",
@@ -162,12 +163,16 @@
       }
     }
   },
+  "codeWsSessionNoExecutors": "No available executors",
   "codeWsSessionSettingsTitle": "Session settings",
   "codeWsSessionSettingsName": "Session name",
   "codeWsSessionSettingsApproval": "Approval policy",
   "codeWsSessionSettingsPolicyManual": "Confirm each time",
   "codeWsSessionSettingsPolicySafeAuto": "Safe auto",
   "codeWsSessionSettingsPolicyFullAuto": "Full auto",
+  "codeWsSessionSettingsPolicyManualDesc": "Confirm before running actions",
+  "codeWsSessionSettingsPolicySafeAutoDesc": "Confirm high-risk actions only",
+  "codeWsSessionSettingsPolicyFullAutoDesc": "Run without pausing",
   "codeWsSessionSettingsPolicyRejectsInConversation": "{executor} cannot ask you in conversation mode: actions that need permission (such as running commands) are rejected outright, so the AI may not finish the task. Approve them one by one in terminal mode instead.",
   "@codeWsSessionSettingsPolicyRejectsInConversation": {
     "placeholders": {
