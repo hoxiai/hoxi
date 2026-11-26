@@ -71,6 +71,8 @@ export const tasks = {
   portalReopenedBanner: "补充反馈已保存同步，等待开发者审批后继续修复",
   portalProcessTitle: "执行过程实时进度",
   portalProcessWaiting: "开发者批准执行后，这里将实时流式展示排查与修复步骤",
+  portalDeveloperFollowupLabel: "开发者继续跟进排查",
+  portalContinuingProgress: "正在继续排查处理中…",
   portalDeveloperNoteLabel: "开发者说明",
   portalRetestPrompt: "该问题已完成修复，请按说明复测并反馈结果",
   portalPassBtn: "复测通过",

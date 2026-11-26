@@ -71,6 +71,8 @@ export const tasks = {
   portalReopenedBanner: "Follow-up saved — waiting for developer approval to continue fixing",
   portalProcessTitle: "Execution progress",
   portalProcessWaiting: "Execution steps will appear here in real time once approved",
+  portalDeveloperFollowupLabel: "Developer continued investigation",
+  portalContinuingProgress: "Continuing investigation…",
   portalDeveloperNoteLabel: "Developer note",
   portalRetestPrompt: "Fix is ready for verification — please test and report the result",
   portalPassBtn: "Retest passed",

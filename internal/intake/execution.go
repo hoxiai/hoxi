@@ -165,12 +165,14 @@ func (s *Service) ApproveAndRun(ctx context.Context, in ApproveTaskInput) (TaskI
 	prevTask := cloneTask(cur)
 	runCtx, cancel := context.WithCancel(context.Background())
 	s.running[taskID] = cancel
+	delete(s.externalRuns, taskID)
 	cur.SessionID = sid
 	cur.Status = StatusRunning
 	cur.Error = ""
 	cur.ApprovedAt = now
 	cur.UpdatedAt = now
 	s.tasks[taskID] = cur
+	s.indexTaskSessionLocked(taskID, prevTask.SessionID, sid)
 	linkID := cur.LinkID
 	desktopOut := toDesktopTask(cur)
 	seq, snap := s.snapshotLocked()
@@ -182,11 +184,13 @@ func (s *Service) ApproveAndRun(ctx context.Context, in ApproveTaskInput) (TaskI
 		if latest, exists := s.tasks[taskID]; exists && latest.Status == StatusRunning && latest.ApprovedAt == now {
 			prevTask.SessionID = sid
 			s.tasks[taskID] = prevTask
+			s.indexTaskSessionLocked(taskID, latest.SessionID, sid)
 			delete(s.running, taskID)
 		}
 		s.mu.Unlock()
 		return TaskItem{}, err
 	}
+	s.ensureSessionWatcher()
 	s.broadcastPortal(linkID, SanitizedStreamEvent{Type: "task.updated", TaskID: taskID})
 	go s.executeApprovedTurn(runCtx, taskID, linkID, sid, runReq)
 	return desktopOut, nil
@@ -199,7 +203,6 @@ func (s *Service) executeApprovedTurn(ctx context.Context, taskID, linkID, sessi
 		if updates != nil {
 			go func() {
 				defer unsub()
-				var lastEmit time.Time
 				for {
 					select {
 					case <-stopRelay:
@@ -208,13 +211,7 @@ func (s *Service) executeApprovedTurn(ctx context.Context, taskID, linkID, sessi
 						if !ok {
 							return
 						}
-						if time.Since(lastEmit) >= 120*time.Millisecond {
-							lastEmit = time.Now()
-							s.broadcastPortal(linkID, SanitizedStreamEvent{
-								Type:   "timeline.updated",
-								TaskID: taskID,
-							})
-						}
+						s.scheduleTimelineBroadcast(linkID, taskID)
 					}
 				}
 			}()
@@ -229,6 +226,7 @@ func (s *Service) executeApprovedTurn(ctx context.Context, taskID, linkID, sessi
 	s.mu.Lock()
 	now := s.now().UnixMilli()
 	delete(s.running, taskID)
+	delete(s.externalRuns, taskID)
 	cur, ok := s.tasks[taskID]
 	if !ok {
 		s.mu.Unlock()
@@ -258,7 +256,7 @@ func (s *Service) executeApprovedTurn(ctx context.Context, taskID, linkID, sessi
 	s.mu.Unlock()
 
 	_ = s.store.saveSnapshot(seq, snap)
-	s.broadcastPortal(linkID, SanitizedStreamEvent{Type: "timeline.updated", TaskID: taskID})
+	s.flushTimelineBroadcast(linkID, taskID)
 	s.broadcastPortal(linkID, SanitizedStreamEvent{Type: "task.updated", TaskID: taskID})
 }
 
@@ -306,6 +304,7 @@ func (s *Service) UpdateTaskStatus(in UpdateTaskStatusInput) (TaskItem, error) {
 	case "cancel":
 		cancelFn = s.running[taskID]
 		delete(s.running, taskID)
+		delete(s.externalRuns, taskID)
 		abortSid = cur.SessionID
 		cur.Status = StatusStaged
 	default:
@@ -424,6 +423,298 @@ func (s *Service) broadcastPortal(linkID string, evt SanitizedStreamEvent) {
 	}
 }
 
+const portalTimelineThrottle = 120 * time.Millisecond
+
+func (s *Service) indexTaskSessionLocked(taskID, prevSID, nextSID string) {
+	prevSID = strings.TrimSpace(prevSID)
+	nextSID = strings.TrimSpace(nextSID)
+	if prevSID == nextSID {
+		return
+	}
+	if prevSID != "" {
+		if set := s.sessionTasks[prevSID]; set != nil {
+			delete(set, taskID)
+			if len(set) == 0 {
+				delete(s.sessionTasks, prevSID)
+			}
+		}
+	}
+	if nextSID != "" {
+		set := s.sessionTasks[nextSID]
+		if set == nil {
+			set = make(map[string]struct{})
+			s.sessionTasks[nextSID] = set
+		}
+		set[taskID] = struct{}{}
+	}
+}
+
+func (s *Service) cleanupTaskRuntimeLocked(taskID string) {
+	if timer, ok := s.timelineTimers[taskID]; ok {
+		timer.Stop()
+		delete(s.timelineTimers, taskID)
+	}
+	delete(s.lastTimelineEmit, taskID)
+	delete(s.externalRuns, taskID)
+}
+
+// HasLinkedSession reports whether sessionID is attached to at least one intake task.
+func (s *Service) HasLinkedSession(sessionID string) bool {
+	sid := strings.TrimSpace(sessionID)
+	if sid == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.sessionTasks[sid]) > 0
+}
+
+// LinkedSessionIDs returns all distinct runner session IDs currently linked to intake tasks.
+func (s *Service) LinkedSessionIDs() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.sessionTasks) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(s.sessionTasks))
+	for sid := range s.sessionTasks {
+		out = append(out, sid)
+	}
+	return out
+}
+
+func (s *Service) scheduleTimelineBroadcast(linkID, taskID string) {
+	if linkID == "" || taskID == "" {
+		return
+	}
+	now := time.Now()
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	elapsed := now.Sub(s.lastTimelineEmit[taskID])
+	if elapsed >= portalTimelineThrottle {
+		if prev, ok := s.timelineTimers[taskID]; ok {
+			prev.Stop()
+			delete(s.timelineTimers, taskID)
+		}
+		s.lastTimelineEmit[taskID] = now
+		s.mu.Unlock()
+		s.broadcastPortal(linkID, SanitizedStreamEvent{Type: "timeline.updated", TaskID: taskID})
+		return
+	}
+	if _, armed := s.timelineTimers[taskID]; armed {
+		s.mu.Unlock()
+		return
+	}
+	wait := portalTimelineThrottle - elapsed
+	var myTimer *time.Timer
+	myTimer = time.AfterFunc(wait, func() {
+		s.mu.Lock()
+		if s.closed || s.timelineTimers[taskID] != myTimer {
+			s.mu.Unlock()
+			return
+		}
+		delete(s.timelineTimers, taskID)
+		s.lastTimelineEmit[taskID] = time.Now()
+		s.mu.Unlock()
+		s.broadcastPortal(linkID, SanitizedStreamEvent{Type: "timeline.updated", TaskID: taskID})
+	})
+	s.timelineTimers[taskID] = myTimer
+	s.mu.Unlock()
+}
+
+func (s *Service) flushTimelineBroadcast(linkID, taskID string) {
+	if linkID == "" || taskID == "" {
+		return
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	if prev, ok := s.timelineTimers[taskID]; ok {
+		prev.Stop()
+		delete(s.timelineTimers, taskID)
+	}
+	s.lastTimelineEmit[taskID] = time.Now()
+	s.mu.Unlock()
+	s.broadcastPortal(linkID, SanitizedStreamEvent{Type: "timeline.updated", TaskID: taskID})
+}
+
+// HandleSessionEvent synchronizes tester portal streams and task state when an owner
+// continues a linked QA session directly from Hoxi desktop outside ApproveAndRun.
+func (s *Service) HandleSessionEvent(evt SessionEvent) {
+	sid := strings.TrimSpace(evt.SessionID)
+	if sid == "" {
+		return
+	}
+	type portalTarget struct {
+		linkID     string
+		taskID     string
+		taskUpdate bool
+		immediate  bool
+	}
+
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	linked := s.sessionTasks[sid]
+	if len(linked) == 0 {
+		s.mu.Unlock()
+		return
+	}
+	now := s.now().UnixMilli()
+	var targets []portalTarget
+	prevTasks := make(map[string]TaskItem)
+	prevExternal := make(map[string]string)
+	hadExternal := make(map[string]bool)
+	needSave := false
+
+	for taskID := range linked {
+		if s.running[taskID] != nil || s.approving[taskID] {
+			continue
+		}
+		cur, ok := s.tasks[taskID]
+		if !ok {
+			continue
+		}
+		switch evt.Kind {
+		case SessionEventProgress:
+			targets = append(targets, portalTarget{
+				linkID:    cur.LinkID,
+				taskID:    taskID,
+				immediate: false,
+			})
+		case SessionEventBusy:
+			statusChanged := false
+			if s.loadErr == nil && cur.Status != StatusResolved && cur.Status != StatusRejected && cur.Status != StatusRunning {
+				prevTasks[taskID] = cloneTask(cur)
+				prevExternal[taskID], hadExternal[taskID] = s.externalRuns[taskID]
+				s.externalRuns[taskID] = cur.Status
+				cur.Status = StatusRunning
+				cur.Error = ""
+				cur.UpdatedAt = now
+				s.tasks[taskID] = cur
+				needSave = true
+				statusChanged = true
+			}
+			targets = append(targets, portalTarget{
+				linkID:     cur.LinkID,
+				taskID:     taskID,
+				taskUpdate: statusChanged,
+				immediate:  true,
+			})
+		case SessionEventError:
+			statusChanged := false
+			prevStatus, wasExt := s.externalRuns[taskID]
+			delete(s.externalRuns, taskID)
+			if s.loadErr == nil && cur.Status == StatusRunning {
+				prevTasks[taskID] = cloneTask(cur)
+				prevExternal[taskID], hadExternal[taskID] = prevStatus, wasExt
+				if strings.TrimSpace(evt.Summary) != "" {
+					cur.Summary = SanitizeAssistantText(evt.Summary)
+				}
+				errMsg := strings.TrimSpace(evt.Error)
+				if errMsg == "" {
+					errMsg = "execution failed"
+				}
+				cur.Status = StatusFailed
+				cur.Error = ScrubLocalPaths(errMsg)
+				cur.UpdatedAt = now
+				s.tasks[taskID] = cur
+				needSave = true
+				statusChanged = true
+			}
+			targets = append(targets, portalTarget{
+				linkID:     cur.LinkID,
+				taskID:     taskID,
+				taskUpdate: statusChanged,
+				immediate:  true,
+			})
+		case SessionEventIdle:
+			statusChanged := false
+			prevStatus, wasExt := s.externalRuns[taskID]
+			delete(s.externalRuns, taskID)
+			if s.loadErr == nil && cur.Status == StatusRunning {
+				prevTasks[taskID] = cloneTask(cur)
+				prevExternal[taskID], hadExternal[taskID] = prevStatus, wasExt
+				if strings.TrimSpace(evt.Error) != "" {
+					if strings.TrimSpace(evt.Summary) != "" {
+						cur.Summary = SanitizeAssistantText(evt.Summary)
+					}
+					cur.Status = StatusFailed
+					cur.Error = ScrubLocalPaths(evt.Error)
+				} else if !evt.Aborted && (strings.TrimSpace(evt.Summary) != "" || evt.Completed) {
+					if strings.TrimSpace(evt.Summary) != "" {
+						cur.Summary = SanitizeAssistantText(evt.Summary)
+					}
+					cur.Status = StatusSucceeded
+					cur.Error = ""
+					cur.CompletedAt = now
+				} else if wasExt && prevStatus != "" {
+					cur.Status = prevStatus
+				} else {
+					cur.Status = StatusSucceeded
+					cur.Error = ""
+					cur.CompletedAt = now
+				}
+				cur.UpdatedAt = now
+				s.tasks[taskID] = cur
+				needSave = true
+				statusChanged = true
+			}
+			targets = append(targets, portalTarget{
+				linkID:     cur.LinkID,
+				taskID:     taskID,
+				taskUpdate: statusChanged,
+				immediate:  true,
+			})
+		}
+	}
+
+	var seq uint64
+	var snap storeDoc
+	if needSave {
+		seq, snap = s.snapshotLocked()
+	}
+	s.mu.Unlock()
+
+	if needSave {
+		if err := s.store.saveSnapshot(seq, snap); err != nil {
+			s.mu.Lock()
+			for taskID, prev := range prevTasks {
+				if latest, exists := s.tasks[taskID]; exists && latest.UpdatedAt == now {
+					s.tasks[taskID] = prev
+					if hadExternal[taskID] {
+						s.externalRuns[taskID] = prevExternal[taskID]
+					} else {
+						delete(s.externalRuns, taskID)
+					}
+				}
+			}
+			s.mu.Unlock()
+			for i := range targets {
+				targets[i].taskUpdate = false
+			}
+		}
+	}
+
+	for _, t := range targets {
+		if t.immediate {
+			s.flushTimelineBroadcast(t.linkID, t.taskID)
+		} else {
+			s.scheduleTimelineBroadcast(t.linkID, t.taskID)
+		}
+		if t.taskUpdate {
+			s.broadcastPortal(t.linkID, SanitizedStreamEvent{Type: "task.updated", TaskID: t.taskID})
+		}
+	}
+}
+
 // ForgetSession detaches deleted Hoxi sessions from intake tasks so stale IDs are never retained.
 func (s *Service) ForgetSession(sessionID string) {
 	sid := strings.TrimSpace(sessionID)
@@ -438,6 +729,8 @@ func (s *Service) ForgetSession(sessionID string) {
 				cancel()
 				delete(s.running, id)
 			}
+			s.indexTaskSessionLocked(id, sid, "")
+			s.cleanupTaskRuntimeLocked(id)
 			t.SessionID = ""
 			if t.Status == StatusRunning {
 				t.Status = StatusStaged

@@ -169,4 +169,41 @@ describe("QA intake portal route & store helpers", () => {
     assertEqual(selectMatchingPortalTimeline("tsk_b", tlA), null);
     assertEqual(selectMatchingPortalTimeline(null, tlA), null);
   });
+
+  it("splits consecutive tool groups cleanly across developer continuation notices", () => {
+    const turns: SanitizedExecutionTurn[] = [
+      {
+        id: "a1",
+        createdAt: 1000,
+        steps: [
+          { id: "s1", kind: "tool", category: "read", label: "Read Export.tsx", status: "completed" },
+        ],
+      },
+      {
+        id: "u2",
+        createdAt: 2000,
+        steps: [
+          { id: "u2_notice", kind: "notice", category: "developer_followup" },
+        ],
+      },
+      {
+        id: "a2",
+        createdAt: 2100,
+        steps: [
+          { id: "s2", kind: "tool", category: "edit", label: "Edit Export.tsx", status: "completed" },
+          { id: "s3", kind: "text", text: "Continued fix complete." },
+        ],
+      },
+    ];
+
+    const segments = groupSanitizedTurns(turns);
+    assertEqual(segments.length, 4);
+    assertEqual(segments[0].kind, "activity");
+    assertEqual(segments[1].kind, "notice");
+    assertEqual(segments[2].kind, "activity");
+    assertEqual(segments[3].kind, "text");
+    if (segments[0].kind === "activity") assertEqual(segments[0].toolCount, 1);
+    if (segments[1].kind === "notice") assertEqual(segments[1].category, "developer_followup");
+    if (segments[2].kind === "activity") assertEqual(segments[2].toolCount, 1);
+  });
 });

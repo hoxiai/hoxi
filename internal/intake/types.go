@@ -175,7 +175,7 @@ type SanitizedFileChange struct {
 // Raw tool inputs, file contents, diffs, shell commands, and local paths are omitted.
 type SanitizedStep struct {
 	ID        string                `json:"id"`
-	Kind      string                `json:"kind"` // "tool" | "text" | "todo"
+	Kind      string                `json:"kind"` // "tool" | "text" | "todo" | "notice"
 	Category  string                `json:"category,omitempty"`
 	Label     string                `json:"label,omitempty"`
 	Text      string                `json:"text,omitempty"`
@@ -186,6 +186,26 @@ type SanitizedStep struct {
 	Files     []SanitizedFileChange `json:"files,omitempty"`
 	StartTime int64                 `json:"startTime,omitempty"`
 	EndTime   int64                 `json:"endTime,omitempty"`
+}
+
+// SessionEventKind describes runner lifecycle or progress events for linked QA sessions.
+type SessionEventKind string
+
+const (
+	SessionEventBusy     SessionEventKind = "busy"
+	SessionEventProgress SessionEventKind = "progress"
+	SessionEventIdle     SessionEventKind = "idle"
+	SessionEventError    SessionEventKind = "error"
+)
+
+// SessionEvent carries an observed runner lifecycle or transcript update for a session.
+type SessionEvent struct {
+	SessionID string
+	Kind      SessionEventKind
+	Summary   string
+	Error     string
+	Completed bool
+	Aborted   bool
 }
 
 // SanitizedTurn groups one assistant execution cycle for the tester view.

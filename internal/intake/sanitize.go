@@ -663,3 +663,24 @@ func BuildFollowupFixPrompt(task TaskItem) string {
 	_, prompt := BuildFollowupFixTurn(task)
 	return prompt
 }
+
+// IsTesterReportPrompt reports whether a session user message was generated from a
+// tester intake submission/reopen envelope rather than typed directly by the developer.
+func IsTesterReportPrompt(raw string) bool {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || !strings.Contains(trimmed, "</untrusted_tester_report>") {
+		return false
+	}
+	if strings.HasPrefix(trimmed, "<untrusted_tester_report") && strings.HasSuffix(trimmed, "</untrusted_tester_report>") {
+		rest := trimmed[len("<untrusted_tester_report"):]
+		if len(rest) > 0 && (rest[0] == '>' || rest[0] == ' ' || rest[0] == '\t' || rest[0] == '\n' || rest[0] == '\r') {
+			return true
+		}
+	}
+	if (strings.HasPrefix(trimmed, "请排查并修复以下由测试人员提交") || strings.HasPrefix(trimmed, "测试人员复测后反馈")) &&
+		strings.Contains(trimmed, "安全边界说明") &&
+		strings.Contains(trimmed, "<untrusted_tester_report") {
+		return true
+	}
+	return false
+}

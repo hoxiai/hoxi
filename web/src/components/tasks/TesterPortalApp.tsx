@@ -386,12 +386,9 @@ export default function TesterPortalApp() {
                   const entries = createMemo(() =>
                     buildPortalConversationEntries(timelineTurns(), followupComments())
                   );
-                  const lastExecutionIndex = createMemo(() => {
+                  const lastEntryIsExecution = createMemo(() => {
                     const list = entries();
-                    for (let i = list.length - 1; i >= 0; i--) {
-                      if (list[i].kind === "execution") return i;
-                    }
-                    return -1;
+                    return list.length > 0 && list[list.length - 1].kind === "execution";
                   });
                   const standaloneDeveloperNote = createMemo(() => {
                     const note = task().developerNote?.trim();
@@ -473,9 +470,19 @@ export default function TesterPortalApp() {
                                     </div>
                                   }
                                 >
-                                  <p class="py-6 text-center text-[12px] text-[var(--text-faint)]">
-                                    {t("tasks.portalProcessWaiting")}
-                                  </p>
+                                  <Show
+                                    when={isLiveBusy()}
+                                    fallback={
+                                      <p class="py-6 text-center text-[12px] text-[var(--text-faint)]">
+                                        {t("tasks.portalProcessWaiting")}
+                                      </p>
+                                    }
+                                  >
+                                    <div class="flex items-center gap-2 py-2 text-[12.5px] text-[var(--accent-primary)]">
+                                      <LoaderCircle size={13} class="shrink-0 animate-spin" />
+                                      <span>{t("tasks.portalContinuingProgress")}</span>
+                                    </div>
+                                  </Show>
                                 </Show>
                               }
                             >
@@ -501,13 +508,20 @@ export default function TesterPortalApp() {
                                   turns={
                                     (entry as Extract<typeof entry, { kind: "execution" }>).turns
                                   }
-                                  busy={isLiveBusy() && idx() === lastExecutionIndex()}
-                                  isLastBlock={idx() === lastExecutionIndex()}
+                                  busy={isLiveBusy() && idx() === entries().length - 1}
+                                  isLastBlock={idx() === entries().length - 1}
                                   scopeKey={task().id}
                                 />
                               </Show>
                             )}
                           </For>
+
+                          <Show when={isLiveBusy() && !lastEntryIsExecution()}>
+                            <div class="flex items-center gap-2 text-[12.5px] text-[var(--accent-primary)]">
+                              <LoaderCircle size={13} class="shrink-0 animate-spin" />
+                              <span>{t("tasks.portalContinuingProgress")}</span>
+                            </div>
+                          </Show>
 
                           <Show when={isWaitingApproval()}>
                             <div class="flex items-center gap-2 rounded-lg bg-[var(--bg-inset)]/55 px-3 py-2 text-[12px] text-[var(--text-muted)]">

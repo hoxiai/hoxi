@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/hoxiai/hoxi/internal/intake"
 	"github.com/hoxiai/hoxi/internal/runner"
@@ -332,5 +334,286 @@ func TestIntakeManagementRoutesRequireGatewayToken(t *testing.T) {
 	gw.ServeHTTP(okRec, okReq)
 	if okRec.Code != http.StatusOK {
 		t.Fatalf("GET /api/hoxi/intake/links with token = %d, want 200: %s", okRec.Code, okRec.Body.String())
+	}
+}
+
+func TestSanitizedTimelineMarksDeveloperContinuationWithoutLeakingPrompt(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOXI_HOME", filepath.Join(tmp, "hoxi-home"))
+	proj := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gw := New(0, "test-pass", proj, nil, nil)
+	t.Cleanup(gw.CloseBrowser)
+
+	info, _, err := gw.runner.CreateConversation(t.Context(), runner.CreateSessionRequest{
+		Title:       "QA · 导出失败",
+		Directory:   proj,
+		SandboxMode: "local",
+	}, proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, initPrompt := intake.BuildInitialFixTurn(intake.TaskItem{
+		Title:       "导出失败",
+		Description: "点击导出报错",
+	})
+	_, reopenPrompt := intake.BuildFollowupFixTurn(intake.TaskItem{
+		Title:    "导出失败",
+		Comments: []intake.TaskComment{{AuthorRole: "tester", Text: "导出空表仍报错"}},
+	})
+
+	gw.runner.Store().Update(info.ID, func(rec *runner.SessionRecord) {
+		rec.Turns = []runner.MessageTurn{
+			{
+				Info:  runner.MessageInfo{ID: "msg_u1", SessionID: info.ID, Role: "user", Time: runner.MessageTime{Created: 1000}},
+				Parts: []runner.MessagePart{{ID: "p_u1", Type: "text", Text: initPrompt}},
+			},
+			{
+				Info:  runner.MessageInfo{ID: "msg_a1", SessionID: info.ID, Role: "assistant", Time: runner.MessageTime{Created: 1100, Completed: 1200}},
+				Parts: []runner.MessagePart{{ID: "p_a1", Type: "text", Text: "第一轮已修复导出接口。"}},
+			},
+			{
+				Info:  runner.MessageInfo{ID: "msg_u2", SessionID: info.ID, Role: "user", Time: runner.MessageTime{Created: 2000}},
+				Parts: []runner.MessagePart{{ID: "p_u2", Type: "text", Text: reopenPrompt}},
+			},
+			{
+				Info:  runner.MessageInfo{ID: "msg_a2", SessionID: info.ID, Role: "assistant", Time: runner.MessageTime{Created: 2100, Completed: 2200}},
+				Parts: []runner.MessagePart{{ID: "p_a2", Type: "text", Text: "第二轮已处理空表场景。"}},
+			},
+			{
+				Info:  runner.MessageInfo{ID: "msg_u3", SessionID: info.ID, Role: "user", Time: runner.MessageTime{Created: 3000}},
+				Parts: []runner.MessagePart{{ID: "p_u3", Type: "text", Text: "顺便检查 /Users/alice/secret/export.go 里的 SECRET_ADMIN_INSTRUCTION 逻辑"}},
+			},
+			{
+				Info: runner.MessageInfo{ID: "msg_a3", SessionID: info.ID, Role: "assistant", Time: runner.MessageTime{Created: 3100, Completed: 3200}},
+				Parts: []runner.MessagePart{
+					{
+						ID:   "p_tool3",
+						Type: "tool",
+						Tool: "edit_file",
+						State: &runner.ToolState{
+							Status: "completed",
+							Input:  map[string]interface{}{"Path": proj + "/src/Export.tsx"},
+						},
+					},
+					{ID: "p_a3", Type: "text", Text: "已补充大文件分片导出校验，请重点复测。"},
+				},
+			},
+		}
+	})
+
+	bridge := &gatewayIntakeSessions{runner: gw.runner}
+	tl, ok := bridge.SanitizedTimeline(info.ID)
+	if !ok {
+		t.Fatal("expected timeline found")
+	}
+	raw, _ := json.Marshal(tl)
+	if strings.Contains(string(raw), "SECRET_ADMIN_INSTRUCTION") || strings.Contains(string(raw), "Users/alice") {
+		t.Fatalf("developer continuation prompt must never leak to tester timeline: %s", string(raw))
+	}
+	// Expect: assistant 1, assistant 2, developer_followup notice, assistant 3.
+	if len(tl.Turns) != 4 {
+		t.Fatalf("expected 4 timeline turns (3 assistant + 1 developer notice), got %d: %+v", len(tl.Turns), tl.Turns)
+	}
+	if len(tl.Turns[2].Steps) != 1 || tl.Turns[2].Steps[0].Kind != "notice" || tl.Turns[2].Steps[0].Category != "developer_followup" {
+		t.Fatalf("expected turn 2 to be developer_followup notice, got %+v", tl.Turns[2])
+	}
+	if tl.Turns[3].ID != "msg_a3" || len(tl.Turns[3].Steps) != 2 {
+		t.Fatalf("expected continued assistant turn after notice, got %+v", tl.Turns[3])
+	}
+
+	summary, completed, aborted, errText := bridge.inspectLatestTurn(info.ID)
+	if !completed || aborted || errText != "" || !strings.Contains(summary, "大文件分片导出") {
+		t.Fatalf("unexpected inspectLatestTurn result: summary=%q completed=%v aborted=%v err=%q", summary, completed, aborted, errText)
+	}
+}
+
+type stubApproveRunBridge struct {
+	*gatewayIntakeSessions
+	sessionID string
+}
+
+func (s *stubApproveRunBridge) EnsureSession(_ context.Context, _ intake.RunSessionRequest) (string, error) {
+	return s.sessionID, nil
+}
+
+func (s *stubApproveRunBridge) RunTurn(_ context.Context, _ string, _ intake.RunSessionRequest) (string, error) {
+	return "第一轮修复完成", nil
+}
+
+func TestGatewayIntakeWatcherRelaysDesktopContinuationEvents(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOXI_HOME", filepath.Join(tmp, "hoxi-home"))
+	proj := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gw := New(0, "test-pass", proj, nil, nil)
+	t.Cleanup(gw.CloseBrowser)
+
+	info, _, err := gw.runner.CreateConversation(t.Context(), runner.CreateSessionRequest{
+		Title:       "QA · 导出失败",
+		Directory:   proj,
+		SandboxMode: "local",
+	}, proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	busyNow := false
+	bridge := &gatewayIntakeSessions{
+		runner: gw.runner,
+		isBusy: func(sid string) bool { return sid == info.ID && busyNow },
+	}
+	svc := intake.NewService(filepath.Join(tmp, "intake-watch.json"), nil, &stubApproveRunBridge{
+		gatewayIntakeSessions: bridge,
+		sessionID:             info.ID,
+	}, nil)
+	svc.SetSessionWatcher(func() func() {
+		return bridge.startSessionWatcher(svc)
+	})
+	t.Cleanup(svc.Close)
+
+	pub, err := svc.CreateLink(intake.CreateLinkInput{Directory: proj, Label: "QA"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok := strings.TrimPrefix(pub.PortalPath, "/qa/")
+	link, err := svc.AuthorizePortalToken(tok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := svc.SubmitPortalTask(link, intake.SubmitTaskInput{
+		Title:       "导出失败",
+		Description: "点击导出报错",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ApproveAndRun(t.Context(), intake.ApproveTaskInput{TaskID: task.ID}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		items := svc.ListDesktopTasks(proj)
+		if len(items) == 1 && items[0].Status == intake.StatusSucceeded {
+			break
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+
+	subCh, unsub := svc.SubscribePortal(link.ID)
+	defer unsub()
+	for {
+		select {
+		case <-subCh:
+		default:
+			goto drained
+		}
+	}
+drained:
+
+	// A stale buffered busy event after a turn already ended must not flicker the task back to running.
+	busyNow = false
+	bridge.forwardRunnerEvent(svc, runner.SSEEvent{
+		Type: "session.status",
+		Properties: map[string]interface{}{
+			"sessionID": info.ID,
+			"status":    runner.SessionStatus{Type: "busy"},
+		},
+	})
+	if items := svc.ListDesktopTasks(proj); len(items) != 1 || items[0].Status != intake.StatusSucceeded {
+		t.Fatalf("stale busy event must not flip settled task to running, got %+v", items)
+	}
+
+	// Simulate admin continuing the linked session directly on desktop.
+	busyNow = true
+	bridge.forwardRunnerEvent(svc, runner.SSEEvent{
+		Type: "session.status",
+		Properties: map[string]interface{}{
+			"sessionID": info.ID,
+			"status":    runner.SessionStatus{Type: "busy"},
+		},
+	})
+	if items := svc.ListDesktopTasks(proj); len(items) != 1 || items[0].Status != intake.StatusRunning {
+		t.Fatalf("expected running after desktop busy event, got %+v", items)
+	}
+
+	// A stale idle event arriving while the session is still actively busy must not settle it early.
+	bridge.forwardRunnerEvent(svc, runner.SSEEvent{
+		Type:       "session.idle",
+		Properties: map[string]interface{}{"sessionID": info.ID},
+	})
+	if items := svc.ListDesktopTasks(proj); len(items) != 1 || items[0].Status != intake.StatusRunning {
+		t.Fatalf("stale idle while busy must keep task running, got %+v", items)
+	}
+
+	gw.runner.Store().Update(info.ID, func(rec *runner.SessionRecord) {
+		rec.Turns = []runner.MessageTurn{
+			{
+				Info:  runner.MessageInfo{ID: "msg_u1", SessionID: info.ID, Role: "user", Time: runner.MessageTime{Created: 1000}},
+				Parts: []runner.MessagePart{{ID: "p_u1", Type: "text", Text: intake.BuildInitialFixPrompt(intake.TaskItem{Title: "导出失败", Description: "点击导出报错"})}},
+			},
+			{
+				Info:  runner.MessageInfo{ID: "msg_a1", SessionID: info.ID, Role: "assistant", Time: runner.MessageTime{Created: 1100, Completed: 1200}},
+				Parts: []runner.MessagePart{{ID: "p_a1", Type: "text", Text: "第一轮修复完成"}},
+			},
+			{
+				Info:  runner.MessageInfo{ID: "msg_u2", SessionID: info.ID, Role: "user", Time: runner.MessageTime{Created: 2000}},
+				Parts: []runner.MessagePart{{ID: "p_u2", Type: "text", Text: "继续补上边界校验"}},
+			},
+			{
+				Info:  runner.MessageInfo{ID: "msg_a2", SessionID: info.ID, Role: "assistant", Time: runner.MessageTime{Created: 2100, Completed: 2200}},
+				Parts: []runner.MessagePart{{ID: "p_a2", Type: "text", Text: "第二轮已补充边界校验，请复测"}},
+			},
+		}
+	})
+
+	bridge.forwardRunnerEvent(svc, runner.SSEEvent{
+		Type: "message.part.updated",
+		Properties: map[string]interface{}{
+			"part": runner.MessagePart{ID: "p_a2", SessionID: info.ID, Type: "text", Text: "第二轮已补充边界校验，请复测"},
+		},
+	})
+	busyNow = false
+	bridge.forwardRunnerEvent(svc, runner.SSEEvent{
+		Type:       "session.idle",
+		Properties: map[string]interface{}{"sessionID": info.ID},
+	})
+
+	items := svc.ListDesktopTasks(proj)
+	if len(items) != 1 || items[0].Status != intake.StatusSucceeded || !strings.Contains(items[0].Summary, "边界校验") {
+		t.Fatalf("expected task settled with continued summary, got %+v", items)
+	}
+	tl, err := svc.PortalTimeline(link, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tl.Turns) != 3 || tl.Turns[1].Steps[0].Kind != "notice" || tl.Turns[2].ID != "msg_a2" {
+		t.Fatalf("expected continued timeline with notice + msg_a2, got %+v", tl)
+	}
+
+	// Resync event reconciles linked session state safely.
+	bridge.forwardRunnerEvent(svc, runner.SSEEvent{Type: "hoxi.stream.resync", Properties: map[string]interface{}{}})
+	sawTimeline := false
+	sawTask := false
+	for {
+		select {
+		case evt := <-subCh:
+			if evt.Type == "timeline.updated" && evt.TaskID == task.ID {
+				sawTimeline = true
+			}
+			if evt.Type == "task.updated" && evt.TaskID == task.ID {
+				sawTask = true
+			}
+		default:
+			goto doneCheck
+		}
+	}
+doneCheck:
+	if !sawTimeline || !sawTask {
+		t.Fatalf("expected portal SSE timeline.updated and task.updated events, got timeline=%v task=%v", sawTimeline, sawTask)
 	}
 }

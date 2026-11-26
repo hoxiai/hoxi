@@ -81,14 +81,22 @@ func (a gatewayIntakeAttachments) Delete(id string) error {
 
 func newGatewayIntakeService(g *Gateway) *intake.Service {
 	var att intake.Attachments
+	var bridge *gatewayIntakeSessions
 	var sess intake.Sessions
 	if g.runner != nil {
 		if st := g.runner.Attachments(); st != nil {
 			att = gatewayIntakeAttachments{store: st}
 		}
-		sess = &gatewayIntakeSessions{runner: g.runner}
+		bridge = &gatewayIntakeSessions{runner: g.runner}
+		sess = bridge
 	}
-	return intake.NewService(hoxipaths.IntakeStorePath(), att, sess, g.resolveIntakeEndpoints)
+	svc := intake.NewService(hoxipaths.IntakeStorePath(), att, sess, g.resolveIntakeEndpoints)
+	if bridge != nil {
+		svc.SetSessionWatcher(func() func() {
+			return bridge.startSessionWatcher(svc)
+		})
+	}
+	return svc
 }
 
 func (g *Gateway) resolveIntakeEndpoints() intake.EndpointInfo {
@@ -214,6 +222,17 @@ func (g *Gateway) serveIntakePublicSurface(w http.ResponseWriter, r *http.Reques
 
 type gatewayIntakeSessions struct {
 	runner *runner.Service
+	isBusy func(sessionID string) bool
+}
+
+func (b *gatewayIntakeSessions) sessionBusy(sessionID string) bool {
+	if b.isBusy != nil {
+		return b.isBusy(sessionID)
+	}
+	if b.runner == nil {
+		return false
+	}
+	return b.runner.IsSessionBusy(sessionID)
 }
 
 func (b *gatewayIntakeSessions) EnsureSession(ctx context.Context, req intake.RunSessionRequest) (string, error) {
@@ -288,10 +307,32 @@ func (b *gatewayIntakeSessions) SanitizedTimeline(sessionID string) (intake.Sani
 	}
 	var turns []intake.SanitizedTurn
 	found := b.runner.Store().VisitTurns(sessionID, func(rec runner.SessionRecord) {
+		sawTurn := false
 		for _, turn := range rec.Turns {
+			if turn.Info.Role == "user" {
+				if sawTurn && !isTesterIntakeUserTurn(turn) {
+					noticeTurn := intake.SanitizedTurn{
+						ID:        turn.Info.ID,
+						CreatedAt: turn.Info.Time.Created,
+						Steps: []intake.SanitizedStep{{
+							ID:       turn.Info.ID + "_dev_followup",
+							Kind:     "notice",
+							Category: "developer_followup",
+						}},
+					}
+					if n := len(turns); n > 0 && isDeveloperFollowupNoticeTurn(turns[n-1]) {
+						turns[n-1] = noticeTurn
+					} else {
+						turns = append(turns, noticeTurn)
+					}
+				}
+				sawTurn = true
+				continue
+			}
 			if turn.Info.Role != "assistant" {
 				continue
 			}
+			sawTurn = true
 			var steps []intake.SanitizedStep
 			for _, part := range turn.Parts {
 				switch part.Type {
@@ -405,5 +446,281 @@ func (b *gatewayIntakeSessions) SubscribeSession(sessionID string) (<-chan struc
 func (b *gatewayIntakeSessions) Abort(sessionID string) {
 	if b.runner != nil {
 		b.runner.AbortSession(sessionID)
+	}
+}
+
+func isTesterIntakeUserTurn(turn runner.MessageTurn) bool {
+	var texts []string
+	for _, part := range turn.Parts {
+		if part.Type == "text" && strings.TrimSpace(part.Text) != "" {
+			texts = append(texts, part.Text)
+		}
+	}
+	return intake.IsTesterReportPrompt(strings.Join(texts, "\n"))
+}
+
+func isDeveloperFollowupNoticeTurn(turn intake.SanitizedTurn) bool {
+	return len(turn.Steps) == 1 &&
+		turn.Steps[0].Kind == "notice" &&
+		turn.Steps[0].Category == "developer_followup"
+}
+
+func formatRunnerMessageError(e *runner.MessageError) string {
+	if e == nil {
+		return ""
+	}
+	if e.Data != nil && strings.TrimSpace(e.Data.Message) != "" {
+		if strings.TrimSpace(e.Name) != "" {
+			return strings.TrimSpace(e.Name) + ": " + strings.TrimSpace(e.Data.Message)
+		}
+		return strings.TrimSpace(e.Data.Message)
+	}
+	return strings.TrimSpace(e.Name)
+}
+
+func extractRunnerEventSessionID(evt runner.SSEEvent) string {
+	if evt.Properties == nil {
+		return ""
+	}
+	if sid, ok := evt.Properties["sessionID"].(string); ok && strings.TrimSpace(sid) != "" {
+		return strings.TrimSpace(sid)
+	}
+	switch info := evt.Properties["info"].(type) {
+	case runner.MessageInfo:
+		if strings.TrimSpace(info.SessionID) != "" {
+			return strings.TrimSpace(info.SessionID)
+		}
+	case *runner.MessageInfo:
+		if info != nil && strings.TrimSpace(info.SessionID) != "" {
+			return strings.TrimSpace(info.SessionID)
+		}
+	case runner.SessionInfo:
+		if strings.TrimSpace(info.ID) != "" {
+			return strings.TrimSpace(info.ID)
+		}
+	case *runner.SessionInfo:
+		if info != nil && strings.TrimSpace(info.ID) != "" {
+			return strings.TrimSpace(info.ID)
+		}
+	}
+	switch part := evt.Properties["part"].(type) {
+	case runner.MessagePart:
+		if strings.TrimSpace(part.SessionID) != "" {
+			return strings.TrimSpace(part.SessionID)
+		}
+	case *runner.MessagePart:
+		if part != nil && strings.TrimSpace(part.SessionID) != "" {
+			return strings.TrimSpace(part.SessionID)
+		}
+	}
+	return ""
+}
+
+func extractRunnerSessionStatusType(evt runner.SSEEvent) string {
+	if evt.Properties == nil {
+		return ""
+	}
+	switch st := evt.Properties["status"].(type) {
+	case runner.SessionStatus:
+		return strings.ToLower(strings.TrimSpace(st.Type))
+	case *runner.SessionStatus:
+		if st != nil {
+			return strings.ToLower(strings.TrimSpace(st.Type))
+		}
+	case map[string]interface{}:
+		if typ, ok := st["type"].(string); ok {
+			return strings.ToLower(strings.TrimSpace(typ))
+		}
+	}
+	return ""
+}
+
+func extractRunnerSessionError(raw interface{}) string {
+	switch e := raw.(type) {
+	case runner.MessageError:
+		return formatRunnerMessageError(&e)
+	case *runner.MessageError:
+		return formatRunnerMessageError(e)
+	case string:
+		return strings.TrimSpace(e)
+	case map[string]interface{}:
+		name, _ := e["name"].(string)
+		if data, ok := e["data"].(map[string]interface{}); ok {
+			if msg, ok := data["message"].(string); ok && strings.TrimSpace(msg) != "" {
+				if strings.TrimSpace(name) != "" {
+					return strings.TrimSpace(name) + ": " + strings.TrimSpace(msg)
+				}
+				return strings.TrimSpace(msg)
+			}
+		}
+		if msg, ok := e["message"].(string); ok && strings.TrimSpace(msg) != "" {
+			return strings.TrimSpace(msg)
+		}
+		return strings.TrimSpace(name)
+	}
+	return ""
+}
+
+func (b *gatewayIntakeSessions) inspectLatestTurn(sessionID string) (summary string, completed bool, aborted bool, errText string) {
+	if b.runner == nil {
+		return "", false, false, ""
+	}
+	b.runner.Store().VisitTurns(sessionID, func(rec runner.SessionRecord) {
+		for i := len(rec.Turns) - 1; i >= 0; i-- {
+			turn := rec.Turns[i]
+			if turn.Info.Role == "user" {
+				return
+			}
+			if turn.Info.Role != "assistant" {
+				continue
+			}
+			if turn.Info.Error != nil && errText == "" {
+				errText = formatRunnerMessageError(turn.Info.Error)
+			}
+			if strings.EqualFold(strings.TrimSpace(turn.Info.Finish), "aborted") {
+				aborted = true
+			} else if turn.Info.Time.Completed > 0 {
+				completed = true
+			}
+			var texts []string
+			for _, part := range turn.Parts {
+				if part.Type == "text" && strings.TrimSpace(part.Text) != "" {
+					texts = append(texts, part.Text)
+				}
+			}
+			if len(texts) > 0 && summary == "" {
+				summary = strings.Join(texts, "\n")
+			}
+			if summary != "" {
+				if !aborted {
+					completed = true
+				}
+				return
+			}
+		}
+	})
+	return summary, completed, aborted, errText
+}
+
+func (b *gatewayIntakeSessions) startSessionWatcher(svc *intake.Service) func() {
+	if b.runner == nil || svc == nil {
+		return func() {}
+	}
+	rawCh, unsub := b.runner.Subscribe("")
+	stop := make(chan struct{})
+	var once sync.Once
+	clean := func() {
+		once.Do(func() {
+			close(stop)
+			unsub()
+		})
+	}
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			case evt, ok := <-rawCh:
+				if !ok {
+					return
+				}
+				b.forwardRunnerEvent(svc, evt)
+			}
+		}
+	}()
+	return clean
+}
+
+func (b *gatewayIntakeSessions) forwardRunnerEvent(svc *intake.Service, evt runner.SSEEvent) {
+	if evt.Type == "hoxi.stream.resync" {
+		for _, sid := range svc.LinkedSessionIDs() {
+			if b.sessionBusy(sid) {
+				svc.HandleSessionEvent(intake.SessionEvent{
+					SessionID: sid,
+					Kind:      intake.SessionEventBusy,
+				})
+				continue
+			}
+			summary, completed, aborted, errText := b.inspectLatestTurn(sid)
+			svc.HandleSessionEvent(intake.SessionEvent{
+				SessionID: sid,
+				Kind:      intake.SessionEventIdle,
+				Summary:   summary,
+				Completed: completed,
+				Aborted:   aborted,
+				Error:     errText,
+			})
+		}
+		return
+	}
+	sid := extractRunnerEventSessionID(evt)
+	if sid == "" || !svc.HasLinkedSession(sid) {
+		return
+	}
+	switch evt.Type {
+	case "session.status":
+		switch extractRunnerSessionStatusType(evt) {
+		case "busy", "retry":
+			if !b.sessionBusy(sid) {
+				return
+			}
+			svc.HandleSessionEvent(intake.SessionEvent{
+				SessionID: sid,
+				Kind:      intake.SessionEventBusy,
+			})
+		case "idle":
+			if b.sessionBusy(sid) {
+				svc.HandleSessionEvent(intake.SessionEvent{
+					SessionID: sid,
+					Kind:      intake.SessionEventProgress,
+				})
+				return
+			}
+			summary, completed, aborted, errText := b.inspectLatestTurn(sid)
+			svc.HandleSessionEvent(intake.SessionEvent{
+				SessionID: sid,
+				Kind:      intake.SessionEventIdle,
+				Summary:   summary,
+				Completed: completed,
+				Aborted:   aborted,
+				Error:     errText,
+			})
+		}
+	case "session.idle":
+		if b.sessionBusy(sid) {
+			svc.HandleSessionEvent(intake.SessionEvent{
+				SessionID: sid,
+				Kind:      intake.SessionEventProgress,
+			})
+			return
+		}
+		summary, completed, aborted, errText := b.inspectLatestTurn(sid)
+		svc.HandleSessionEvent(intake.SessionEvent{
+			SessionID: sid,
+			Kind:      intake.SessionEventIdle,
+			Summary:   summary,
+			Completed: completed,
+			Aborted:   aborted,
+			Error:     errText,
+		})
+	case "session.error":
+		summary, completed, aborted, storeErr := b.inspectLatestTurn(sid)
+		errText := extractRunnerSessionError(evt.Properties["error"])
+		if errText == "" {
+			errText = storeErr
+		}
+		svc.HandleSessionEvent(intake.SessionEvent{
+			SessionID: sid,
+			Kind:      intake.SessionEventError,
+			Summary:   summary,
+			Completed: completed,
+			Aborted:   aborted,
+			Error:     errText,
+		})
+	case "message.updated", "message.part.updated", "message.part.delta", "session.updated":
+		svc.HandleSessionEvent(intake.SessionEvent{
+			SessionID: sid,
+			Kind:      intake.SessionEventProgress,
+		})
 	}
 }

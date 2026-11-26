@@ -348,6 +348,9 @@ func (g *Gateway) CloseBrowser() {
 	if g.scheduler != nil {
 		g.scheduler.Stop()
 	}
+	if g.intake != nil {
+		g.intake.Close()
+	}
 	g.closeExtensions()
 	g.browser.Close()
 	g.closeNativeHost()

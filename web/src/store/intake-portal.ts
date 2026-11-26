@@ -130,10 +130,19 @@ export function mountTesterPortal(explicitToken?: string): () => void {
     })
     .finally(() => setPortalLoading(false));
 
+  let hasConnectedOnce = false;
   const disconnect = intakeAPI.connectPortalStream(tok, {
     onConnectionChange: (ok) => setPortalConnected(ok),
     onEvent: (evt) => {
-      if (evt.type === "task.updated") {
+      if (evt.type === "connected") {
+        if (hasConnectedOnce) {
+          void refreshPortalInfo();
+          if (activePortalTaskID()) {
+            void refreshActivePortalTimeline(activePortalTaskID());
+          }
+        }
+        hasConnectedOnce = true;
+      } else if (evt.type === "task.updated") {
         void refreshPortalInfo();
         if (evt.taskId && evt.taskId === activePortalTaskID()) {
           void refreshActivePortalTimeline(evt.taskId);
@@ -146,10 +155,13 @@ export function mountTesterPortal(explicitToken?: string): () => void {
     },
   });
 
-  // Fallback poll while active task is running in case reverse proxies buffer SSE frames.
+  // Fallback poll while active task or linked session is busy in case reverse proxies buffer SSE frames.
   const pollTimer = setInterval(() => {
     const cur = activePortalTask();
-    if (cur && cur.status === "running") {
+    if (!cur) return;
+    const tl = portalTimeline();
+    const tlBusy = Boolean(tl && (!tl.taskId || tl.taskId === cur.id) && tl.busy);
+    if (cur.status === "running" || tlBusy) {
       void refreshPortalInfo();
       void refreshActivePortalTimeline(cur.id);
     }

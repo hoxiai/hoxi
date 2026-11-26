@@ -42,7 +42,14 @@ export interface PortalTextSegment {
   text: string;
 }
 
-export type PortalTimelineSegment = PortalActivitySegment | PortalTextSegment;
+export interface PortalNoticeSegment {
+  kind: "notice";
+  key: string;
+  category: string;
+  label?: string;
+}
+
+export type PortalTimelineSegment = PortalActivitySegment | PortalTextSegment | PortalNoticeSegment;
 
 export type PortalConversationEntry =
   | {
@@ -220,6 +227,17 @@ export function groupSanitizedTurns(
 
   for (const turn of turns) {
     for (const step of turn.steps ?? []) {
+      if (step.kind === "notice") {
+        flushActivity();
+        segments.push({
+          kind: "notice",
+          key: step.id || `${turn.id}_notice_${segments.length}`,
+          category: step.category || "developer_followup",
+          label: step.label,
+        });
+        continue;
+      }
+
       if (step.kind === "text") {
         const text = step.text?.trim();
         if (!text) continue;

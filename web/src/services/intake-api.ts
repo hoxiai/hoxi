@@ -81,7 +81,7 @@ export interface SanitizedFileChange {
 
 export interface SanitizedExecutionStep {
   id: string;
-  kind: "tool" | "text" | "todo";
+  kind: "tool" | "text" | "todo" | "notice";
   category?: string;
   label?: string;
   text?: string;

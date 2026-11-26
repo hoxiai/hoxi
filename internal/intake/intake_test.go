@@ -577,3 +577,162 @@ func TestScrubLocalPathsSpacesCJKAndOrphanQuotaAndConcurrency(t *testing.T) {
 		}
 	}
 }
+
+func TestHandleSessionEventDesktopContinuationSyncAndErrorGuards(t *testing.T) {
+	tmp := t.TempDir()
+	proj := filepath.Join(tmp, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	sess := &fakeSessions{}
+	svc := NewService(filepath.Join(tmp, "intake.json"), newFakeAttachments(), sess, nil)
+	t.Cleanup(svc.Close)
+
+	pub, err := svc.CreateLink(CreateLinkInput{Directory: proj, Label: "QA"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok := strings.TrimPrefix(pub.PortalPath, "/qa/")
+	link, err := svc.AuthorizePortalToken(tok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := svc.SubmitPortalTask(link, SubmitTaskInput{
+		Title:       "表单提交未防连点",
+		Description: "快速点击两次提交会产生重复记录",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ApproveAndRun(context.Background(), ApproveTaskInput{TaskID: task.ID}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		items := svc.ListDesktopTasks(proj)
+		if len(items) == 1 && items[0].Status == StatusSucceeded {
+			break
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	if !svc.HasLinkedSession("ses_qa_test_1") {
+		t.Fatal("expected ses_qa_test_1 to be indexed as linked session")
+	}
+
+	subCh, unsub := svc.SubscribePortal(link.ID)
+	defer unsub()
+	drainEvents := func() {
+		for {
+			select {
+			case <-subCh:
+			default:
+				return
+			}
+		}
+	}
+	waitEvent := func(wantType string) {
+		t.Helper()
+		timer := time.NewTimer(time.Second)
+		defer timer.Stop()
+		for {
+			select {
+			case evt := <-subCh:
+				if evt.Type == wantType && evt.TaskID == task.ID {
+					return
+				}
+			case <-timer.C:
+				t.Fatalf("timed out waiting for portal SSE event %q", wantType)
+			}
+		}
+	}
+	drainEvents()
+
+	// 1. Admin continues the linked QA session directly in desktop: busy -> progress -> idle.
+	svc.HandleSessionEvent(SessionEvent{SessionID: "ses_qa_test_1", Kind: SessionEventBusy})
+	waitEvent("timeline.updated")
+	waitEvent("task.updated")
+	items := svc.ListDesktopTasks(proj)
+	if len(items) != 1 || items[0].Status != StatusRunning {
+		t.Fatalf("expected task running during desktop continuation, got %+v", items)
+	}
+
+	drainEvents()
+	svc.HandleSessionEvent(SessionEvent{SessionID: "ses_qa_test_1", Kind: SessionEventProgress})
+	svc.HandleSessionEvent(SessionEvent{SessionID: "ses_qa_test_1", Kind: SessionEventProgress})
+	waitEvent("timeline.updated")
+
+	drainEvents()
+	secretPath := "/" + "Users/alice/private/src/SubmitBtn.tsx"
+	svc.HandleSessionEvent(SessionEvent{
+		SessionID: "ses_qa_test_1",
+		Kind:      SessionEventIdle,
+		Completed: true,
+		Summary:   "已补充 " + secretPath + " 按钮防连点：\n```tsx\nconst secret = 1;\n```\n请再次快速连点复测。",
+	})
+	waitEvent("timeline.updated")
+	waitEvent("task.updated")
+	items = svc.ListDesktopTasks(proj)
+	if len(items) != 1 || items[0].Status != StatusSucceeded {
+		t.Fatalf("expected task succeeded after desktop continuation, got %+v", items)
+	}
+	if strings.Contains(items[0].Summary, "Users/alice") || strings.Contains(items[0].Summary, "const secret") {
+		t.Fatalf("continued summary leaked path or code: %q", items[0].Summary)
+	}
+	if !strings.Contains(items[0].Summary, "SubmitBtn.tsx") || !strings.Contains(items[0].Summary, "请再次快速连点复测") {
+		t.Fatalf("expected updated sanitized summary, got %q", items[0].Summary)
+	}
+
+	// 2. Admin continues a reopened task and aborts before completion -> restores StatusReopened.
+	if _, err := svc.SubmitPortalFeedback(link, PortalFeedbackInput{
+		TaskID: task.ID,
+		Action: "reopen",
+		Text:   "Safari 上仍可双击触发",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc.HandleSessionEvent(SessionEvent{SessionID: "ses_qa_test_1", Kind: SessionEventBusy})
+	svc.HandleSessionEvent(SessionEvent{SessionID: "ses_qa_test_1", Kind: SessionEventIdle, Aborted: true})
+	items = svc.ListDesktopTasks(proj)
+	if len(items) != 1 || items[0].Status != StatusReopened {
+		t.Fatalf("expected aborted continuation to restore StatusReopened, got %+v", items)
+	}
+
+	// 3. Error event transitions to StatusFailed and trailing idle does not overwrite it.
+	svc.HandleSessionEvent(SessionEvent{SessionID: "ses_qa_test_1", Kind: SessionEventBusy})
+	svc.HandleSessionEvent(SessionEvent{
+		SessionID: "ses_qa_test_1",
+		Kind:      SessionEventError,
+		Error:     "failed reading " + secretPath,
+	})
+	svc.HandleSessionEvent(SessionEvent{SessionID: "ses_qa_test_1", Kind: SessionEventIdle, Completed: true})
+	items = svc.ListDesktopTasks(proj)
+	if len(items) != 1 || items[0].Status != StatusFailed {
+		t.Fatalf("expected StatusFailed preserved across trailing idle, got %+v", items)
+	}
+	if strings.Contains(items[0].Error, "Users/alice") || !strings.Contains(items[0].Error, "SubmitBtn.tsx") {
+		t.Fatalf("expected scrubbed error message, got %q", items[0].Error)
+	}
+
+	// 4. Terminal StatusResolved is never overwritten, while timeline.updated is still broadcast.
+	if _, err := svc.UpdateTaskStatus(UpdateTaskStatusInput{TaskID: task.ID, Status: StatusResolved}); err != nil {
+		t.Fatal(err)
+	}
+	drainEvents()
+	svc.HandleSessionEvent(SessionEvent{SessionID: "ses_qa_test_1", Kind: SessionEventBusy})
+	waitEvent("timeline.updated")
+	items = svc.ListDesktopTasks(proj)
+	if len(items) != 1 || items[0].Status != StatusResolved {
+		t.Fatalf("expected terminal StatusResolved preserved, got %+v", items)
+	}
+
+	// 5. IsTesterReportPrompt distinguishes generated envelopes from developer prompts.
+	_, initPrompt := BuildInitialFixTurn(TaskItem{Title: "Bug", Description: "Broken"})
+	_, followPrompt := BuildFollowupFixTurn(TaskItem{Title: "Bug", Comments: []TaskComment{{AuthorRole: "tester", Text: "Still broken"}}})
+	if !IsTesterReportPrompt(initPrompt) || !IsTesterReportPrompt(followPrompt) {
+		t.Fatalf("expected generated tester prompts to match IsTesterReportPrompt")
+	}
+	if IsTesterReportPrompt("再检查一下 <untrusted_tester_report> 标签处理逻辑") {
+		t.Fatalf("ordinary developer prompt mentioning the tag must not match IsTesterReportPrompt")
+	}
+}

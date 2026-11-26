@@ -29,6 +29,7 @@ import {
   groupSanitizedTurns,
   type PortalActivitySegment,
   type PortalDiffSummary,
+  type PortalNoticeSegment,
 } from "./portal-timeline-helpers";
 
 const MAX_EXPANDED_ENTRIES = 256;
@@ -432,6 +433,30 @@ export default function PortalExecutionTimeline(props: {
 
           return (
             <Switch>
+              <Match when={seg.kind === "notice"}>
+                {(() => {
+                  const notice = seg as PortalNoticeSegment;
+                  const label = () =>
+                    notice.category === "developer_followup"
+                      ? t("tasks.portalDeveloperFollowupLabel")
+                      : notice.label || t("tasks.portalDeveloperFollowupLabel");
+                  return (
+                    <div class="space-y-2 pt-1">
+                      <div class="flex items-center gap-2.5 text-[11px] font-medium text-[var(--text-faint)] select-none">
+                        <span class="h-px flex-1 bg-[var(--border-subtle)]/60" />
+                        <span>{label()}</span>
+                        <span class="h-px flex-1 bg-[var(--border-subtle)]/60" />
+                      </div>
+                      <Show when={isTail()}>
+                        <div class="flex items-center gap-2 text-[12.5px] text-[var(--accent-primary)]">
+                          <LoaderCircle size={13} class="shrink-0 animate-spin" />
+                          <span>{t("tasks.portalContinuingProgress")}</span>
+                        </div>
+                      </Show>
+                    </div>
+                  );
+                })()}
+              </Match>
               <Match when={seg.kind === "text"}>
                 <div class="text-[var(--text-primary)]">
                   <MarkdownView

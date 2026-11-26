@@ -68,12 +68,20 @@ type Service struct {
 	seq                  uint64
 	links                map[string]Link
 	tasks                map[string]TaskItem
+	sessionTasks         map[string]map[string]struct{}
 	attachmentLink       map[string]string
 	attachmentUploadedAt map[string]int64
 	uploadHistory        map[string][]int64
 	approving            map[string]bool
 	running              map[string]context.CancelFunc
+	externalRuns         map[string]string
+	timelineTimers       map[string]*time.Timer
+	lastTimelineEmit     map[string]time.Time
 	portalSubs           map[string]map[chan SanitizedStreamEvent]struct{}
+	closed               bool
+	watchStarter         func() func()
+	watchStop            func()
+	onClose              func()
 	nowFn                func() time.Time
 
 	attachments    Attachments
@@ -106,22 +114,109 @@ func NewService(storePath string, attachments Attachments, sessions Sessions, en
 			err = saveErr
 		}
 	}
-	return &Service{
+	svc := &Service{
 		store:                ds,
 		loadErr:              err,
 		seq:                  initSeq,
 		links:                doc.Links,
 		tasks:                doc.Tasks,
+		sessionTasks:         make(map[string]map[string]struct{}),
 		attachmentLink:       doc.AttachmentLink,
 		attachmentUploadedAt: doc.AttachmentUploadedAt,
 		uploadHistory:        make(map[string][]int64),
 		approving:            make(map[string]bool),
 		running:              make(map[string]context.CancelFunc),
+		externalRuns:         make(map[string]string),
+		timelineTimers:       make(map[string]*time.Timer),
+		lastTimelineEmit:     make(map[string]time.Time),
 		portalSubs:           make(map[string]map[chan SanitizedStreamEvent]struct{}),
 		nowFn:                time.Now,
 		attachments:          attachments,
 		sessions:             sessions,
 		endpoints:            endpoints,
+	}
+	for id, t := range doc.Tasks {
+		svc.indexTaskSessionLocked(id, "", t.SessionID)
+	}
+	return svc
+}
+
+// SetSessionWatcher registers a lazy runner-event watcher factory that starts
+// automatically once at least one intake task is linked to a runner session.
+func (s *Service) SetSessionWatcher(start func() func()) {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	s.watchStarter = start
+	shouldStart := len(s.sessionTasks) > 0 && s.watchStop == nil && start != nil
+	s.mu.Unlock()
+	if shouldStart {
+		s.ensureSessionWatcher()
+	}
+}
+
+func (s *Service) ensureSessionWatcher() {
+	s.mu.Lock()
+	if s.closed || s.watchStop != nil || s.watchStarter == nil || len(s.sessionTasks) == 0 {
+		s.mu.Unlock()
+		return
+	}
+	starter := s.watchStarter
+	s.watchStarter = nil
+	s.mu.Unlock()
+
+	stop := starter()
+	if stop == nil {
+		return
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		stop()
+		return
+	}
+	s.watchStop = stop
+	s.mu.Unlock()
+}
+
+// SetCloseHook registers a cleanup callback invoked when Close shuts down the service.
+func (s *Service) SetCloseHook(fn func()) {
+	s.mu.Lock()
+	s.onClose = fn
+	s.mu.Unlock()
+}
+
+// Close stops background watchers and pending timeline broadcast timers.
+func (s *Service) Close() {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	s.closed = true
+	s.watchStarter = nil
+	watchStop := s.watchStop
+	s.watchStop = nil
+	hook := s.onClose
+	s.onClose = nil
+	for id, timer := range s.timelineTimers {
+		timer.Stop()
+		delete(s.timelineTimers, id)
+	}
+	for id := range s.lastTimelineEmit {
+		delete(s.lastTimelineEmit, id)
+	}
+	for id := range s.externalRuns {
+		delete(s.externalRuns, id)
+	}
+	s.mu.Unlock()
+	if watchStop != nil {
+		watchStop()
+	}
+	if hook != nil {
+		hook()
 	}
 }
 
@@ -502,6 +597,8 @@ func (s *Service) pruneCompletedTasksLocked(directory string) []string {
 					}
 				}
 			}
+			s.indexTaskSessionLocked(t.ID, t.SessionID, "")
+			s.cleanupTaskRuntimeLocked(t.ID)
 			delete(s.tasks, t.ID)
 			excess--
 		}
