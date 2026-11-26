@@ -29,7 +29,7 @@ import {
   findMatchingLineIndices,
   formatLineRangeLabel,
 } from "../components/inspector/FileSourceCodeView";
-import { extractToolErrorBadge } from "../components/timeline/ToolOutputView";
+import { extractToolErrorBadge, extractToolErrorText } from "../components/timeline/ToolOutputView";
 import { isJsonPath } from "../components/inspector/file-tree-helpers";
 import {
   canvasPreview,
@@ -374,12 +374,38 @@ describe("display layer — code diff tinting, in-file search, line quote, and t
     };
     assertEqual(extractToolErrorBadge(shellErr, 2), "exit 2");
     assertEqual(extractToolErrorBadge(shellErr), "command failed");
+    assertEqual(extractToolErrorText(shellErr), "command failed");
+
+    const hookTimeoutMsg =
+      'tool call denied by pre-tool hook: timed out waiting for another active session in this workspace to finish modifying "collab.ts"';
+    const editHookErr = {
+      ...shellErr,
+      tool: "edit_file",
+      state: { status: "error" as const, input: { Path: "work/web/store/collab.ts" }, error: hookTimeoutMsg, time: { start: 1, end: 2 } },
+    };
+    const hookBadge = extractToolErrorBadge(editHookErr);
+    assert(hookBadge.startsWith("timed out waiting for another active"), `expected stripped pre-tool hook reason, got: ${hookBadge}`);
+    assertEqual(hookBadge.length, 44);
+    assertEqual(extractToolErrorText(editHookErr), hookTimeoutMsg);
+
+    const stackedPrefixErr = {
+      ...editHookErr,
+      state: { status: "error" as const, input: {}, error: "pre-tool hook denied: error: target string not found", time: { start: 1, end: 2 } },
+    };
+    assertEqual(extractToolErrorBadge(stackedPrefixErr), "target string not found");
+
+    const barePrefixErr = {
+      ...editHookErr,
+      state: { status: "error" as const, input: {}, error: "tool call denied by pre-tool hook: ", time: { start: 1, end: 2 } },
+    };
+    assertEqual(extractToolErrorBadge(barePrefixErr), "tool call denied by pre-tool hook:");
 
     const okPart = {
       ...shellErr,
       state: { status: "completed" as const, input: {}, output: "ok", title: "", metadata: {}, time: { start: 1, end: 2 } },
     };
     assertEqual(extractToolErrorBadge(okPart, 1), "");
+    assertEqual(extractToolErrorText(okPart), "");
   });
 
   it("linkifies plain tool output paths without semantic PASS/FAIL coloring when semanticColors is false", () => {

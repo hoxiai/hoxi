@@ -426,3 +426,123 @@ func TestFileCoordinatorDistinguishesAbortedUnmodifiedLeaseFromDirectCLIDiskEdit
 		t.Fatalf("cli_edited.go WAS modified on disk by ses_a subprocess while ses_b waited; expected ModifiedByPeer=true, got %v", got.modPeer)
 	}
 }
+
+func TestFileCoordinatorParallelHookWaitersKeepRefcountAndActivity(t *testing.T) {
+	if defaultHookFileLeaseMaxWait < defaultFileLeaseMaxWait {
+		t.Fatalf("defaultHookFileLeaseMaxWait=%v must match or exceed defaultFileLeaseMaxWait=%v", defaultHookFileLeaseMaxWait, defaultFileLeaseMaxWait)
+	}
+
+	repo := initTestGitRepo(t)
+	fileA := filepath.Join(repo, "a.go")
+	fileB := filepath.Join(repo, "b.go")
+	fileC := filepath.Join(repo, "c.go")
+	for _, p := range []string{fileA, fileB, fileC} {
+		if err := os.WriteFile(p, []byte("package main\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	svc := NewService(repo, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
+	s1, _, err := svc.CreateSession(CreateSessionRequest{
+		Runtime: "antigravity", Directory: repo, SandboxMode: "local", ModelID: "gemini-3.8-flash-low",
+	}, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s2, _, err := svc.CreateSession(CreateSessionRequest{
+		Runtime: "antigravity", Directory: repo, SandboxMode: "local", ModelID: "gemini-3.8-flash-low",
+	}, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ap1 := &activeProcess{sessionID: s1.ID, runtime: "antigravity", done: make(chan struct{}), abortCh: make(chan struct{})}
+	ap2 := &activeProcess{sessionID: s2.ID, runtime: "antigravity", done: make(chan struct{}), abortCh: make(chan struct{})}
+	ap2.stall.lastActivity.Store(1)
+	svc.mu.Lock()
+	svc.procs[s1.ID] = ap1
+	svc.procs[s2.ID] = ap2
+	svc.mu.Unlock()
+	svc.beginSessionFileTurn(s1.ID)
+	svc.beginSessionFileTurn(s2.ID)
+
+	if ok, reason := svc.acquireHookFileLease(context.Background(), s1.ID, fileA); !ok {
+		t.Fatalf("s1 claim fileA failed: %s", reason)
+	}
+	if ok, reason := svc.acquireHookFileLease(context.Background(), s1.ID, fileB); !ok {
+		t.Fatalf("s1 claim fileB failed: %s", reason)
+	}
+	if ok, reason := svc.acquireHookFileLease(context.Background(), s2.ID, fileC); !ok {
+		t.Fatalf("s2 claim fileC failed: %s", reason)
+	}
+
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	defer cancel1()
+	type leaseRes struct {
+		ok     bool
+		reason string
+	}
+	wait1 := make(chan leaseRes, 1)
+	wait2 := make(chan leaseRes, 1)
+	go func() {
+		ok, reason := svc.acquireHookFileLease(ctx1, s2.ID, fileA)
+		wait1 <- leaseRes{ok: ok, reason: reason}
+	}()
+	go func() {
+		ok, reason := svc.acquireHookFileLease(context.Background(), s2.ID, fileB)
+		wait2 <- leaseRes{ok: ok, reason: reason}
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		svc.fileCoord.mu.Lock()
+		cnt := svc.fileCoord.waitingOn[s2.ID][s1.ID]
+		svc.fileCoord.mu.Unlock()
+		if cnt == 2 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	svc.fileCoord.mu.Lock()
+	cnt := svc.fileCoord.waitingOn[s2.ID][s1.ID]
+	svc.fileCoord.mu.Unlock()
+	if cnt != 2 {
+		t.Fatalf("expected waitingOn refcount=2 for parallel hook waiters, got %d", cnt)
+	}
+	if ap2.stall.lastActivity.Load() <= 1 {
+		t.Fatal("expected acquireHookFileLease onWait to refresh active process activity timestamp")
+	}
+	if !svc.isWaitingOnPeerFileLease(s2.ID) {
+		t.Fatal("expected isWaitingOnPeerFileLease(s2) to be true while both waiters are blocked")
+	}
+
+	// Cancelling one parallel waiter must NOT drop waitingOn for the sibling waiter.
+	cancel1()
+	if r1 := <-wait1; r1.ok {
+		t.Fatalf("expected cancelled waiter 1 to fail, got ok=true")
+	}
+	if !svc.isWaitingOnPeerFileLease(s2.ID) {
+		t.Fatal("expected isWaitingOnPeerFileLease(s2) to remain true while second parallel waiter is still blocked")
+	}
+	if okCycle, reasonCycle := svc.acquireHookFileLease(context.Background(), s1.ID, fileC); okCycle || !strings.Contains(reasonCycle, "concurrent file edit conflict") {
+		t.Fatalf("expected AB-BA cycle detection to remain active for remaining waiter, got ok=%v reason=%q", okCycle, reasonCycle)
+	}
+
+	// Releasing s1 unblocks the remaining waiter cleanly and leaves zero waitingOn entries.
+	svc.releaseActiveProcess(s1.ID, ap1)
+	close(ap1.done)
+	if r2 := <-wait2; !r2.ok {
+		t.Fatalf("expected second waiter to acquire fileB after s1 finished, got %q", r2.reason)
+	}
+	if svc.isWaitingOnPeerFileLease(s2.ID) {
+		t.Fatal("expected isWaitingOnPeerFileLease(s2) to clear after waiter unblocked")
+	}
+	svc.releaseActiveProcess(s2.ID, ap2)
+	close(ap2.done)
+	svc.fileCoord.mu.Lock()
+	leakedWaits := len(svc.fileCoord.waitingOn)
+	svc.fileCoord.mu.Unlock()
+	if leakedWaits != 0 {
+		t.Fatalf("expected zero leaked waitingOn entries, got %d", leakedWaits)
+	}
+}

@@ -31,7 +31,7 @@ import {
   isTaskTool, isTodoTool, kiloToolIconName, processCarriageReturns, resolveToolMediaAttachments,
   ToolCardExpandedBody, type ToolPart,
 } from "./tool-card-helpers";
-import { extractToolErrorBadge } from "./ToolOutputView";
+import { extractToolErrorBadge, extractToolErrorText } from "./ToolOutputView";
 import ToolMissingMediaCard from "./ToolMissingMediaCard";
 import {
   extractTargetFiles, resolveLoadedContextFiles, resolveReadLineRange, resolveToolArgPills,
@@ -586,7 +586,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                 <span
                   data-tool-error-badge="true"
                   class="hidden sm:inline-block max-w-[200px] truncate rounded bg-[var(--danger-surface)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--danger-text)]"
-                  title={badge()}
+                  title={extractToolErrorText(props.part) || badge()}
                 >
                   {badge()}
                 </span>

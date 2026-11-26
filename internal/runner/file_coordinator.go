@@ -15,7 +15,7 @@ import (
 const (
 	maxRecentCoordinatedFiles   = 4096
 	defaultFileLeaseMaxWait     = 5 * time.Minute
-	defaultHookFileLeaseMaxWait = 45 * time.Second
+	defaultHookFileLeaseMaxWait = defaultFileLeaseMaxWait
 )
 
 // NativeFileEditCoordination transfers cross-session lease and peer-edit state
@@ -74,7 +74,7 @@ type fileEditCoordinator struct {
 	turnStartSeq map[string]uint64
 	ownerTurns   map[string]*ownerLeaseGroup
 	leases       map[string]*ownerLeaseGroup
-	waitingOn    map[string]string
+	waitingOn    map[string]map[string]int
 	recentEdits  map[string]recentCoordEdit
 	recentOrder  []string
 
@@ -90,7 +90,7 @@ func newFileEditCoordinator(isOwnerActive func(string) bool) *fileEditCoordinato
 		turnStartSeq:  make(map[string]uint64),
 		ownerTurns:    make(map[string]*ownerLeaseGroup),
 		leases:        make(map[string]*ownerLeaseGroup),
-		waitingOn:     make(map[string]string),
+		waitingOn:     make(map[string]map[string]int),
 		recentEdits:   make(map[string]recentCoordEdit),
 		pathLocks:     make(map[string]*coordPathMutex),
 	}
@@ -170,15 +170,86 @@ func (c *fileEditCoordinator) releaseTurnLocked(ownerID string) {
 	close(grp.done)
 }
 
-func (c *fileEditCoordinator) WaitingHolder(ownerID string) (string, bool) {
+func (c *fileEditCoordinator) WaitingHolders(ownerID string) []string {
 	ownerID = strings.TrimSpace(ownerID)
 	if c == nil || ownerID == "" {
-		return "", false
+		return nil
 	}
 	c.mu.Lock()
-	holder, ok := c.waitingOn[ownerID]
+	holders := c.waitingOn[ownerID]
+	if len(holders) == 0 {
+		c.mu.Unlock()
+		return nil
+	}
+	out := make([]string, 0, len(holders))
+	for h := range holders {
+		if h != "" {
+			out = append(out, h)
+		}
+	}
 	c.mu.Unlock()
-	return holder, ok && holder != ""
+	sort.Strings(out)
+	return out
+}
+
+func (c *fileEditCoordinator) WaitingHolder(ownerID string) (string, bool) {
+	holders := c.WaitingHolders(ownerID)
+	if len(holders) == 0 {
+		return "", false
+	}
+	return holders[0], true
+}
+
+func (c *fileEditCoordinator) addWaitLocked(ownerID, holderID string) {
+	if ownerID == "" || holderID == "" {
+		return
+	}
+	holders := c.waitingOn[ownerID]
+	if holders == nil {
+		holders = make(map[string]int)
+		c.waitingOn[ownerID] = holders
+	}
+	holders[holderID]++
+}
+
+func (c *fileEditCoordinator) removeWaitLocked(ownerID, holderID string) {
+	holders := c.waitingOn[ownerID]
+	if holders == nil {
+		return
+	}
+	if holders[holderID] > 1 {
+		holders[holderID]--
+		return
+	}
+	delete(holders, holderID)
+	if len(holders) == 0 {
+		delete(c.waitingOn, ownerID)
+	}
+}
+
+func (c *fileEditCoordinator) hasWaitPathLocked(startOwner, targetOwner string) bool {
+	if startOwner == "" || targetOwner == "" {
+		return false
+	}
+	if startOwner == targetOwner {
+		return true
+	}
+	visited := map[string]bool{startOwner: true}
+	queue := []string{startOwner}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for next := range c.waitingOn[cur] {
+			if next == targetOwner {
+				return true
+			}
+			if !visited[next] {
+				visited[next] = true
+				queue = append(queue, next)
+			}
+		}
+	}
+	return false
 }
 
 func (c *fileEditCoordinator) claimKeyLocked(ownerID, key, rawPath string) {
@@ -396,19 +467,17 @@ func (c *fileEditCoordinator) AcquireAndLock(
 			break
 		}
 
-		for cur := conflictGrp.ownerID; cur != ""; cur = c.waitingOn[cur] {
-			if cur == ownerID {
-				c.mu.Unlock()
-				return nil, waited, nil, fmt.Errorf(
-					"concurrent file edit conflict on %q: another active session in this workspace is waiting on a file modified by this session; read or retry after the other task finishes",
-					filepath.Base(rawByKey[conflictKey]),
-				)
-			}
+		if c.hasWaitPathLocked(conflictGrp.ownerID, ownerID) {
+			c.mu.Unlock()
+			return nil, waited, nil, fmt.Errorf(
+				"concurrent file edit conflict on %q: another active session in this workspace is waiting on a file modified by this session; read or retry after the other task finishes",
+				filepath.Base(rawByKey[conflictKey]),
+			)
 		}
 
-		c.waitingOn[ownerID] = conflictGrp.ownerID
-		waitCh := conflictGrp.done
 		holderID := conflictGrp.ownerID
+		c.addWaitLocked(ownerID, holderID)
+		waitCh := conflictGrp.done
 		c.mu.Unlock()
 
 		noticeKey := conflictKey + "\x00" + holderID
@@ -435,7 +504,7 @@ func (c *fileEditCoordinator) AcquireAndLock(
 		}
 
 		c.mu.Lock()
-		delete(c.waitingOn, ownerID)
+		c.removeWaitLocked(ownerID, holderID)
 		c.mu.Unlock()
 
 		if waitErr != nil {
@@ -493,14 +562,18 @@ func (s *Service) isWaitingOnPeerFileLease(sessionID string) bool {
 	if s == nil || s.fileCoord == nil {
 		return false
 	}
-	holderID, ok := s.fileCoord.WaitingHolder(s.rootLeaseOwner(sessionID))
-	if !ok {
+	holders := s.fileCoord.WaitingHolders(s.rootLeaseOwner(sessionID))
+	if len(holders) == 0 {
 		return false
 	}
 	s.mu.Lock()
-	holderAP := s.procs[holderID]
-	s.mu.Unlock()
-	return holderAP != nil && holderAP.stall.stalledSince.Load() == 0
+	defer s.mu.Unlock()
+	for _, holderID := range holders {
+		if holderAP := s.procs[holderID]; holderAP != nil && holderAP.stall.stalledSince.Load() == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) nativeCoordinateFileEdit(rec SessionRecord, ap *activeProcess) func(context.Context, []string, func(string)) (NativeFileEditCoordination, error) {
@@ -565,7 +638,14 @@ func (s *Service) acquireHookFileLease(ctx context.Context, sessionID, path stri
 			limit = rem
 		}
 	}
-	release, waited, _, err := s.fileCoord.AcquireAndLock(ctx, ownerID, []string{path}, limit, nil)
+	release, waited, _, err := s.fileCoord.AcquireAndLock(ctx, ownerID, []string{path}, limit, func(string) {
+		s.mu.Lock()
+		ap := s.procs[ownerID]
+		s.mu.Unlock()
+		if ap != nil {
+			s.noteActivity(ap)
+		}
+	})
 	if release != nil {
 		release()
 	}

@@ -7,7 +7,7 @@ import { Icon, type IconName } from "../icons";
 import FileDiffBlock from "../inspector/LazyFileDiffBlock";
 import QuestionToolBody from "./question-card";
 import ShellOutputView from "./ShellOutputView";
-import ToolOutputView from "./ToolOutputView";
+import ToolOutputView, { ToolErrorBlock } from "./ToolOutputView";
 import { resolveToolRichView } from "./rich-view-spec";
 import { t } from "../../i18n";
 import { processCarriageReturns, repairWindowsMojibake } from "./terminal-output-text";
@@ -640,45 +640,55 @@ export function ToolCardExpandedBody(props: {
       </Show>
 
       {/* Case 2: Todo Checklist Tool (`todowrite` / `todoread`) */}
-      <Show when={props.isTodo && props.todoItems.length > 0}>
-        <div class="p-3 space-y-1.5">
-          <For each={props.todoItems}>
-            {(item) => (
-              <div class="flex items-start gap-2 text-[13px] leading-snug">
-                <span
-                  class={
-                    item.status === "completed"
-                      ? "mt-0.5 text-[var(--ok-text)] shrink-0"
-                      : item.status === "in_progress"
-                        ? "mt-0.5 text-[var(--accent-primary)] shrink-0"
-                        : "mt-0.5 text-[var(--text-faint)] shrink-0"
-                  }
-                >
-                  <Icon
-                    name={item.status === "completed" ? "check-small" : "dot-grid"}
-                    size="small"
-                  />
-                </span>
-                <span
-                  class={
-                    item.status === "completed"
-                      ? "line-through text-[var(--text-muted)]"
-                      : item.status === "in_progress"
-                        ? "font-medium text-[var(--text-primary)]"
-                        : "text-[var(--text-secondary)]"
-                  }
-                >
-                  {item.content}
-                </span>
-              </div>
-            )}
-          </For>
+      <Show when={props.isTodo && (props.todoItems.length > 0 || props.part.state.status === "error")}>
+        <div class="p-3 space-y-2.5">
+          <Show when={props.part.state.status === "error"}>
+            <ToolErrorBlock error={(props.part.state as Extract<ToolState, { status: "error" }>).error} />
+          </Show>
+          <Show when={props.todoItems.length > 0}>
+            <div class="space-y-1.5">
+              <For each={props.todoItems}>
+                {(item) => (
+                  <div class="flex items-start gap-2 text-[13px] leading-snug">
+                    <span
+                      class={
+                        item.status === "completed"
+                          ? "mt-0.5 text-[var(--ok-text)] shrink-0"
+                          : item.status === "in_progress"
+                            ? "mt-0.5 text-[var(--accent-primary)] shrink-0"
+                            : "mt-0.5 text-[var(--text-faint)] shrink-0"
+                      }
+                    >
+                      <Icon
+                        name={item.status === "completed" ? "check-small" : "dot-grid"}
+                        size="small"
+                      />
+                    </span>
+                    <span
+                      class={
+                        item.status === "completed"
+                          ? "line-through text-[var(--text-muted)]"
+                          : item.status === "in_progress"
+                            ? "font-medium text-[var(--text-primary)]"
+                            : "text-[var(--text-secondary)]"
+                      }
+                    >
+                      {item.content}
+                    </span>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
         </div>
       </Show>
 
       {/* Case 3: File Edit / Write / Patch Tool -> Inline Diff Preview */}
       <Show when={props.isEdit}>
         <div class="p-3 space-y-3">
+          <Show when={props.part.state.status === "error"}>
+            <ToolErrorBlock error={(props.part.state as Extract<ToolState, { status: "error" }>).error} />
+          </Show>
           <Show
             when={diffs().length > 0}
             fallback={
@@ -775,14 +785,7 @@ export function ToolCardExpandedBody(props: {
           </Show>
 
           <Show when={props.part.state.status === "error"}>
-            <div>
-              <div class="text-[11px] font-medium text-[var(--danger-text)] mb-1">
-                {t("toolCard.error")}
-              </div>
-              <pre class="text-[12px] font-mono bg-[var(--danger-surface)] border border-[var(--danger-border)] p-2.5 rounded-lg overflow-x-auto text-[var(--danger-text)] whitespace-pre-wrap selectable-text">
-                {processCarriageReturns((props.part.state as Extract<ToolState, { status: "error" }>).error)}
-              </pre>
-            </div>
+            <ToolErrorBlock error={(props.part.state as Extract<ToolState, { status: "error" }>).error} />
           </Show>
         </div>
       </Show>

@@ -19,6 +19,12 @@ import { processCarriageReturns } from "./terminal-output-text";
 type ToolPart = Extract<MessagePart, { type: "tool" }>;
 
 const MAX_LINKIFY_CHARS = 32 * 1024;
+const TOOL_ERROR_PREFIX_RE = /^(?:tool call denied by pre-tool hook|pre-tool hook denied|error|failed)\s*:\s*/i;
+
+export function extractToolErrorText(part: ToolPart): string {
+  if (part.state.status !== "error") return "";
+  return processCarriageReturns(String(part.state.error || "")).trim();
+}
 
 /**
  * Extracts a short, single-line failure summary (`exit 1` or concise error head)
@@ -29,7 +35,7 @@ export function extractToolErrorBadge(part: ToolPart, exitCode?: number): string
   if (typeof exitCode === "number" && exitCode !== 0) {
     return `exit ${exitCode}`;
   }
-  const raw = processCarriageReturns(String(part.state.error || "")).trim();
+  const raw = extractToolErrorText(part);
   if (!raw) return "";
   const firstLine =
     raw
@@ -37,8 +43,29 @@ export function extractToolErrorBadge(part: ToolPart, exitCode?: number): string
       .map((line) => line.trim())
       .find((line) => line.length > 0) ?? "";
   if (!firstLine) return "";
-  const compact = firstLine.replace(/^(?:error|failed)\s*:\s*/i, "").trim() || firstLine;
+  let compact = firstLine;
+  for (let i = 0; i < 3; i++) {
+    const next = compact.replace(TOOL_ERROR_PREFIX_RE, "").trim();
+    if (!next || next === compact) break;
+    compact = next;
+  }
   return compact.length > 44 ? `${compact.slice(0, 43)}…` : compact;
+}
+
+export function ToolErrorBlock(props: { error?: string }) {
+  const text = createMemo(() => processCarriageReturns(String(props.error || "")).trim());
+  return (
+    <Show when={text().length > 0}>
+      <div>
+        <div class="text-[11px] font-medium text-[var(--danger-text)] mb-1">
+          {t("toolCard.error")}
+        </div>
+        <pre class="text-[12px] font-mono bg-[var(--danger-surface)] border border-[var(--danger-border)] p-2.5 rounded-lg overflow-x-auto text-[var(--danger-text)] whitespace-pre-wrap break-words selectable-text">
+          {text()}
+        </pre>
+      </div>
+    </Show>
+  );
 }
 
 export default function ToolOutputView(props: {
