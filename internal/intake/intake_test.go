@@ -458,6 +458,7 @@ func TestScrubLocalPathsSpacesCJKAndOrphanQuotaAndConcurrency(t *testing.T) {
 	runGate := make(chan struct{})
 	sess := &fakeSessions{ensureGate: ensureGate, runGate: runGate}
 	svc := NewService(storePath, attStore, sess, nil)
+	t.Cleanup(svc.Close)
 	now := time.Now()
 	svc.nowFn = func() time.Time { return now }
 
@@ -553,6 +554,7 @@ func TestScrubLocalPathsSpacesCJKAndOrphanQuotaAndConcurrency(t *testing.T) {
 	}
 
 	restarted := NewService(storePath, nil, nil, nil)
+	t.Cleanup(restarted.Close)
 	recoveredTasks := restarted.ListDesktopTasks(proj)
 	if len(recoveredTasks) != 1 || recoveredTasks[0].Status != StatusFailed {
 		t.Fatalf("expected restarted service to settle running task to failed, got %+v", recoveredTasks)
@@ -561,12 +563,20 @@ func TestScrubLocalPathsSpacesCJKAndOrphanQuotaAndConcurrency(t *testing.T) {
 	if rErr != nil || !strings.Contains(string(rawDisk), `"status": "failed"`) {
 		t.Fatalf("expected startup StatusFailed settlement persisted to intake.json, got: %s (err=%v)", string(rawDisk), rErr)
 	}
+	portalUpdates, unsubPortal := svc.SubscribePortal(link.ID)
+	defer unsubPortal()
 	close(runGate)
+	select {
+	case <-portalUpdates:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for background ApproveAndRun goroutine to finish saving snapshot")
+	}
 
 	corruptDir := t.TempDir()
 	corruptPath := filepath.Join(corruptDir, "intake.json")
 	_ = os.WriteFile(corruptPath, []byte("{corrupt"), 0o600)
 	corruptSvc := NewService(corruptPath, nil, nil, nil)
+	t.Cleanup(corruptSvc.Close)
 	mux := http.NewServeMux()
 	corruptSvc.RegisterRoutes(mux, nil)
 	for _, route := range []string{"/api/hoxi/intake/links", "/api/hoxi/intake/tasks"} {

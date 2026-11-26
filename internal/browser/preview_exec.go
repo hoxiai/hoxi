@@ -483,6 +483,24 @@ func (sc *scope) enforcePreviewOrigin(reqCtx, opctx context.Context, allowedOrig
 		return st, hadBlockedNav, nil
 	}
 	if isBlankTabURL(st.URL) {
+		if hadBlockedNav || sc.previewLastAllowedURL != "" {
+			var liveURL string
+			locCtx, cancel := context.WithTimeout(opctx, previewFetchActionTimeout)
+			locErr := sc.withTab(locCtx, chromedp.Location(&liveURL))
+			cancel()
+			if locErr == nil && isAllowedPreviewTabURL(allowedOrigin, liveURL) {
+				st.URL = liveURL
+				sc.previewLastAllowedURL = liveURL
+				return st, hadBlockedNav, nil
+			}
+			if hadBlockedNav && isAllowedPreviewTabURL(allowedOrigin, revertTarget) {
+				_ = sc.navigatePreviewBounded(reqCtx, opctx, revertTarget)
+				if reverted, rErr := sc.state(opctx); rErr == nil && isAllowedPreviewTabURL(allowedOrigin, reverted.URL) {
+					sc.previewLastAllowedURL = reverted.URL
+					return reverted, true, nil
+				}
+			}
+		}
 		return st, hadBlockedNav, nil
 	}
 	// Tab navigated outside allowedOrigin (e.g. external link or redirect): revert immediately.
