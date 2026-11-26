@@ -417,21 +417,24 @@ func TestTunnelRelayTokenAuthAndBootstrapRelay(t *testing.T) {
 }
 
 type stubTunnelRelayPolicyExt struct {
-	defaultURL  string
-	retiredURLs []string
+	defaultURL          string
+	retiredURLs         []string
+	defaultShortCodeURL string
 }
 
-func (stubTunnelRelayPolicyExt) HasSessionContext(string) bool    { return false }
-func (stubTunnelRelayPolicyExt) ForgetSession(string)             {}
-func (stubTunnelRelayPolicyExt) RegisterRoutes(*http.ServeMux)    {}
-func (stubTunnelRelayPolicyExt) Close()                           {}
-func (s stubTunnelRelayPolicyExt) DefaultTunnelRelayURL() string  { return s.defaultURL }
-func (s stubTunnelRelayPolicyExt) RetiredAutoRelayURLs() []string { return s.retiredURLs }
+func (stubTunnelRelayPolicyExt) HasSessionContext(string) bool      { return false }
+func (stubTunnelRelayPolicyExt) ForgetSession(string)               {}
+func (stubTunnelRelayPolicyExt) RegisterRoutes(*http.ServeMux)      {}
+func (stubTunnelRelayPolicyExt) Close()                             {}
+func (s stubTunnelRelayPolicyExt) DefaultTunnelRelayURL() string    { return s.defaultURL }
+func (s stubTunnelRelayPolicyExt) RetiredAutoRelayURLs() []string   { return s.retiredURLs }
+func (s stubTunnelRelayPolicyExt) DefaultShortCodeRelayURL() string { return s.defaultShortCodeURL }
 
 func TestExtensionTunnelRelayPolicyIsEmptyInOSSAndSuppliedByExtension(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("HOXI_HOME", filepath.Join(home, ".hoxi"))
+	t.Setenv("HOXI_PAIRING_RELAY_URL", "")
 	g := New(0, "test", t.TempDir(), nil, nil)
 	defer g.CloseBrowser()
 
@@ -441,10 +444,17 @@ func TestExtensionTunnelRelayPolicyIsEmptyInOSSAndSuppliedByExtension(t *testing
 	if got := g.extensionRetiredAutoRelayURLs(); len(got) != 0 {
 		t.Fatalf("extensionRetiredAutoRelayURLs() without extension = %v, want empty", got)
 	}
+	if got := g.extensionDefaultShortCodeRelayURL(); got != "" {
+		t.Fatalf("extensionDefaultShortCodeRelayURL() without extension = %q, want empty", got)
+	}
+	if code, err := g.pairing.Code(); err != nil || code.ShortCodeRelayURL != "" {
+		t.Fatalf("pairing.Code().ShortCodeRelayURL without extension = %q (err=%v), want empty", code.ShortCodeRelayURL, err)
+	}
 
 	g.AttachExtension(stubTunnelRelayPolicyExt{
-		defaultURL:  "https://relay.example.test///",
-		retiredURLs: []string{" https://legacy-relay.example.test/ ", ""},
+		defaultURL:          "https://relay.example.test///",
+		retiredURLs:         []string{" https://legacy-relay.example.test/ ", ""},
+		defaultShortCodeURL: "https://relay.example.test/",
 	})
 	if got := g.extensionDefaultTunnelRelayURL(); got != "https://relay.example.test" {
 		t.Fatalf("extensionDefaultTunnelRelayURL() = %q, want https://relay.example.test", got)
@@ -452,5 +462,8 @@ func TestExtensionTunnelRelayPolicyIsEmptyInOSSAndSuppliedByExtension(t *testing
 	gotRetired := g.extensionRetiredAutoRelayURLs()
 	if len(gotRetired) != 1 || gotRetired[0] != "https://legacy-relay.example.test" {
 		t.Fatalf("extensionRetiredAutoRelayURLs() = %v, want [https://legacy-relay.example.test]", gotRetired)
+	}
+	if code, err := g.pairing.Code(); err != nil || code.ShortCodeRelayURL != "https://relay.example.test" {
+		t.Fatalf("pairing.Code().ShortCodeRelayURL with extension = %q (err=%v), want https://relay.example.test", code.ShortCodeRelayURL, err)
 	}
 }

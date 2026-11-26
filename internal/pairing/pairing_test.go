@@ -409,6 +409,19 @@ func TestShortCodeExchangeLifecycleAndLimits(t *testing.T) {
 	if _, _, _, err := ex.Publish("peer-rate", id7, ticketPayload, 0); !errors.Is(err, ErrShortCodeRateLimited) {
 		t.Fatalf("expected ErrShortCodeRateLimited, got %v", err)
 	}
+
+	// Abusive retries from a rate-limited IP must NOT consume global quota and
+	// starve other legitimate peers.
+	for i := 0; i < shortCodeGlobalPerMinLimit+50; i++ {
+		id, _ := NewShortCodeRequestID(now)
+		if _, _, _, err := ex.Publish("peer-rate", id, ticketPayload, 0); !errors.Is(err, ErrShortCodeRateLimited) {
+			t.Fatalf("abusive retry %d err = %v, want ErrShortCodeRateLimited", i, err)
+		}
+	}
+	otherID, _ := NewShortCodeRequestID(now)
+	if _, _, _, err := ex.Publish("peer-innocent", otherID, ticketPayload, 0); err != nil {
+		t.Fatalf("innocent peer must not be starved by rate-limited peer: %v", err)
+	}
 }
 
 func TestServiceShortCodeDesktopFlowStripsE2EEKey(t *testing.T) {

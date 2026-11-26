@@ -55,7 +55,7 @@ func (s *Service) handleShortCode(w http.ResponseWriter, r *http.Request) {
 		}
 		relayURL := strings.TrimSpace(body.RelayURL)
 		if relayURL == "" {
-			relayURL = DefaultShortCodeRelayURL()
+			relayURL = s.effectiveShortCodeRelayURL()
 		}
 		pub, err := s.PublishShortCode(r.Context(), relayURL)
 		if err != nil {

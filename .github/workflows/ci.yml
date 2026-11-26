@@ -52,8 +52,8 @@ jobs:
       - name: Run frontend unit tests
         run: npm --prefix web test
 
-      - name: Run release pipeline regression tests
-        run: node --test scripts/release.test.mjs
+      - name: Run release and install script regression tests
+        run: node --test scripts/release.test.mjs scripts/install.test.mjs
 
       - name: Run browser, sandbox, computer and Chrome Link extension tests
         run: node --test internal/opencode/browser_plugin_test.mjs internal/opencode/skill_catalog_test.mjs internal/opencode/sandbox_plugin_test.mjs internal/opencode/computer_tool_test.mjs extensions/chrome/*.test.mjs
@@ -161,18 +161,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check if mobile/ exists in this repository
+      - name: Check if mobile/ or client/ exists in this repository
         id: check_mobile
         run: |
           if [[ -f "mobile/pubspec.yaml" ]]; then
             echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "dir=mobile" >> "$GITHUB_OUTPUT"
+          elif [[ -f "client/pubspec.yaml" ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "dir=client" >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Run mobile architecture & boundary gates
         if: steps.check_mobile.outputs.present == 'true'
-        working-directory: mobile
+        working-directory: ${{ steps.check_mobile.outputs.dir }}
         run: |
           python3 scripts/check_source_lines.py
           python3 scripts/check_network_boundary.py
@@ -187,7 +191,7 @@ jobs:
 
       - name: Analyze & test Flutter mobile controller
         if: steps.check_mobile.outputs.present == 'true'
-        working-directory: mobile
+        working-directory: ${{ steps.check_mobile.outputs.dir }}
         run: |
           flutter pub get
           flutter gen-l10n

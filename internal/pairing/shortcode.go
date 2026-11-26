@@ -27,8 +27,9 @@ const (
 	shortCodeMaxTicketBytes = 8 * 1024
 	shortCodeMaxBodyBytes   = 12 * 1024
 	shortCodeMaxActiveSlots = 256
+	shortCodeMaxRateEntries = 8192
 
-	shortCodeGlobalPerMinLimit  = 120
+	shortCodeGlobalPerMinLimit  = 1200
 	shortCodePublishPerMinLimit = 6
 	shortCodeRedeemPerMinLimit  = 5
 )
@@ -188,12 +189,15 @@ func (e *ShortCodeExchange) consumeRateLocked(nowMs int64, action, source string
 	if source == "" {
 		source = "unknown"
 	}
+	sKey := rateWindowKey{minute: curMin, action: action, source: source}
+	if e.rateCounts[sKey] >= perSourceLimit {
+		return false
+	}
 	gKey := fmt.Sprintf("%d:%s", curMin, action)
 	if e.globalCount[gKey] >= shortCodeGlobalPerMinLimit {
 		return false
 	}
-	sKey := rateWindowKey{minute: curMin, action: action, source: source}
-	if e.rateCounts[sKey] >= perSourceLimit {
+	if _, exists := e.rateCounts[sKey]; !exists && len(e.rateCounts) >= shortCodeMaxRateEntries {
 		return false
 	}
 	e.rateCounts[sKey]++

@@ -69,6 +69,12 @@ type TunnelRelayPolicyExtension interface {
 	RetiredAutoRelayURLs() []string
 }
 
+// ShortCodeRelayExtension may be implemented by an Extension to supply the
+// default 6-digit one-time pairing relay origin for commercial builds.
+type ShortCodeRelayExtension interface {
+	DefaultShortCodeRelayURL() string
+}
+
 // PublicPortalEndpoints reports loopback, LAN, and public relay base URLs
 // available for isolated external portal links.
 type PublicPortalEndpoints struct {
@@ -287,6 +293,20 @@ func (g *Gateway) extensionRetiredAutoRelayURLs() []string {
 		}
 	}
 	return out
+}
+
+func (g *Gateway) extensionDefaultShortCodeRelayURL() string {
+	if g == nil {
+		return ""
+	}
+	for _, ext := range g.extensions {
+		if provider, ok := ext.(ShortCodeRelayExtension); ok {
+			if base := strings.TrimRight(strings.TrimSpace(provider.DefaultShortCodeRelayURL()), "/"); base != "" {
+				return base
+			}
+		}
+	}
+	return ""
 }
 
 // ActiveIntakeTokenHashes returns sorted SHA-256 hex digests of active intake
@@ -612,6 +632,28 @@ func (g *Gateway) VerifyDesktopUIHeaderRequest(r *http.Request, requiredHeader, 
 	httpAllowed := site == "same-origin" && (configuredHost || trustedReferer)
 	if !nativeAllowed && !httpAllowed {
 		return errors.New(surfaceName + " requires a desktop UI context")
+	}
+	return nil
+}
+
+// VerifyDesktopPassiveTokenRequest validates that a passive desktop read (such
+// as an <img> attachment load or EventSource SSE stream that cannot send custom
+// headers) comes from a non-remote trusted loopback/native host and presents the
+// per-boot gateway token (via header, HttpOnly cookie, or ?hoxiToken query param).
+func (g *Gateway) VerifyDesktopPassiveTokenRequest(r *http.Request, surfaceName string) error {
+	if isRemoteRequest(r) || !trustedHost(r.Host) {
+		return errors.New(surfaceName + " requires the desktop UI")
+	}
+	token := g.GatewayToken()
+	if token == "" {
+		return errors.New(surfaceName + " requires the local gateway token")
+	}
+	if hasVerifiedGatewayToken(r) {
+		return nil
+	}
+	got := requestGatewayToken(r)
+	if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
+		return errors.New(surfaceName + " requires the local gateway token")
 	}
 	return nil
 }

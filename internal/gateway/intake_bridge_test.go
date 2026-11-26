@@ -240,3 +240,38 @@ func TestRelayEndpointExtensionAndServeIntakeRelayRequest(t *testing.T) {
 		t.Fatalf("ServeIntakeRelayRequest must reject non-intake paths with 403, got %d", denyRec.Code)
 	}
 }
+
+func TestIntakeManagementRoutesRequireGatewayToken(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOXI_HOME", filepath.Join(tmp, "hoxi-home"))
+	proj := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gw := New(0, "test-pass", proj, nil, nil)
+	t.Cleanup(gw.CloseBrowser)
+	const tok = "intake-boot-token-123"
+	gw.SetGatewayToken(tok)
+
+	// Unauthenticated loopback calls to management routes must return 403.
+	for _, p := range []string{"/api/hoxi/intake/links", "/api/hoxi/intake/tasks", "/api/hoxi/intake/tasks/approve"} {
+		method := http.MethodGet
+		if strings.HasSuffix(p, "/approve") {
+			method = http.MethodPost
+		}
+		rec := httptest.NewRecorder()
+		gw.ServeHTTP(rec, localRequest(method, p, nil))
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s %s without gateway token = %d, want 403: %s", method, p, rec.Code, rec.Body.String())
+		}
+	}
+
+	// Authenticated call with X-Hoxi-Token succeeds.
+	okReq := localRequest(http.MethodGet, "/api/hoxi/intake/links?directory="+proj, nil)
+	okReq.Header.Set(gatewayTokenHeader, tok)
+	okRec := httptest.NewRecorder()
+	gw.ServeHTTP(okRec, okReq)
+	if okRec.Code != http.StatusOK {
+		t.Fatalf("GET /api/hoxi/intake/links with token = %d, want 200: %s", okRec.Code, okRec.Body.String())
+	}
+}

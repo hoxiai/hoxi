@@ -36,6 +36,20 @@ const (
 	gatewayTokenQueryParam = "hoxiToken"
 )
 
+type verifiedGatewayTokenKey struct{}
+
+func withVerifiedGatewayToken(r *http.Request) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), verifiedGatewayTokenKey{}, true))
+}
+
+func hasVerifiedGatewayToken(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	ok, _ := r.Context().Value(verifiedGatewayTokenKey{}).(bool)
+	return ok
+}
+
 var openCodeProxyPrefixes = []string{
 	"/session",
 	"/event",
@@ -150,13 +164,23 @@ func isTokenProtectedHoxiHostPath(requestPath string) bool {
 		"/api/hoxi/provider/dispose",
 		"/api/hoxi/provider/credentials",
 		"/api/hoxi/provider/disconnect",
-		"/api/hoxi/local-cli/disconnect":
+		"/api/hoxi/local-cli/disconnect",
+		"/api/hoxi/work/joined-collabs":
+		return true
+	}
+	if strings.HasPrefix(requestPath, "/api/hoxi/intake/") &&
+		!strings.HasPrefix(requestPath, "/api/hoxi/intake/portal/") {
+		return true
+	}
+	if strings.HasPrefix(requestPath, "/api/hoxi/collab/") &&
+		!strings.HasPrefix(requestPath, "/api/hoxi/collab/portal/") {
 		return true
 	}
 	return strings.HasPrefix(requestPath, "/api/hoxi/pty/") ||
 		strings.HasPrefix(requestPath, "/api/hoxi/schedules/") ||
 		strings.HasPrefix(requestPath, "/api/hoxi/provider/credentials/") ||
-		strings.HasPrefix(requestPath, "/api/hoxi/provider/oauth/")
+		strings.HasPrefix(requestPath, "/api/hoxi/provider/oauth/") ||
+		strings.HasPrefix(requestPath, "/api/hoxi/work/joined-collabs/")
 }
 
 func isUpstreamPassthroughPath(requestPath string) bool {
@@ -230,22 +254,89 @@ func stripGatewayTokenFromRequest(r *http.Request) {
 	}
 }
 
-func (g *Gateway) guardUpstreamPassthrough(w http.ResponseWriter, r *http.Request) bool {
+func (g *Gateway) guardUpstreamPassthrough(w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
 	if !isUpstreamPassthroughPath(r.URL.Path) {
 		r.Header.Del(gatewayTokenHeader)
-		return true
+		return r, true
 	}
 	got := requestGatewayToken(r)
 	stripGatewayTokenFromRequest(r)
 	tok := g.GatewayToken()
-	if tok == "" || isInternalConversationRoute(r) || nativeWailsRequest(r) {
-		return true
+	matched := tok != "" && got != "" && subtle.ConstantTimeCompare([]byte(got), []byte(tok)) == 1
+	if matched {
+		r = withVerifiedGatewayToken(r)
 	}
-	if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(tok)) != 1 {
-		writeJSONError(w, http.StatusForbidden, "missing or invalid gateway token")
+	if tok == "" || isInternalConversationRoute(r) || nativeWailsRequest(r) || matched {
+		return r, true
+	}
+	writeJSONError(w, http.StatusForbidden, "missing or invalid gateway token")
+	return r, false
+}
+
+// isCrossSiteDesktopMediaPath reports whether requestPath is an exact read-only
+// local media or attachment path that a native desktop WebView (e.g. macOS
+// wails://wails) may load via a loopback <img>/<video>/<audio> tag.
+func isCrossSiteDesktopMediaPath(requestPath string) bool {
+	if requestPath == "" || path.Clean(requestPath) != requestPath {
 		return false
 	}
-	return true
+	switch requestPath {
+	case "/file/content", "/api/file/content", "/api/hoxi/file/content":
+		return true
+	}
+	if strings.HasPrefix(requestPath, "/api/hoxi/attachments/") {
+		rest := strings.TrimPrefix(requestPath, "/api/hoxi/attachments/")
+		parts := strings.Split(rest, "/")
+		if len(parts) == 1 && parts[0] != "" {
+			return true
+		}
+		return len(parts) == 2 && parts[0] != "" && parts[1] == "content"
+	}
+	if strings.HasPrefix(requestPath, "/api/hoxi/work/joined-collabs/") {
+		rest := strings.TrimPrefix(requestPath, "/api/hoxi/work/joined-collabs/")
+		parts := strings.Split(rest, "/")
+		return len(parts) == 4 && parts[0] != "" && parts[1] == "proxy" && parts[2] == "attachments" && parts[3] != ""
+	}
+	return false
+}
+
+// allowsCrossSiteDesktopMedia permits cross-site GET/HEAD no-CORS media loads
+// (image/video/audio) from a native desktop WebView (e.g. macOS wails://wails)
+// to read-only loopback attachment/media paths ONLY when the caller presents
+// the exact per-boot gateway token. Unauthenticated third-party web pages never
+// possess the boot token and remain blocked with 403.
+func (g *Gateway) allowsCrossSiteDesktopMedia(r *http.Request) bool {
+	if isRemoteRequest(r) || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
+		return false
+	}
+	if !isCrossSiteDesktopMediaPath(r.URL.Path) {
+		return false
+	}
+	dests := r.Header.Values("Sec-Fetch-Dest")
+	if len(dests) != 1 {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(dests[0])) {
+	case "image", "video", "audio":
+	default:
+		return false
+	}
+	modes := r.Header.Values("Sec-Fetch-Mode")
+	if len(modes) > 1 {
+		return false
+	}
+	if len(modes) == 1 {
+		mode := strings.TrimSpace(modes[0])
+		if mode != "" && !strings.EqualFold(mode, "no-cors") {
+			return false
+		}
+	}
+	tok := g.GatewayToken()
+	if tok == "" {
+		return false
+	}
+	got := requestGatewayToken(r)
+	return got != "" && subtle.ConstantTimeCompare([]byte(got), []byte(tok)) == 1
 }
 
 // allowsCrossSiteDesktopIframe permits cross-site GET/HEAD iframe navigations
@@ -299,7 +390,7 @@ func (g *Gateway) allowRequest(w http.ResponseWriter, r *http.Request) bool {
 		// no-Origin CLI/OpenCode calls and native WebView requests working.
 		for _, site := range r.Header.Values("Sec-Fetch-Site") {
 			if site != "" && site != "same-origin" && site != "same-site" && site != "none" {
-				if site == "cross-site" && g.allowsCrossSiteDesktopIframe(r) {
+				if site == "cross-site" && (g.allowsCrossSiteDesktopIframe(r) || g.allowsCrossSiteDesktopMedia(r)) {
 					continue
 				}
 				http.Error(w, "untrusted Sec-Fetch-Site", http.StatusForbidden)

@@ -174,6 +174,9 @@ func TestUpstreamPassthroughTokenDefenseInDepth(t *testing.T) {
 	for _, target := range []string{
 		"/pty", "/api/hoxi/pty", "/api/hoxi/pty/pty_1/connect",
 		"/api/hoxi/agents", "/api/hoxi/commands", "/api/hoxi/lsp",
+		"/api/hoxi/intake/links", "/api/hoxi/intake/tasks",
+		"/api/hoxi/collab/links", "/api/hoxi/collab/items/approve-build",
+		"/api/hoxi/work/joined-collabs", "/api/hoxi/work/joined-collabs/jcol_1/proxy/stream",
 		"/session", "/auth/openai", "/api/hoxi/provider/credentials/openai",
 		"/api/session", "/global/config", "/api/hoxi/provider/config", "/api/hoxi/provider/catalog",
 	} {
@@ -364,5 +367,61 @@ func TestDesktopIframeRouteCrossSitePolicy(t *testing.T) {
 		if !strings.Contains(allowHeaders, hdr) {
 			t.Fatalf("Access-Control-Allow-Headers missing %q: %q", hdr, allowHeaders)
 		}
+	}
+}
+
+func TestDesktopCrossSiteMediaRequiresGatewayTokenAndReadOnlyDest(t *testing.T) {
+	g := New(0, "desktop-media", t.TempDir(), nil, nil)
+	const tok = "media-boot-token-secret"
+	g.SetGatewayToken(tok)
+	g.mux.HandleFunc("/api/hoxi/work/joined-collabs/", func(w http.ResponseWriter, r *http.Request) {
+		if err := g.VerifyDesktopPassiveTokenRequest(r, "Remote collaboration"); err != nil {
+			writeJSONError(w, http.StatusForbidden, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		site   string
+		dest   string
+		mode   string
+		remote bool
+		want   int
+	}{
+		{"joined image with boot token", http.MethodGet, "/api/hoxi/work/joined-collabs/jcol_1/proxy/attachments/att_1?hoxiToken=" + tok, "cross-site", "image", "no-cors", false, http.StatusOK},
+		{"joined video with boot token", http.MethodGet, "/api/hoxi/work/joined-collabs/jcol_1/proxy/attachments/att_1?hoxiToken=" + tok, "cross-site", "video", "no-cors", false, http.StatusOK},
+		{"joined audio HEAD with boot token", http.MethodHead, "/api/hoxi/work/joined-collabs/jcol_1/proxy/attachments/att_1?hoxiToken=" + tok, "cross-site", "audio", "", false, http.StatusOK},
+		{"local attachment image with boot token passes security gate", http.MethodGet, "/api/hoxi/attachments/att_1/content?hoxiToken=" + tok, "cross-site", "image", "no-cors", false, http.StatusNotFound},
+		{"reject joined image without boot token", http.MethodGet, "/api/hoxi/work/joined-collabs/jcol_1/proxy/attachments/att_1", "cross-site", "image", "no-cors", false, http.StatusForbidden},
+		{"reject joined image with wrong token", http.MethodGet, "/api/hoxi/work/joined-collabs/jcol_1/proxy/attachments/att_1?hoxiToken=wrong", "cross-site", "image", "no-cors", false, http.StatusForbidden},
+		{"reject non-media dest even with token", http.MethodGet, "/api/hoxi/work/joined-collabs/jcol_1/proxy/attachments/att_1?hoxiToken=" + tok, "cross-site", "empty", "no-cors", false, http.StatusForbidden},
+		{"reject cors mode on no-Origin image", http.MethodGet, "/api/hoxi/work/joined-collabs/jcol_1/proxy/attachments/att_1?hoxiToken=" + tok, "cross-site", "image", "cors", false, http.StatusForbidden},
+		{"reject POST even with token", http.MethodPost, "/api/hoxi/work/joined-collabs/jcol_1/proxy/attachments/att_1?hoxiToken=" + tok, "cross-site", "image", "no-cors", false, http.StatusForbidden},
+		{"reject non-attachment path even with token", http.MethodGet, "/api/hoxi/sessions?hoxiToken=" + tok, "cross-site", "image", "no-cors", false, http.StatusForbidden},
+		{"reject joined info path even with token", http.MethodGet, "/api/hoxi/work/joined-collabs/jcol_1/proxy/info?hoxiToken=" + tok, "cross-site", "image", "no-cors", false, http.StatusForbidden},
+		{"reject remote request even with token", http.MethodGet, "/api/hoxi/work/joined-collabs/jcol_1/proxy/attachments/att_1?hoxiToken=" + tok, "cross-site", "image", "no-cors", true, http.StatusForbidden},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := localRequest(tc.method, tc.path, nil)
+			req.Header.Set("Sec-Fetch-Site", tc.site)
+			req.Header.Set("Sec-Fetch-Dest", tc.dest)
+			if tc.mode != "" {
+				req.Header.Set("Sec-Fetch-Mode", tc.mode)
+			}
+			if tc.remote {
+				req = WithRemoteSource(req, "gopanel")
+			}
+			rec := httptest.NewRecorder()
+			g.ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, tc.want, rec.Body.String())
+			}
+		})
 	}
 }

@@ -1,5 +1,5 @@
 // Command hoxi-pairing-relay runs the standalone zero-knowledge 6-digit
-// one-time pairing ticket exchange service for link.hoxi.ai.
+// one-time pairing ticket exchange service for self-hosted deployments.
 //
 // It directly reuses internal/pairing.ShortCodeExchange.Handler() with
 // hardened HTTP server timeouts, optional reverse-proxy client IP extraction,
@@ -11,9 +11,11 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"strings"
@@ -25,6 +27,7 @@ import (
 
 const (
 	defaultListenAddr       = ":8787"
+	defaultTrustedProxies   = "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
 	defaultShutdownTimeout  = 5 * time.Second
 	defaultReadHeaderPeriod = 5 * time.Second
 	defaultReadTimeout      = 10 * time.Second
@@ -34,8 +37,10 @@ const (
 )
 
 type relayConfig struct {
-	Addr       string
-	TrustProxy bool
+	Addr           string
+	TrustProxy     bool
+	TrustedProxies []netip.Prefix
+	TrustCF        bool
 }
 
 func envOrDefault(key, fallback string) string {
@@ -54,14 +59,61 @@ func parseBoolEnv(raw string) bool {
 	}
 }
 
+func parseTrustedProxyPrefixes(raw string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, item := range strings.Split(raw, ",") {
+		part := strings.TrimSpace(item)
+		if part == "" {
+			continue
+		}
+		if strings.Contains(part, "/") {
+			p, err := netip.ParsePrefix(part)
+			if err != nil {
+				return nil, fmt.Errorf("invalid trusted proxy CIDR %q: %w", part, err)
+			}
+			out = append(out, p.Masked())
+			continue
+		}
+		addr, err := netip.ParseAddr(strings.Trim(part, "[]"))
+		if err != nil {
+			return nil, fmt.Errorf("invalid trusted proxy IP %q: %w", part, err)
+		}
+		addr = addr.Unmap()
+		out = append(out, netip.PrefixFrom(addr, addr.BitLen()))
+	}
+	return out, nil
+}
+
+func defaultTrustedProxyPrefixes() []netip.Prefix {
+	prefixes, _ := parseTrustedProxyPrefixes(defaultTrustedProxies)
+	return prefixes
+}
+
+func isLoopbackListenAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(addr))
+	if err != nil {
+		return false
+	}
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.Unmap().IsLoopback()
+}
+
 func loadConfig(args []string) (relayConfig, error) {
 	fs := flag.NewFlagSet("hoxi-pairing-relay", flag.ContinueOnError)
+	trustedProxiesRaw := envOrDefault("HOXI_PAIRING_RELAY_TRUSTED_PROXIES", defaultTrustedProxies)
 	cfg := relayConfig{
 		Addr:       envOrDefault("HOXI_PAIRING_RELAY_ADDR", defaultListenAddr),
 		TrustProxy: parseBoolEnv(os.Getenv("HOXI_PAIRING_RELAY_TRUST_PROXY")),
+		TrustCF:    parseBoolEnv(os.Getenv("HOXI_PAIRING_RELAY_TRUST_CF")),
 	}
 	fs.StringVar(&cfg.Addr, "addr", cfg.Addr, "TCP listen address (env: HOXI_PAIRING_RELAY_ADDR)")
-	fs.BoolVar(&cfg.TrustProxy, "trust-proxy", cfg.TrustProxy, "trust CF-Connecting-IP / X-Forwarded-For / X-Real-IP headers for per-IP rate limiting (env: HOXI_PAIRING_RELAY_TRUST_PROXY)")
+	fs.BoolVar(&cfg.TrustProxy, "trust-proxy", cfg.TrustProxy, "trust reverse-proxy X-Forwarded-For (rightmost untrusted hop) from trusted proxy peers (env: HOXI_PAIRING_RELAY_TRUST_PROXY)")
+	fs.StringVar(&trustedProxiesRaw, "trusted-proxies", trustedProxiesRaw, "comma-separated proxy IPs/CIDRs permitted to supply forwarded client IP headers (env: HOXI_PAIRING_RELAY_TRUSTED_PROXIES)")
+	fs.BoolVar(&cfg.TrustCF, "trust-cf", cfg.TrustCF, "when -trust-proxy is enabled, trust CF-Connecting-IP from Cloudflare/trusted edge proxies (env: HOXI_PAIRING_RELAY_TRUST_CF)")
 	if err := fs.Parse(args); err != nil {
 		return relayConfig{}, err
 	}
@@ -69,21 +121,37 @@ func loadConfig(args []string) (relayConfig, error) {
 	if cfg.Addr == "" {
 		cfg.Addr = defaultListenAddr
 	}
+	prefixes, err := parseTrustedProxyPrefixes(trustedProxiesRaw)
+	if err != nil {
+		return relayConfig{}, err
+	}
+	cfg.TrustedProxies = prefixes
 	return cfg, nil
 }
 
 // buildHandler wraps exchange.Handler() with defensive headers and optional
 // reverse-proxy client IP normalization for per-IP rate limiting.
 func buildHandler(exchange *pairing.ShortCodeExchange, trustProxy bool) http.Handler {
+	return buildHandlerWithConfig(exchange, relayConfig{
+		TrustProxy:     trustProxy,
+		TrustedProxies: defaultTrustedProxyPrefixes(),
+	})
+}
+
+func buildHandlerWithConfig(exchange *pairing.ShortCodeExchange, cfg relayConfig) http.Handler {
 	base := exchange.Handler()
+	trusted := cfg.TrustedProxies
+	if len(trusted) == 0 {
+		trusted = defaultTrustedProxyPrefixes()
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Cache-Control", "no-store")
 
 		req := r
-		if trustProxy {
-			if forwardedIP := extractTrustedProxyIP(r); forwardedIP != "" {
+		if cfg.TrustProxy {
+			if forwardedIP := extractTrustedProxyIP(r, trusted, cfg.TrustCF); forwardedIP != "" {
 				cloned := r.Clone(r.Context())
 				cloned.RemoteAddr = net.JoinHostPort(forwardedIP, "0")
 				req = cloned
@@ -93,46 +161,81 @@ func buildHandler(exchange *pairing.ShortCodeExchange, trustProxy bool) http.Han
 	})
 }
 
-func extractTrustedProxyIP(r *http.Request) string {
+func addrInPrefixes(addr netip.Addr, prefixes []netip.Prefix) bool {
+	if !addr.IsValid() {
+		return false
+	}
+	clean := addr.Unmap()
+	for _, p := range prefixes {
+		if p.Contains(clean) {
+			return true
+		}
+	}
+	return false
+}
+
+// extractTrustedProxyIP resolves the real client IP ONLY when the direct TCP
+// peer belongs to trustedProxies. It ignores CF-Connecting-IP unless trustCF is
+// explicitly enabled, and walks X-Forwarded-For from right to left so spoofed
+// left-hand entries injected by attackers are never trusted.
+func extractTrustedProxyIP(r *http.Request, trustedProxies []netip.Prefix, trustCF bool) string {
 	if r == nil {
 		return ""
 	}
-	if ip := parseSingleIP(r.Header.Get("CF-Connecting-IP")); ip != "" {
-		return ip
+	peerAddr, ok := parseSingleAddr(r.RemoteAddr)
+	if !ok || !addrInPrefixes(peerAddr, trustedProxies) {
+		return ""
 	}
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		for _, part := range strings.Split(xff, ",") {
-			if ip := parseSingleIP(part); ip != "" {
-				return ip
-			}
+	if trustCF {
+		if ip, ok := parseSingleAddr(r.Header.Get("CF-Connecting-IP")); ok {
+			return ip.String()
 		}
 	}
-	if ip := parseSingleIP(r.Header.Get("X-Real-IP")); ip != "" {
-		return ip
+	if xffVals := r.Header.Values("X-Forwarded-For"); len(xffVals) > 0 {
+		parts := strings.Split(strings.Join(xffVals, ","), ",")
+		var fallbackTrusted netip.Addr
+		for i := len(parts) - 1; i >= 0; i-- {
+			addr, valid := parseSingleAddr(parts[i])
+			if !valid {
+				// Stop walking at malformed entries so attacker junk cannot bypass.
+				break
+			}
+			if !addrInPrefixes(addr, trustedProxies) {
+				return addr.String()
+			}
+			fallbackTrusted = addr
+		}
+		if fallbackTrusted.IsValid() {
+			return fallbackTrusted.String()
+		}
+		return ""
+	}
+	if ip, ok := parseSingleAddr(r.Header.Get("X-Real-IP")); ok {
+		return ip.String()
 	}
 	return ""
 }
 
-func parseSingleIP(raw string) string {
+func parseSingleAddr(raw string) (netip.Addr, bool) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return ""
+		return netip.Addr{}, false
 	}
 	if host, _, err := net.SplitHostPort(trimmed); err == nil {
 		trimmed = host
 	}
 	trimmed = strings.Trim(trimmed, "[]")
-	parsed := net.ParseIP(trimmed)
-	if parsed == nil {
-		return ""
+	parsed, err := netip.ParseAddr(trimmed)
+	if err != nil {
+		return netip.Addr{}, false
 	}
-	return parsed.String()
+	return parsed.Unmap(), true
 }
 
 func newRelayServer(cfg relayConfig, exchange *pairing.ShortCodeExchange) *http.Server {
 	return &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           buildHandler(exchange, cfg.TrustProxy),
+		Handler:           buildHandlerWithConfig(exchange, cfg),
 		ReadHeaderTimeout: defaultReadHeaderPeriod,
 		ReadTimeout:       defaultReadTimeout,
 		WriteTimeout:      defaultWriteTimeout,
@@ -146,6 +249,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("hoxi-pairing-relay: invalid flags: %v", err)
 	}
+	if !cfg.TrustProxy && isLoopbackListenAddr(cfg.Addr) {
+		log.Printf("hoxi-pairing-relay: WARNING listening on loopback %s with -trust-proxy=false; behind a reverse proxy all clients will share one loopback rate-limit bucket (pass -trust-proxy)", cfg.Addr)
+	}
 
 	exchange := pairing.NewShortCodeExchange(nil)
 	srv := newRelayServer(cfg, exchange)
@@ -155,7 +261,7 @@ func main() {
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("hoxi-pairing-relay: listening on %s (trust_proxy=%t)", cfg.Addr, cfg.TrustProxy)
+		log.Printf("hoxi-pairing-relay: listening on %s (trust_proxy=%t, trust_cf=%t)", cfg.Addr, cfg.TrustProxy, cfg.TrustCF)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}

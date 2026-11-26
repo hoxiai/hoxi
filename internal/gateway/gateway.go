@@ -289,6 +289,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		}
 		return ""
 	})
+	g.pairing.SetDefaultShortCodeRelayURL(g.extensionDefaultShortCodeRelayURL)
 	g.intake = newGatewayIntakeService(g)
 	g.scheduler = newGatewaySchedulerService(g)
 	workspaces.SetFolderRelinkHandler(func(projectID, oldPath, newPath string) error {
@@ -505,7 +506,8 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusForbidden, "answer permissions through /api/hoxi/permission/{id}/reply")
 		return
 	}
-	if !g.guardUpstreamPassthrough(w, r) {
+	var ok bool
+	if r, ok = g.guardUpstreamPassthrough(w, r); !ok {
 		return
 	}
 	g.observeUpdateDirectory(r)

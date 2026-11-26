@@ -64,13 +64,14 @@ type Service struct {
 	lanPeers  func() []string
 	relayURL  func() string
 
-	mu                 sync.Mutex
-	cached             string
-	cachedRelay        string
-	cachedE2EE         string
-	cachedCipher       *E2EECipher
-	activeShortCode    *PublishedShortCode
-	shortCodeTransport http.RoundTripper
+	mu                       sync.Mutex
+	defaultShortCodeRelayURL func() string
+	cached                   string
+	cachedRelay              string
+	cachedE2EE               string
+	cachedCipher             *E2EECipher
+	activeShortCode          *PublishedShortCode
+	shortCodeTransport       http.RoundTripper
 }
 
 // NewService returns a Service that stores its token at tokenPath and
@@ -92,6 +93,30 @@ func (s *Service) SetRelayURL(fn func() string) {
 	s.mu.Lock()
 	s.relayURL = fn
 	s.mu.Unlock()
+}
+
+// SetDefaultShortCodeRelayURL registers a callback returning the build or
+// host-extension default 6-digit pairing relay origin when HOXI_PAIRING_RELAY_URL
+// is not explicitly set in the environment.
+func (s *Service) SetDefaultShortCodeRelayURL(fn func() string) {
+	s.mu.Lock()
+	s.defaultShortCodeRelayURL = fn
+	s.mu.Unlock()
+}
+
+func (s *Service) effectiveShortCodeRelayURL() string {
+	if env := strings.TrimSpace(os.Getenv("HOXI_PAIRING_RELAY_URL")); env != "" {
+		return strings.TrimRight(env, "/")
+	}
+	s.mu.Lock()
+	fn := s.defaultShortCodeRelayURL
+	s.mu.Unlock()
+	if fn != nil {
+		if ext := strings.TrimRight(strings.TrimSpace(fn()), "/"); ext != "" {
+			return ext
+		}
+	}
+	return DefaultShortCodeRelayURL()
 }
 
 func formatDirectEndpoint(host string, port int) string {
@@ -118,7 +143,7 @@ func (s *Service) Code() (Code, error) {
 			Port:     s.port,
 			Hostname: s.hostname(),
 		},
-		ShortCodeRelayURL: DefaultShortCodeRelayURL(),
+		ShortCodeRelayURL: s.effectiveShortCodeRelayURL(),
 	}
 	if relay := s.relay(); relay != "" {
 		code.Relay = relay
