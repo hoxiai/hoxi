@@ -92,13 +92,13 @@ Configure these GitHub Actions repository secrets before pushing a release tag:
 - `APPLE_API_KEY_ID`: App Store Connect API key ID.
 - `APPLE_API_ISSUER`: App Store Connect issuer UUID.
 
-When official signed desktop bundles are built in a private repository and published to a separate public release repository (for example, `hoxiai/hoxi`), configure:
+When official signed desktop bundles are built in a private release orchestrator repository and published to `hoxiai/hoxi`, configure:
 
-- Repository variable `HOXI_RELEASE_REPO`: target `<owner>/<repo>` for GitHub Release asset uploads (defaults to the current repository when unset).
+- Repository variable `HOXI_RELEASE_REPO`: target `<owner>/<repo>` for GitHub Release asset uploads (defaults to the current repository when unset; set to `hoxiai/hoxi` in the private orchestrator).
 - Repository secret `HOXI_PUBLIC_RELEASE_TOKEN`: fine-grained PAT with `Contents: write` on `HOXI_RELEASE_REPO` (required whenever `HOXI_RELEASE_REPO` differs from the build repository).
 - CDN mirror sync (S3-compatible Cloudflare R2 / OSS / COS, see [Auto-Updates](auto-updates.md)): set `HOXI_CDN_PUBLIC_URL` (e.g. `https://cdn.hoxi.dev`) plus secrets `HOXI_CDN_ENDPOINT`, `HOXI_CDN_BUCKET`, `HOXI_CDN_ACCESS_KEY_ID`, and `HOXI_CDN_SECRET_ACCESS_KEY` (or `HOXI_CDN_TOKEN`) so `publish-release` mirrors all 16 desktop release assets to `<HOXI_CDN_PUBLIC_URL>/hoxi-desktop/v<version>/` alongside GitHub Releases.
 
-Public open-source mirror exports omit desktop release jobs and only keep the `build-mobile-android` (`Hoxi Remote` APK) release job so pushing a `v*` tag to the public mirror never overwrites official signed desktop artifacts.
+The public upstream repository (`hoxiai/hoxi`) intentionally omits desktop signing workflows and only keeps the `build-mobile-android` (`Hoxi Remote` APK) release workflow in `.github/workflows/release-cross-platform.yml`. Pushing a `v*` tag to `hoxiai/hoxi` publishes the signed `Hoxi Remote` Android APK, while the private release orchestrator checks out that same `hoxiai/hoxi@v<version>` tag alongside optional commercial extensions to build, sign, notarize, and upload the official desktop installers without colliding with the mobile workflow.
 
 Signing and notarization are mandatory on this path. The temporary signing
 keychain is added to the runner's search list and deleted after the job, including

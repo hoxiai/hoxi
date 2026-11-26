@@ -873,46 +873,50 @@ test("stage-host.sh writes Windows-compatible portable go.work paths and commerc
     assert.equal(check.status, 0, check.stderr);
   }
 
-  const desktopWorkflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/release.yml"), "utf8");
-  assert.match(desktopWorkflow, /group:.*\bgithub\.ref_name\b/);
-  assert.doesNotMatch(desktopWorkflow, /group:.*\bgithub\.ref\b(?!_name)/);
-  assert.match(desktopWorkflow, /HOXI_WORK_TOKEN:\?[^\n]*desktop releases/);
-  assert.match(desktopWorkflow, /HOXI_WORK_TOKEN cannot access/);
-  assert.match(desktopWorkflow, /HOXI_WORK_TOKEN:\?[^\n]*macOS releases/);
-  assert.match(desktopWorkflow, /HOXI_WORK_TOKEN:\?[^\n]*Windows releases/);
-  assert.match(desktopWorkflow, /HOXI_WORK_TOKEN:\?[^\n]*Linux releases/);
-  assert.match(desktopWorkflow, /persist-credentials: false/);
-  assert.match(desktopWorkflow, /git -C "\$\{RUNNER_TEMP:-\/tmp\}" -c "http\.https:\/\/github\.com\/\.extraheader=" -c "http\.https:\/\/github\.com\/\.extraheader=\$\{WORK_AUTH\}" ls-remote "\$WORK_REPO_URL"/);
-  assert.match(desktopWorkflow, /ls-remote "\$WORK_REPO_URL"/);
-  assert.match(desktopWorkflow, /fetch --depth 1 origin "\$WORK_SHA"/);
-  assert.doesNotMatch(desktopWorkflow, /clone --depth 1 https:\/\/github\.com\/hoxiai\/hoxi-ext\.git \.\.\/hoxi-ext/);
-  assert.doesNotMatch(desktopWorkflow, /default:\s*"v0\.2\.1"/);
-  assert.match(desktopWorkflow, /cygpath -m "\$WORK_DIR"/);
-  assert.match(desktopWorkflow, /GOWORK="\$GO_WORK_FILE" go vet \.\/\.\.\./);
-  assert.match(desktopWorkflow, /grep -q "modeExecuteLabel" web\/dist\/assets\/\*\.js/);
-  assert.match(desktopWorkflow, /go version -m "build\/bin\/Hoxi\.app\/Contents\/MacOS\/Hoxi" \| grep -Fq "\$BRIDGE_PKG"/);
-  assert.match(desktopWorkflow, /go version -m build\/bin\/Hoxi\.exe \| grep -Fq "\$BRIDGE_PKG"/);
-  assert.match(desktopWorkflow, /go version -m build\/bin\/Hoxi \| grep -Fq "\$BRIDGE_PKG"/);
-  assert.match(desktopWorkflow, /git\/ref\/tags\/\$\{encodeURIComponent\(tag\)\}/);
-  assert.match(desktopWorkflow, /res\.status === 401 \|\| res\.status === 403/);
-  assert.match(desktopWorkflow, /res\.status !== 404 \|\| Date\.now\(\) >= deadline/);
-  assert.doesNotMatch(desktopWorkflow, /if \[\[ -f "internal\/app\/work_bridge\.go" \]\]/);
-  assert.match(desktopWorkflow, /ref: \$\{\{ needs\.preflight\.outputs\.release_tag \}\}/);
-  assert.match(desktopWorkflow, /repository: \$\{\{ env\.RELEASE_TARGET_REPO \}\}/);
-  assert.match(desktopWorkflow, /tag_name: \$\{\{ env\.RELEASE_TAG_NAME \}\}/);
+  const desktopWorkflowPath = path.join(repoRoot, ".github/workflows/release.yml");
+  if (fs.existsSync(desktopWorkflowPath)) {
+    const desktopWorkflow = fs.readFileSync(desktopWorkflowPath, "utf8");
+    assert.match(desktopWorkflow, /group:.*\bgithub\.ref_name\b/);
+    assert.doesNotMatch(desktopWorkflow, /group:.*\bgithub\.ref\b(?!_name)/);
+    assert.match(desktopWorkflow, /HOXI_WORK_TOKEN:\?[^\n]*desktop releases/);
+    assert.match(desktopWorkflow, /HOXI_WORK_TOKEN cannot access/);
+    assert.match(desktopWorkflow, /HOXI_WORK_TOKEN:\?[^\n]*macOS releases/);
+    assert.match(desktopWorkflow, /HOXI_WORK_TOKEN:\?[^\n]*Windows releases/);
+    assert.match(desktopWorkflow, /HOXI_WORK_TOKEN:\?[^\n]*Linux releases/);
+    assert.match(desktopWorkflow, /persist-credentials: false/);
+    assert.match(desktopWorkflow, /git -C "\$\{RUNNER_TEMP:-\/tmp\}" -c "http\.https:\/\/github\.com\/\.extraheader=" -c "http\.https:\/\/github\.com\/\.extraheader=\$\{WORK_AUTH\}" ls-remote "\$WORK_REPO_URL"/);
+    assert.match(desktopWorkflow, /ls-remote "\$WORK_REPO_URL"/);
+    assert.match(desktopWorkflow, /fetch --depth 1 origin "\$WORK_SHA"/);
+    assert.doesNotMatch(desktopWorkflow, /clone --depth 1 https:\/\/github\.com\/hoxiai\/hoxi-ext\.git \.\.\/hoxi-ext/);
+    assert.doesNotMatch(desktopWorkflow, /default:\s*"v0\.2\.1"/);
+    assert.match(desktopWorkflow, /cygpath -m "\$WORK_DIR"/);
+    assert.match(desktopWorkflow, /GOWORK="\$GO_WORK_FILE" go vet \.\/\.\.\./);
+    assert.match(desktopWorkflow, /grep -q "modeExecuteLabel" web\/dist\/assets\/\*\.js/);
+    assert.match(desktopWorkflow, /go version -m "build\/bin\/Hoxi\.app\/Contents\/MacOS\/Hoxi" \| grep -Fq "\$BRIDGE_PKG"/);
+    assert.match(desktopWorkflow, /go version -m build\/bin\/Hoxi\.exe \| grep -Fq "\$BRIDGE_PKG"/);
+    assert.match(desktopWorkflow, /go version -m build\/bin\/Hoxi \| grep -Fq "\$BRIDGE_PKG"/);
+    assert.match(desktopWorkflow, /git\/ref\/tags\/\$\{encodeURIComponent\(tag\)\}/);
+    assert.match(desktopWorkflow, /res\.status === 401 \|\| res\.status === 403/);
+    assert.match(desktopWorkflow, /res\.status !== 404 \|\| Date\.now\(\) >= deadline/);
+    assert.doesNotMatch(desktopWorkflow, /if \[\[ -f "internal\/app\/work_bridge\.go" \]\]/);
+    assert.match(desktopWorkflow, /ref: \$\{\{ needs\.preflight\.outputs\.release_tag \}\}/);
+    assert.match(desktopWorkflow, /repository: \$\{\{ env\.RELEASE_TARGET_REPO \}\}/);
+    assert.match(desktopWorkflow, /tag_name: \$\{\{ env\.RELEASE_TAG_NAME \}\}/);
+  }
 
   const workCIPath = path.join(repoRoot, ".github/workflows/ci-work-integration.yml");
-  assert.equal(fs.existsSync(workCIPath), true, "Expected commercial Work integration CI workflow");
-  const workCI = fs.readFileSync(workCIPath, "utf8");
-  assert.match(workCI, /clone --depth 1 https:\/\/github\.com\/hoxiai\/hoxi-ext\.git work/);
-  assert.match(workCI, /npm --prefix web run lint/);
-  assert.match(workCI, /npm --prefix web run build/);
-  assert.match(workCI, /grep -q "modeExecuteLabel" web\/dist\/assets\/\*\.js/);
-  assert.match(workCI, /go run \.\/tools\/contractcheck/);
-  for (const block of workCI.matchAll(/^        run: \|\n((?:          .*\n|\n)+)/gm)) {
-    const shell = block[1].replace(/^          /gm, "");
-    const check = spawnSync("bash", ["-n"], { input: shell, encoding: "utf8" });
-    assert.equal(check.status, 0, check.stderr);
+  if (fs.existsSync(workCIPath)) {
+    const workCI = fs.readFileSync(workCIPath, "utf8");
+    assert.match(workCI, /clone --depth 1 https:\/\/github\.com\/hoxiai\/hoxi-ext\.git work/);
+    assert.match(workCI, /npm --prefix web run lint/);
+    assert.match(workCI, /npm --prefix web run build/);
+    assert.match(workCI, /grep -q "modeExecuteLabel" web\/dist\/assets\/\*\.js/);
+    assert.match(workCI, /go run \.\/tools\/contractcheck/);
+    for (const block of workCI.matchAll(/^        run: \|\n((?:          .*\n|\n)+)/gm)) {
+      const shell = block[1].replace(/^          /gm, "");
+      const check = spawnSync("bash", ["-n"], { input: shell, encoding: "utf8" });
+      assert.equal(check.status, 0, check.stderr);
+    }
   }
 
   // Release notes delimiter framing must survive files lacking a trailing newline or using CRLF.
@@ -929,8 +933,8 @@ test("stage-host.sh writes Windows-compatible portable go.work paths and commerc
     const ossStage = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-oss-workflows-"));
     t.after(() => fs.rmSync(ossStage, { recursive: true, force: true }));
     fs.mkdirSync(path.join(ossStage, ".github/workflows"), { recursive: true });
-    fs.copyFileSync(path.join(repoRoot, ".github/workflows/release.yml"), path.join(ossStage, ".github/workflows/release.yml"));
-    fs.copyFileSync(path.join(repoRoot, ".github/workflows/ci-work-integration.yml"), path.join(ossStage, ".github/workflows/ci-work-integration.yml"));
+    fs.writeFileSync(path.join(ossStage, ".github/workflows/release.yml"), "name: Release Desktop\n");
+    fs.writeFileSync(path.join(ossStage, ".github/workflows/ci-work-integration.yml"), "name: CI Work Integration\n");
     fs.copyFileSync(path.join(repoRoot, ".github/workflows/release-cross-platform.yml"), path.join(ossStage, ".github/workflows/release-cross-platform.yml"));
     const pyRun = spawnSync("python3", [verifyOssPath, ossStage], { encoding: "utf8" });
     assert.equal(pyRun.status, 0, pyRun.stderr || pyRun.stdout);
@@ -1238,4 +1242,33 @@ test("Windows NSIS installer uses valid ASCII ${U+XXXX} escapes and compiles wit
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("check-oss-hygiene.py passes on tracked host files and rejects secrets, private paths, and personal home dirs", (t) => {
+  const repoRoot = path.join(scripts, "..");
+  const hygieneScript = path.join(scripts, "check-oss-hygiene.py");
+  const liveRun = spawnSync("python3", [hygieneScript], { cwd: repoRoot, encoding: "utf8" });
+  assert.equal(liveRun.status, 0, liveRun.stderr || liveRun.stdout);
+  assert.match(liveRun.stdout, /OSS_HYGIENE_OK/);
+
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-oss-hygiene-"));
+  t.after(() => fs.rmSync(fixtureDir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(fixtureDir, ".ai"), { recursive: true });
+  fs.mkdirSync(path.join(fixtureDir, "internal/app"), { recursive: true });
+  fs.mkdirSync(path.join(fixtureDir, ".github/workflows"), { recursive: true });
+  fs.writeFileSync(path.join(fixtureDir, ".env"), "SECRET=1\n");
+  fs.writeFileSync(path.join(fixtureDir, "go.work"), "go 1.25.0\n");
+  fs.writeFileSync(path.join(fixtureDir, "internal/app/work_bridge.go"), "package app\n");
+  fs.writeFileSync(path.join(fixtureDir, ".ai/STATE.md"), "# state\n");
+  fs.writeFileSync(path.join(fixtureDir, ".github/workflows/release.yml"), "name: Release\n");
+  fs.writeFileSync(path.join(fixtureDir, "notes.md"), "Local path: /Users/privateuser/code/app\n");
+
+  const failRun = spawnSync("python3", [hygieneScript, "--dir", fixtureDir], { encoding: "utf8" });
+  assert.notEqual(failRun.status, 0, "Expected check-oss-hygiene.py to reject leaked fixture files");
+  assert.match(failRun.stderr, /\.env:/);
+  assert.match(failRun.stderr, /go\.work:/);
+  assert.match(failRun.stderr, /internal\/app\/work_bridge\.go:/);
+  assert.match(failRun.stderr, /\.ai\/STATE\.md:/);
+  assert.match(failRun.stderr, /\.github\/workflows\/release\.yml:/);
+  assert.match(failRun.stderr, /hardcoded personal home path for "privateuser"/);
 });

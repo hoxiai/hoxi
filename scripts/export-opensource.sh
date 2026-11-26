@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Export a clean, zero-history open-source snapshot of Hoxi (pure Code mode + mobile/).
-# Excludes closed-source sibling directories (work/, client/, site/), internal
-# HQ governance notes (.ai/, verify.sh), local Go workspace bridges (go.work*,
-# internal/app/work_bridge.go), build outputs, and runtime caches, then exports
-# the zero-fork open-source Flutter mobile controller into <target>/mobile/ and
-# verifies the entire tree with a zero-leak clean-room scan.
+# Export a standalone, clean-room snapshot of Hoxi (pure Code mode + mobile/).
+# `hoxiai/hoxi` is developed upstream-first directly on `main`; this helper
+# remains available for producing clean-room archives or verifying that local
+# untracked extensions (work/, client/, site/, .ai/, verify.sh, go.work*,
+# internal/app/work_bridge.go) stay fully isolated from the open-source tree.
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -29,9 +29,11 @@ go run ./cmd/hoxi --no-desktop   # headless gateway
 
 ## Required checks
 
-Run these before opening a pull request; CI runs the same gates:
+Pull requests target `hoxiai/hoxi` `main` directly. Run these before opening a pull request; CI runs the same gates:
 
 ```bash
+python3 scripts/check-oss-hygiene.py
+go run ./tools/contractcheck
 go vet ./... && go test ./... && go build ./...
 npm --prefix web run lint
 npm --prefix web test

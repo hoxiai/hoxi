@@ -179,6 +179,15 @@ flutter run
 
 ---
 
+## 开源核心（Open-Core）与官方发行版说明
+
+本仓库（`hoxiai/hoxi`）是 Hoxi 桌面端 / CLI 核心工程工作台（`Code` 模式）以及开源移动端控制器（`mobile/`，**`Hoxi Remote`**）的 **Apache-2.0 上游研发主仓**，宿主日常迭代、安全修复与社区 PR 均直接合入 `main`。
+
+- **源码自编译**：直接基于本仓库即可构建完整、零闭源依赖的开源 `Code` 模式桌面端与 CLI（`./build-desktop.sh` / `.\scripts\build-windows.ps1` / `go build ./cmd/hoxi`）。
+- **官方签名安装包**：发布在 [GitHub Releases](https://github.com/hoxiai/hoxi/releases) 与 [hoxi.ai](https://hoxi.ai) 的官方桌面安装包以本仓库对应版本标签为宿主源码，在私有构建流水线中额外联编可选商业扩展（如 `Work` 工作台模式）并完成签名与公证。
+
+---
+
 ## 开源协议
 
 Apache-2.0 © [Hoxi (hoxi.ai)](https://hoxi.ai)

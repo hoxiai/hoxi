@@ -12,6 +12,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  oss-hygiene:
+    name: "OSS Hygiene: Tracked Secrets & Clean-Room Gate"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify tracked OSS repository hygiene
+        run: python3 scripts/check-oss-hygiene.py
+
   frontend-lint:
     name: "Frontend: TypeCheck, i18n & Architecture Lint"
     runs-on: ubuntu-latest

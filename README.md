@@ -178,6 +178,15 @@ flutter run
 
 ---
 
+## Open-Core & Official Releases
+
+This repository (`hoxiai/hoxi`) is the **upstream Apache-2.0 development repository** for Hoxi's core desktop/CLI workspace (`Code` mode) and the open-source Flutter mobile controller (`mobile/`, **`Hoxi Remote`**). Daily host development, bug fixes, and community pull requests land directly on `main`.
+
+- **Building from source** produces the complete, self-contained open-source `Code` mode desktop app and CLI (`go build` / `wails build` / `./build-desktop.sh`) with zero proprietary dependencies.
+- **Official signed installers** published to [GitHub Releases](https://github.com/hoxiai/hoxi/releases) and [hoxi.ai](https://hoxi.ai) are built from the tagged commit in this repository together with optional commercial extensions (such as the `Work` workspace surface) and signed/notarized in a private release pipeline.
+
+---
+
 ## License
 
 Apache-2.0 © [Hoxi (hoxi.ai)](https://hoxi.ai)
