@@ -4,7 +4,7 @@
 import { createSignal } from "solid-js";
 import { hoxiAPI } from "../services/api";
 import { writeDesktopClipboard } from "../services/desktop-events";
-import { getGatewayToken, isWailsDesktopWebView } from "../services/http";
+import { getGatewayToken, getLoopbackHTTPBase, isWailsDesktopWebView } from "../services/http";
 import { isAnyPortalMode } from "./intake-portal";
 import {
   openAttachmentInInspector,
@@ -104,8 +104,48 @@ export function clearAttachmentActionFeedback(): void {
   setFeedbackState(null);
 }
 
+function isLocalLoopbackURL(url: string): boolean {
+  const trimmed = url.trim();
+  if (!/^https?:\/\//i.test(trimmed)) return false;
+  try {
+    const parsed = new URL(trimmed);
+    const loopbackBase = getLoopbackHTTPBase();
+    if (loopbackBase) {
+      try {
+        if (parsed.origin === new URL(loopbackBase).origin) return true;
+      } catch {
+        /* ignore invalid loopback base */
+      }
+    }
+    const host = parsed.hostname.toLowerCase();
+    return host === "127.0.0.1" || host === "localhost" || host === "::1" || host === "[::1]";
+  } catch {
+    return false;
+  }
+}
+
+function isLocalGatewayURL(url: string): boolean {
+  const trimmed = url.trim();
+  return trimmed.startsWith("/") || isLocalLoopbackURL(trimmed);
+}
+
 function isRemoteHttpURL(url: string): boolean {
-  return /^https?:\/\//i.test(url.trim());
+  const trimmed = url.trim();
+  return /^https?:\/\//i.test(trimmed) && !isLocalLoopbackURL(trimmed);
+}
+
+function cleanGatewayAttachmentPath(url: string): string {
+  const trimmed = url.trim();
+  if (!trimmed) return "";
+  try {
+    const parsed = new URL(
+      trimmed,
+      typeof window !== "undefined" ? window.location.origin : "http://localhost"
+    );
+    return parsed.pathname;
+  } catch {
+    return stripQueryAndHash(trimmed);
+  }
 }
 
 function parseStagedFileURL(url: string): { path: string; directory?: string } | null {
@@ -226,16 +266,18 @@ export function resolveAttachmentMenuActions(
     externalFilePath = staged.path;
     externalFileDir = staged.directory;
   } else if (isGatewayAtt) {
-    externalFilePath = isGatewayAttachmentURL(src) ? src : downloadHref;
+    externalFilePath = cleanGatewayAttachmentPath(
+      isGatewayAttachmentURL(src) ? src : downloadHref
+    );
   }
 
   let copyMeta: ResolvedAttachmentActions["copyMeta"];
-  if (remoteSrc) {
-    copyMeta = { kind: "link", value: remoteSrc };
-  } else if (localPath) {
+  if (localPath) {
     copyMeta = { kind: "path", value: localPath };
   } else if (staged) {
     copyMeta = { kind: "path", value: staged.path };
+  } else if (remoteSrc) {
+    copyMeta = { kind: "link", value: remoteSrc };
   } else if ((target.filename || "").trim()) {
     copyMeta = { kind: "filename", value: (target.filename || "").trim() };
   }
@@ -259,7 +301,7 @@ export function resolveAttachmentMenuActions(
 }
 
 function buildFetchHeaders(url: string): Record<string, string> | undefined {
-  if (!url.startsWith("/")) return undefined;
+  if (!isLocalGatewayURL(url)) return undefined;
   const token = getGatewayToken();
   return token ? { "X-Hoxi-Token": token } : undefined;
 }

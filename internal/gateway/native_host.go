@@ -143,7 +143,11 @@ func extractHostActionResult(toolName string, status int, raw []byte) (agent.Hos
 		})
 		delete(parsed, "image")
 	}
-	cleanRaw, _ := json.Marshal(parsed)
+	modelView := parsed
+	if toolName == "hoxi_browser" {
+		modelView = compactBrowserSnapshotForModel(parsed)
+	}
+	cleanRaw, _ := json.Marshal(modelView)
 	return agent.HostToolResult{
 		Title:    toolName,
 		Output:   string(cleanRaw),

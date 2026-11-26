@@ -19,7 +19,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     -h|--help)
       echo "Usage: $0 <target-directory> [--verify]" >&2
-      echo "  --verify   Run GOWORK=off go vet/test and frontend lint/test/build inside exported tree" >&2
+      echo "  --verify   Run GOWORK=off go vet/test, frontend lint/test/build, and mobile OSS analyze/test inside exported tree" >&2
       exit 0
       ;;
     *)
@@ -116,9 +116,22 @@ if [[ "${RUN_VERIFY}" -eq 1 ]]; then
     npm --prefix web ci
     npm --prefix web run lint
     npm --prefix web test
-    node --test scripts/release.test.mjs
+    if [[ -f "scripts/install.test.mjs" ]]; then
+      node --test scripts/release.test.mjs scripts/install.test.mjs
+    else
+      node --test scripts/release.test.mjs
+    fi
     npm --prefix web run build
     rm -rf web/node_modules web/dist
+    if command -v flutter >/dev/null 2>&1 && [[ -d "mobile" ]]; then
+      (
+        cd mobile
+        (flutter pub get --offline >/dev/null 2>&1 || flutter pub get >/dev/null)
+        flutter analyze --no-pub
+        flutter test --no-pub
+        rm -rf .dart_tool build pubspec.lock .flutter-plugins .flutter-plugins-dependencies
+      )
+    fi
   )
 fi
 

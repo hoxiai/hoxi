@@ -640,6 +640,10 @@ func (g *Gateway) handleFileOpen(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
 		return
 	}
+	if err := g.verifyStrictDesktopTokenRequest("File open")(r); err != nil {
+		writeJSONError(w, http.StatusForbidden, err.Error())
+		return
+	}
 	var body struct {
 		Path      string `json:"path"`
 		Directory string `json:"directory"`

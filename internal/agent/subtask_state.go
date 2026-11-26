@@ -119,6 +119,22 @@ func saveSessionSubtask(sessionID string, st savedSubtaskState) bool {
 	return true
 }
 
+// clearLatestSessionExecutor drops the sticky executor pointer when the most
+// recent executor run could not be saved, so the next delegation starts fresh
+// instead of replaying a transcript that lacks that run's work. Saved states
+// stay addressable by explicit resume ID.
+func clearLatestSessionExecutor(sessionID string) {
+	sid := strings.TrimSpace(sessionID)
+	if sid == "" {
+		return
+	}
+	subtaskStateMu.Lock()
+	defer subtaskStateMu.Unlock()
+	if bucket := subtaskStateSessions[sid]; bucket != nil {
+		bucket.latestExecutorID = ""
+	}
+}
+
 func loadLatestSessionExecutor(sessionID, providerID, modelID, worktreeDir string) (savedSubtaskState, bool) {
 	sid := strings.TrimSpace(sessionID)
 	if sid == "" {

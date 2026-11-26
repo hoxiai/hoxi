@@ -83,13 +83,3 @@ func parseRetryAfter(value string, now time.Time) time.Duration {
 	}
 	return 0
 }
-
-func llmAttemptWindow(remaining time.Duration, attemptsLeft int) time.Duration {
-	if remaining <= 0 {
-		return 0
-	}
-	if attemptsLeft <= 1 {
-		return remaining
-	}
-	return remaining * 2 / 3
-}

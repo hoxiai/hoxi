@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/hoxiai/hoxi/internal/llm"
 )
+
+var errSummaryTruncated = errors.New("summarization truncated at output token limit")
 
 const compactionSystemPrompt = `You are a senior software engineering context compaction engine.
 Distill the provided conversation transcript into a dense, lossless technical checkpoint in Markdown so work can continue seamlessly without prior raw messages.
@@ -77,7 +80,9 @@ func (e *Engine) SummarizeWithUsage(ctx context.Context, providerID, modelID, tr
 			summary, err := e.summarizeChunkWithFallback(ctx, &target, &drv, maxOut, chunk, record)
 			calls++
 			if err != nil {
-				if ctx.Err() == nil && len(chunk) > minAdaptiveChunkBytes && isContextOverflowError(err) {
+				// Overflowing or truncated segments are re-split instead of failing, so
+				// checkpoints already paid for in earlier segments are kept.
+				if ctx.Err() == nil && len(chunk) > minAdaptiveChunkBytes && (isContextOverflowError(err) || errors.Is(err, errSummaryTruncated)) {
 					// Earlier segments already have complete checkpoints. Resize only
 					// the rejected segment and the source that still follows it.
 					chunkBytes = max(minAdaptiveChunkBytes, len(chunk)/2)
@@ -195,7 +200,7 @@ func (e *Engine) summarizeChunk(ctx context.Context, target llm.StreamTarget, dr
 	}
 	e.reportStreamOutcome(ctx, target, headerLatency, nil)
 	if isTruncatedFinishReason(finishReason) {
-		return "", fmt.Errorf("summarization truncated at output token limit (%s)", finishReason)
+		return "", fmt.Errorf("%w (%s)", errSummaryTruncated, finishReason)
 	}
 	summary := strings.TrimSpace(out.String())
 	if summary == "" {

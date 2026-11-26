@@ -444,6 +444,11 @@ func (e *Engine) runSubtask(
 	}
 
 	if subErr != nil {
+		if strings.EqualFold(subType, "executor") {
+			// The failed run is never saved; resuming the older sticky thread would
+			// replay history that lacks this run's work.
+			clearLatestSessionExecutor(parent.SessionID)
+		}
 		errSummary := summary
 		if errSummary == "" {
 			errSummary = subErr.Error()
@@ -475,6 +480,8 @@ func (e *Engine) runSubtask(
 		FileRevisions: childRevisions,
 	}) {
 		res.SubtaskID = subtaskID
+	} else if strings.EqualFold(subType, "executor") {
+		clearLatestSessionExecutor(parent.SessionID)
 	}
 	if receipt != nil {
 		if block := receipt.FormatReceipt(childProv, childModel, resumed != nil); block != "" {

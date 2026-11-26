@@ -5,6 +5,19 @@ import (
 	"strings"
 )
 
+// MaxInjectedProjectMemoryBytes bounds the project memory re-sent with every
+// turn. The file itself may hold up to MaxMemoryDocumentBytes (and more when
+// edited externally); the remainder stays readable on demand.
+const MaxInjectedProjectMemoryBytes = 64 << 10
+
+func capInjectedProjectMemory(md string) string {
+	if len(md) <= MaxInjectedProjectMemoryBytes {
+		return md
+	}
+	return truncateUTF8Bytes(md, MaxInjectedProjectMemoryBytes) +
+		"\n\n[Project memory truncated to 64 KiB for the prompt; read .hoxi/memory/project.md for the remaining sections.]"
+}
+
 // RuntimeMemoryBlocks separates shared project guidance from the current
 // conversation checkpoint so a changing transcript can travel with user input.
 func RuntimeMemoryBlocks(rec SessionRecord) (project, handoff string) {
@@ -44,7 +57,7 @@ func memoryBlocks(rec SessionRecord, includeProgress bool) (project, handoff str
 		sessMem = buildEightDimSessionMarkdown(rec)
 	}
 
-	projClean := stripVolatileMemoryHeader(projMem)
+	projClean := capInjectedProjectMemory(stripVolatileMemoryHeader(projMem))
 	sessClean := sanitizeSessionMemoryMarkdown(stripVolatileMemoryHeader(sessMem))
 	if includeProgress && (rec.ContextPending || strings.TrimSpace(rec.ExternalID) == "") && len(rec.Turns) > 0 && sessClean != "" {
 		sessClean = dedupHandoffMemorySection6(sessClean)

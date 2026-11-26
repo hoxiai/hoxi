@@ -94,7 +94,7 @@ than 0.3.1 lack the `viewport` capability and keep the real viewport.
 
 ## Tools And Isolation
 
-`hoxi_browser` supports navigation (`navigate`, `back`, `forward`, `reload`), pointer & form actions (`click`, `hover`, `type` with optional `clear` and trailing `key`, `select` for `<select>` dropdowns, `key`, `scroll`), bounded observation (`snapshot` returning visible text and controls with `@e1..@e200` refs plus CSS selectors, `screenshot` returning JPEG media, `diagnostics` returning sanitized console/network errors, `wait` for a selector/`@eN` ref or bounded settle time), synchronous JavaScript `evaluate`, and tab lifecycle (`tab_new`, `tab_select`, `tab_close`, `close`).
+`hoxi_browser` supports navigation (`navigate`, `back`, `forward`, `reload`), pointer & form actions (`click`, `hover`, `type` with optional `clear` and trailing `key`, `select` for `<select>` dropdowns, `key`, `scroll`), bounded observation (`snapshot` returning visible text and controls with `@e1..@e200` refs (CSS selectors stay in the browser-side ref map and are omitted from the agent's tool output), `screenshot` returning JPEG media, `diagnostics` returning sanitized console/network errors, `wait` for a selector/`@eN` ref or bounded settle time), synchronous JavaScript `evaluate`, and tab lifecycle (`tab_new`, `tab_select`, `tab_close`, `close`).
 Both the Native Agent host bridge and the OpenCode plugin derive scope from Hoxi's execution context, never model-supplied session IDs. The gateway resolves session handles to their owning Hoxi session ID, so agent tools and the inspector share the same browser and manual ownership. Requests with a mismatched worktree are rejected.
 
 By default, Hoxi launches a visible **Desktop Window (`window`)** backed by the

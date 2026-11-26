@@ -175,6 +175,9 @@ Strict rules:
 		Temperature: 0.2,
 		Timeout:     12 * time.Second,
 		Purpose:     llm.PurposeInteractive,
+		// A 4-14 character title needs no deliberation; default effort on
+		// reasoning models can spend the whole output budget before any text.
+		ReasoningEffort: "low",
 	})
 	if err != nil {
 		return "", err

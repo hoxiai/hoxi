@@ -313,10 +313,25 @@ func loadProjectRules(worktreeDir string, cfgDoc map[string]any) RulesLoadResult
 	sort.SliceStable(priorityOrder, func(i, j int) bool {
 		return scopeRank(docs[priorityOrder[i]].cand.scope) < scopeRank(docs[priorityOrder[j]].cand.scope)
 	})
+	// Byte-identical copies under different paths (e.g. AGENTS.md mirrored into
+	// CLAUDE.md) are rendered once; the copy in the most specific scope wins.
+	duplicate := make([]bool, len(docs))
+	keeper := make(map[string]int, len(docs))
+	for _, idx := range priorityOrder {
+		if _, seen := keeper[docs[idx].text]; seen {
+			duplicate[idx] = true
+			continue
+		}
+		keeper[docs[idx].text] = idx
+	}
 
 	remaining := budget
 	for _, idx := range priorityOrder {
 		res.LoadedFiles = append(res.LoadedFiles, docs[idx].cand.absPath)
+		if duplicate[idx] {
+			res.TotalBytes -= len(docs[idx].text)
+			continue
+		}
 		if remaining <= 0 {
 			res.OverBudget = true
 			truncated[idx] = true

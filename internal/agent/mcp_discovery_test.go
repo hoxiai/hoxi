@@ -63,3 +63,44 @@ func TestMCPToolDiscoveryContinuesWithOpaqueCursor(t *testing.T) {
 		t.Fatalf("repeated cursor: %v", err)
 	}
 }
+
+func TestUnfilteredMCPListFallsBackToIndexWhenLarge(t *testing.T) {
+	t.Setenv("HOXI_HOME", t.TempDir())
+	bigSchema := `{"type":"object","properties":{"q":{"type":"string","description":"` + strings.Repeat("very long parameter documentation ", 120) + `"}}}`
+	tools := make([]string, 0, 8)
+	for i := 0; i < 8; i++ {
+		tools = append(tools, `{"name":"tool_`+string(rune('a'+i))+`","description":"Searches things.\nSecond line with more detail.","inputSchema":`+bigSchema+`}`)
+	}
+	listBody := `{"jsonrpc":"2.0","id":2,"result":{"tools":[` + strings.Join(tools, ",") + `]}}`
+	SetMCPHTTPTransportForTest(mcpRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		var rpc struct{ Method string }
+		_ = json.NewDecoder(r.Body).Decode(&rpc)
+		switch rpc.Method {
+		case "initialize":
+			return mcpJSONResp(200, nil, `{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{"tools":{}}}}`), nil
+		case "notifications/initialized":
+			return mcpJSONResp(202, nil, ""), nil
+		default:
+			return mcpJSONResp(200, nil, listBody), nil
+		}
+	}))
+	defer SetMCPHTTPTransportForTest(nil)
+	tc := ToolContext{WorktreeDir: t.TempDir(), MCPConfig: func() map[string]any {
+		return map[string]any{"mcp": map[string]any{"catalog": map[string]any{"type": "remote", "url": "https://example.invalid/mcp", "oauth": false}}}
+	}}
+	tool := &mcpListToolsTool{}
+	index, err := tool.Execute(context.Background(), tc, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(index.Output, "schema:") || strings.Contains(index.Output, "Second line") {
+		t.Fatalf("large unfiltered listing must omit schemas and long descriptions: %d bytes", len(index.Output))
+	}
+	if !strings.Contains(index.Output, "- tool_h: Searches things.") || !strings.Contains(index.Output, `{"server": "<name>"}`) {
+		t.Fatalf("index must list every tool and explain how to get schemas: %s", index.Output)
+	}
+	full, err := tool.Execute(context.Background(), tc, json.RawMessage(`{"server":"catalog"}`))
+	if err != nil || !strings.Contains(full.Output, "schema:") {
+		t.Fatalf("a server-filtered listing must keep full schemas: %v", err)
+	}
+}

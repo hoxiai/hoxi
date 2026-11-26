@@ -12,7 +12,8 @@ const maxScheduleBodyBytes = 128 << 10
 
 // RegisterRoutes mounts /api/hoxi/schedules endpoints. All routes remain
 // strictly desktop/local-host only and reject remote tunnel callers with 403.
-func (s *Service) RegisterRoutes(mux *http.ServeMux, isRemote func(*http.Request) bool) {
+// Optional verifyDesktop guards enforce local desktop token/UI auth.
+func (s *Service) RegisterRoutes(mux *http.ServeMux, isRemote func(*http.Request) bool, verifyDesktop ...func(*http.Request) error) {
 	if s == nil || mux == nil {
 		return
 	}
@@ -20,6 +21,15 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux, isRemote func(*http.Request
 		if isRemote != nil && isRemote(r) {
 			writeJSONError(w, http.StatusForbidden, "scheduled tasks are only available locally")
 			return true
+		}
+		for _, verify := range verifyDesktop {
+			if verify == nil {
+				continue
+			}
+			if err := verify(r); err != nil {
+				writeJSONError(w, http.StatusForbidden, err.Error())
+				return true
+			}
 		}
 		return false
 	}

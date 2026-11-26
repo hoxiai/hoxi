@@ -15,6 +15,9 @@ const (
 	defaultMaxConcurrentSubtasks   = 6
 	maxStepTransientRetries        = 2
 	maxReactiveOverflowCompactions = 2
+	// A failed proactive attempt already paid for an in-place summary and a
+	// chunked fallback; later steps rely on reactive overflow compaction.
+	maxProactiveCompactionFailures = 1
 )
 
 var defaultStepRetryDelays = []time.Duration{
@@ -340,6 +343,7 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 		})
 	}
 	overflowCompactions := 0
+	proactiveCompactionFailures := 0
 	truncationRecoveries := 0
 	chantingRecoveries := 0
 	foldUnsignedToolSteps := false
@@ -382,7 +386,7 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 		if prunedChanged {
 			tokenTracker.RebaseAfterPrune(prePruneMsgs, msgs, fullSystem, toolSpecs)
 		}
-		if overflowCompactions < maxReactiveOverflowCompactions &&
+		if overflowCompactions < maxReactiveOverflowCompactions && proactiveCompactionFailures < maxProactiveCompactionFailures &&
 			shouldProactivelyCompactWithBudget(msgs, fullSystem, toolSpecs, contextThresholds, tokenTracker, target.ContextLimit, historyLen, step) {
 			inPlaceMsgs := msgs
 			inPlaceCacheWarm := tokenTracker.IsPrefixCacheWarm()
@@ -431,6 +435,8 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 					})
 				}
 				msgs = compacted
+			} else if ctx.Err() == nil {
+				proactiveCompactionFailures++
 			}
 		}
 

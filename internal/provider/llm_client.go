@@ -54,22 +54,37 @@ func (s *Service) Complete(ctx context.Context, target llm.Target, req llm.Reque
 		return callSimpleLLM(ctx, call)
 	}
 	// Endpoints that do not know reasoning_effort answer 400; the breaker
-	// ignores bad requests, and the model is retried once without it.
+	// ignores bad requests, and the model is retried once without it. Strict
+	// gateways phrase the rejection in many ways, so any 400/422 earns one plain
+	// retry (bad requests are not billed); the model is remembered when the
+	// message names the parameter or the plain retry succeeds.
 	started := time.Now()
 	withEffort := call
 	withEffort.ReasoningEffort = effort
 	text, err := callSimpleLLM(ctx, withEffort)
-	if err == nil || !isReasoningEffortRejection(err) {
+	if err == nil || !isBadRequestError(err) {
 		return text, err
 	}
-	s.noReasoningEffort.Store(memoKey, struct{}{})
+	explicit := isReasoningEffortRejection(err)
+	if explicit {
+		s.noReasoningEffort.Store(memoKey, struct{}{})
+	}
 	if call.Timeout > 0 {
 		call.Timeout -= time.Since(started)
 		if call.Timeout <= 0 {
 			return "", context.DeadlineExceeded
 		}
 	}
-	return callSimpleLLM(ctx, call)
+	text, err = callSimpleLLM(ctx, call)
+	if err == nil && !explicit {
+		s.noReasoningEffort.Store(memoKey, struct{}{})
+	}
+	return text, err
+}
+
+func isBadRequestError(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.HasPrefix(msg, "http 400") || strings.HasPrefix(msg, "http 422")
 }
 
 // isReasoningEffortRejection reports whether an endpoint refused the request

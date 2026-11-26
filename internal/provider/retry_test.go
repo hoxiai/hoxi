@@ -204,3 +204,53 @@ func TestIsQuotaExhaustedKeepsPlainRateLimitsRetryable(t *testing.T) {
 		t.Fatal("an empty balance is permanent")
 	}
 }
+
+func TestCallSimpleLLMGivesSlowGenerationTheWholeBudget(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		select {
+		case <-time.After(700 * time.Millisecond): // longer than 2/3 of the 1s budget
+		case <-r.Context().Done():
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{"message": map[string]any{"content": "slow but complete"}}},
+		})
+	}))
+	defer server.Close()
+	text, err := callSimpleLLM(context.Background(), llmCompletionRequest{
+		BaseURL: server.URL, ProviderID: "slow-prov", ModelID: "m", Prompt: "hi",
+		Timeout: time.Second,
+	})
+	if err != nil || text != "slow but complete" {
+		t.Fatalf("slow generation must finish within the budget, got %q %v", text, err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("a slow generation must not be cut off and resent, got %d requests", got)
+	}
+}
+
+func TestCallSimpleLLMDoesNotResendAfterBudgetTimeout(t *testing.T) {
+	var calls atomic.Int32
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer server.Close()
+	defer close(release)
+	_, err := callSimpleLLM(context.Background(), llmCompletionRequest{
+		BaseURL: server.URL, ProviderID: "hung-prov", ModelID: "m", Prompt: "hi",
+		Timeout: 400 * time.Millisecond,
+	})
+	if err == nil {
+		t.Fatal("expected a timeout error")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("a request that exhausted the budget must not be resent, got %d requests", got)
+	}
+}

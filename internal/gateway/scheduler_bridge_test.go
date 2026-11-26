@@ -187,16 +187,42 @@ func TestScheduleRoutesRequireGatewayToken(t *testing.T) {
 	const tok = "schedule-boot-token-123"
 	g.SetGatewayToken(tok)
 
-	// Missing token is rejected with 403.
-	noTokReq := localRequest(http.MethodGet, "/api/hoxi/schedules", nil)
-	noTokRec := httptest.NewRecorder()
-	g.ServeHTTP(noTokRec, noTokReq)
-	if noTokRec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 without gateway token, got %d: %s", noTokRec.Code, noTokRec.Body.String())
+	// Missing token (including spoofed Wails Origin/Host headers) is rejected with 403.
+	for _, ep := range []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{http.MethodGet, "/api/hoxi/schedules", ""},
+		{http.MethodPost, "/api/hoxi/schedules/preview-cron", `{"trigger":{"kind":"interval","intervalMinutes":15}}`},
+	} {
+		for _, tc := range []struct {
+			label  string
+			host   string
+			origin string
+		}{
+			{"plain", "", ""},
+			{"spoofed-wails-origin", "", "wails://wails"},
+			{"spoofed-wails-host", "wails", ""},
+		} {
+			noTokReq := localRequest(ep.method, ep.path, strings.NewReader(ep.body))
+			if tc.host != "" {
+				noTokReq.Host = tc.host
+			}
+			if tc.origin != "" {
+				noTokReq.Header.Set("Origin", tc.origin)
+			}
+			noTokRec := httptest.NewRecorder()
+			g.ServeHTTP(noTokRec, noTokReq)
+			if noTokRec.Code != http.StatusForbidden {
+				t.Fatalf("%s %s (%s) without gateway token = %d, want 403: %s", ep.method, ep.path, tc.label, noTokRec.Code, noTokRec.Body.String())
+			}
+		}
 	}
 
 	// Valid X-Hoxi-Token succeeds with 200.
 	withTokReq := localRequest(http.MethodGet, "/api/hoxi/schedules", nil)
+	withTokReq.Header.Set("Origin", "wails://wails")
 	withTokReq.Header.Set(gatewayTokenHeader, tok)
 	withTokRec := httptest.NewRecorder()
 	g.ServeHTTP(withTokRec, withTokReq)

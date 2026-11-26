@@ -1,9 +1,11 @@
+import { getGatewayToken, setGatewayToken } from "../services/http";
 import {
   attachmentActionFeedback,
   attachmentContextMenu,
   clearAttachmentActionFeedback,
   closeAttachmentContextMenu,
   deriveAttachmentFilename,
+  downloadAttachmentTarget,
   openAttachmentContextMenu,
   resolveAttachmentMenuActions,
   showAttachmentActionFeedback,
@@ -178,5 +180,64 @@ describe("attachment context menu state and resolution", () => {
     assertEqual(attachmentActionFeedback()?.tone, "ok");
     clearAttachmentActionFeedback();
     assertEqual(attachmentActionFeedback(), null);
+  });
+
+  it("never exposes loopback URLs or hoxiToken as remote links and sends X-Hoxi-Token on loopback fetches", async () => {
+    const loopbackAtt = resolveAttachmentMenuActions(
+      {
+        kind: "image",
+        src: "http://127.0.0.1:5410/api/hoxi/attachments/att_1700_abcdef/content?hoxiToken=secret_boot_tok",
+        filename: "preview.png",
+      },
+      { portalMode: false }
+    );
+    assertEqual(loopbackAtt.copyMeta?.kind, "filename");
+    assertEqual(loopbackAtt.copyMeta?.value, "preview.png");
+    assertEqual(loopbackAtt.externalFilePath, "/api/hoxi/attachments/att_1700_abcdef/content");
+
+    const loopbackStaged = resolveAttachmentMenuActions(
+      {
+        kind: "image",
+        src: "http://127.0.0.1:5410/api/hoxi/file/content?path=docs%2Fpic.png&directory=%2Frepo&hoxiToken=secret_boot_tok",
+        localPath: "docs/pic.png",
+      },
+      { portalMode: false }
+    );
+    assertEqual(loopbackStaged.copyMeta?.kind, "path");
+    assertEqual(loopbackStaged.copyMeta?.value, "docs/pic.png");
+
+    const loopbackJoined = resolveAttachmentMenuActions(
+      {
+        kind: "image",
+        src: "http://127.0.0.1:5410/api/hoxi/work/joined-collabs/jcol_1/proxy/attachments/att_9?hoxiToken=secret_boot_tok",
+        filename: "mockup.png",
+      },
+      { portalMode: false }
+    );
+    assertEqual(loopbackJoined.copyMeta?.kind, "filename");
+    assertEqual(loopbackJoined.copyMeta?.value, "mockup.png");
+
+    const prevToken = getGatewayToken();
+    const prevFetch = globalThis.fetch;
+    let seenTokenHeader: string | null = null;
+    setGatewayToken("tok_loopback_hdr");
+    try {
+      globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+        seenTokenHeader = new Headers(init?.headers || {}).get("X-Hoxi-Token");
+        return new Response("fail", { status: 500 });
+      }) as typeof fetch;
+
+      // On failure, a loopback URL must NOT fall back to opening a cross-site _blank anchor.
+      const ok = await downloadAttachmentTarget({
+        kind: "file",
+        src: "http://127.0.0.1:5410/api/hoxi/attachments/att_1700_abcdef/content",
+        filename: "report.pdf",
+      });
+      assertEqual(seenTokenHeader, "tok_loopback_hdr");
+      assertEqual(ok, false);
+    } finally {
+      globalThis.fetch = prevFetch;
+      setGatewayToken(prevToken);
+    }
   });
 });

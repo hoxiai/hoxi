@@ -109,11 +109,12 @@ Rules:
 </user_draft>`, language, rawPrompt)
 
 	rawText, err := s.llm.Complete(parentCtx, target, llm.Request{
-		Prompt:      instruction,
-		MaxTokens:   1536,
-		Temperature: 0.3,
-		Timeout:     20 * time.Second,
-		Purpose:     llm.PurposeInteractive,
+		Prompt:          instruction,
+		MaxTokens:       1536,
+		Temperature:     0.3,
+		Timeout:         20 * time.Second,
+		Purpose:         llm.PurposeInteractive,
+		ReasoningEffort: "low",
 	})
 	if err != nil {
 		return "", err

@@ -393,6 +393,10 @@ func (g *Gateway) handleClipboardImages(w http.ResponseWriter, r *http.Request) 
 		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
+	if err := g.verifyStrictDesktopTokenRequest("Clipboard image read")(r); err != nil {
+		writeJSONError(w, http.StatusForbidden, err.Error())
+		return
+	}
 	filesOnly := r.URL.Query().Get("filesOnly") == "1"
 	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
 		writeJSON(w, http.StatusOK, map[string]any{"images": []clipboardImageItem{}})

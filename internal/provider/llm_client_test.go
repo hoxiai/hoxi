@@ -122,3 +122,64 @@ func TestIsReasoningEffortRejection(t *testing.T) {
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+func TestCompleteRetriesPlainOnGenericBadRequestWithEffort(t *testing.T) {
+	_, workspaceDir := setupIsolatedEnv(t)
+	var mu sync.Mutex
+	var efforts []string
+	alwaysBad := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(raw, &body)
+		effort, _ := body["reasoning_effort"].(string)
+		mu.Lock()
+		efforts = append(efforts, effort)
+		bad := alwaysBad
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if bad || effort != "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"Invalid request body"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+	svc := NewService(0, "", workspaceDir, nil)
+	target := svc.Resolve("strict-gw", "chat-model", srv.URL+"/v1", "")
+	req := llm.Request{Prompt: "x", Timeout: 5 * time.Second, ReasoningEffort: "low"}
+	seen := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), efforts...)
+	}
+
+	if text, err := svc.Complete(context.Background(), target, req); err != nil || text != "ok" {
+		t.Fatalf("expected the plain retry to answer a generic 400, got %q, %v", text, err)
+	}
+	if got := seen(); len(got) != 2 || got[0] != "low" || got[1] != "" {
+		t.Fatalf("expected an effort try then a plain one, got %q", got)
+	}
+	if _, err := svc.Complete(context.Background(), target, req); err != nil {
+		t.Fatal(err)
+	}
+	if got := seen(); len(got) != 3 || got[2] != "" {
+		t.Fatalf("a successful plain retry must be remembered, got %q", got)
+	}
+
+	// A 400 unrelated to the parameter fails both tries and is not remembered.
+	mu.Lock()
+	alwaysBad = true
+	mu.Unlock()
+	other := svc.Resolve("strict-gw", "other-model", srv.URL+"/v1", "")
+	for i := 0; i < 2; i++ {
+		if _, err := svc.Complete(context.Background(), other, req); err == nil {
+			t.Fatal("expected the unrelated 400 to surface")
+		}
+	}
+	got := seen()[3:]
+	if len(got) != 4 || got[0] != "low" || got[1] != "" || got[2] != "low" || got[3] != "" {
+		t.Fatalf("unrelated 400s must not disable reasoning_effort for the model, got %q", got)
+	}
+}

@@ -189,3 +189,60 @@ func TestResolveAttachmentStorePath(t *testing.T) {
 		}
 	}
 }
+
+func TestClipboardReadAndFileOpenRequireStrictGatewayToken(t *testing.T) {
+	root := t.TempDir()
+	g := New(0, "test", root, nil, nil)
+	defer g.CloseBrowser()
+	const tok = "strict-local-boot-token"
+	g.SetGatewayToken(tok)
+
+	cases := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{http.MethodGet, "/api/hoxi/clipboard/images", ""},
+		{http.MethodPost, "/api/hoxi/file/open", `{"path":"missing.txt","directory":` + jsonString(root) + `}`},
+	}
+
+	for _, ep := range cases {
+		for _, tc := range []struct {
+			label  string
+			host   string
+			origin string
+		}{
+			{"plain", "", ""},
+			{"spoofed-wails-origin", "", "wails://wails"},
+			{"spoofed-wails-host", "wails", ""},
+		} {
+			var bodyReader *strings.Reader
+			if ep.body != "" {
+				bodyReader = strings.NewReader(ep.body)
+			} else {
+				bodyReader = strings.NewReader("")
+			}
+			req := localRequest(ep.method, ep.path, bodyReader)
+			if tc.host != "" {
+				req.Host = tc.host
+			}
+			if tc.origin != "" {
+				req.Header.Set("Origin", tc.origin)
+			}
+			rec := httptest.NewRecorder()
+			g.ServeHTTP(rec, req)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("%s %s (%s) without token = %d, want 403: %s", ep.method, ep.path, tc.label, rec.Code, rec.Body.String())
+			}
+		}
+	}
+
+	// Valid X-Hoxi-Token passes the auth gate (file/open reaches 404 for missing file).
+	openReq := localRequest(http.MethodPost, "/api/hoxi/file/open", strings.NewReader(`{"path":"missing.txt","directory":`+jsonString(root)+`}`))
+	openReq.Header.Set(gatewayTokenHeader, tok)
+	openRec := httptest.NewRecorder()
+	g.ServeHTTP(openRec, openReq)
+	if openRec.Code != http.StatusNotFound {
+		t.Fatalf("POST /api/hoxi/file/open with valid token = %d, want 404: %s", openRec.Code, openRec.Body.String())
+	}
+}

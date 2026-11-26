@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 )
 
@@ -64,6 +65,11 @@ func decodeMCPToolResult(title string, raw json.RawMessage) (ToolOutput, error) 
 		}
 		switch c.Type {
 		case "text":
+			// MCP servers SHOULD mirror structuredContent as serialized JSON text;
+			// projecting both would bill the same payload twice.
+			if mcpTextMirrorsStructured(c.Text, result.StructuredContent) {
+				continue
+			}
 			parts = append(parts, c.Text)
 		case "image", "audio":
 			name := c.Name
@@ -113,4 +119,21 @@ func decodeMCPToolResult(title string, raw json.RawMessage) (ToolOutput, error) 
 		out.Output = string(raw)
 	}
 	return out, nil
+}
+
+// mcpTextMirrorsStructured reports whether text is a JSON serialization of the
+// same value as structured. Non-JSON or differing text is always kept.
+func mcpTextMirrorsStructured(text string, structured json.RawMessage) bool {
+	if len(structured) == 0 || string(structured) == "null" {
+		return false
+	}
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" || (trimmed[0] != '{' && trimmed[0] != '[') {
+		return false
+	}
+	var fromText, fromStructured any
+	if json.Unmarshal([]byte(trimmed), &fromText) != nil || json.Unmarshal(structured, &fromStructured) != nil {
+		return false
+	}
+	return reflect.DeepEqual(fromText, fromStructured)
 }

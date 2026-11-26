@@ -669,7 +669,7 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 		g.intake.RegisterRoutes(g.mux, isRemoteRequest, g.verifyStrictDesktopTokenRequest("Intake management"))
 	}
 	if g.scheduler != nil {
-		g.scheduler.RegisterRoutes(g.mux, isRemoteRequest)
+		g.scheduler.RegisterRoutes(g.mux, isRemoteRequest, g.verifyStrictDesktopTokenRequest("Scheduled tasks"))
 	}
 	if g.forge != nil {
 		g.forge.RegisterRoutes(g.mux)

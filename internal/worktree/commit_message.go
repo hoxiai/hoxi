@@ -124,11 +124,12 @@ Strict requirements:
 	// Use 2048 max_tokens so reasoning models (DeepSeek, Qwen, GLM, o-series) can finish their
 	// internal reasoning_content without hitting finish_reason="length" before emitting content.
 	rawText, err := client.Complete(parentCtx, target, llm.Request{
-		Prompt:      instruction,
-		MaxTokens:   2048,
-		Temperature: 0.2,
-		Timeout:     20 * time.Second,
-		Purpose:     llm.PurposeInteractive,
+		Prompt:          instruction,
+		MaxTokens:       2048,
+		Temperature:     0.2,
+		Timeout:         20 * time.Second,
+		Purpose:         llm.PurposeInteractive,
+		ReasoningEffort: "low",
 	})
 	if err != nil {
 		return "", err

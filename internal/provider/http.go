@@ -175,7 +175,11 @@ func callSimpleLLM(parentCtx context.Context, req llmCompletionRequest) (text st
 			resultErr = context.DeadlineExceeded
 			break
 		}
-		res := attemptSimpleLLM(parentCtx, req, llmAttemptWindow(remaining, llmMaxAttempts-attempt+1))
+		// Each attempt may use the whole remaining budget: cutting a slow
+		// non-streaming generation short and resending it pays for the prompt
+		// (and partial output) again while leaving later attempts too little
+		// time to finish. Fast failures (5xx, resets) still leave room to retry.
+		res := attemptSimpleLLM(parentCtx, req, remaining)
 		status, readFailed = res.status, res.readFailed
 		quotaExhausted = quotaExhausted || res.quotaExhausted
 		if res.err == nil {

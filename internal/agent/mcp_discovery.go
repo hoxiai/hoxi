@@ -55,7 +55,7 @@ func (t *mcpListToolsTool) Execute(ctx context.Context, tc ToolContext, input js
 		}, nil
 	}
 
-	var b strings.Builder
+	var full, compact strings.Builder
 	matched := 0
 	for _, srv := range servers {
 		if filter != "" && !strings.EqualFold(srv.Name, filter) {
@@ -63,14 +63,18 @@ func (t *mcpListToolsTool) Execute(ctx context.Context, tc ToolContext, input js
 		}
 		matched++
 		if srv.OAuthError != "" {
-			fmt.Fprintf(&b, "## Server: %s (%s) — error: %s\n\n", srv.Name, srv.Type, srv.OAuthError)
+			line := fmt.Sprintf("## Server: %s (%s) — error: %s\n\n", srv.Name, srv.Type, srv.OAuthError)
+			full.WriteString(line)
+			compact.WriteString(line)
 			continue
 		}
 		callCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		rawRes, err := invokeMCPMethod(callCtx, tc.WorktreeDir, srv, "tools/list", params)
 		cancel()
 		if err != nil {
-			fmt.Fprintf(&b, "## Server: %s (%s) — error: %v\n\n", srv.Name, srv.Type, err)
+			line := fmt.Sprintf("## Server: %s (%s) — error: %v\n\n", srv.Name, srv.Type, err)
+			full.WriteString(line)
+			compact.WriteString(line)
 			continue
 		}
 		var listPayload struct {
@@ -85,28 +89,58 @@ func (t *mcpListToolsTool) Execute(ctx context.Context, tc ToolContext, input js
 			if filter != "" {
 				return ToolOutput{Title: srv.Name}, fmt.Errorf("invalid tools/list response from %s", srv.Name)
 			}
-			fmt.Fprintf(&b, "## Server: %s (%s) — invalid tools/list response\n\n", srv.Name, srv.Type)
+			line := fmt.Sprintf("## Server: %s (%s) — invalid tools/list response\n\n", srv.Name, srv.Type)
+			full.WriteString(line)
+			compact.WriteString(line)
 			continue
 		}
-		fmt.Fprintf(&b, "## Server: %s (%s) — %d tool(s)\n", srv.Name, srv.Type, len(listPayload.Tools))
+		header := fmt.Sprintf("## Server: %s (%s) — %d tool(s)\n", srv.Name, srv.Type, len(listPayload.Tools))
+		full.WriteString(header)
+		compact.WriteString(header)
 		if next := listPayload.NextCursor; next != nil {
 			if args.Cursor != nil && *next == *args.Cursor {
 				return ToolOutput{Title: srv.Name}, fmt.Errorf("incomplete MCP tool list from %s: repeated continuation cursor", srv.Name)
 			}
 			continuation, _ := json.Marshal(map[string]string{"server": srv.Name, "cursor": *next})
-			fmt.Fprintf(&b, "More tools available. Continue with mcp_list_tools %s\n", continuation)
+			line := fmt.Sprintf("More tools available. Continue with mcp_list_tools %s\n", continuation)
+			full.WriteString(line)
+			compact.WriteString(line)
 		}
 		for _, tool := range listPayload.Tools {
 			schemaBytes, _ := json.Marshal(tool.InputSchema)
-			fmt.Fprintf(&b, "- %s: %s\n  schema: %s\n", tool.Name, strings.TrimSpace(tool.Description), string(schemaBytes))
+			fmt.Fprintf(&full, "- %s: %s\n  schema: %s\n", tool.Name, strings.TrimSpace(tool.Description), string(schemaBytes))
+			fmt.Fprintf(&compact, "- %s: %s\n", tool.Name, mcpToolSummaryLine(tool.Description))
 		}
-		b.WriteString("\n")
+		full.WriteString("\n")
+		compact.WriteString("\n")
+	}
+	out := full.String()
+	if filter == "" && len(out) > maxUnfilteredMCPListBytes {
+		// Every server's full schemas would be truncated mid-list (forcing a
+		// second, filtered call) and then re-billed on later steps. Return an
+		// index instead and let the model fetch schemas for the server it needs.
+		out = compact.String() + "Schemas omitted because the full listing is large. Call mcp_list_tools with {\"server\": \"<name>\"} to get parameter schemas before mcp_call_tool.\n"
 	}
 	if matched == 0 {
 		return ToolOutput{Title: filter, IsError: true}, fmt.Errorf("MCP server %q not found", filter)
 	}
 	return ToolOutput{
 		Title:  fmt.Sprintf("%d MCP server(s)", matched),
-		Output: strings.TrimSpace(b.String()),
+		Output: strings.TrimSpace(out),
 	}, nil
+}
+
+// maxUnfilteredMCPListBytes keeps an unfiltered listing well inside the 32 KiB
+// tool output cap; larger listings fall back to a name + summary index.
+const maxUnfilteredMCPListBytes = 12 * 1024
+
+func mcpToolSummaryLine(desc string) string {
+	line := strings.TrimSpace(desc)
+	if i := strings.IndexAny(line, "\r\n"); i >= 0 {
+		line = strings.TrimSpace(line[:i])
+	}
+	if runes := []rune(line); len(runes) > 160 {
+		line = string(runes[:160]) + "…"
+	}
+	return line
 }
