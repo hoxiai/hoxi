@@ -10,8 +10,8 @@ import {
 import { createSyntaxHighlightClient } from "./syntax-highlight-client";
 import {
   codeWrapEnabled,
+  isAnyPortalMode,
   isHtmlPreviewCodeBlockLang,
-  isTesterPortalMode,
   openCanvasPreview,
   openDocumentPreview,
   toggleCodeWrap,
@@ -19,7 +19,7 @@ import {
 } from "../../store/workspace";
 import { Icon } from "../icons";
 import { ActionIconButton } from "./tool-card-helpers";
-import { useMarkdownStreaming } from "./stream-reveal";
+import { useMarkdownPortalMode, useMarkdownStreaming } from "./stream-reveal";
 
 export const CODE_COLLAPSE_THRESHOLD_LINES = 28;
 export const CODE_COLLAPSE_PREVIEW_LINES = 18;
@@ -88,6 +88,8 @@ export default function CodeBlockCard(props: {
   ref?: (el: HTMLDivElement) => void;
 }) {
   const streaming = useMarkdownStreaming();
+  const markdownPortal = useMarkdownPortalMode();
+  const isPortal = () => isAnyPortalMode() || markdownPortal();
   const initialTheme = workspace.theme === "dark" ? "dark" : "light";
   const [copied, setCopied] = createSignal(false);
   const blockKey = createMemo(() => codeBlockKey(props.lang, props.code));
@@ -296,7 +298,7 @@ export default function CodeBlockCard(props: {
             >
               <Eye size={13} />
             </ActionIconButton>
-            <Show when={!isTesterPortalMode()}>
+            <Show when={!isPortal()}>
               <ActionIconButton
                 label={t("timeline.dockHtmlPreview")}
                 tooltipSide="left"

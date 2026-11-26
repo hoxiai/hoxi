@@ -463,6 +463,7 @@ export default function PortalExecutionTimeline(props: {
                     content={(seg as Extract<typeof seg, { kind: "text" }>).text}
                     density="chat"
                     streaming={isTail()}
+                    portal
                   />
                 </div>
               </Match>

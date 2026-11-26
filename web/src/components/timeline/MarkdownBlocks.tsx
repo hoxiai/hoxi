@@ -10,13 +10,13 @@ import {
 import { t } from "../../i18n";
 import { Icon } from "../icons";
 import {
+  isAnyPortalMode,
   isChartCodeBlockLang,
   isMermaidCodeBlockLang,
   isRichCardsCodeBlockLang,
   isRichMetricsCodeBlockLang,
   isSubtaskPlanCodeBlockLang,
   isSvgCodeBlockLang,
-  isTesterPortalMode,
 } from "../../store/workspace";
 import ChartBlockCard from "./ChartBlockCard";
 import CodeBlockCard from "./CodeBlockCard";
@@ -31,7 +31,7 @@ import {
   extractMarkdownParagraphGallery,
   extractSingleMarkdownImage,
 } from "./rich-view-spec";
-import { createRevealBirths, revealBlock } from "./stream-reveal";
+import { createRevealBirths, revealBlock, useMarkdownPortalMode } from "./stream-reveal";
 
 function alertStyle(alert?: AlertKind): { border: string; badgeBg: string; label: string } {
   switch (alert) {
@@ -65,6 +65,8 @@ export default function MarkdownBlocks(props: {
   const depth = () => props.depth ?? 0;
   const compact = () => props.density === "compact";
   const isDoc = () => props.density === "document";
+  const markdownPortal = useMarkdownPortalMode();
+  const isPortal = () => isAnyPortalMode() || markdownPortal();
   const blockBirth = createRevealBirths();
   const headingSlugs = createMemo(() => computeHeadingSlugList(props.blocks));
 
@@ -96,7 +98,7 @@ export default function MarkdownBlocks(props: {
           <Match
             when={
               block().type === "code" &&
-              !isTesterPortalMode() &&
+              !isPortal() &&
               isSubtaskPlanCodeBlockLang((block() as Extract<BlockToken, { type: "code" }>).lang)
             }
           >

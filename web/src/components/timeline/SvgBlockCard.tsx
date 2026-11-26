@@ -20,12 +20,12 @@ import {
 } from "lucide-solid";
 import { t } from "../../i18n";
 import {
-  isTesterPortalMode,
+  isAnyPortalMode,
   openCanvasPreview,
   openImagePreview,
   workspace,
 } from "../../store/workspace";
-import { useMarkdownStreaming } from "./stream-reveal";
+import { useMarkdownPortalMode, useMarkdownStreaming } from "./stream-reveal";
 import {
   downloadSvgAsPng,
   downloadSvgFile,
@@ -48,6 +48,8 @@ export default function SvgBlockCard(props: {
   ref?: (el: HTMLDivElement) => void;
 }) {
   const streaming = useMarkdownStreaming();
+  const markdownPortal = useMarkdownPortalMode();
+  const isPortal = () => isAnyPortalMode() || markdownPortal();
   const [viewMode, setViewMode] = createSignal<"preview" | "source">("preview");
   const [backdrop, setBackdrop] = createSignal<SvgBackdrop>("auto");
   const [copied, setCopied] = createSignal(false);
@@ -239,7 +241,7 @@ export default function SvgBlockCard(props: {
             >
               <ImageDown size={12} />
             </button>
-            <Show when={!isTesterPortalMode()}>
+            <Show when={!isPortal()}>
               <button
                 type="button"
                 onClick={handleDock}

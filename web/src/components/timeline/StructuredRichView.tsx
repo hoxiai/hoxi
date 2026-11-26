@@ -17,7 +17,7 @@ import {
 import { t } from "../../i18n";
 import {
   appSettings,
-  isTesterPortalMode,
+  isAnyPortalMode,
   openExternalURL,
   openImagePreview,
   openURLInInspector,
@@ -32,6 +32,7 @@ import {
   buildContextEnvelopeFromMetric,
 } from "./rich-view-spec";
 import MediaGalleryView from "./MediaGalleryView";
+import { useMarkdownPortalMode } from "./stream-reveal";
 
 const INITIAL_VISIBLE_ENTITIES = 6;
 
@@ -65,12 +66,28 @@ function metricValueClass(tone?: RichTone): string {
   }
 }
 
-function openSafeLink(url: string, forceExternal?: boolean) {
-  if (isTesterPortalMode() || forceExternal || appSettings.linkOpenTarget === "external") {
+function openSafeLink(url: string, forceExternal?: boolean, portalMode?: boolean) {
+  if (portalMode || isAnyPortalMode() || forceExternal || appSettings.linkOpenTarget === "external") {
     openExternalURL(url);
   } else {
     openURLInInspector(url);
   }
+}
+
+function isSafePortalImageSrc(src: string | undefined): boolean {
+  if (!src) return false;
+  const trimmed = src.trim();
+  if (!trimmed) return false;
+  if (/^https?:\/\//i.test(trimmed)) return true;
+  if (
+    !trimmed.includes("..") &&
+    /^\/api\/hoxi\/(?:[a-z0-9-]+\/portal\/attachments|[a-z0-9-]+\/[a-z0-9-]+\/[a-z0-9_-]+\/proxy\/attachments)/i.test(
+      trimmed
+    )
+  ) {
+    return true;
+  }
+  return /^data:image\/(?:png|jpe?g|gif|webp|avif);base64,/i.test(trimmed);
 }
 
 function EntityThumbnail(props: { src: string; alt: string; compact?: boolean }) {
@@ -107,10 +124,17 @@ function EntityCard(props: {
   layout: "grid" | "list";
   selected: boolean;
   selectable: boolean;
+  portal?: boolean;
   onToggleSelect: () => void;
   onQuickReference: () => void;
 }) {
   const isList = () => props.layout === "list";
+  const safeThumb = () => {
+    const src = props.item.thumbnailUrl;
+    if (!src) return undefined;
+    if (props.portal && !isSafePortalImageSrc(src)) return undefined;
+    return src;
+  };
 
   return (
     <div
@@ -143,7 +167,7 @@ function EntityCard(props: {
           </button>
         </Show>
 
-        <Show when={props.item.thumbnailUrl}>
+        <Show when={safeThumb()}>
           {(src) => (
             <EntityThumbnail src={src()} alt={props.item.title} compact={isList()} />
           )}
@@ -225,7 +249,7 @@ function EntityCard(props: {
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    openSafeLink(url());
+                    openSafeLink(url(), false, props.portal);
                   }}
                   class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] font-medium text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--accent-primary)] transition-colors cursor-pointer"
                 >
@@ -259,16 +283,28 @@ export default function StructuredRichView(props: {
   spec: StructuredRichViewSpec;
   compact?: boolean;
   hideHeader?: boolean;
+  portal?: boolean;
   ref?: (el: HTMLDivElement) => void;
 }) {
   const [selectedIdx, setSelectedIdx] = createSignal<number[]>([]);
   const [layoutOverride, setLayoutOverride] = createSignal<"grid" | "list" | null>(null);
   const [showAll, setShowAll] = createSignal(false);
 
-  const selectable = () => !isTesterPortalMode();
+  const markdownPortal = useMarkdownPortalMode();
+  const isPortal = () => Boolean(props.portal) || isAnyPortalMode() || markdownPortal();
+  const selectable = () => !isPortal();
   const entities = () => props.spec.entities || [];
   const metrics = () => props.spec.metrics || [];
-  const gallery = () => props.spec.gallery || [];
+  const gallery = () => {
+    const raw = props.spec.gallery || [];
+    return isPortal() ? raw.filter((img) => isSafePortalImageSrc(img.src)) : raw;
+  };
+  const safeQrImage = () => {
+    const qr = props.spec.qrImage;
+    if (!qr) return undefined;
+    if (isPortal() && !isSafePortalImageSrc(qr.src)) return undefined;
+    return qr;
+  };
   const links = () => props.spec.links || [];
   const effectiveLayout = (): "grid" | "list" =>
     layoutOverride() ?? (props.compact ? "list" : props.spec.layout || "grid");
@@ -485,6 +521,7 @@ export default function StructuredRichView(props: {
                     layout={effectiveLayout()}
                     selected={selectedIdx().includes(idx())}
                     selectable={selectable()}
+                    portal={isPortal()}
                     onToggleSelect={() => toggleEntity(idx())}
                     onQuickReference={() => dispatchContext([item])}
                   />
@@ -517,13 +554,14 @@ export default function StructuredRichView(props: {
             images={gallery()}
             source={props.spec.source}
             compact={props.compact}
+            portal={isPortal()}
           />
         </Show>
 
         {/* QR Receipt + Action Links */}
-        <Show when={props.spec.qrImage || links().length > 0}>
+        <Show when={safeQrImage() || links().length > 0}>
           <div class="flex flex-wrap items-center gap-2.5 pt-1">
-            <Show when={props.spec.qrImage}>
+            <Show when={safeQrImage()}>
               {(qr) => (
                 <button
                   type="button"
@@ -560,7 +598,7 @@ export default function StructuredRichView(props: {
                   {(link: RichLinkAction) => (
                     <button
                       type="button"
-                      onClick={() => openSafeLink(link.url, link.external)}
+                      onClick={() => openSafeLink(link.url, link.external, isPortal())}
                       class={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11.5px] font-medium transition-colors hover:opacity-90 cursor-pointer ${badgeClass(
                         link.tone || "accent"
                       )}`}

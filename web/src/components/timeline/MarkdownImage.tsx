@@ -14,7 +14,7 @@ import { getCachedMarkdownImage, loadMarkdownImage } from "../../store/markdown-
 import { t } from "../../i18n";
 import { Icon } from "../icons";
 import { resolveMarkdownRelativePath, stripFileLineSuffix } from "./markdown-parser";
-import { useMarkdownBaseFilePath } from "./stream-reveal";
+import { useMarkdownBaseFilePath, useMarkdownPortalMode } from "./stream-reveal";
 
 export default function MarkdownImage(props: { src: string; alt: string; title?: string }) {
   let host!: HTMLSpanElement;
@@ -23,6 +23,8 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
   const [failed, setFailed] = createSignal(false);
   const [loading, setLoading] = createSignal(false);
   const baseFilePath = useMarkdownBaseFilePath();
+  const markdownPortal = useMarkdownPortalMode();
+  const isPortal = () => isAnyPortalMode() || markdownPortal();
 
   onMount(() => {
     if (typeof IntersectionObserver === "undefined") {
@@ -73,7 +75,7 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
 
     const directory = activeDirectory() || workspace.rootDir || "";
     const sessionID = workspace.activeSessionID || undefined;
-    if (isAnyPortalMode() || (!workspace.connected && !directory)) {
+    if (isPortal() || (!workspace.connected && !directory)) {
       setLoading(false);
       setFailed(true);
       return;
@@ -121,7 +123,7 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
 
   const handleOpen = (e?: MouseEvent) => {
     e?.preventDefault();
-    const portalMode = isAnyPortalMode();
+    const portalMode = isPortal();
     const path = localPath();
     if (path && !portalMode) {
       openImagePreview({
@@ -161,7 +163,7 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
     const src = displaySrc();
     if (!src) return;
     const path = localPath();
-    const portalMode = isAnyPortalMode();
+    const portalMode = isPortal();
     const remoteTarget =
       portalMode || appSettings.linkOpenTarget === "external" ? "external" : "inspector";
     openAttachmentContextMenu(e, {
@@ -190,7 +192,7 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
   };
 
   const openTitle = () => {
-    if (isAnyPortalMode()) {
+    if (isPortal()) {
       return isRemote() ? t("timeline.openInExternalBrowserTooltip") : undefined;
     }
     if (localPath()) return t("timeline.openInInspectorTooltip");

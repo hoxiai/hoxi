@@ -2,6 +2,7 @@
 import { render } from "solid-js/web";
 import { t } from "../i18n";
 import MarkdownBlocks from "../components/timeline/MarkdownBlocks";
+import MarkdownView from "../components/timeline/MarkdownView";
 import { parseMarkdownBlocks } from "../components/timeline/markdown-parser";
 import ShellOutputView from "../components/timeline/ShellOutputView";
 import JsonTreeView from "../components/timeline/JsonTreeView";
@@ -348,6 +349,75 @@ export async function runBrowserTest(): Promise<string[]> {
       window.removeEventListener("hoxi:composer-fill", onRichFill);
     }
 
+    dispose?.();
+    dispose = undefined;
+
+    // Scenario 6: Portal-mode MarkdownView renders Chart + Rich cards cleanly while hiding desktop Source/Send-to-Chat actions and blocking desktop-only thumbnails
+    const portalMd = [
+      "```chart",
+      JSON.stringify({
+        type: "bar",
+        title: "PM Funnel",
+        labels: ["Visit", "Pay"],
+        series: [{ name: "Users", values: [100, 28] }],
+      }),
+      "```",
+      "",
+      "```hoxi-cards",
+      JSON.stringify({
+        title: "Option Comparison",
+        entities: [
+          {
+            title: "Plan A",
+            subtitle: "Fast ship",
+            thumbnailUrl: "/api/hoxi/file/content?path=.env",
+            metrics: [{ label: "ETA", value: "2d" }],
+          },
+          {
+            title: "Plan B",
+            subtitle: "Safe portal asset",
+            thumbnailUrl: "/api/hoxi/collab/portal/attachments/att_1?token=tok",
+            metrics: [{ label: "ETA", value: "4d" }],
+          },
+        ],
+      }),
+      "```",
+    ].join("\n");
+
+    dispose = render(() => <MarkdownView content={portalMd} density="chat" portal />, host);
+    await tick();
+
+    const portalChart = host.querySelector<HTMLElement>('[data-hoxi-chart-card="true"]');
+    assertTrue(Boolean(portalChart), "portal MarkdownView renders ChartBlockCard");
+    assertTrue(Boolean(portalChart!.querySelector("svg")), "portal chart renders interactive SVG");
+    const portalChartSourceBtn = Array.from(portalChart!.querySelectorAll<HTMLButtonElement>("button")).find(
+      (btn) => btn.textContent?.trim() === t("inspector.files.sourceMode")
+    );
+    assertEqual(portalChartSourceBtn, undefined, "portal ChartBlockCard hides Source tab");
+
+    const portalRich = host.querySelector<HTMLElement>('[data-hoxi-rich-block-card="true"]');
+    assertTrue(Boolean(portalRich), "portal MarkdownView renders RichBlockCard");
+    const portalRichSourceBtn = Array.from(portalRich!.querySelectorAll<HTMLButtonElement>("button")).find(
+      (btn) => btn.textContent?.trim() === t("inspector.files.sourceMode")
+    );
+    assertEqual(portalRichSourceBtn, undefined, "portal RichBlockCard hides Source tab");
+    assertEqual(
+      portalRich!.querySelector('button[aria-pressed]'),
+      null,
+      "portal StructuredRichView disables desktop entity selection"
+    );
+    const portalRichImgs = Array.from(portalRich!.querySelectorAll<HTMLImageElement>("img")).map((el) =>
+      el.getAttribute("src") || ""
+    );
+    assertTrue(
+      !portalRichImgs.some((src) => src.includes("/api/hoxi/file/content")),
+      "portal StructuredRichView blocks desktop /api/hoxi/file/content thumbnails"
+    );
+    assertTrue(
+      portalRichImgs.some((src) => src.includes("/api/hoxi/collab/portal/attachments/att_1")),
+      "portal StructuredRichView preserves safe portal attachment thumbnails"
+    );
+
     return [
       "ChartBlockCard renders interactive SVG bar chart from declarative JSON",
       "SvgBlockCard sanitizes <script> and onload in real browser DOM",
@@ -357,6 +427,7 @@ export async function runBrowserTest(): Promise<string[]> {
       "CodeBlockCard auto-collapses long code blocks and tints diff blocks",
       "FileSourceCodeView line-range click quotes exact lines into hoxi-context v1",
       "MediaGalleryView renders auto-grouped images with A/B slider, RichBlockCard sends hoxi-context v1, and ToolOutputView toggles Card/JSON",
+      "Portal MarkdownView renders charts and rich cards while hiding desktop Source/Send-to-Chat controls and blocking desktop-only thumbnails",
     ];
   } finally {
     dispose?.();

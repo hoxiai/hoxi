@@ -45,6 +45,7 @@ export default function MarkdownView(props: {
   density?: "chat" | "compact" | "document";
   streaming?: boolean;
   baseFilePath?: string;
+  portal?: boolean;
 }) {
   const parseIncremental = createIncrementalMarkdownParser();
   const canAnimate = typeof requestAnimationFrame === "function";
@@ -168,6 +169,7 @@ export default function MarkdownView(props: {
     active: revealActive,
     streaming: () => Boolean(props.streaming) || revealActive(),
     baseFilePath: () => props.baseFilePath,
+    portal: () => Boolean(props.portal),
   };
 
   const blocks = createMemo(() => parseIncremental(displayed()));

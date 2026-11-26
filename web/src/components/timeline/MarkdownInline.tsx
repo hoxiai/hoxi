@@ -6,8 +6,8 @@ import {
   checkFile,
   extractFilePathFromHref,
   getCachedFileCheck,
+  isAnyPortalMode,
   isRichDocumentPreviewPath,
-  isTesterPortalMode,
   openDocumentPreview,
   openExternalURL,
   openFileInInspector,
@@ -34,6 +34,7 @@ import {
   StreamRevealText,
   useInlineRevealRef,
   useMarkdownBaseFilePath,
+  useMarkdownPortalMode,
   useMarkdownStreaming,
 } from "./stream-reveal";
 
@@ -100,6 +101,8 @@ function scrollToHeadingAnchor(e: MouseEvent, rawHref: string) {
 function InlineCodeSpan(props: { text: string; unclosed?: boolean }) {
   const inlineRevealRef = useInlineRevealRef();
   const baseFilePath = useMarkdownBaseFilePath();
+  const markdownPortal = useMarkdownPortalMode();
+  const isPortal = () => isAnyPortalMode() || markdownPortal();
   const effectivePath = () => {
     const raw = props.text;
     if (raw.startsWith("./") || raw.startsWith("../")) {
@@ -111,7 +114,7 @@ function InlineCodeSpan(props: { text: string; unclosed?: boolean }) {
   const checkKey = () => `${directory()}\n${effectivePath()}`;
   const [checked, setChecked] = createSignal<{ key: string; exists: boolean }>();
   const verified = createMemo(() => {
-    if (props.unclosed || isTesterPortalMode()) return false;
+    if (props.unclosed || isPortal()) return false;
     const result = checked();
     const known =
       getCachedFileCheck(effectivePath(), directory()) ??
@@ -124,7 +127,7 @@ function InlineCodeSpan(props: { text: string; unclosed?: boolean }) {
     const raw = effectivePath();
     const dir = directory();
     const key = checkKey();
-    if (props.unclosed || isTesterPortalMode() || !isLikelyFilePath(props.text)) return;
+    if (props.unclosed || isPortal() || !isLikelyFilePath(props.text)) return;
     if (getCachedFileCheck(raw, dir) !== undefined) return;
     // Only query backend when connected or when we have a rootDir
     if (!workspace.connected && !dir) return;
@@ -188,6 +191,8 @@ function InlineCodeSpan(props: { text: string; unclosed?: boolean }) {
 export default function MarkdownInline(props: { text: string }) {
   const text = createMemo(() => props.text);
   const streaming = useMarkdownStreaming();
+  const markdownPortal = useMarkdownPortalMode();
+  const isPortal = () => isAnyPortalMode() || markdownPortal();
   const spans = createMemo<InlineSpan[]>((prev) => {
     const next = parseInline(text(), { streaming: streaming() });
     for (let i = 0; i < next.length; i++) {
@@ -229,7 +234,7 @@ export default function MarkdownInline(props: { text: string }) {
               const codeText = () => (span() as Extract<InlineSpan, { type: "code" }>).text;
               const handleOpen = (e: MouseEvent) => {
                 e.preventDefault();
-                const target = isTesterPortalMode()
+                const target = isPortal()
                   ? "external"
                   : e.metaKey || e.ctrlKey
                     ? appSettings.linkOpenTarget === "external"
@@ -251,7 +256,7 @@ export default function MarkdownInline(props: { text: string }) {
                     type="button"
                     onClick={handleOpen}
                     title={
-                      isTesterPortalMode() || appSettings.linkOpenTarget === "external"
+                      isPortal() || appSettings.linkOpenTarget === "external"
                         ? t("timeline.openInExternalBrowserTooltip")
                         : t("timeline.openInBrowserTooltip")
                     }
@@ -370,7 +375,7 @@ export default function MarkdownInline(props: { text: string }) {
               });
               const handleHttpOpen = (e: MouseEvent) => {
                 e.preventDefault();
-                const target = isTesterPortalMode()
+                const target = isPortal()
                   ? "external"
                   : e.metaKey || e.ctrlKey
                     ? appSettings.linkOpenTarget === "external"
@@ -392,7 +397,7 @@ export default function MarkdownInline(props: { text: string }) {
                     when={!isLocalFile()}
                     fallback={
                       <Show
-                        when={!isTesterPortalMode()}
+                        when={!isPortal()}
                         fallback={
                           <code
                             ref={inlineRevealRef}
@@ -485,7 +490,7 @@ export default function MarkdownInline(props: { text: string }) {
                           target="_blank"
                           rel="noreferrer"
                           title={
-                            isTesterPortalMode() || appSettings.linkOpenTarget === "external"
+                            isPortal() || appSettings.linkOpenTarget === "external"
                               ? t("timeline.openInExternalBrowserTooltip")
                               : t("timeline.openInBrowserTooltip")
                           }

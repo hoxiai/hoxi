@@ -21,6 +21,8 @@ export interface StreamReveal {
   streaming?: () => boolean;
   /** Optional relative file path of the Markdown document being rendered (e.g. "docs/guide.md"). */
   baseFilePath?: () => string | undefined;
+  /** True when rendered inside an external or joined collaboration portal (hides desktop-only actions). */
+  portal?: () => boolean;
 }
 
 export const StreamRevealContext = createContext<StreamReveal>();
@@ -28,6 +30,11 @@ export const StreamRevealContext = createContext<StreamReveal>();
 export function useMarkdownBaseFilePath(): () => string | undefined {
   const reveal = useContext(StreamRevealContext);
   return () => reveal?.baseFilePath?.();
+}
+
+export function useMarkdownPortalMode(): () => boolean {
+  const reveal = useContext(StreamRevealContext);
+  return () => Boolean(reveal?.portal?.());
 }
 
 export function useMarkdownStreaming(): () => boolean {

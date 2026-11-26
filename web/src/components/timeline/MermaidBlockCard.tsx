@@ -2,9 +2,9 @@
 import { createEffect, createSignal, on, onCleanup, Show } from "solid-js";
 import { Check, Code2, Copy, Download, Eye, ImageDown, LoaderCircle, Maximize2, Sparkles } from "lucide-solid";
 import { t } from "../../i18n";
-import { isTesterPortalMode, openImagePreview, workspace } from "../../store/workspace";
+import { isAnyPortalMode, openImagePreview, workspace } from "../../store/workspace";
 import type { ContextEnvelope } from "../../store/context-protocol";
-import { useMarkdownStreaming } from "./stream-reveal";
+import { useMarkdownPortalMode, useMarkdownStreaming } from "./stream-reveal";
 import { downloadSvgAsPng, downloadSvgFile, svgToDataURL } from "./svg-sanitizer";
 
 let mermaidModulePromise: Promise<typeof import("mermaid")> | null = null;
@@ -22,6 +22,8 @@ export default function MermaidBlockCard(props: {
   ref?: (el: HTMLDivElement) => void;
 }) {
   const streaming = useMarkdownStreaming();
+  const markdownPortal = useMarkdownPortalMode();
+  const isPortal = () => isAnyPortalMode() || markdownPortal();
   const [viewMode, setViewMode] = createSignal<"preview" | "source">("preview");
   const [svgMarkup, setSvgMarkup] = createSignal("");
   const [rendering, setRendering] = createSignal(false);
@@ -190,32 +192,34 @@ export default function MermaidBlockCard(props: {
         </div>
         <div class="flex items-center gap-1 shrink-0">
           <Show when={svgMarkup()}>
-            <div class="inline-flex items-center rounded-md bg-[var(--bg-inset)] p-0.5">
-              <button
-                type="button"
-                onClick={() => setViewMode("preview")}
-                class={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition-colors cursor-pointer ${
-                  viewMode() === "preview"
-                    ? "bg-[var(--bg-panel)] text-[var(--text-primary)] font-medium shadow-2xs"
-                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                }`}
-              >
-                <Eye size={11} />
-                <span>{t("inspector.files.previewMode")}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode("source")}
-                class={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition-colors cursor-pointer ${
-                  viewMode() === "source"
-                    ? "bg-[var(--bg-panel)] text-[var(--text-primary)] font-medium shadow-2xs"
-                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                }`}
-              >
-                <Code2 size={11} />
-                <span>{t("inspector.files.sourceMode")}</span>
-              </button>
-            </div>
+            <Show when={!isPortal()}>
+              <div class="inline-flex items-center rounded-md bg-[var(--bg-inset)] p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setViewMode("preview")}
+                  class={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition-colors cursor-pointer ${
+                    viewMode() === "preview"
+                      ? "bg-[var(--bg-panel)] text-[var(--text-primary)] font-medium shadow-2xs"
+                      : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  <Eye size={11} />
+                  <span>{t("inspector.files.previewMode")}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("source")}
+                  class={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition-colors cursor-pointer ${
+                    viewMode() === "source"
+                      ? "bg-[var(--bg-panel)] text-[var(--text-primary)] font-medium shadow-2xs"
+                      : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  <Code2 size={11} />
+                  <span>{t("inspector.files.sourceMode")}</span>
+                </button>
+              </div>
+            </Show>
             <button
               type="button"
               onClick={() => downloadSvgFile(svgMarkup(), "mermaid-diagram.svg")}
@@ -261,7 +265,7 @@ export default function MermaidBlockCard(props: {
             <Show when={renderError() && viewMode() === "preview"}>
               <div class="flex items-center justify-between gap-2 border-b border-[var(--border-subtle)] bg-[var(--warn-surface)]/40 px-3 py-1.5 text-[11px] text-[var(--warn-text)]">
                 <span>{t("timeline.mermaidRenderFailed")}</span>
-                <Show when={!isTesterPortalMode() && workspace.activeSessionID}>
+                <Show when={!isPortal() && workspace.activeSessionID}>
                   <button
                     type="button"
                     onClick={handleFixWithAI}

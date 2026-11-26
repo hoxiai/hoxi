@@ -18,7 +18,7 @@ import {
 import { getCachedMarkdownImage, loadMarkdownImage } from "../../store/markdown-images";
 import { Icon } from "../icons";
 import { resolveMarkdownRelativePath } from "./markdown-parser";
-import { useMarkdownBaseFilePath } from "./stream-reveal";
+import { useMarkdownBaseFilePath, useMarkdownPortalMode } from "./stream-reveal";
 import { buildContextEnvelopeFromImages } from "./rich-view-spec";
 
 function isDirectImageSrc(src: string): boolean {
@@ -45,7 +45,7 @@ function toneBadgeClass(tone?: RichTone): string {
   }
 }
 
-function useResolvedGallerySrc(getRawSrc: () => string) {
+function useResolvedGallerySrc(getRawSrc: () => string, isPortal: () => boolean) {
   const baseFilePath = useMarkdownBaseFilePath();
   const [resolved, setResolved] = createSignal("");
   const [failed, setFailed] = createSignal(false);
@@ -71,7 +71,7 @@ function useResolvedGallerySrc(getRawSrc: () => string) {
     const path = localPath();
     const dir = activeDirectory() || workspace.rootDir || "";
     const sid = workspace.activeSessionID || undefined;
-    if (!path || isAnyPortalMode() || (!workspace.connected && !dir)) {
+    if (!path || isPortal() || (!workspace.connected && !dir)) {
       setResolved("");
       setFailed(true);
       return;
@@ -105,10 +105,12 @@ function useResolvedGallerySrc(getRawSrc: () => string) {
 function GalleryComparePanel(props: {
   left: RichGalleryImage;
   right: RichGalleryImage;
+  portal?: boolean;
 }) {
+  const isPortal = () => Boolean(props.portal) || isAnyPortalMode();
   const [splitPct, setSplitPct] = createSignal(50);
-  const leftRes = useResolvedGallerySrc(() => props.left.src);
-  const rightRes = useResolvedGallerySrc(() => props.right.src);
+  const leftRes = useResolvedGallerySrc(() => props.left.src, isPortal);
+  const rightRes = useResolvedGallerySrc(() => props.right.src, isPortal);
 
   const leftLabel = () => props.left.alt || props.left.caption || props.left.filename || "A";
   const rightLabel = () => props.right.alt || props.right.caption || props.right.filename || "B";
@@ -171,9 +173,11 @@ function GalleryTile(props: {
   index: number;
   selected: boolean;
   selectable: boolean;
+  portal?: boolean;
   onToggleSelect: () => void;
 }) {
-  const res = useResolvedGallerySrc(() => props.image.src);
+  const isPortal = () => Boolean(props.portal) || isAnyPortalMode();
+  const res = useResolvedGallerySrc(() => props.image.src, isPortal);
   const label = () =>
     props.image.alt || props.image.caption || props.image.filename || `Image ${props.index + 1}`;
   const downloadHref = () => props.image.downloadUrl || res.src();
@@ -182,7 +186,7 @@ function GalleryTile(props: {
     const display = res.src();
     if (!display) return;
     const lp = res.localPath();
-    if (lp && !isAnyPortalMode()) {
+    if (lp && !isPortal()) {
       openImagePreview({
         src: display,
         alt: label(),
@@ -214,7 +218,7 @@ function GalleryTile(props: {
       downloadUrl: downloadHref() || undefined,
       onPreview: handleOpen,
       originalLabel: lp ? t("timeline.openInInspectorTooltip") : undefined,
-      onOpenOriginal: lp && !isAnyPortalMode() ? () => openFileInInspector(lp) : undefined,
+      onOpenOriginal: lp && !isPortal() ? () => openFileInInspector(lp) : undefined,
     });
   };
 
@@ -314,12 +318,15 @@ export default function MediaGalleryView(props: {
   title?: string;
   source?: ContextSource;
   compact?: boolean;
+  portal?: boolean;
   ref?: (el: HTMLDivElement) => void;
 }) {
   const [selectedIdx, setSelectedIdx] = createSignal<number[]>([]);
   const [compareOpen, setCompareOpen] = createSignal(false);
 
-  const selectable = () => !isAnyPortalMode();
+  const markdownPortal = useMarkdownPortalMode();
+  const isPortal = () => Boolean(props.portal) || isAnyPortalMode() || markdownPortal();
+  const selectable = () => !isPortal();
 
   const toggleSelect = (idx: number) => {
     setSelectedIdx((prev) =>
@@ -437,6 +444,7 @@ export default function MediaGalleryView(props: {
                   index={idx()}
                   selected={selectedIdx().includes(idx())}
                   selectable={selectable()}
+                  portal={isPortal()}
                   onToggleSelect={() => toggleSelect(idx())}
                 />
               )}
@@ -444,7 +452,7 @@ export default function MediaGalleryView(props: {
           </div>
         }
       >
-        {(pair) => <GalleryComparePanel left={pair()[0]} right={pair()[1]} />}
+        {(pair) => <GalleryComparePanel left={pair()[0]} right={pair()[1]} portal={isPortal()} />}
       </Show>
     </div>
   );

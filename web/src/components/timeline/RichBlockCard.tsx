@@ -4,11 +4,11 @@
 import { createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { Check, Code2, Copy, LayoutGrid, Sparkles, Table } from "lucide-solid";
 import { t } from "../../i18n";
-import { isTesterPortalMode, workspace } from "../../store/workspace";
+import { isAnyPortalMode, workspace } from "../../store/workspace";
 import type { ContextEnvelope } from "../../store/context-protocol";
 import { parseRichMarkdownBlock, richEntitiesToTable } from "./rich-view-spec";
 import StructuredRichView from "./StructuredRichView";
-import { useMarkdownStreaming } from "./stream-reveal";
+import { useMarkdownPortalMode, useMarkdownStreaming } from "./stream-reveal";
 
 export default function RichBlockCard(props: {
   lang: string;
@@ -16,6 +16,8 @@ export default function RichBlockCard(props: {
   ref?: (el: HTMLDivElement) => void;
 }) {
   const streaming = useMarkdownStreaming();
+  const markdownPortal = useMarkdownPortalMode();
+  const isPortal = () => isAnyPortalMode() || markdownPortal();
   const [viewMode, setViewMode] = createSignal<"rich" | "table" | "source">("rich");
   const [copied, setCopied] = createSignal(false);
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
@@ -87,7 +89,7 @@ export default function RichBlockCard(props: {
         </div>
 
         <div class="flex items-center gap-1 shrink-0">
-          <Show when={spec()}>
+          <Show when={spec() && (!isPortal() || tableData())}>
             <div class="inline-flex items-center rounded-md bg-[var(--bg-inset)] p-0.5">
               <button
                 type="button"
@@ -115,18 +117,20 @@ export default function RichBlockCard(props: {
                   <span>{t("timeline.richCardsViewTable")}</span>
                 </button>
               </Show>
-              <button
-                type="button"
-                onClick={() => setViewMode("source")}
-                class={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition-colors cursor-pointer ${
-                  viewMode() === "source"
-                    ? "bg-[var(--bg-panel)] text-[var(--text-primary)] font-medium shadow-2xs"
-                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                }`}
-              >
-                <Code2 size={11} />
-                <span>{t("inspector.files.sourceMode")}</span>
-              </button>
+              <Show when={!isPortal()}>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("source")}
+                  class={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition-colors cursor-pointer ${
+                    viewMode() === "source"
+                      ? "bg-[var(--bg-panel)] text-[var(--text-primary)] font-medium shadow-2xs"
+                      : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  <Code2 size={11} />
+                  <span>{t("inspector.files.sourceMode")}</span>
+                </button>
+              </Show>
             </div>
           </Show>
           <button
@@ -152,7 +156,7 @@ export default function RichBlockCard(props: {
                 <Show when={showError()}>
                   <div class="flex items-center justify-between gap-2 border-b border-[var(--border-subtle)] bg-[var(--warn-surface)]/40 px-3 py-1.5 text-[11px] text-[var(--warn-text)]">
                     <span>{t("timeline.richCardsRenderFailed")}</span>
-                    <Show when={!isTesterPortalMode() && workspace.activeSessionID}>
+                    <Show when={!isPortal() && workspace.activeSessionID}>
                       <button
                         type="button"
                         onClick={handleFixWithAI}
@@ -210,6 +214,7 @@ export default function RichBlockCard(props: {
         <div class="bg-[var(--bg-panel)]/45 p-2">
           <StructuredRichView
             spec={spec()!}
+            portal={isPortal()}
             hideHeader={!spec()!.entities || spec()!.entities!.length <= 1}
           />
         </div>
