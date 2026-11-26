@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -633,6 +634,12 @@ func (s *Service) VerifySessionPathScope(sessionID string) ([]string, error) {
 	cmd.Env = sanitizedGitStatusEnv()
 	out, err := cmd.Output()
 	if err != nil {
+		if strings.EqualFold(strings.TrimSpace(rec.SandboxMode), "local") {
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) && strings.Contains(strings.ToLower(string(exitErr.Stderr)), "not a git repository") {
+				return nil, nil
+			}
+		}
 		return nil, fmt.Errorf("verify session path scope: %w", err)
 	}
 	entries := bytes.Split(out, []byte{0})

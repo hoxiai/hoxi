@@ -616,4 +616,31 @@ func TestSessionPathScopeHardenedShellWorktreeAndReconcile(t *testing.T) {
 	if reason, bad := sessionWriteTargetViolation(ruleRec, repo, filepath.Join(repo, "docs", "README.md")); bad {
 		t.Fatalf("unexpected deny for docs/README.md: %s", reason)
 	}
+
+	// 6. VerifySessionPathScope gracefully skips non-git directories ONLY in local mode,
+	//    while still failing closed for isolated worktree sessions.
+	nonGitDir := t.TempDir()
+	localNonGit := SessionRecord{
+		ID:            "ses_local_nongit",
+		Runtime:       string(RuntimeNative),
+		SandboxMode:   "local",
+		ProjectDir:    nonGitDir,
+		WorktreePath:  nonGitDir,
+		ReadOnlyPaths: []string{"AGENTS.md"},
+	}
+	if err := svc.store.Put(localNonGit); err != nil {
+		t.Fatal(err)
+	}
+	if viols, err := svc.VerifySessionPathScope(localNonGit.ID); err != nil || len(viols) != 0 {
+		t.Fatalf("expected local non-git VerifySessionPathScope to return nil,nil; got viols=%v err=%v", viols, err)
+	}
+	wtNonGit := localNonGit
+	wtNonGit.ID = "ses_wt_nongit"
+	wtNonGit.SandboxMode = "worktree"
+	if err := svc.store.Put(wtNonGit); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.VerifySessionPathScope(wtNonGit.ID); err == nil {
+		t.Fatal("expected worktree VerifySessionPathScope on non-git directory to fail closed")
+	}
 }
