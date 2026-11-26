@@ -547,7 +547,14 @@ func (m *worktreeManager) apply(sessionID, mode, message string) error {
 		meta.Branch = branch
 	}
 
-	if err := snapshotWorktreeWithMessage(meta.Directory, sessionID, message); err != nil {
+	snapshotMsg := ""
+	if mode == "merge" {
+		snapshotMsg = strings.TrimSpace(message)
+		if snapshotMsg == "" {
+			snapshotMsg = "Merge hoxi session " + sessionID
+		}
+	}
+	if err := snapshotWorktreeWithMessage(meta.Directory, sessionID, snapshotMsg); err != nil {
 		return err
 	}
 	defer func() {

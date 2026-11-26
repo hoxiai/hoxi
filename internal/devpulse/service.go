@@ -23,8 +23,8 @@ const (
 	// byte budget rather than a small file count: a handful of generated files
 	// must not silently hide the rest of an agent's day.
 	maxUntrackedFilesToCount = 500
-	maxUntrackedFileSize     = 64 * 1024
-	maxUntrackedTotalBytes   = 4 << 20
+	maxUntrackedFileSize     = 1 << 20
+	maxUntrackedTotalBytes   = 16 << 20
 
 	devPulseCacheTTL        = 15 * time.Second
 	maxDevPulseCacheEntries = 16
@@ -147,6 +147,12 @@ type Source interface {
 type contextGitSource interface {
 	RunGitContext(ctx context.Context, workDir string, args ...string) (string, error)
 	RunGitRawContext(ctx context.Context, workDir string, args ...string) (string, error)
+}
+
+// dismissedDirFilter is optionally implemented by Source so global target
+// discovery skips projects the user explicitly dismissed from the workspace.
+type dismissedDirFilter interface {
+	IsDismissedDirectory(dir string) bool
 }
 
 type pulseEntry struct {

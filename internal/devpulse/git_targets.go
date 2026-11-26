@@ -81,10 +81,74 @@ func unquoteGitPath(raw string) string {
 	return s
 }
 
+type parsedFileStat struct {
+	oldPath string
+	path    string
+	add     int
+	del     int
+}
+
+func makeParsedFileStat(addStr, delStr, oldPath, newPath string, unquote bool) (parsedFileStat, bool) {
+	if unquote {
+		oldPath = unquoteGitPath(oldPath)
+		newPath = unquoteGitPath(newPath)
+	}
+	if newPath == "" {
+		return parsedFileStat{}, false
+	}
+	if isGeneratedOrLockFile(newPath) && (oldPath == "" || isGeneratedOrLockFile(oldPath)) {
+		return parsedFileStat{}, false
+	}
+	add, _ := strconv.Atoi(strings.TrimSpace(addStr))
+	del, _ := strconv.Atoi(strings.TrimSpace(delStr))
+	return parsedFileStat{
+		oldPath: oldPath,
+		path:    newPath,
+		add:     add,
+		del:     del,
+	}, true
+}
+
+func parseGitRenameDisplayPath(raw string) (oldPath, newPath string) {
+	trimmed := strings.TrimSpace(raw)
+	if !strings.Contains(trimmed, " => ") {
+		return "", unquoteGitPath(trimmed)
+	}
+	if open := strings.IndexByte(trimmed, '{'); open >= 0 {
+		if closeIdx := strings.IndexByte(trimmed[open:], '}'); closeIdx > 0 {
+			closeIdx += open
+			inner := trimmed[open+1 : closeIdx]
+			if left, right, ok := strings.Cut(inner, " => "); ok {
+				prefix := trimmed[:open]
+				suffix := trimmed[closeIdx+1:]
+				join := func(mid string) string {
+					joined := prefix + mid + suffix
+					joined = strings.ReplaceAll(joined, "//", "/")
+					return strings.TrimPrefix(joined, "/")
+				}
+				return unquoteGitPath(join(left)), unquoteGitPath(join(right))
+			}
+		}
+	}
+	left, right, ok := strings.Cut(trimmed, " => ")
+	if !ok {
+		return "", unquoteGitPath(trimmed)
+	}
+	return unquoteGitPath(left), unquoteGitPath(right)
+}
+
 func parseGitNumstatLine(rawLine string) (int, int, string, bool) {
+	st, ok := parseGitNumstatLineStat(rawLine)
+	if !ok {
+		return 0, 0, "", false
+	}
+	return st.add, st.del, st.path, true
+}
+
+func parseGitNumstatLineStat(rawLine string) (parsedFileStat, bool) {
 	line := strings.TrimSpace(rawLine)
 	if line == "" {
-		return 0, 0, "", false
+		return parsedFileStat{}, false
 	}
 	var addStr, delStr, file string
 	if parts := strings.SplitN(line, "\t", 3); len(parts) == 3 {
@@ -94,19 +158,56 @@ func parseGitNumstatLine(rawLine string) (int, int, string, bool) {
 	} else {
 		fields := strings.Fields(line)
 		if len(fields) < 3 {
-			return 0, 0, "", false
+			return parsedFileStat{}, false
 		}
 		addStr = fields[0]
 		delStr = fields[1]
 		file = fields[len(fields)-1]
 	}
-	file = unquoteGitPath(file)
-	if file == "" || isGeneratedOrLockFile(file) {
-		return 0, 0, "", false
+	oldPath, newPath := parseGitRenameDisplayPath(file)
+	return makeParsedFileStat(addStr, delStr, oldPath, newPath, false)
+}
+
+func parseGitNumstatOutput(raw string) []parsedFileStat {
+	if raw == "" {
+		return nil
 	}
-	add, _ := strconv.Atoi(addStr)
-	del, _ := strconv.Atoi(delStr)
-	return add, del, file, true
+	var out []parsedFileStat
+	if strings.Contains(raw, "\x00") {
+		tokens := strings.Split(raw, "\x00")
+		for i := 0; i < len(tokens); i++ {
+			tok := strings.TrimLeft(tokens[i], "\r\n")
+			if tok == "" {
+				continue
+			}
+			parts := strings.SplitN(tok, "\t", 3)
+			if len(parts) < 3 {
+				continue
+			}
+			addStr, delStr, pathPart := parts[0], parts[1], parts[2]
+			var oldPath, newPath string
+			if pathPart == "" {
+				if i+2 >= len(tokens) {
+					break
+				}
+				oldPath = tokens[i+1]
+				newPath = tokens[i+2]
+				i += 2
+			} else {
+				newPath = pathPart
+			}
+			if st, ok := makeParsedFileStat(addStr, delStr, oldPath, newPath, false); ok {
+				out = append(out, st)
+			}
+		}
+		return out
+	}
+	for _, line := range strings.Split(strings.TrimSpace(raw), "\n") {
+		if st, ok := parseGitNumstatLineStat(line); ok {
+			out = append(out, st)
+		}
+	}
+	return out
 }
 
 func isInternalSnapshotCommitSubject(subject string) bool {
@@ -178,6 +279,11 @@ func (s *Service) ResolveGitTargets(rawDir, sessionID string) []GitTarget {
 			roots = append(roots, t)
 		}
 	}
+	var dismissed dismissedDirFilter
+	if s.source != nil {
+		dismissed, _ = s.source.(dismissedDirFilter)
+	}
+	respectDismissed := strings.TrimSpace(rawDir) == "" && dismissed != nil
 	seenRaw := make(map[string]struct{})
 	addCandidate := func(raw string) string {
 		trimmed := filepath.Clean(strings.TrimSpace(raw))
@@ -188,6 +294,9 @@ func (s *Service) ResolveGitTargets(rawDir, sessionID string) []GitTarget {
 			return ""
 		}
 		seenRaw[trimmed] = struct{}{}
+		if respectDismissed && dismissed.IsDismissedDirectory(trimmed) {
+			return ""
+		}
 		wtTop := findGitWorkingTreeRoot(trimmed)
 		if wtTop == "" {
 			return ""
@@ -197,6 +306,11 @@ func (s *Service) ResolveGitTargets(rawDir, sessionID string) []GitTarget {
 			if pTop := findGitWorkingTreeRoot(parent); pTop != "" {
 				repoRoot = pTop
 			}
+		} else if linkedRoot := resolveLinkedWorktreeRepoRoot(wtTop); linkedRoot != "" {
+			repoRoot = linkedRoot
+		}
+		if respectDismissed && (dismissed.IsDismissedDirectory(repoRoot) || dismissed.IsDismissedDirectory(wtTop)) {
+			return ""
 		}
 		addTarget(repoRoot, repoRoot, false)
 		if !samePulseDir(wtTop, repoRoot) {
@@ -252,41 +366,68 @@ const (
 	worktreeSharedDetached
 )
 
-// classifyWorktreeHead checks whether workDir is a linked Git worktree sharing
-// its common gitdir with repoRoot, and whether its HEAD points to a local
-// branch (ref: refs/heads/*) or is detached.
-func classifyWorktreeHead(workDir, repoRoot string) worktreeHeadKind {
+func readWorktreeCommonGitDir(workDir string) (gitDir, commonDir string, ok bool) {
 	dotGit := filepath.Join(workDir, ".git")
 	info, err := os.Stat(dotGit)
 	if err != nil || info.IsDir() || info.Size() > 16*1024 {
-		return worktreeNotShared
+		return "", "", false
 	}
 	raw, err := os.ReadFile(dotGit)
 	if err != nil {
-		return worktreeNotShared
+		return "", "", false
 	}
 	line := strings.TrimSpace(string(raw))
 	if !strings.HasPrefix(line, "gitdir:") {
-		return worktreeNotShared
+		return "", "", false
 	}
-	gitDir := strings.TrimSpace(strings.TrimPrefix(line, "gitdir:"))
+	gitDir = strings.TrimSpace(strings.TrimPrefix(line, "gitdir:"))
 	if gitDir == "" {
-		return worktreeNotShared
+		return "", "", false
 	}
 	if !filepath.IsAbs(gitDir) {
 		gitDir = filepath.Join(workDir, gitDir)
 	}
 	commonRaw, err := os.ReadFile(filepath.Join(gitDir, "commondir"))
 	if err != nil {
-		return worktreeNotShared
+		return "", "", false
 	}
 	commonRel := strings.TrimSpace(string(commonRaw))
 	if commonRel == "" {
-		return worktreeNotShared
+		return "", "", false
 	}
-	commonDir := commonRel
+	commonDir = commonRel
 	if !filepath.IsAbs(commonDir) {
 		commonDir = filepath.Join(gitDir, commonDir)
+	}
+	return gitDir, commonDir, true
+}
+
+func resolveLinkedWorktreeRepoRoot(workDir string) string {
+	_, commonDir, ok := readWorktreeCommonGitDir(workDir)
+	if !ok {
+		return ""
+	}
+	canonicalCommon := canonicalPulseDir(commonDir)
+	if canonicalCommon == "" || filepath.Base(canonicalCommon) != ".git" {
+		return ""
+	}
+	mainRoot := filepath.Dir(canonicalCommon)
+	if samePulseDir(workDir, mainRoot) {
+		return ""
+	}
+	if root := findGitWorkingTreeRoot(mainRoot); root != "" && samePulseDir(root, mainRoot) {
+		return root
+	}
+	return ""
+}
+
+// classifyWorktreeHead checks whether workDir is a linked Git worktree sharing
+// its common gitdir with repoRoot, and whether its HEAD points to a local
+// branch (ref: refs/heads/*) or is detached.
+func classifyWorktreeHead(workDir, repoRoot string) worktreeHeadKind {
+	gitDir, commonDir, ok := readWorktreeCommonGitDir(workDir)
+	if !ok {
+		return worktreeNotShared
 	}
 	if !samePulseDir(commonDir, filepath.Join(repoRoot, ".git")) {
 		return worktreeNotShared

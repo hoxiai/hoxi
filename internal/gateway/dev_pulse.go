@@ -36,16 +36,33 @@ func (s *gatewayDevPulseSource) SessionDirectories(sessionID string) (workDir, p
 	return s.g.sessionPulseDirectories(sessionID)
 }
 
+func (s *gatewayDevPulseSource) IsDismissedDirectory(dir string) bool {
+	if s.g == nil || s.g.workspaces == nil {
+		return false
+	}
+	trimmed := strings.TrimSpace(dir)
+	if trimmed == "" {
+		return false
+	}
+	if s.g.workspaces.IsDismissed(trimmed) {
+		return true
+	}
+	if root := hoxipaths.ProjectRootForWorktree(trimmed); root != "" && s.g.workspaces.IsDismissed(root) {
+		return true
+	}
+	return false
+}
+
 func (s *gatewayDevPulseSource) CandidateDirectories() []string {
 	if s.g == nil {
 		return nil
 	}
 	var dirs []string
-	if s.g.rootDir != "" {
+	if s.g.rootDir != "" && !s.IsDismissedDirectory(s.g.rootDir) {
 		dirs = append(dirs, s.g.rootDir)
 	}
 	if s.g.worktrees != nil {
-		if root := s.g.worktrees.RootDir(); root != "" {
+		if root := s.g.worktrees.RootDir(); root != "" && !s.IsDismissedDirectory(root) {
 			dirs = append(dirs, root)
 		}
 	}
@@ -55,10 +72,10 @@ func (s *gatewayDevPulseSource) CandidateDirectories() []string {
 	if s.g.runner != nil {
 		store := s.g.runner.Store()
 		store.EachMeta(func(rec runner.SessionRecord) {
-			if rec.ProjectDir != "" {
+			if rec.ProjectDir != "" && !s.IsDismissedDirectory(rec.ProjectDir) {
 				dirs = append(dirs, rec.ProjectDir)
 			}
-			if rec.WorktreePath != "" {
+			if rec.WorktreePath != "" && !s.IsDismissedDirectory(rec.WorktreePath) {
 				dirs = append(dirs, rec.WorktreePath)
 			}
 		})

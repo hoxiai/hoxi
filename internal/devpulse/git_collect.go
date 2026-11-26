@@ -1,11 +1,7 @@
 package devpulse
 
 import (
-	"bytes"
 	"context"
-	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -92,69 +88,15 @@ func (s *Service) scanGitUncommittedCmds(ctx context.Context, workDir string) gi
 		}
 	}
 	if hasTrackedChanges && ctx.Err() == nil {
-		if numstat, err := s.runGit(ctx, workDir, "diff", "--no-renames", "--numstat", "HEAD"); err == nil {
+		if numstat, err := s.runGitRaw(ctx, workDir, "diff", "-M", "--numstat", "-z", "HEAD"); err == nil {
+			out.diffOut = numstat
+		} else if numstat, err := s.runGitRaw(ctx, workDir, "diff", "-M", "--numstat", "-z", gitEmptyTreeSHA); err == nil {
+			out.diffOut = numstat
+		} else if numstat, err := s.runGitRaw(ctx, workDir, "diff", "-M", "--cached", "--numstat", "-z"); err == nil {
 			out.diffOut = numstat
 		}
 	}
 	return out
-}
-
-func applyGitUncommittedScan(workDir, repoRoot string, scan gitUncommittedScan, uncommittedFileSet map[string]struct{}, budget *untrackedBudget) (additions, deletions int, branch string) {
-	if repoRoot == "" {
-		repoRoot = workDir
-	}
-	branch = scan.branch
-	seenInWorktree := make(map[string]struct{})
-	if scan.diffOut != "" {
-		for _, line := range strings.Split(strings.TrimSpace(scan.diffOut), "\n") {
-			add, del, file, ok := parseGitNumstatLine(line)
-			if !ok {
-				continue
-			}
-			if _, seen := seenInWorktree[file]; seen {
-				continue
-			}
-			seenInWorktree[file] = struct{}{}
-			additions += add
-			deletions += del
-			uncommittedFileSet[repoRoot+"\x00"+file] = struct{}{}
-		}
-	}
-	for _, rel := range scan.untrackedFiles {
-		rel = unquoteGitPath(rel)
-		if rel == "" || strings.HasSuffix(rel, "/") || isGeneratedOrLockFile(rel) {
-			continue
-		}
-		if _, seen := seenInWorktree[rel]; seen {
-			continue
-		}
-		seenInWorktree[rel] = struct{}{}
-		uncommittedFileSet[repoRoot+"\x00"+rel] = struct{}{}
-		if budget.truncated || budget.readCount >= maxUntrackedFilesToCount {
-			budget.truncated = true
-			continue
-		}
-		full := filepath.Join(workDir, filepath.FromSlash(rel))
-		info, err := os.Stat(full)
-		if err != nil || info.IsDir() || info.Size() > maxUntrackedFileSize {
-			continue
-		}
-		if budget.readBytes+info.Size() > maxUntrackedTotalBytes {
-			budget.truncated = true
-			continue
-		}
-		data, err := os.ReadFile(full)
-		if err != nil || len(data) == 0 || bytes.IndexByte(data, 0) != -1 {
-			continue
-		}
-		budget.readCount++
-		budget.readBytes += int64(len(data))
-		additions += bytes.Count(data, []byte{'\n'})
-		if data[len(data)-1] != '\n' {
-			additions++
-		}
-	}
-	return additions, deletions, branch
 }
 
 func runParallelGit(ctx context.Context, n int, fn func(idx int)) {
@@ -267,70 +209,33 @@ func (s *Service) CollectGitDailyStatsCtx(ctx context.Context, targets []GitTarg
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	baseArgs := []string{"log", "--since=" + startOfToday.Format(time.RFC3339), "--no-merges", "--no-renames", "--numstat", "--pretty=format:COMMIT:%H\t%s"}
+	baseArgs := []string{"log", "--since=" + startOfToday.Format(time.RFC3339), "--no-merges", "-M", "--numstat", "-z", "--pretty=format:COMMIT:%H\t%s"}
 	results := s.runGitTargetsBatch(ctx, targets, baseArgs, true)
 
+	commits, sideBranchesByRepo, committedFilesByRepo := s.collectDeduplicatedCommits(
+		ctx, targets, results, startOfToday, false, "", "", startOfToday.Location(),
+	)
 	committedFileSet := make(map[string]struct{})
-	seenCommits := make(map[string]struct{})
-	for i, t := range targets {
-		if !results[i].logOK || results[i].logOut == "" {
-			continue
-		}
-		skipCurrent := false
-		for _, rawLine := range strings.Split(results[i].logOut, "\n") {
-			line := strings.TrimSpace(rawLine)
-			if line == "" {
-				continue
-			}
-			if strings.HasPrefix(line, "COMMIT:") {
-				rest := strings.TrimPrefix(line, "COMMIT:")
-				parts := strings.SplitN(rest, "\t", 2)
-				sha := strings.TrimSpace(parts[0])
-				var subject string
-				if len(parts) > 1 {
-					subject = strings.TrimSpace(parts[1])
-				}
-				if sha != "" {
-					if _, exists := seenCommits[sha]; exists {
-						skipCurrent = true
-						continue
-					}
-					seenCommits[sha] = struct{}{}
-				}
-				if isInternalSnapshotCommitSubject(subject) {
-					skipCurrent = true
-					continue
-				}
-				skipCurrent = false
-				res.TodayCommits++
-				continue
-			}
-			if skipCurrent {
-				continue
-			}
-			add, del, file, ok := parseGitNumstatLine(rawLine)
-			if !ok {
-				continue
-			}
-			res.CommittedAdditions += add
-			res.CommittedDeletions += del
-			committedFileSet[t.RepoRoot+"\x00"+file] = struct{}{}
+	for _, c := range commits {
+		res.TodayCommits++
+		for _, f := range c.files {
+			res.CommittedAdditions += f.add
+			res.CommittedDeletions += f.del
+			committedFileSet[c.repoRoot+"\x00"+f.path] = struct{}{}
 		}
 	}
 	res.CommittedFiles = len(committedFileSet)
 
-	uncommittedFileSet := make(map[string]struct{})
-	var budget untrackedBudget
-	for i, t := range targets {
-		add, del, branch := applyGitUncommittedScan(t.Dir, t.RepoRoot, results[i].uncommitted, uncommittedFileSet, &budget)
-		res.UncommittedAdditions += add
-		res.UncommittedDeletions += del
-		if res.Branch == "" && branch != "" {
-			res.Branch = branch
-		}
+	uncommAdd, uncommDel, uncommittedFileSet, branch, truncated := s.collectDeduplicatedUncommitted(
+		ctx, targets, results, sideBranchesByRepo, committedFilesByRepo,
+	)
+	res.UncommittedAdditions += uncommAdd
+	res.UncommittedDeletions += uncommDel
+	if res.Branch == "" && branch != "" {
+		res.Branch = branch
 	}
 	res.UncommittedFiles = len(uncommittedFileSet)
-	res.UncommittedTruncated = budget.truncated
+	res.UncommittedTruncated = truncated
 
 	changed := make(map[string]struct{}, len(committedFileSet)+len(uncommittedFileSet))
 	for file := range committedFileSet {
@@ -361,7 +266,7 @@ func (s *Service) CollectGitHistoryCtx(ctx context.Context, targets []GitTarget,
 		"log",
 		"--since=" + start.Format(time.RFC3339),
 		"--until=" + end.Format(time.RFC3339),
-		"--no-merges", "--no-renames", "--numstat",
+		"--no-merges", "-M", "--numstat", "-z",
 		"--pretty=format:COMMIT:%H\t%ct\t%s",
 	}
 	results := s.runGitTargetsBatch(ctx, targets, baseArgs, includeToday)
@@ -370,85 +275,28 @@ func (s *Service) CollectGitHistoryCtx(ctx context.Context, targets []GitTarget,
 	}
 
 	loc := start.Location()
+	commits, sideBranchesByRepo, committedFilesByRepo := s.collectDeduplicatedCommits(
+		ctx, targets, results, start, true, startKey, endInclusiveKey, loc,
+	)
 	fileSets := make(map[string]map[string]struct{})
-	seenCommits := make(map[string]struct{})
-
-	for i, t := range targets {
-		if !results[i].logOK || results[i].logOut == "" {
-			continue
+	for _, c := range commits {
+		target := day(c.dayKey)
+		target.Commits++
+		if fileSets[c.dayKey] == nil {
+			fileSets[c.dayKey] = make(map[string]struct{})
 		}
-		var current string
-		for _, rawLine := range strings.Split(results[i].logOut, "\n") {
-			line := strings.TrimSpace(rawLine)
-			if line == "" {
-				continue
-			}
-			if strings.HasPrefix(line, "COMMIT:") {
-				rest := strings.TrimPrefix(line, "COMMIT:")
-				parts := strings.SplitN(rest, "\t", 3)
-				var sha, tsStr, subject string
-				if len(parts) == 1 {
-					tsStr = strings.TrimSpace(parts[0])
-				} else {
-					sha = strings.TrimSpace(parts[0])
-					tsStr = strings.TrimSpace(parts[1])
-					if len(parts) > 2 {
-						subject = strings.TrimSpace(parts[2])
-					}
-				}
-				if sha != "" {
-					if _, exists := seenCommits[sha]; exists {
-						current = ""
-						continue
-					}
-					seenCommits[sha] = struct{}{}
-				}
-				if isInternalSnapshotCommitSubject(subject) {
-					current = ""
-					continue
-				}
-				sec, convErr := strconv.ParseInt(tsStr, 10, 64)
-				if convErr != nil {
-					current = ""
-					continue
-				}
-				key := historyDayKey(sec*1000, loc)
-				if key < startKey || key > endInclusiveKey {
-					current = ""
-					continue
-				}
-				current = key
-				target := day(current)
-				target.Commits++
-				if fileSets[current] == nil {
-					fileSets[current] = make(map[string]struct{})
-				}
-				continue
-			}
-			if current == "" {
-				continue
-			}
-			add, del, file, ok := parseGitNumstatLine(rawLine)
-			if !ok {
-				continue
-			}
-			target := day(current)
-			target.Additions += add
-			target.Deletions += del
-			fileSets[current][t.RepoRoot+"\x00"+file] = struct{}{}
+		for _, f := range c.files {
+			target.Additions += f.add
+			target.Deletions += f.del
+			fileSets[c.dayKey][c.repoRoot+"\x00"+f.path] = struct{}{}
 		}
 	}
 
 	if includeToday {
 		todayKey := todayStart.Format("2006-01-02")
-		uncommittedFileSet := make(map[string]struct{})
-		var budget untrackedBudget
-		var uncommAdd, uncommDel int
-		for i, t := range targets {
-			a, d, _ := applyGitUncommittedScan(t.Dir, t.RepoRoot, results[i].uncommitted, uncommittedFileSet, &budget)
-			uncommAdd += a
-			uncommDel += d
-		}
+		uncommAdd, uncommDel, uncommittedFileSet, _, _ := s.collectDeduplicatedUncommitted(
+			ctx, targets, results, sideBranchesByRepo, committedFilesByRepo,
+		)
 		if uncommAdd > 0 || uncommDel > 0 || len(uncommittedFileSet) > 0 {
 			target := day(todayKey)
 			target.Additions += uncommAdd
