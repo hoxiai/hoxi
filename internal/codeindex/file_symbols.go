@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 )
 
@@ -121,187 +120,18 @@ func declaredSymbolsInFile(directory, relPath string, maxFileBytes int64) (strin
 	return cleanRel, syms, nil
 }
 
-func (s *Service) callersForFile(directory, relPath string, limit int) (CallersResponse, error) {
-	if limit <= 0 || limit > 40 {
-		limit = 16
-	}
+func (s *Service) callersForFile(directory, relPath string, limit int, c *cachedIndex) (CallersResponse, error) {
 	cleanRel, syms, err := declaredSymbolsInFile(directory, relPath, s.cfg.MaxFileBytes)
 	if err != nil {
 		return CallersResponse{}, err
 	}
-	callers := []CallerHit{}
-	tests := []CallerHit{}
-	seenProd := make(map[string]bool)
-	seenTest := make(map[string]bool)
-	for _, sym := range syms {
-		res, cErr := s.Callers(directory, sym, cleanRel, limit)
-		if cErr != nil {
-			continue
-		}
-		for _, h := range res.Callers {
-			if h.Path == cleanRel {
-				continue
-			}
-			key := fmt.Sprintf("%s:%d", h.Path, h.Line)
-			if !seenProd[key] && len(callers) < limit {
-				seenProd[key] = true
-				callers = append(callers, h)
-			}
-		}
-		for _, th := range res.Tests {
-			key := fmt.Sprintf("%s:%d", th.Path, th.Line)
-			if !seenTest[key] && len(tests) < limit {
-				seenTest[key] = true
-				tests = append(tests, th)
-			}
-		}
-	}
+	matches := c.callerGraph(syms, cleanRel, true, 1, false, limit)
 	return CallersResponse{
-		Directory: directory,
-		Symbol:    cleanRel,
-		Callers:   callers,
-		Tests:     tests,
-	}, nil
-}
-
-func (s *Service) impactForFile(directory, relPath string, depth, limit int) (ImpactResponse, error) {
-	if depth <= 0 {
-		depth = 2
-	} else if depth > 3 {
-		depth = 3
-	}
-	if limit <= 0 || limit > 40 {
-		limit = 16
-	}
-	cleanRel, syms, err := declaredSymbolsInFile(directory, relPath, s.cfg.MaxFileBytes)
-	if err != nil {
-		return ImpactResponse{}, err
-	}
-
-	type frontierNode struct {
-		symbol string
-		path   string
-		chain  string
-	}
-	visitedSymbols := make(map[string]bool, len(syms))
-	for _, sym := range syms {
-		visitedSymbols[strings.ToLower(sym)] = true
-	}
-	seenProdKey := make(map[string]bool)
-	seenTestKey := make(map[string]bool)
-	affectedSet := map[string]struct{}{cleanRel: {}}
-
-	direct := []CallerHit{}
-	tests := []CallerHit{}
-	var frontier []frontierNode
-
-	for _, declSym := range syms {
-		hop1, cErr := s.Callers(directory, declSym, cleanRel, limit)
-		if cErr != nil {
-			continue
-		}
-		for _, hit := range hop1.Callers {
-			if hit.Path == cleanRel {
-				continue
-			}
-			key := fmt.Sprintf("%s:%d", hit.Path, hit.Line)
-			if !seenProdKey[key] {
-				seenProdKey[key] = true
-				affectedSet[hit.Path] = struct{}{}
-				if len(direct) < limit {
-					direct = append(direct, hit)
-				}
-			}
-			callerSym := strings.TrimSpace(hit.Symbol)
-			if callerSym != "" && !visitedSymbols[strings.ToLower(callerSym)] {
-				visitedSymbols[strings.ToLower(callerSym)] = true
-				frontier = append(frontier, frontierNode{
-					symbol: callerSym,
-					path:   hit.Path,
-					chain:  callerSym + " -> " + declSym,
-				})
-			}
-		}
-		for _, th := range hop1.Tests {
-			key := fmt.Sprintf("%s:%d", th.Path, th.Line)
-			if !seenTestKey[key] {
-				seenTestKey[key] = true
-				affectedSet[th.Path] = struct{}{}
-				if len(tests) < limit {
-					tests = append(tests, th)
-				}
-			}
-		}
-	}
-
-	var transitive []ImpactHit
-	for d := 2; d <= depth+1 && len(frontier) > 0 && (d <= depth || len(tests) < limit); d++ {
-		collectCallers := d <= depth && len(transitive) < limit
-		var nextFrontier []frontierNode
-		for _, node := range frontier {
-			res, cErr := s.Callers(directory, node.symbol, node.path, limit)
-			if cErr != nil {
-				continue
-			}
-			if collectCallers {
-				for _, hit := range res.Callers {
-					if hit.Path == cleanRel {
-						continue
-					}
-					key := fmt.Sprintf("%s:%d", hit.Path, hit.Line)
-					if seenProdKey[key] {
-						continue
-					}
-					seenProdKey[key] = true
-					affectedSet[hit.Path] = struct{}{}
-					if len(transitive) < limit {
-						transitive = append(transitive, ImpactHit{
-							Path:    hit.Path,
-							Symbol:  hit.Symbol,
-							Line:    hit.Line,
-							Depth:   d,
-							Via:     node.chain,
-							Snippet: hit.Snippet,
-						})
-					}
-					callerSym := strings.TrimSpace(hit.Symbol)
-					if callerSym != "" && !visitedSymbols[strings.ToLower(callerSym)] {
-						visitedSymbols[strings.ToLower(callerSym)] = true
-						nextFrontier = append(nextFrontier, frontierNode{
-							symbol: callerSym,
-							path:   hit.Path,
-							chain:  callerSym + " -> " + node.chain,
-						})
-					}
-				}
-			}
-			for _, th := range res.Tests {
-				key := fmt.Sprintf("%s:%d", th.Path, th.Line)
-				if !seenTestKey[key] {
-					seenTestKey[key] = true
-					affectedSet[th.Path] = struct{}{}
-					if len(tests) < limit {
-						tests = append(tests, th)
-					}
-				}
-			}
-		}
-		frontier = nextFrontier
-	}
-
-	affectedFiles := make([]string, 0, len(affectedSet))
-	for f := range affectedSet {
-		affectedFiles = append(affectedFiles, f)
-	}
-	sort.Strings(affectedFiles)
-
-	return ImpactResponse{
-		Directory:         directory,
-		Path:              cleanRel,
-		Symbol:            cleanRel,
-		DirectCallers:     direct,
-		TransitiveCallers: transitive,
-		Tests:             tests,
-		AffectedFiles:     affectedFiles,
+		Directory:    directory,
+		Symbol:       cleanRel,
+		Callers:      matches.DirectCallers,
+		TotalCallers: matches.TotalCallers,
+		Tests:        matches.Tests,
+		TotalTests:   matches.TotalTests,
 	}, nil
 }

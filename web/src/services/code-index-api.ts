@@ -69,6 +69,7 @@ export interface CodeIndexCalleesResponse {
   path: string;
   symbol: string;
   imports?: string[];
+  totalCallees: number;
   callees: CodeIndexCalleeHit[];
 }
 
@@ -77,6 +78,9 @@ export interface CodeIndexImpactResponse {
   path?: string;
   symbol: string;
   directCallers: CodeIndexCallerHit[];
+  totalCallers: number;
+  totalTransitiveCallers: number;
+  totalTests: number;
   transitiveCallers?: CodeIndexImpactHit[];
   tests: CodeIndexCallerHit[];
   affectedFiles: string[];
@@ -86,8 +90,12 @@ export interface CodeIndexContextResponse {
   directory: string;
   inspect: CodeIndexInspectResponse;
   imports?: string[];
+  totalCallees: number;
   callees: CodeIndexCalleeHit[];
   callers: CodeIndexCallerHit[];
+  totalCallers: number;
+  totalTransitiveCallers: number;
+  totalTests: number;
   transitiveCallers?: CodeIndexImpactHit[];
   tests: CodeIndexCallerHit[];
   affectedFiles?: string[];

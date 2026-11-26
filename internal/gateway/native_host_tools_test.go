@@ -11,6 +11,26 @@ import (
 	"github.com/hoxiai/hoxi/internal/agent"
 )
 
+func TestCodeIndexHeadingsReportOnlyTruncatedGroups(t *testing.T) {
+	var payload map[string]any
+	err := json.Unmarshal([]byte(`{"inspect":{"path":"src.go","content":"example"},"callers":[{}],"directCallers":[{}],"totalCallers":20,"callees":[],"tests":[{}],"totalTests":1}`), &payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []string{"callers", "context", "impact"} {
+		out := formatCodeIndexHostOutput(action, payload)
+		if !strings.Contains(out, "Callers (showing 1 of 20):") || !strings.Contains(out, "Tests (1):") {
+			t.Fatalf("%s headings: %s", action, out)
+		}
+	}
+	payload["totalCallers"] = float64(1)
+	payload["totalTests"] = float64(3)
+	out := formatCodeIndexHostOutput("context", payload)
+	if !strings.Contains(out, "Callers (1):") || !strings.Contains(out, "Tests (showing 1 of 3):") {
+		t.Fatalf("independently truncated tests: %s", out)
+	}
+}
+
 func TestNativeHostCodeIndexAndImageTools(t *testing.T) {
 	t.Setenv("HOXI_HOME", t.TempDir())
 	wsDir := t.TempDir()

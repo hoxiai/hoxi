@@ -109,3 +109,48 @@ func TestFilePathInputsNeverTruncateExtensionAndResolveFileGraph(t *testing.T) {
 		}
 	}
 }
+
+func TestCallerTotalsAreIndependentOfDisplayLimit(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "target.go"), "package demo\nfunc Alpha() {}\nfunc Beta() {}\n")
+	writeFile(t, filepath.Join(dir, "use.go"), "package demo\nfunc First() {\n Alpha(); Beta()\n}\nfunc Second() {\n Alpha()\n}\n")
+	writeFile(t, filepath.Join(dir, "entry.go"), "package demo\nfunc Entry() {\n First()\n Second()\n}\n")
+	writeFile(t, filepath.Join(dir, "use_test.go"), "package demo\nfunc TestCalls() {\n Alpha(); Beta()\n Alpha()\n Second()\n Entry()\n}\n")
+	svc := NewService(t.TempDir())
+
+	for _, symbol := range []string{"Alpha", "target.go"} {
+		for _, limit := range []int{1, 2, 10} {
+			callers, err := svc.Callers(dir, symbol, "", limit)
+			if err != nil || callers.TotalCallers != 2 || callers.TotalTests != 2 ||
+				len(callers.Callers) != min(limit, 2) || len(callers.Tests) != min(limit, 2) {
+				t.Fatalf("Callers(%s, %d) = %+v, %v", symbol, limit, callers, err)
+			}
+			context, err := svc.Context(dir, "", symbol, "", 0, limit)
+			if err != nil || context.TotalCallers != 2 || context.TotalTransitiveCallers != 2 || context.TotalTests != 4 ||
+				len(context.Callers) != min(limit, 2) || len(context.TransitiveCallers) != min(limit, 2) || len(context.Tests) != min(limit, 4) {
+				t.Fatalf("Context(%s, %d) = %+v, %v", symbol, limit, context, err)
+			}
+		}
+	}
+	context, err := svc.Context(dir, "entry.go", "Entry", "", 0, 1)
+	if err != nil || context.TotalCallers != 0 || context.TotalCallees != 2 || len(context.Callees) != 1 {
+		t.Fatalf("Entry context = %+v, %v", context, err)
+	}
+}
+
+func TestCallerTotalsBeyondMaximumDisplayLimit(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "target.go"), "package demo\nfunc Target() {}\n")
+	writeFile(t, filepath.Join(dir, "use.go"), "package demo\nfunc Use() {\n"+strings.Repeat(" Target()\n", 45)+"}\n")
+	svc := NewService(t.TempDir())
+	for _, tc := range []struct{ limit, shown int }{{0, 16}, {40, 40}} {
+		got, err := svc.Callers(dir, "Target", "", tc.limit)
+		if err != nil || len(got.Callers) != tc.shown || got.TotalCallers != 45 || got.TotalTests != 0 {
+			t.Fatalf("limit %d: got %d of %d callers and %d tests, err=%v", tc.limit, len(got.Callers), got.TotalCallers, got.TotalTests, err)
+		}
+	}
+	got, err := svc.Context(dir, "", "Target", "", 0, 0)
+	if err != nil || len(got.Callers) != 12 || got.TotalCallers != 45 {
+		t.Fatalf("default context: got %d of %d callers, err=%v", len(got.Callers), got.TotalCallers, err)
+	}
+}

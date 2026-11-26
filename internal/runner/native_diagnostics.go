@@ -101,12 +101,12 @@ func (s *Service) nativeDiagnostics(rec SessionRecord) func(ctx context.Context,
 		diagCtx, cancel := context.WithTimeout(ctx, nativeDiagTimeout)
 		defer cancel()
 
-		var res string
+		var res, scope string
 		switch ext {
 		case ".go":
-			res = s.runNativeGoVetDiagnostic(diagCtx, rec, worktreeRoot, filePath)
+			res, scope = s.runNativeGoVetDiagnostic(diagCtx, rec, worktreeRoot, filePath)
 		case ".ts", ".tsx", ".mts", ".cts":
-			res = s.runNativeTSCDiagnostic(diagCtx, rec, worktreeRoot, filePath)
+			res, scope = s.runNativeTSCDiagnostic(diagCtx, rec, worktreeRoot, filePath)
 		case ".js", ".mjs", ".cjs":
 			res = s.runNativeJSDiagnostic(diagCtx, rec, worktreeRoot, filePath)
 		case ".jsx":
@@ -114,7 +114,7 @@ func (s *Service) nativeDiagnostics(rec SessionRecord) func(ctx context.Context,
 		case ".json":
 			res = runNativeJSONDiagnostic(filePath)
 		case ".vue":
-			res = s.runNativeVueDiagnostic(diagCtx, rec, worktreeRoot, filePath)
+			res, scope = s.runNativeVueDiagnostic(diagCtx, rec, worktreeRoot, filePath)
 		case ".rs":
 			res = s.runNativeRustDiagnostic(diagCtx, rec, worktreeRoot, filePath)
 		case ".php":
@@ -126,12 +126,15 @@ func (s *Service) nativeDiagnostics(rec SessionRecord) func(ctx context.Context,
 		default:
 			return ""
 		}
+		if scope != "" {
+			scope = " [" + scope + "]"
+		}
 		if diagCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
 			noteDiagToolBudgetExceeded(rec.ID, ext)
-			return "Timed out: static check did not finish."
+			return "Timed out: static check did not finish." + scope
 		}
 		if ctx.Err() != nil {
-			return "Not completed: static check cancelled."
+			return "Not completed: static check cancelled." + scope
 		}
 		if res == "" {
 			return "Not run: checker or project configuration unavailable."
@@ -140,45 +143,58 @@ func (s *Service) nativeDiagnostics(rec SessionRecord) func(ctx context.Context,
 	}
 }
 
-func (s *Service) runNativeGoVetDiagnostic(ctx context.Context, rec SessionRecord, worktreeRoot, filePath string) string {
+func diagnosticRelativePath(root, path string) string {
+	if rel, err := filepath.Rel(root, path); err == nil {
+		return filepath.ToSlash(rel)
+	}
+	return filepath.ToSlash(path)
+}
+
+// Return the scope separately so timeouts and cancellation can identify the checker too.
+func scopedDiagnostic(label, priorityFile, out string, code int, err error) (string, string) {
+	if err == nil && code == 0 {
+		return "Passed: " + label, label
+	}
+	detail := formatDiagnosticLines(out, priorityFile, nativeDiagMaxLines, nativeDiagMaxOutputBytes)
+	if detail == "" {
+		detail = diagnosticExitStatus(code, err)
+	}
+	return "[" + label + "]\n" + detail, label
+}
+
+func (s *Service) runNativeGoVetDiagnostic(ctx context.Context, rec SessionRecord, worktreeRoot, filePath string) (string, string) {
 	modRoot := findAncestorWithFile(filepath.Dir(filePath), worktreeRoot, "go.mod")
 	if modRoot == "" {
-		return ""
+		return "", ""
 	}
 	goBin := resolveNativeToolBinary(rec, "go")
 	if goBin == "" {
-		return ""
+		return "", ""
 	}
 	relPkg, err := filepath.Rel(modRoot, filepath.Dir(filePath))
 	if err != nil || strings.HasPrefix(relPkg, "..") {
-		return ""
+		return "", ""
 	}
 	pkgTarget := "."
 	if relPkg != "." && relPkg != "" {
 		pkgTarget = "./" + filepath.ToSlash(relPkg)
 	}
 	out, code, err := s.execNativeConfined(ctx, rec, nil, modRoot, goBin, []string{"vet", pkgTarget}, "", nativeDiagMaxOutputBytes*2)
-	if ctx.Err() != nil {
-		return ""
+	label := "go vet " + pkgTarget
+	if module := diagnosticRelativePath(worktreeRoot, filepath.Join(modRoot, "go.mod")); module != "go.mod" {
+		label += " (module " + module + ")"
 	}
-	if err == nil && code == 0 {
-		return "Passed: go vet."
-	}
-	formatted := formatDiagnosticLines(out, "", nativeDiagMaxLines, nativeDiagMaxOutputBytes)
-	if formatted == "" {
-		return diagnosticExitStatus(code, err)
-	}
-	return fmt.Sprintf("[go vet %s]\n%s", pkgTarget, formatted)
+	return scopedDiagnostic(label, "", out, code, err)
 }
 
-func (s *Service) runNativeTSCDiagnostic(ctx context.Context, rec SessionRecord, worktreeRoot, filePath string) string {
+func (s *Service) runNativeTSCDiagnostic(ctx context.Context, rec SessionRecord, worktreeRoot, filePath string) (string, string) {
 	tsRoot := findAncestorWithFile(filepath.Dir(filePath), worktreeRoot, "tsconfig.json")
 	if tsRoot == "" {
-		return ""
+		return "", ""
 	}
 	tscBin := resolveWorkspaceTSC(rec, tsRoot, worktreeRoot)
 	if tscBin == "" {
-		return ""
+		return "", ""
 	}
 	tsconfigPath := filepath.Join(tsRoot, "tsconfig.json")
 	baseArgs := []string{"--project", tsconfigPath, "--noEmit", "--pretty", "false"}
@@ -190,21 +206,8 @@ func (s *Service) runNativeTSCDiagnostic(ctx context.Context, rec SessionRecord,
 	if (err != nil || code != 0) && len(args) > len(baseArgs) && isUnsupportedTSCIncrementalError(out) && ctx.Err() == nil {
 		out, code, err = s.execNativeConfined(ctx, rec, nil, tsRoot, tscBin, baseArgs, "", nativeDiagMaxOutputBytes*4)
 	}
-	if ctx.Err() != nil {
-		return ""
-	}
-	if err == nil && code == 0 {
-		return "Passed: tsc --noEmit."
-	}
-	relFile := filepath.Base(filePath)
-	if rel, relErr := filepath.Rel(tsRoot, filePath); relErr == nil && !strings.HasPrefix(rel, "..") {
-		relFile = filepath.ToSlash(rel)
-	}
-	formatted := formatDiagnosticLines(out, relFile, nativeDiagMaxLines, nativeDiagMaxOutputBytes)
-	if formatted == "" {
-		return diagnosticExitStatus(code, err)
-	}
-	return "[tsc --noEmit]\n" + formatted
+	return scopedDiagnostic("tsc --noEmit --project "+diagnosticRelativePath(worktreeRoot, tsconfigPath),
+		diagnosticRelativePath(tsRoot, filePath), out, code, err)
 }
 
 func nativeTSCBuildInfoPath(sessionID, tsconfigPath string) string {
@@ -510,27 +513,15 @@ func runNativeJSONDiagnostic(filePath string) string {
 	return fmt.Sprintf("[%s]\n%s: invalid JSON syntax", tag, filepath.Base(filePath))
 }
 
-func (s *Service) runNativeVueDiagnostic(ctx context.Context, rec SessionRecord, worktreeRoot, filePath string) string {
+func (s *Service) runNativeVueDiagnostic(ctx context.Context, rec SessionRecord, worktreeRoot, filePath string) (string, string) {
 	tsRoot := findAncestorWithFile(filepath.Dir(filePath), worktreeRoot, "tsconfig.json")
 	if tsRoot != "" {
 		if vueTscBin := resolveWorkspaceNodeBin(rec, tsRoot, worktreeRoot, "vue-tsc"); vueTscBin != "" {
 			tsconfigPath := filepath.Join(tsRoot, "tsconfig.json")
 			args := []string{"--project", tsconfigPath, "--noEmit", "--pretty", "false"}
 			out, code, err := s.execNativeConfined(ctx, rec, nil, tsRoot, vueTscBin, args, "", nativeDiagMaxOutputBytes*4)
-			if ctx.Err() != nil {
-				return ""
-			}
-			if err == nil && code == 0 {
-				return "Passed: vue-tsc --noEmit."
-			}
-			relFile := filepath.Base(filePath)
-			if rel, relErr := filepath.Rel(tsRoot, filePath); relErr == nil && !strings.HasPrefix(rel, "..") {
-				relFile = filepath.ToSlash(rel)
-			}
-			if formatted := formatDiagnosticLines(out, relFile, nativeDiagMaxLines, nativeDiagMaxOutputBytes); formatted != "" {
-				return "[vue-tsc --noEmit]\n" + formatted
-			}
-			return diagnosticExitStatus(code, err)
+			return scopedDiagnostic("vue-tsc --noEmit --project "+diagnosticRelativePath(worktreeRoot, tsconfigPath),
+				diagnosticRelativePath(tsRoot, filePath), out, code, err)
 		}
 	}
 	pkgRoot := findAncestorWithFile(filepath.Dir(filePath), worktreeRoot, "package.json")
@@ -540,17 +531,17 @@ func (s *Service) runNativeVueDiagnostic(ctx context.Context, rec SessionRecord,
 	if oxlintBin := resolveWorkspaceNodeBin(rec, pkgRoot, worktreeRoot, "oxlint"); oxlintBin != "" {
 		out, code, err := s.execNativeConfined(ctx, rec, nil, pkgRoot, oxlintBin, []string{"--quiet", filePath}, "", nativeDiagMaxOutputBytes*2)
 		if ctx.Err() != nil {
-			return ""
+			return "", ""
 		}
 		if err == nil && code == 0 {
-			return "Passed: oxlint."
+			return "Passed: oxlint.", ""
 		}
 		if formatted := formatDiagnosticLines(out, filepath.Base(filePath), nativeDiagMaxLines, nativeDiagMaxOutputBytes); formatted != "" {
-			return "[oxlint]\n" + formatted
+			return "[oxlint]\n" + formatted, ""
 		}
-		return diagnosticExitStatus(code, err)
+		return diagnosticExitStatus(code, err), ""
 	}
-	return ""
+	return "", ""
 }
 
 func (s *Service) runNativeRustDiagnostic(ctx context.Context, rec SessionRecord, worktreeRoot, filePath string) string {

@@ -24,11 +24,12 @@ type CalleeHit struct {
 }
 
 type CalleesResponse struct {
-	Directory string      `json:"directory"`
-	Path      string      `json:"path"`
-	Symbol    string      `json:"symbol"`
-	Imports   []string    `json:"imports,omitempty"`
-	Callees   []CalleeHit `json:"callees"`
+	Directory    string      `json:"directory"`
+	Path         string      `json:"path"`
+	Symbol       string      `json:"symbol"`
+	Imports      []string    `json:"imports,omitempty"`
+	Callees      []CalleeHit `json:"callees"`
+	TotalCallees int         `json:"totalCallees"`
 }
 
 type ImpactHit struct {
@@ -42,6 +43,7 @@ type ImpactHit struct {
 }
 
 type ImpactResponse struct {
+	CallerTotals
 	Directory         string      `json:"directory"`
 	Path              string      `json:"path,omitempty"`
 	Symbol            string      `json:"symbol"`
@@ -52,6 +54,8 @@ type ImpactResponse struct {
 }
 
 type ContextResponse struct {
+	CallerTotals
+	TotalCallees      int             `json:"totalCallees"`
 	Directory         string          `json:"directory"`
 	Inspect           InspectResponse `json:"inspect"`
 	Imports           []string        `json:"imports,omitempty"`
@@ -427,6 +431,9 @@ func (s *Service) Callees(directory, symbol, relPath string, limit int) (Callees
 					continue
 				}
 				seenTarget[targetKey] = struct{}{}
+				if len(callees) >= limit {
+					continue
+				}
 				snippet := strings.TrimSpace(rawLine)
 				if len(snippet) > 200 {
 					snippet = snippet[:200] + "..."
@@ -440,25 +447,17 @@ func (s *Service) Callees(directory, symbol, relPath string, limit int) (Callees
 					CallLine:  lineNo,
 					Snippet:   snippet,
 				})
-				if len(callees) >= limit {
-					break
-				}
 			}
-			if len(callees) >= limit {
-				break
-			}
-		}
-		if len(callees) >= limit {
-			break
 		}
 	}
 
 	return CalleesResponse{
-		Directory: directory,
-		Path:      cleanRel,
-		Symbol:    resolvedSym,
-		Imports:   imports,
-		Callees:   callees,
+		Directory:    directory,
+		Path:         cleanRel,
+		Symbol:       resolvedSym,
+		Imports:      imports,
+		Callees:      callees,
+		TotalCallees: len(seenTarget),
 	}, nil
 }
 
@@ -478,10 +477,7 @@ func (s *Service) Impact(directory, symbol, relPath string, depth, limit int) (I
 		}
 		relPath = cleanRel
 	}
-	if symbol == "" && relPath != "" {
-		return s.impactForFile(directory, relPath, depth, limit)
-	}
-	if symbol == "" {
+	if symbol == "" && relPath == "" {
 		return ImpactResponse{}, errors.New("symbol is required")
 	}
 	if depth <= 0 {
@@ -505,117 +501,18 @@ func (s *Service) Impact(directory, symbol, relPath string, depth, limit int) (I
 		}
 	}
 
-	hop1, err := s.Callers(directory, symbol, relPath, limit)
-	if err != nil {
-		return ImpactResponse{}, err
-	}
-
-	type frontierNode struct {
-		symbol string
-		path   string
-		chain  string
-	}
-
-	visitedSymbols := map[string]bool{strings.ToLower(symbol): true}
-	seenProdKey := make(map[string]bool)
-	seenTestKey := make(map[string]bool)
-	affectedSet := make(map[string]struct{})
-	if relPath != "" {
-		affectedSet[relPath] = struct{}{}
-	}
-
-	var frontier []frontierNode
-	for _, hit := range hop1.Callers {
-		key := fmt.Sprintf("%s:%d", hit.Path, hit.Line)
-		seenProdKey[key] = true
-		affectedSet[hit.Path] = struct{}{}
-		sym := strings.TrimSpace(hit.Symbol)
-		if !hit.Possible && sym != "" && !visitedSymbols[strings.ToLower(sym)] {
-			visitedSymbols[strings.ToLower(sym)] = true
-			frontier = append(frontier, frontierNode{
-				symbol: sym,
-				path:   hit.Path,
-				chain:  sym + " -> " + symbol,
-			})
+	fileQuery := symbol == ""
+	targets := []string{symbol}
+	if fileQuery {
+		_, targets, err = declaredSymbolsInFile(directory, relPath, s.cfg.MaxFileBytes)
+		if err != nil {
+			return ImpactResponse{}, err
 		}
+		symbol = relPath
 	}
-	tests := make([]CallerHit, 0, len(hop1.Tests))
-	for _, hit := range hop1.Tests {
-		key := fmt.Sprintf("%s:%d", hit.Path, hit.Line)
-		seenTestKey[key] = true
-		affectedSet[hit.Path] = struct{}{}
-		tests = append(tests, hit)
-	}
-
-	var transitive []ImpactHit
-	for d := 2; d <= depth+1 && len(frontier) > 0 && (d <= depth || len(tests) < limit); d++ {
-		collectCallers := d <= depth && len(transitive) < limit
-		var nextFrontier []frontierNode
-		for _, node := range frontier {
-			res, err := s.Callers(directory, node.symbol, node.path, limit)
-			if err != nil {
-				continue
-			}
-			if collectCallers {
-				for _, hit := range res.Callers {
-					key := fmt.Sprintf("%s:%d", hit.Path, hit.Line)
-					if seenProdKey[key] {
-						continue
-					}
-					seenProdKey[key] = true
-					affectedSet[hit.Path] = struct{}{}
-					if len(transitive) < limit {
-						transitive = append(transitive, ImpactHit{
-							Path:     hit.Path,
-							Symbol:   hit.Symbol,
-							Line:     hit.Line,
-							Depth:    d,
-							Via:      node.chain,
-							Snippet:  hit.Snippet,
-							Possible: hit.Possible,
-						})
-					}
-					sym := strings.TrimSpace(hit.Symbol)
-					if !hit.Possible && sym != "" && !visitedSymbols[strings.ToLower(sym)] {
-						visitedSymbols[strings.ToLower(sym)] = true
-						nextFrontier = append(nextFrontier, frontierNode{
-							symbol: sym,
-							path:   hit.Path,
-							chain:  sym + " -> " + node.chain,
-						})
-					}
-				}
-			}
-			for _, tHit := range res.Tests {
-				key := fmt.Sprintf("%s:%d", tHit.Path, tHit.Line)
-				if seenTestKey[key] {
-					continue
-				}
-				seenTestKey[key] = true
-				affectedSet[tHit.Path] = struct{}{}
-				if len(tests) < limit {
-					tests = append(tests, tHit)
-				}
-			}
-		}
-		frontier = nextFrontier
-	}
-
-	affectedFiles := make([]string, 0, len(affectedSet))
-	for f := range affectedSet {
-		affectedFiles = append(affectedFiles, f)
-	}
-	sort.Strings(affectedFiles)
-
-	return ImpactResponse{
-		Directory:         directory,
-		Path:              relPath,
-		Symbol:            symbol,
-		DirectCallers:     hop1.Callers,
-		TransitiveCallers: transitive,
-		Tests:             tests,
-		AffectedFiles:     affectedFiles,
-	}, nil
+	result := c.callerGraph(targets, relPath, fileQuery, depth, true, limit)
+	result.Directory, result.Path, result.Symbol = directory, relPath, symbol
+	return result, nil
 }
 
 func (s *Service) Context(directory, relPath, symbol, query string, contextLines, limit int) (ContextResponse, error) {
@@ -689,16 +586,20 @@ func (s *Service) Context(directory, relPath, symbol, query string, contextLines
 	var transitive []ImpactHit
 	tests := []CallerHit{}
 	var affectedFiles []string
+	var totals CallerTotals
+	var totalCallees int
 
 	if targetSym != "" || inspected.Path != "" {
 		if calleesRes, cErr := s.Callees(directory, targetSym, inspected.Path, limit); cErr == nil {
 			callees = calleesRes.Callees
+			totalCallees = calleesRes.TotalCallees
 			if len(imports) == 0 {
 				imports = calleesRes.Imports
 			}
 		}
 		if impactRes, iErr := s.Impact(directory, targetSym, inspected.Path, 2, limit); iErr == nil {
 			callers = impactRes.DirectCallers
+			totals = impactRes.CallerTotals
 			transitive = impactRes.TransitiveCallers
 			tests = impactRes.Tests
 			affectedFiles = impactRes.AffectedFiles
@@ -708,6 +609,8 @@ func (s *Service) Context(directory, relPath, symbol, query string, contextLines
 	return ContextResponse{
 		Directory:         directory,
 		Inspect:           inspected,
+		CallerTotals:      totals,
+		TotalCallees:      totalCallees,
 		Imports:           imports,
 		Callees:           callees,
 		Callers:           callers,

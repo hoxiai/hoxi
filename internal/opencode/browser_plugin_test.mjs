@@ -133,6 +133,20 @@ test("standalone browser plugin", async (t) => {
     }
   });
 
+  await t.test("code index counts callers and tests independently when results are truncated", async () => {
+    const hit = { path: "use.go", line: 2 };
+    globalThis.fetch = async () => Response.json({
+      inspect: { path: "target.go", content: "func Target() {}" },
+      callees: [], callers: [hit], directCallers: [hit], totalCallers: 20,
+      tests: [hit], totalTests: 3,
+    });
+    for (const action of ["callers", "context", "impact"]) {
+      const { output } = await hooks.tool.hoxi_code_index.execute({ action, symbol: "Target" }, context);
+      assert.match(output, /Callers \(showing 1 of 20\):/);
+      assert.match(output, /Tests \(showing 1 of 3\):/);
+    }
+  });
+
   await t.test("hoxi_code_index executes search, inspect, callers and refresh bound to context.directory", async () => {
     const execIndex = hooks.tool.hoxi_code_index.execute;
     requests = [];

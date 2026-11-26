@@ -62,8 +62,8 @@ exit 1
 	rec := SessionRecord{
 		ID:             "ses_tsc_inc",
 		Runtime:        string(RuntimeNative),
-		ProjectDir:     workspace,
-		WorktreePath:   workspace,
+		ProjectDir:     root,
+		WorktreePath:   root,
 		CommandSandbox: sandbox.Available(),
 	}
 	if rec.CommandSandbox {
@@ -74,8 +74,8 @@ exit 1
 	}
 
 	diagFn := svc.nativeDiagnostics(rec)
-	got := diagFn(context.Background(), workspace, tsFile)
-	if !strings.Contains(got, "[tsc --noEmit]") || !strings.Contains(got, "TS2322") {
+	got := diagFn(context.Background(), root, tsFile)
+	if !strings.Contains(got, "[tsc --noEmit --project web/tsconfig.json]") || !strings.Contains(got, "TS2322") {
 		t.Fatalf("expected incremental tsc diagnostic output, got:\n%s", got)
 	}
 	buildInfoPath := nativeTSCBuildInfoPath(rec.ID, filepath.Join(workspace, "tsconfig.json"))
@@ -101,8 +101,13 @@ exit 1
 	if err := os.WriteFile(tscStub, []byte(legacyScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	fallbackGot := diagFn(context.Background(), workspace, tsFile)
+	fallbackGot := diagFn(context.Background(), root, tsFile)
 	if strings.Contains(fallbackGot, "TS5053") || !strings.Contains(fallbackGot, "Fallback check succeeded.") {
 		t.Fatalf("expected automatic fallback without --incremental, got:\n%s", fallbackGot)
 	}
+	writeFakeExecutable(t, binDir, "tsc", `test "$1" = "--project" && test "$2" -ef "$PWD/tsconfig.json"`)
+	if got := diagFn(context.Background(), root, tsFile); got != "Passed: tsc --noEmit --project web/tsconfig.json" {
+		t.Fatalf("expected the checked nested tsconfig, got %q", got)
+	}
+
 }

@@ -12,6 +12,10 @@ function isSensitiveIndexPath(rawPath) {
   return isProtectedPath(trimmed) || isSecretPath(trimmed) || isSensitiveExternalPath(trimmed);
 }
 
+function countHeading(label, shown, total) {
+  return shown < total ? `${label} (showing ${shown} of ${total}):` : `${label} (${shown}):`;
+}
+
 export function formatCodeIndexOutput(action, payload) {
   if (!payload || typeof payload !== "object") return JSON.stringify(payload);
   if (action === "map" && Array.isArray(payload.entries)) {
@@ -57,9 +61,9 @@ export function formatCodeIndexOutput(action, payload) {
     const tests = Array.isArray(payload.tests) ? payload.tests : [];
     const fmtHit = (h) => `  ${h.path}:${h.line}${h.symbol ? ` [${h.symbol}]` : ""} — ${h.snippet || ""}`;
     return [
-      `Callers (${callers.length}):`,
+      countHeading("Callers", callers.length, payload.totalCallers),
       ...(callers.length ? callers.map(fmtHit) : ["  (none)"]),
-      `Tests (${tests.length}):`,
+      countHeading("Tests", tests.length, payload.totalTests),
       ...(tests.length ? tests.map(fmtHit) : ["  (none)"]),
     ].join("\n");
   }
@@ -68,7 +72,7 @@ export function formatCodeIndexOutput(action, payload) {
     const imports =
       Array.isArray(payload.imports) && payload.imports.length ? `Imports: ${payload.imports.join(", ")}\n` : "";
     const fmtCallee = (c) => `  ${c.path}:${c.startLine}-${c.endLine} [${c.symbol}] (called at L${c.callLine})`;
-    return `${imports}Callees (${callees.length}):\n${callees.length ? callees.map(fmtCallee).join("\n") : "  (none)"}`;
+    return `${imports}${countHeading("Callees", callees.length, payload.totalCallees)}\n${callees.length ? callees.map(fmtCallee).join("\n") : "  (none)"}`;
   }
   if (action === "impact" && (Array.isArray(payload.directCallers) || Array.isArray(payload.tests))) {
     const direct = Array.isArray(payload.directCallers) ? payload.directCallers : [];
@@ -78,10 +82,10 @@ export function formatCodeIndexOutput(action, payload) {
     const fmtTrans = (h) =>
       `  ${h.path}:${h.line}${h.symbol ? ` [${h.symbol}]` : ""} (depth ${h.depth}, via ${h.via}) — ${h.snippet || ""}`;
     return [
-      `Direct Callers (${direct.length}):`,
+      countHeading("Direct Callers", direct.length, payload.totalCallers),
       ...(direct.length ? direct.map(fmtHit) : ["  (none)"]),
-      ...(trans.length ? [`Transitive Callers (${trans.length}):`, ...trans.map(fmtTrans)] : []),
-      `Related Tests (${tests.length}):`,
+      ...(trans.length ? [countHeading("Transitive Callers", trans.length, payload.totalTransitiveCallers), ...trans.map(fmtTrans)] : []),
+      countHeading("Related Tests", tests.length, payload.totalTests),
       ...(tests.length ? tests.map(fmtHit) : ["  (none)"]),
     ].join("\n");
   }
@@ -99,12 +103,12 @@ export function formatCodeIndexOutput(action, payload) {
     return [
       `# ${insp.path}:${insp.startLine}-${insp.endLine} (of ${insp.totalLines})${sym}${trunc}`,
       insp.content,
-      `Callees (${callees.length}):`,
+      countHeading("Callees", callees.length, payload.totalCallees),
       ...(callees.length ? callees.map(fmtCallee) : ["  (none)"]),
-      `Callers (${callees.length}):`,
+      countHeading("Callers", callers.length, payload.totalCallers),
       ...(callers.length ? callers.map(fmtHit) : ["  (none)"]),
-      ...(trans.length ? [`Transitive Callers (${trans.length}):`, ...trans.map(fmtTrans)] : []),
-      `Tests (${tests.length}):`,
+      ...(trans.length ? [countHeading("Transitive Callers", trans.length, payload.totalTransitiveCallers), ...trans.map(fmtTrans)] : []),
+      countHeading("Tests", tests.length, payload.totalTests),
       ...(tests.length ? tests.map(fmtHit) : ["  (none)"]),
     ].join("\n");
   }

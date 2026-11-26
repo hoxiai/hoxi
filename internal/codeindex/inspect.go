@@ -40,10 +40,12 @@ type CallerHit struct {
 }
 
 type CallersResponse struct {
-	Directory string      `json:"directory"`
-	Symbol    string      `json:"symbol"`
-	Callers   []CallerHit `json:"callers"`
-	Tests     []CallerHit `json:"tests"`
+	Directory    string      `json:"directory"`
+	Symbol       string      `json:"symbol"`
+	Callers      []CallerHit `json:"callers"`
+	Tests        []CallerHit `json:"tests"`
+	TotalCallers int         `json:"totalCallers"`
+	TotalTests   int         `json:"totalTests"`
 }
 
 var classMethodDeclRe = regexp.MustCompile(`^\s*(?:(?:public|private|protected|internal|static|async|override|readonly|abstract|virtual|get|set)\s+)*([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\s*\([^()]*\)\s*(?::\s*[^{;=>]+|\s+throws\s+[^{;=>]+)?\{\s*$`)
@@ -196,13 +198,6 @@ func (s *Service) Callers(directory, symbol, excludePath string, limit int) (Cal
 	if err != nil {
 		return CallersResponse{}, err
 	}
-	if symbol == "" && excludePath != "" {
-		return s.callersForFile(directory, excludePath, limit)
-	}
-	callIdent := shortSymbolName(symbol)
-	if callIdent == "" {
-		return CallersResponse{}, errors.New("symbol is required")
-	}
 	if limit <= 0 || limit > 40 {
 		limit = 16
 	}
@@ -210,6 +205,25 @@ func (s *Service) Callers(directory, symbol, excludePath string, limit int) (Cal
 	if err != nil {
 		return CallersResponse{}, err
 	}
+	if symbol == "" && excludePath != "" {
+		return s.callersForFile(directory, excludePath, limit, c)
+	}
+	if shortSymbolName(symbol) == "" {
+		return CallersResponse{}, errors.New("symbol is required")
+	}
+	callers, tests := c.symbolCallerHits(symbol, excludePath, c.sortedPaths)
+	return CallersResponse{
+		Directory:    directory,
+		Symbol:       symbol,
+		Callers:      callers[:min(limit, len(callers))],
+		TotalCallers: len(callers),
+		Tests:        tests[:min(limit, len(tests))],
+		TotalTests:   len(tests),
+	}, nil
+}
+
+func (c *cachedIndex) symbolCallerHits(symbol, excludePath string, paths []string) ([]CallerHit, []CallerHit) {
+	callIdent := shortSymbolName(symbol)
 	normExclude := filepath.ToSlash(strings.TrimPrefix(strings.TrimSpace(excludePath), "./"))
 	targetPath := normExclude
 	if targetPath == "" && len(c.symbols) > 0 {
@@ -231,15 +245,6 @@ func (s *Service) Callers(directory, symbol, excludePath string, limit int) (Cal
 	var prodMatches []scoredCaller
 	var testMatches []scoredCaller
 	seen := make(map[string]struct{})
-
-	paths := c.sortedPaths
-	if len(paths) == 0 && len(c.index.Files) > 0 {
-		paths = make([]string, 0, len(c.index.Files))
-		for p := range c.index.Files {
-			paths = append(paths, p)
-		}
-		sort.Strings(paths)
-	}
 
 	goDecls := c.symbols[strings.ToLower(callIdent)]
 	ambiguousMethod := ambiguousGoMethod(goDecls, callIdent)
@@ -322,12 +327,6 @@ func (s *Service) Callers(directory, symbol, excludePath string, limit int) (Cal
 	}
 	sort.SliceStable(prodMatches, func(i, j int) bool { return prodMatches[i].score > prodMatches[j].score })
 	sort.SliceStable(testMatches, func(i, j int) bool { return testMatches[i].score > testMatches[j].score })
-	if len(prodMatches) > limit {
-		prodMatches = prodMatches[:limit]
-	}
-	if len(testMatches) > limit {
-		testMatches = testMatches[:limit]
-	}
 	callers := make([]CallerHit, len(prodMatches))
 	for i, m := range prodMatches {
 		callers[i] = m.hit
@@ -336,12 +335,7 @@ func (s *Service) Callers(directory, symbol, excludePath string, limit int) (Cal
 	for i, m := range testMatches {
 		tests[i] = m.hit
 	}
-	return CallersResponse{
-		Directory: directory,
-		Symbol:    symbol,
-		Callers:   callers,
-		Tests:     tests,
-	}, nil
+	return callers, tests
 }
 
 func fileChunksMightContainSymbol(rec *FileRecord, lowerTarget string, maxChunks int) bool {

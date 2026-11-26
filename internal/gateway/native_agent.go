@@ -581,13 +581,13 @@ func buildNativeCodeIndexHooks(
 		if includeCallers {
 			if callers, cErr := idx.Callers(dir, symbol, insp.Path, 12); cErr == nil {
 				if len(callers.Callers) > 0 {
-					b.WriteString("\n\nCallers:\n")
+					b.WriteString("\n\n" + codeIndexCountHeading("Callers", len(callers.Callers), callers.TotalCallers) + "\n")
 					for _, c := range callers.Callers {
 						b.WriteString("- " + c.Path + ":" + strconv.Itoa(c.Line) + ": " + c.Snippet + "\n")
 					}
 				}
 				if len(callers.Tests) > 0 {
-					b.WriteString("\nTest References:\n")
+					b.WriteString("\n" + codeIndexCountHeading("Test References", len(callers.Tests), callers.TotalTests) + "\n")
 					for _, tr := range callers.Tests {
 						b.WriteString("- " + tr.Path + ":" + strconv.Itoa(tr.Line) + ": " + tr.Snippet + "\n")
 					}
@@ -607,25 +607,25 @@ func buildNativeCodeIndexHooks(
 		var b strings.Builder
 		b.WriteString("Symbol: " + imp.Symbol + " (" + imp.Path + ")\n")
 		if callees, cErr := idx.Callees(dir, imp.Symbol, imp.Path, limit); cErr == nil && len(callees.Callees) > 0 {
-			b.WriteString("\nOutgoing Callees:\n")
+			b.WriteString("\n" + codeIndexCountHeading("Outgoing Callees", len(callees.Callees), callees.TotalCallees) + "\n")
 			for _, cal := range callees.Callees {
 				b.WriteString("- " + cal.Path + ":" + strconv.Itoa(cal.StartLine) + " [" + cal.Symbol + "]\n")
 			}
 		}
 		if len(imp.DirectCallers) > 0 {
-			b.WriteString("\nDirect Callers:\n")
+			b.WriteString("\n" + codeIndexCountHeading("Direct Callers", len(imp.DirectCallers), imp.TotalCallers) + "\n")
 			for _, c := range imp.DirectCallers {
 				b.WriteString("- " + c.Path + ":" + strconv.Itoa(c.Line) + ": " + c.Snippet + "\n")
 			}
 		}
 		if len(imp.TransitiveCallers) > 0 {
-			b.WriteString("\nTransitive Callers:\n")
+			b.WriteString("\n" + codeIndexCountHeading("Transitive Callers", len(imp.TransitiveCallers), imp.TotalTransitiveCallers) + "\n")
 			for _, tc := range imp.TransitiveCallers {
 				b.WriteString("- [depth " + strconv.Itoa(tc.Depth) + " via " + tc.Via + "] " + tc.Path + ":" + strconv.Itoa(tc.Line) + "\n")
 			}
 		}
 		if len(imp.Tests) > 0 {
-			b.WriteString("\nRelated Tests:\n")
+			b.WriteString("\n" + codeIndexCountHeading("Related Tests", len(imp.Tests), imp.TotalTests) + "\n")
 			for _, t := range imp.Tests {
 				b.WriteString("- " + t.Path + ":" + strconv.Itoa(t.Line) + ": " + t.Snippet + "\n")
 			}

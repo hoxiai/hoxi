@@ -199,8 +199,16 @@ func TestNativeCommandAndDiagnostics(t *testing.T) {
 		if err := os.WriteFile(goFile, []byte(goodCode), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if clean := diagFn(context.Background(), workspace, goFile); clean != "Passed: go vet." {
+		if clean := diagFn(context.Background(), workspace, goFile); clean != "Passed: go vet ./calc" {
 			t.Fatalf("expected clean diagnostic after fix, got:\n%s", clean)
+		}
+
+		// The same package argument is ambiguous when run from a nested module.
+		if err := os.WriteFile(filepath.Join(pkgDir, "go.mod"), []byte("module calc\n\ngo 1.22\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if clean := diagFn(context.Background(), workspace, goFile); clean != "Passed: go vet . (module calc/go.mod)" {
+			t.Fatalf("expected nested module root in diagnostic, got %q", clean)
 		}
 	}
 

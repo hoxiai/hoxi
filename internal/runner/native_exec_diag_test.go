@@ -99,8 +99,13 @@ exit 0`)
 	diagFn := svc.nativeDiagnostics(rec)
 
 	vueOut := diagFn(context.Background(), root, vueFile)
-	if !strings.Contains(vueOut, "[vue-tsc --noEmit]") || !strings.Contains(vueOut, "TS2322") {
+	if !strings.Contains(vueOut, "[vue-tsc --noEmit --project tsconfig.json]") || !strings.Contains(vueOut, "TS2322") {
 		t.Fatalf("expected vue-tsc diagnostic output, got: %q", vueOut)
+	}
+
+	writeFakeExecutable(t, nodeBinDir, "vue-tsc", "exit 0")
+	if got := diagFn(context.Background(), root, vueFile); got != "Passed: vue-tsc --noEmit --project tsconfig.json" {
+		t.Fatalf("expected checked Vue project, got %q", got)
 	}
 
 	phpOut := diagFn(context.Background(), root, phpFile)

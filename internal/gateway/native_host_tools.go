@@ -222,6 +222,13 @@ func (g *Gateway) invokeNativeCodeIndexTool(ctx context.Context, tc agent.ToolCo
 	}, nil
 }
 
+func codeIndexCountHeading(label string, shown, total int) string {
+	if shown < total {
+		return fmt.Sprintf("%s (showing %d of %d):", label, shown, total)
+	}
+	return fmt.Sprintf("%s (%d):", label, shown)
+}
+
 func formatCodeIndexHostOutput(action string, payload map[string]any) string {
 	str := func(m map[string]any, k string) string { s, _ := m[k].(string); return s }
 	num := func(m map[string]any, k string) int {
@@ -295,7 +302,7 @@ func formatCodeIndexHostOutput(action string, payload map[string]any) string {
 		callers := sliceMaps(payload["callers"])
 		tests := sliceMaps(payload["tests"])
 		var lines []string
-		lines = append(lines, fmt.Sprintf("Callers (%d):", len(callers)))
+		lines = append(lines, codeIndexCountHeading("Callers", len(callers), num(payload, "totalCallers")))
 		if len(callers) == 0 {
 			lines = append(lines, "  (none)")
 		} else {
@@ -303,7 +310,7 @@ func formatCodeIndexHostOutput(action string, payload map[string]any) string {
 				lines = append(lines, fmtHit(h))
 			}
 		}
-		lines = append(lines, fmt.Sprintf("Tests (%d):", len(tests)))
+		lines = append(lines, codeIndexCountHeading("Tests", len(tests), num(payload, "totalTests")))
 		if len(tests) == 0 {
 			lines = append(lines, "  (none)")
 		} else {
@@ -326,7 +333,7 @@ func formatCodeIndexHostOutput(action string, payload map[string]any) string {
 				b.WriteString("Imports: " + strings.Join(imps, ", ") + "\n")
 			}
 		}
-		fmt.Fprintf(&b, "Callees (%d):\n", len(callees))
+		b.WriteString(codeIndexCountHeading("Callees", len(callees), num(payload, "totalCallees")) + "\n")
 		if len(callees) == 0 {
 			b.WriteString("  (none)")
 		} else {
@@ -342,7 +349,7 @@ func formatCodeIndexHostOutput(action string, payload map[string]any) string {
 		trans := sliceMaps(payload["transitiveCallers"])
 		tests := sliceMaps(payload["tests"])
 		var lines []string
-		lines = append(lines, fmt.Sprintf("Direct Callers (%d):", len(direct)))
+		lines = append(lines, codeIndexCountHeading("Direct Callers", len(direct), num(payload, "totalCallers")))
 		if len(direct) == 0 {
 			lines = append(lines, "  (none)")
 		} else {
@@ -351,7 +358,7 @@ func formatCodeIndexHostOutput(action string, payload map[string]any) string {
 			}
 		}
 		if len(trans) > 0 {
-			lines = append(lines, fmt.Sprintf("Transitive Callers (%d):", len(trans)))
+			lines = append(lines, codeIndexCountHeading("Transitive Callers", len(trans), num(payload, "totalTransitiveCallers")))
 			for _, h := range trans {
 				sym := ""
 				if s := str(h, "symbol"); s != "" {
@@ -360,7 +367,7 @@ func formatCodeIndexHostOutput(action string, payload map[string]any) string {
 				lines = append(lines, fmt.Sprintf("  %s:%d%s (depth %d, via %s) — %s", str(h, "path"), num(h, "line"), sym+ambiguity(h), num(h, "depth"), str(h, "via"), str(h, "snippet")))
 			}
 		}
-		lines = append(lines, fmt.Sprintf("Related Tests (%d):", len(tests)))
+		lines = append(lines, codeIndexCountHeading("Related Tests", len(tests), num(payload, "totalTests")))
 		if len(tests) == 0 {
 			lines = append(lines, "  (none)")
 		} else {
@@ -386,7 +393,7 @@ func formatCodeIndexHostOutput(action string, payload map[string]any) string {
 			lines := []string{
 				fmt.Sprintf("# %s:%d-%d (of %d)%s%s", str(insp, "path"), num(insp, "startLine"), num(insp, "endLine"), num(insp, "totalLines"), sym, trunc),
 				str(insp, "content"),
-				fmt.Sprintf("Callees (%d):", len(callees)),
+				codeIndexCountHeading("Callees", len(callees), num(payload, "totalCallees")),
 			}
 			if len(callees) == 0 {
 				lines = append(lines, "  (none)")
@@ -395,7 +402,7 @@ func formatCodeIndexHostOutput(action string, payload map[string]any) string {
 					lines = append(lines, fmtCallee(c))
 				}
 			}
-			lines = append(lines, fmt.Sprintf("Callers (%d):", len(callers)))
+			lines = append(lines, codeIndexCountHeading("Callers", len(callers), num(payload, "totalCallers")))
 			if len(callers) == 0 {
 				lines = append(lines, "  (none)")
 			} else {
@@ -404,7 +411,7 @@ func formatCodeIndexHostOutput(action string, payload map[string]any) string {
 				}
 			}
 			if len(trans) > 0 {
-				lines = append(lines, fmt.Sprintf("Transitive Callers (%d):", len(trans)))
+				lines = append(lines, codeIndexCountHeading("Transitive Callers", len(trans), num(payload, "totalTransitiveCallers")))
 				for _, h := range trans {
 					hsym := ""
 					if s := str(h, "symbol"); s != "" {
@@ -413,7 +420,7 @@ func formatCodeIndexHostOutput(action string, payload map[string]any) string {
 					lines = append(lines, fmt.Sprintf("  %s:%d%s (depth %d, via %s)", str(h, "path"), num(h, "line"), hsym+ambiguity(h), num(h, "depth"), str(h, "via")))
 				}
 			}
-			lines = append(lines, fmt.Sprintf("Tests (%d):", len(tests)))
+			lines = append(lines, codeIndexCountHeading("Tests", len(tests), num(payload, "totalTests")))
 			if len(tests) == 0 {
 				lines = append(lines, "  (none)")
 			} else {
