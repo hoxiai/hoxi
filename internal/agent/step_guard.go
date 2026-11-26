@@ -346,14 +346,16 @@ func (e *Engine) runGracefulFinalizeStep(
 		return nil, false
 	}
 	openStarted := time.Now()
-	resp, openErr := e.stream.OpenStream(ctx, httpReq)
+	stepStreamCtx, cancelStepStream := context.WithCancel(ctx)
+	defer cancelStepStream()
+	resp, openErr := e.stream.OpenStream(stepStreamCtx, httpReq)
 	headerLatency := time.Since(openStarted)
 	if openErr != nil {
 		return nil, false
 	}
 
 	step := stepBudget + 1
-	streamed, parseErr := collectStepStream(ctx, drv, resp.Body, target, step, nextPartID, emit)
+	streamed, parseErr := collectStepStream(stepStreamCtx, cancelStepStream, drv, resp.Body, target, step, nextPartID, emit)
 	_ = resp.Body.Close()
 	if parseErr != nil {
 		e.reportStreamOutcome(ctx, target, time.Since(openStarted), parseErr)

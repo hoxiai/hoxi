@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -309,16 +310,7 @@ func (s *stdioMCPSession) ensureReady(ctx context.Context) error {
 	if s.worktreeDir != "" {
 		cmd.Dir = s.worktreeDir
 	}
-	if len(s.srv.Env) > 0 {
-		env := os.Environ()
-		keys := make([]string, 0, len(s.srv.Env))
-		for k := range s.srv.Env {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			env = append(env, k+"="+s.srv.Env[k])
-		}
+	if env := buildStdioMCPEnv(os.Environ(), s.srv.Env, s.srv.FromRepo); env != nil {
 		cmd.Env = env
 	}
 	stdin, err := cmd.StdinPipe()
@@ -551,6 +543,12 @@ func hashStdioMCPSpec(worktreeDir string, srv mcpServerSpec) string {
 	_, _ = h.Write([]byte{0})
 	_, _ = h.Write([]byte(srv.Name))
 	_, _ = h.Write([]byte{0})
+	if srv.FromRepo {
+		_, _ = h.Write([]byte("repo"))
+	} else {
+		_, _ = h.Write([]byte("machine"))
+	}
+	_, _ = h.Write([]byte{0})
 	for _, arg := range srv.Command {
 		_, _ = h.Write([]byte(arg))
 		_, _ = h.Write([]byte{0})
@@ -567,4 +565,109 @@ func hashStdioMCPSpec(worktreeDir string, srv mcpServerSpec) string {
 		}
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+var (
+	stdioProxyEnvNames = map[string]bool{
+		"HTTP_PROXY": true, "HTTPS_PROXY": true, "ALL_PROXY": true, "NO_PROXY": true,
+	}
+	stdioCredentialEnvNames = map[string]bool{
+		"SSH_AUTH_SOCK": true, "SSH_AGENT_PID": true, "GPG_AGENT_INFO": true,
+		"GIT_ASKPASS": true, "SSH_ASKPASS": true, "SUDO_ASKPASS": true,
+		"KUBECONFIG": true, "DOCKER_CONFIG": true, "NETRC": true,
+		"AWS_SHARED_CREDENTIALS_FILE": true, "AWS_CONFIG_FILE": true,
+		"GIT_CONFIG_PARAMETERS": true, "GIT_CONFIG_COUNT": true,
+		"DATABASE_URL": true, "DB_URI": true, "CONNECTION_STRING": true,
+	}
+	stdioCredentialNameFragments = []string{
+		"TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "APIKEY", "API_KEY", "ACCESS_KEY", "PRIVATE_KEY",
+	}
+	stdioCredentialNameParts = map[string]bool{
+		"AUTH": true, "PAT": true, "AUTHTOKEN": true,
+	}
+	stdioBlockedExecEnvNames = map[string]bool{
+		"LD_PRELOAD": true, "LD_LIBRARY_PATH": true,
+		"DYLD_INSERT_LIBRARIES": true, "DYLD_LIBRARY_PATH": true, "DYLD_FRAMEWORK_PATH": true, "DYLD_FORCE_FLAT_NAMESPACE": true,
+		"BASH_ENV": true, "ENV": true, "ZDOTDIR": true,
+		"PYTHONSTARTUP": true, "PERL5OPT": true, "RUBYOPT": true,
+	}
+	stdioCredentialValueRe = regexp.MustCompile(`^(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}|glpat-[\w-]{20,}|npm_[A-Za-z0-9]{30,}|xox[abeprs]-[\w-]{10,}|sk-[\w-]{20,}|(?:AKIA|ASIA)[A-Z0-9]{16}|AIzaSy[0-9A-Za-z_-]{30,}|hf_[A-Za-z0-9]{30,})$|^[A-Za-z][A-Za-z0-9+.-]*://[^/@\s:]+:[^/@\s]+@|-----BEGIN [A-Z ]*PRIVATE KEY-----`)
+)
+
+func isBlockedStdioExecEnv(name string) bool {
+	return stdioBlockedExecEnvNames[strings.ToUpper(strings.TrimSpace(name))]
+}
+
+func isStdioCredentialEnv(name, value string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(name))
+	if upper == "" || stdioProxyEnvNames[upper] {
+		return false
+	}
+	if stdioCredentialEnvNames[upper] || strings.HasPrefix(upper, "GIT_CONFIG_KEY_") || strings.HasPrefix(upper, "GIT_CONFIG_VALUE_") {
+		return true
+	}
+	for _, frag := range stdioCredentialNameFragments {
+		if strings.Contains(upper, frag) {
+			return true
+		}
+	}
+	for _, part := range strings.Split(upper, "_") {
+		if stdioCredentialNameParts[part] {
+			return true
+		}
+	}
+	if strings.HasSuffix(upper, "_KEY") {
+		return true
+	}
+	return stdioCredentialValueRe.MatchString(strings.TrimSpace(value))
+}
+
+// buildStdioMCPEnv prepares the child environment for a local stdio MCP server.
+// Machine-configured servers preserve inherited host variables (keeping zero
+// friction for personal tools), whereas repository-declared servers (.mcp.json
+// or hoxi.json) have inherited credentials and loader/shell-hook hijack
+// variables scrubbed before overlaying explicit config entries.
+func buildStdioMCPEnv(baseEnv []string, explicit map[string]string, fromRepo bool) []string {
+	if !fromRepo && len(explicit) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(baseEnv)+len(explicit))
+	idxByUpper := make(map[string]int, len(baseEnv)+len(explicit))
+	for _, kv := range baseEnv {
+		name, val, ok := strings.Cut(kv, "=")
+		if !ok || name == "" {
+			continue
+		}
+		if fromRepo && (isStdioCredentialEnv(name, val) || isBlockedStdioExecEnv(name)) {
+			continue
+		}
+		upper := strings.ToUpper(name)
+		if prev, exists := idxByUpper[upper]; exists {
+			out[prev] = kv
+			continue
+		}
+		idxByUpper[upper] = len(out)
+		out = append(out, kv)
+	}
+	if len(explicit) > 0 {
+		keys := make([]string, 0, len(explicit))
+		for k := range explicit {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if fromRepo && isBlockedStdioExecEnv(k) {
+				continue
+			}
+			kv := k + "=" + explicit[k]
+			upper := strings.ToUpper(k)
+			if prev, exists := idxByUpper[upper]; exists {
+				out[prev] = kv
+				continue
+			}
+			idxByUpper[upper] = len(out)
+			out = append(out, kv)
+		}
+	}
+	return out
 }

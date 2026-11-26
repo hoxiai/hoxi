@@ -164,16 +164,19 @@ func DefaultProfile(workspace string, network NetworkMode, extraWritable ...stri
 		}
 	}
 	deny = append(deny, protectedStateRules()...)
+	deny = append(deny, containerDaemonSocketRules()...)
+	denyRead := append(secretReadRules(workspace), containerDaemonSocketRules()...)
+	denySockets := append(credentialSocketRules(), containerDaemonSocketRules()...)
 	return Profile{
 		Filesystem: FilesystemProfile{
 			AllowWrite:         allow,
 			DenyWrite:          deny,
-			DenyRead:           secretReadRules(workspace),
+			DenyRead:           denyRead,
 			DenyNames:          []string{".git", "hoxi.json"},
 			NameDenyExemptions: nameDenyExemptions,
 			TemporaryDirectory: "/private/tmp",
 		},
-		Network: NetworkProfile{Mode: network, DenySockets: credentialSocketRules()},
+		Network: NetworkProfile{Mode: network, DenySockets: denySockets},
 	}, nil
 }
 
@@ -182,8 +185,7 @@ func DefaultProfile(workspace string, network NetworkMode, extraWritable ...stri
 // Secretive, gpg-agent's ssh socket, the current SSH_AUTH_SOCK) and ssh
 // ControlMaster connections under ~/.ssh. The runtime environment drops
 // SSH_AUTH_SOCK, but the default socket path is discoverable, so the profile
-// refuses the connection itself. Docker and other daemon sockets are not
-// listed here.
+// refuses the connection itself.
 func credentialSocketRules() []PathRule {
 	rules := []PathRule{{Path: `^/private/tmp/com\.apple\.launchd\.[^/]+/Listeners$`, Kind: PathRegex}}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
@@ -204,6 +206,36 @@ func credentialSocketRules() []PathRule {
 			sock = resolved
 		}
 		rules = append(rules, PathRule{Path: sock, Kind: PathLiteral})
+	}
+	return rules
+}
+
+// containerDaemonSocketRules block Docker, Colima, OrbStack, and Rancher
+// Desktop daemon sockets so confined commands cannot bind-mount the host
+// filesystem via a host container daemon to escape Seatbelt confinement.
+func containerDaemonSocketRules() []PathRule {
+	rules := []PathRule{
+		{Path: "/var/run/docker.sock", Kind: PathLiteral},
+		{Path: "/var/run/docker.sock.raw", Kind: PathLiteral},
+		{Path: "/private/var/run/docker.sock", Kind: PathLiteral},
+		{Path: "/private/var/run/docker.sock.raw", Kind: PathLiteral},
+		{Path: "/var/run/docker", Kind: PathSubtree},
+		{Path: "/private/var/run/docker", Kind: PathSubtree},
+		{Path: "/Users/Shared/.docker", Kind: PathSubtree},
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if resolved, err := filepath.EvalSymlinks(home); err == nil {
+			home = resolved
+		}
+		for _, dir := range []string{
+			filepath.Join(".docker", "run"),
+			filepath.Join(".docker", "desktop"),
+			".colima",
+			filepath.Join(".orbstack", "run"),
+			".rd",
+		} {
+			rules = append(rules, PathRule{Path: filepath.Join(home, dir), Kind: PathSubtree})
+		}
 	}
 	return rules
 }

@@ -260,6 +260,7 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 	}
 	overflowCompactions := 0
 	truncationRecoveries := 0
+	chantingRecoveries := 0
 	foldUnsignedToolSteps := false
 	effectiveEffort := req.Effort
 	effectiveFast := req.FastMode && req.SubtaskDepth == 0
@@ -401,9 +402,11 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 
 		for attempt := 0; ; attempt++ {
 			openStarted := time.Now()
-			resp, openErr := e.stream.OpenStream(ctx, httpReq)
+			stepStreamCtx, cancelStepStream := context.WithCancel(ctx)
+			resp, openErr := e.stream.OpenStream(stepStreamCtx, httpReq)
 			headerLatency := time.Since(openStarted)
 			if openErr != nil {
+				cancelStepStream()
 				if target.FallbackOpenAI && ctx.Err() == nil && isUnsupportedPromotedProtocolEndpoint(target.Protocol, openErr) {
 					target.Protocol = llm.ProtocolOpenAI
 					target.FallbackOpenAI = false
@@ -483,12 +486,22 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 			}
 
 			var parseErr error
-			streamed, parseErr = collectStepStream(ctx, drv, resp.Body, target, step, nextPartID, emit)
+			streamed, parseErr = collectStepStream(stepStreamCtx, cancelStepStream, drv, resp.Body, target, step, nextPartID, emit)
 			_ = resp.Body.Close()
+			cancelStepStream()
 			if parseErr == nil {
 				e.reportStreamOutcome(ctx, target, headerLatency, nil)
 				stepErr = nil
 				break
+			}
+			if streamed.chantingLoop && ctx.Err() == nil {
+				if canRecoverThinkingChant(streamed, chantingRecoveries, step, maxSteps) {
+					chantingRecoveries++
+					msgs = appendThinkingChantRecoveryMessages(msgs)
+					stepErr = nil
+					break
+				}
+				return parseErr
 			}
 			e.reportStreamOutcome(ctx, target, time.Since(openStarted), parseErr)
 			if !streamed.emittedVisible && effectiveFast && ctx.Err() == nil && isUnsupportedFastModeError(parseErr) {
@@ -558,6 +571,9 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 		}
 		if stepErr != nil {
 			return stepErr
+		}
+		if streamed.chantingLoop {
+			continue
 		}
 
 		if streamed.usage != nil {

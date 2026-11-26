@@ -16,8 +16,9 @@ func isCodexBackendTarget(target llm.StreamTarget) bool {
 
 func (d *openaiDriver) buildResponsesRequest(req ModelRequest) (llm.StreamHTTPRequest, error) {
 	codexBackend := isCodexBackendTarget(req.Target)
-	inputItems := make([]map[string]any, 0, len(req.Messages))
-	for _, m := range req.Messages {
+	hardened := hardenMessagesForRequest(req.Messages, false)
+	inputItems := make([]map[string]any, 0, len(hardened))
+	for _, m := range hardened {
 		if m.Role == RoleSystem {
 			continue
 		}

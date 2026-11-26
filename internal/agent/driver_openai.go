@@ -126,19 +126,20 @@ func assistantMediaSummaryText(b ContentBlock) string {
 }
 
 func (d *openaiDriver) buildChatCompletionsRequest(req ModelRequest) (llm.StreamHTTPRequest, error) {
+	hardened := hardenMessagesForRequest(req.Messages, false)
 	allowReasoningContent := !isStrictOpenAIChatHost(req.Target) && !isOpenAIChatModel(req.Target.ModelID)
-	activeTurnStart := lastPlainUserMessageIndex(req.Messages)
-	activeMsgs := req.Messages
-	if activeTurnStart >= 0 && activeTurnStart < len(req.Messages) {
-		activeMsgs = req.Messages[activeTurnStart:]
+	activeTurnStart := lastPlainUserMessageIndex(hardened)
+	activeMsgs := hardened
+	if activeTurnStart >= 0 && activeTurnStart < len(hardened) {
+		activeMsgs = hardened[activeTurnStart:]
 	}
 	forceToolReasoning := allowReasoningContent && requiresToolReasoningField(req.Target, activeMsgs)
 
-	msgs := make([]map[string]any, 0, len(req.Messages)+1)
+	msgs := make([]map[string]any, 0, len(hardened)+1)
 	if fullSystem := appendSystemPromptSuffix(req.System, req.SystemSuffix); strings.TrimSpace(fullSystem) != "" {
 		msgs = append(msgs, map[string]any{"role": "system", "content": fullSystem})
 	}
-	for msgIdx, m := range req.Messages {
+	for msgIdx, m := range hardened {
 		if m.Role == RoleSystem {
 			continue
 		}

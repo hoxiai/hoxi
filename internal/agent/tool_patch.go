@@ -201,6 +201,9 @@ func (t *applyPatchTool) Execute(ctx context.Context, tc ToolContext, input json
 				}
 				content = []byte(added)
 			}
+			if err := checkEditOmissionPlaceholders(op.path, string(prevAddBytes), string(content)); err != nil {
+				return ToolOutput{Title: op.path, IsError: true}, err
+			}
 			virtualFS[dstAbs] = content
 			delete(deletedFS, dstAbs)
 			staged = append(staged, stagedFileMutation{
@@ -279,6 +282,9 @@ func (t *applyPatchTool) Execute(ctx context.Context, tc ToolContext, input json
 			}
 			if err != nil {
 				return ToolOutput{Title: op.path, IsError: true}, fmt.Errorf("%s: %w", op.path, err)
+			}
+			if err := checkEditOmissionPlaceholders(op.path, normSrc, updated); err != nil {
+				return ToolOutput{Title: op.path, IsError: true}, err
 			}
 			if useCRLF {
 				updated = strings.ReplaceAll(updated, "\n", "\r\n")

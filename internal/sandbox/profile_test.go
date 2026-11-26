@@ -472,3 +472,68 @@ func TestResolvePathSymlinksOnUncreatedChild(t *testing.T) {
 		t.Fatalf("resolvePathSymlinks(%q) = %q, want %q", uncreated, got, want)
 	}
 }
+
+func TestProfileTextDeniesContainerDaemonSocketsAndServices(t *testing.T) {
+	home := resolvePathSymlinks(t.TempDir())
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	profile, err := DefaultProfile(t.TempDir(), NetworkAllow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, err := ProfileText(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"/var/run/docker.sock",
+		"/private/var/run/docker.sock",
+		strings.ReplaceAll(filepath.Join(home, ".docker", "run"), `\`, `\\`),
+		strings.ReplaceAll(filepath.Join(home, ".colima"), `\`, `\\`),
+		strings.ReplaceAll(filepath.Join(home, ".orbstack", "run"), `\`, `\\`),
+		strings.ReplaceAll(filepath.Join(home, ".rd"), `\`, `\\`),
+		`(global-name-prefix "com.docker.")`,
+		`(global-name-prefix "dev.kdrag0n.OrbStack")`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("container daemon deny is missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestSandboxRefusesContainerDaemonSocketUnderFakeHome(t *testing.T) {
+	if !CanApply() {
+		t.Skip("seatbelt sandbox_apply unavailable or blocked by outer sandbox")
+	}
+	if _, err := exec.LookPath("nc"); err != nil {
+		t.Skip("nc unavailable")
+	}
+	home, err := os.MkdirTemp("/private/tmp", "hx-home")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(home)
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	sockDir := filepath.Join(home, ".orbstack", "run")
+	if err := os.MkdirAll(sockDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(sockDir, "docker.sock")
+	l := listenUnix(t, sockPath)
+	defer l.Close()
+
+	profile, err := DefaultProfile(t.TempDir(), NetworkAllow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin, args, err := WrapShell(profile, "nc -U "+shellQuote(sockPath)+" </dev/null")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runCommand(bin, args...); err == nil {
+		t.Fatal("sandboxed command reached the OrbStack container daemon socket")
+	}
+}

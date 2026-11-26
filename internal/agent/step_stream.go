@@ -19,6 +19,9 @@ type stepStreamResult struct {
 	stepFinish           string
 	emittedVisible       bool
 	droppedTruncatedTool bool
+	chantingLoop         bool
+	chantingInThinking   bool
+	chantingSnippet      string
 	usage                *TokenUsage
 }
 
@@ -62,6 +65,7 @@ func (e *Engine) reportStreamOutcome(ctx context.Context, target llm.StreamTarge
 // thinking parts in place by PartID instead of duplicating `think_sig` parts.
 func collectStepStream(
 	ctx context.Context,
+	cancelStream context.CancelFunc,
 	drv ModelDriver,
 	body io.Reader,
 	target llm.StreamTarget,
@@ -75,6 +79,19 @@ func collectStepStream(
 	var ordered []orderedSegRef
 	var activeThink *thinkSegment
 	var activeText *textSegment
+	thinkChant := newStreamChantingDetector()
+	textChant := newStreamChantingDetector()
+	abortChant := func(inThinking bool, snippet string) {
+		if res.chantingLoop {
+			return
+		}
+		res.chantingLoop = true
+		res.chantingInThinking = inThinking
+		res.chantingSnippet = snippet
+		if cancelStream != nil {
+			cancelStream()
+		}
+	}
 
 	emitThinkEnd := func(seg *thinkSegment) {
 		if seg == nil || (!seg.started && seg.sig.Len() == 0 && seg.redacted == "") {
@@ -150,7 +167,7 @@ func collectStepStream(
 	parseErr := drv.ParseSSE(ctx, body, func(se StreamEvent) {
 		switch se.Kind {
 		case EventThinkingDelta:
-			if se.Delta == "" {
+			if se.Delta == "" || res.chantingLoop {
 				return
 			}
 			res.emittedVisible = true
@@ -167,6 +184,9 @@ func collectStepStream(
 			}
 			activeThink.text.WriteString(se.Delta)
 			emit(EngineEvent{Kind: EngineThinkingDelta, Step: step, PartID: activeThink.id, Text: se.Delta})
+			if hit, snippet := thinkChant.Observe(se.Delta); hit {
+				abortChant(true, snippet)
+			}
 
 		case EventSignatureDelta:
 			if se.Delta == "" {
@@ -208,7 +228,7 @@ func collectStepStream(
 			}
 
 		case EventTextDelta:
-			if se.Delta == "" {
+			if se.Delta == "" || res.chantingLoop {
 				return
 			}
 			res.emittedVisible = true
@@ -224,8 +244,13 @@ func collectStepStream(
 			activeText.text.WriteString(se.Delta)
 			res.visibleTextLen += len(se.Delta)
 			emit(EngineEvent{Kind: EngineTextDelta, Step: step, PartID: activeText.id, Text: se.Delta})
+			if hit, snippet := textChant.Observe(se.Delta); hit {
+				abortChant(false, snippet)
+			}
 
 		case EventToolCallReady:
+			thinkChant.Reset()
+			textChant.Reset()
 			if se.ToolCall != nil {
 				res.toolCalls = append(res.toolCalls, *se.ToolCall)
 			}
@@ -287,6 +312,9 @@ func collectStepStream(
 			Input:     tc.Input,
 			Signature: tc.Signature,
 		})
+	}
+	if res.chantingLoop {
+		return res, fmt.Errorf("%w: %q", errStreamChantingLoop, res.chantingSnippet)
 	}
 	return res, parseErr
 }

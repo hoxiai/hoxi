@@ -124,6 +124,15 @@ const seatbeltBase = `(version 1)
   (global-name "com.apple.SystemConfiguration.DNSConfiguration")
   (global-name "com.apple.SystemConfiguration.configd"))
 (allow sysctl-read (sysctl-name-regex #"^net.routetable"))
+
+; block container manager Mach/XPC services and shared memory to prevent sandbox escape
+(deny mach-lookup
+  (xpc-service-name-prefix "com.docker.")
+  (global-name-prefix "com.docker.")
+  (global-name-prefix "dev.kdrag0n.OrbStack"))
+(deny ipc-posix-shm*
+  (ipc-posix-name-prefix "docker")
+  (ipc-posix-name-prefix "com.docker."))
 `
 
 // Available reports whether OS-level confinement is installed on this platform.

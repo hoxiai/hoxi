@@ -55,6 +55,7 @@ func OnDemandProfile(workspace string, denyPorts []int) (Profile, error) {
 	}
 	deny = append(deny, protectedStateRules()...)
 	deny = append(deny, laterExecutionCacheRules()...)
+	deny = append(deny, containerDaemonSocketRules()...)
 	tcpInUse, udpInUse, err := ListeningLocalPorts()
 	if err != nil {
 		return Profile{}, fmt.Errorf("%w: %v", errNoPortSnapshot, err)
@@ -62,6 +63,8 @@ func OnDemandProfile(workspace string, denyPorts []int) (Profile, error) {
 	ports := append(append([]int(nil), denyPorts...), LocalProxyPorts()...)
 	denyRead := append(secretReadRules(workspace), anywhereSecretFileRules()...)
 	denyRead = append(denyRead, agentCredentialRules()...)
+	denyRead = append(denyRead, containerDaemonSocketRules()...)
+	denySockets := append(credentialSocketRules(), containerDaemonSocketRules()...)
 	return Profile{
 		Filesystem: FilesystemProfile{
 			AllowWrite:         allow,
@@ -73,7 +76,7 @@ func OnDemandProfile(workspace string, denyPorts []int) (Profile, error) {
 		Network: NetworkProfile{
 			Mode:              NetworkLocal,
 			AllowUnixSockets:  []PathRule{{Path: workspace, Kind: PathSubtree}},
-			DenySockets:       credentialSocketRules(),
+			DenySockets:       denySockets,
 			DenyLoopbackPorts: uniquePorts(ports),
 			DenyLoopbackTCP:   tcpInUse,
 			DenyLoopbackUDP:   udpInUse,

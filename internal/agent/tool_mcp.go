@@ -63,6 +63,7 @@ type mcpServerSpec struct {
 	Env             map[string]string
 	StartupBudgetMs int
 	OAuthError      string
+	FromRepo        bool
 }
 
 type mcpCallTool struct{}
@@ -151,6 +152,21 @@ func resolveMCPServers(tc ToolContext) ([]mcpServerSpec, error) {
 		}
 		layers = hoxiconfig.Overlay(layers, normalized)
 	}
+	repoServers := make(map[string]bool)
+	markRepoServers := func(m map[string]any) {
+		for name, raw := range m {
+			key := strings.ToLower(strings.TrimSpace(name))
+			cfg, ok := raw.(map[string]any)
+			if !ok || key == "" {
+				continue
+			}
+			if isMCPConfigDisabled(cfg) {
+				delete(repoServers, key)
+				continue
+			}
+			repoServers[key] = true
+		}
+	}
 	merged := make(map[string]mcpServerSpec)
 	collectFromMap := func(m map[string]any) {
 		for name, raw := range m {
@@ -175,6 +191,7 @@ func resolveMCPServers(tc ToolContext) ([]mcpServerSpec, error) {
 				Headers:         toStringMap(cfg["headers"]),
 				Env:             toStringMap(cfg["environment"]),
 				StartupBudgetMs: budgetMs,
+				FromRepo:        repoServers[strings.ToLower(strings.TrimSpace(name))],
 			}
 			if len(spec.Env) == 0 {
 				spec.Env = toStringMap(cfg["env"])
@@ -210,10 +227,12 @@ func resolveMCPServers(tc ToolContext) ([]mcpServerSpec, error) {
 	machineServers := hoxiconfig.Overlay(nil, layers)
 	if dotMCP := loadWorkspaceDotMCP(tc.WorktreeDir); len(dotMCP) > 0 {
 		applyRepoMCPLayer(layers, machineServers, dotMCP)
+		markRepoServers(dotMCP)
 	}
 	// The explicit native project source wins over legacy .mcp.json.
 	if m, ok := project["mcp"].(map[string]any); ok {
 		applyRepoMCPLayer(layers, machineServers, m)
+		markRepoServers(m)
 	}
 	collectFromMap(layers)
 	names := make([]string, 0, len(merged))

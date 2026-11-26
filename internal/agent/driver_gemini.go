@@ -22,9 +22,13 @@ func (d *geminiDriver) SystemPromptPatch() string {
 }
 
 func (d *geminiDriver) BuildRequest(req ModelRequest) (llm.StreamHTTPRequest, error) {
+	thinking, hasThinkingConfig := reasoningVariant(req)["thinkingConfig"].(map[string]any)
+	useSyntheticSig := geminiNeedsThoughtSignatureFallback(req.Target, hasThinkingConfig)
+	hardened := hardenMessagesForRequest(req.Messages, true)
+
 	toolNames := make(map[string]string)
-	contents := make([]map[string]any, 0, len(req.Messages))
-	for _, m := range req.Messages {
+	contents := make([]map[string]any, 0, len(hardened))
+	for _, m := range hardened {
 		if m.Role == RoleSystem {
 			continue
 		}
@@ -33,6 +37,7 @@ func (d *geminiDriver) BuildRequest(req ModelRequest) (llm.StreamHTTPRequest, er
 			role = "model"
 		}
 		parts := make([]map[string]any, 0, len(m.Content))
+		sawFunctionCall := false
 		for _, b := range m.Content {
 			switch b.Type {
 			case ContentThinking:
@@ -67,7 +72,10 @@ func (d *geminiDriver) BuildRequest(req ModelRequest) (llm.StreamHTTPRequest, er
 				}
 				if b.Signature != "" {
 					fcPart["thoughtSignature"] = b.Signature
+				} else if !sawFunctionCall && useSyntheticSig {
+					fcPart["thoughtSignature"] = geminiSyntheticThoughtSignature
 				}
+				sawFunctionCall = true
 				parts = append(parts, fcPart)
 			case ContentToolResult:
 				name := toolNames[b.ToolUseID]
@@ -83,7 +91,12 @@ func (d *geminiDriver) BuildRequest(req ModelRequest) (llm.StreamHTTPRequest, er
 			}
 		}
 		if len(parts) > 0 {
-			contents = append(contents, map[string]any{"role": role, "parts": parts})
+			if len(contents) > 0 && contents[len(contents)-1]["role"] == role {
+				prevParts, _ := contents[len(contents)-1]["parts"].([]map[string]any)
+				contents[len(contents)-1]["parts"] = append(prevParts, parts...)
+			} else {
+				contents = append(contents, map[string]any{"role": role, "parts": parts})
+			}
 		}
 	}
 
@@ -95,7 +108,7 @@ func (d *geminiDriver) BuildRequest(req ModelRequest) (llm.StreamHTTPRequest, er
 	if req.MaxTokens > 0 {
 		generation["maxOutputTokens"] = req.MaxTokens
 	}
-	if thinking, ok := reasoningVariant(req)["thinkingConfig"].(map[string]any); ok {
+	if hasThinkingConfig {
 		generation["thinkingConfig"] = thinking
 	}
 	if len(generation) > 0 {

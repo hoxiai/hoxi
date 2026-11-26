@@ -18,6 +18,7 @@ func TestSandboxedRuntimeEnvDropsCredentials(t *testing.T) {
 	env := []string{
 		"PATH=/usr/bin:/bin", "HOME=/Users/u", "LANG=en_US.UTF-8", "GIT_AUTHOR_NAME=U",
 		"HTTPS_PROXY=http://user:pw@proxy:8080", "JAVA_HOME=/opt/jdk", "PWD=/w",
+		"NODE_OPTIONS=--max-old-space-size=4096",
 		"ANTHROPIC_API_KEY=sk-ant-keep", "ANTHROPIC_BASE_URL=https://api.anthropic.com",
 		"SSH_AUTH_SOCK=/private/tmp/com.apple.launchd.x/Listeners", "SSH_AGENT_PID=1",
 		"GH_TOKEN=a", "GITHUB_TOKEN=b", "NPM_TOKEN=c", "NODE_AUTH_TOKEN=d", "CARGO_REGISTRY_TOKEN=e",
@@ -26,9 +27,10 @@ func TestSandboxedRuntimeEnvDropsCredentials(t *testing.T) {
 		"npm_config__auth=m", "DOCKER_AUTH_CONFIG=n", "GIT_ASKPASS=/bin/askpass", "KUBECONFIG=/k",
 		"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=http.extraHeader", "GIT_CONFIG_VALUE_0=Authorization: x",
 		"INNOCENT_NAME=ghp_abcdefghijklmnopqrstuvwxyz0123", "DATABASE_URL=postgres://app:pw@db/x",
+		"LD_PRELOAD=/tmp/evil.so", "DYLD_INSERT_LIBRARIES=/tmp/evil.dylib", "BASH_ENV=/tmp/hook.sh", "PYTHONSTARTUP=/tmp/p.py",
 	}
 	got := envNames(sandboxedRuntimeEnv(string(RuntimeClaudeCode), env))
-	for _, keep := range []string{"PATH", "HOME", "LANG", "GIT_AUTHOR_NAME", "HTTPS_PROXY", "JAVA_HOME", "PWD", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"} {
+	for _, keep := range []string{"PATH", "HOME", "LANG", "GIT_AUTHOR_NAME", "HTTPS_PROXY", "JAVA_HOME", "PWD", "NODE_OPTIONS", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"} {
 		if !got[keep] {
 			t.Errorf("%s was dropped", keep)
 		}
@@ -39,6 +41,7 @@ func TestSandboxedRuntimeEnvDropsCredentials(t *testing.T) {
 		"PGPASSWORD", "TWINE_PASSWORD", "OPENAI_API_KEY", "STRIPE_KEY", "GITHUB_PAT", "npm_config__auth",
 		"DOCKER_AUTH_CONFIG", "GIT_ASKPASS", "KUBECONFIG", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0",
 		"GIT_CONFIG_VALUE_0", "INNOCENT_NAME", "DATABASE_URL",
+		"LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "BASH_ENV", "PYTHONSTARTUP",
 	} {
 		if got[drop] {
 			t.Errorf("%s reached the sandboxed runtime", drop)

@@ -34,10 +34,22 @@ var credentialValueRe = regexp.MustCompile(`^(?:gh[pousr]_[A-Za-z0-9]{20,}|githu
 // even when the proxy URL embeds a password.
 var proxyEnvNames = setOf("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy")
 
+// blockedSandboxExecEnvNames are loader and shell/interpreter startup hook
+// variables that silently execute code on child startup without appearing in
+// the command line. Build-tuning flags such as NODE_OPTIONS stay untouched.
+var blockedSandboxExecEnvNames = setOf(
+	"LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "DYLD_FORCE_FLAT_NAMESPACE",
+	"BASH_ENV", "ENV", "ZDOTDIR",
+	"PYTHONSTARTUP", "PERL5OPT", "RUBYOPT",
+)
+
 // isCredentialEnv reports whether one NAME=value entry must be dropped.
 func isCredentialEnv(name, value string) bool {
 	if proxyEnvNames[name] || proxyEnvNames[strings.ToUpper(name)] {
 		return false
+	}
+	if blockedSandboxExecEnvNames[strings.ToUpper(strings.TrimSpace(name))] {
+		return true
 	}
 	return isCredentialEnvName(name) || credentialValueRe.MatchString(strings.TrimSpace(value))
 }

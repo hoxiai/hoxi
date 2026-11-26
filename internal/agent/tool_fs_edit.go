@@ -63,6 +63,13 @@ func (t *writeTool) Execute(ctx context.Context, tc ToolContext, input json.RawM
 			return ToolOutput{Title: p, IsError: true}, err
 		}
 	}
+	var beforeText string
+	if prevErr == nil {
+		beforeText = string(prevBytes)
+	}
+	if err := checkEditOmissionPlaceholders(p, beforeText, contentStr); err != nil {
+		return ToolOutput{Title: p, IsError: true}, err
+	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return ToolOutput{Title: p, IsError: true}, err
 	}
@@ -80,10 +87,6 @@ func (t *writeTool) Execute(ctx context.Context, tc ToolContext, input json.RawM
 		}
 	}
 	out = appendSubdirectoryRules(tc, target, out)
-	var beforeText string
-	if prevErr == nil {
-		beforeText = string(prevBytes)
-	}
 	return ToolOutput{
 		Title:    p,
 		Output:   out,
@@ -152,6 +155,9 @@ func (t *editTool) Execute(ctx context.Context, tc ToolContext, input json.RawMe
 
 	if oldStr == "" {
 		return ToolOutput{Title: p, IsError: true}, fmt.Errorf("oldString cannot be empty")
+	}
+	if err := checkEditOmissionPlaceholders(p, oldStr, newStr); err != nil {
+		return ToolOutput{Title: p, IsError: true}, err
 	}
 	updated, startLine, err := applyProgressiveEdit(src, oldStr, newStr, args.ReplaceAll)
 	if err != nil {
@@ -466,6 +472,9 @@ func (t *multiEditTool) Execute(ctx context.Context, tc ToolContext, input json.
 		newStr := strings.ReplaceAll(ed.NewString, "\r\n", "\n")
 		if oldStr == "" {
 			return ToolOutput{Title: p, IsError: true}, fmt.Errorf("edit #%d: oldString cannot be empty", idx+1)
+		}
+		if err := checkEditOmissionPlaceholders(p, oldStr, newStr); err != nil {
+			return ToolOutput{Title: p, IsError: true}, fmt.Errorf("edit #%d failed (file left unchanged): %w", idx+1, err)
 		}
 		next, line, applyErr := applyProgressiveEdit(cur, oldStr, newStr, ed.ReplaceAll)
 		if applyErr != nil {

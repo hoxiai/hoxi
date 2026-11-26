@@ -28,8 +28,9 @@ func (d *anthropicDriver) BuildRequest(req ModelRequest) (llm.StreamHTTPRequest,
 	if maxTokens <= 0 {
 		maxTokens = 8192
 	}
-	msgs := make([]map[string]any, 0, len(req.Messages))
-	for _, m := range req.Messages {
+	hardened := hardenMessagesForRequest(req.Messages, true)
+	msgs := make([]map[string]any, 0, len(hardened))
+	for _, m := range hardened {
 		if m.Role == RoleSystem {
 			continue
 		}
@@ -114,6 +115,25 @@ func (d *anthropicDriver) BuildRequest(req ModelRequest) (llm.StreamHTTPRequest,
 			blocks = append(blocks, block)
 		}
 		if len(blocks) == 0 {
+			continue
+		}
+		if len(msgs) > 0 && msgs[len(msgs)-1]["role"] == string(m.Role) {
+			prevBlocks, _ := msgs[len(msgs)-1]["content"].([]map[string]any)
+			merged := append(prevBlocks, blocks...)
+			if m.Role == RoleUser && len(merged) > 1 {
+				var trBlocks, otherBlocks []map[string]any
+				for _, blk := range merged {
+					if blk["type"] == "tool_result" {
+						trBlocks = append(trBlocks, blk)
+					} else {
+						otherBlocks = append(otherBlocks, blk)
+					}
+				}
+				if len(trBlocks) > 0 && len(otherBlocks) > 0 {
+					merged = append(trBlocks, otherBlocks...)
+				}
+			}
+			msgs[len(msgs)-1]["content"] = merged
 			continue
 		}
 		if m.Role == RoleUser && len(blocks) > 1 {
