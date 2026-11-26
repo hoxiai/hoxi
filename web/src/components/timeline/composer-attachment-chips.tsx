@@ -8,7 +8,6 @@ import {
   AlertCircle,
   AtSign,
   Check,
-  ClipboardPaste,
   ExternalLink,
   FileText,
   LoaderCircle,
@@ -37,6 +36,7 @@ import type {
 } from "./composer-hooks";
 import type { ComposerContextAttachment } from "../../store/workspace";
 import { ComposerContextChips } from "./ComposerContextChips";
+import { ComposerPasteChips } from "./ComposerPasteChips";
 
 export function ComposerAutocompletePopover(props: {
   triggerMode: "file" | "command" | null;
@@ -147,6 +147,7 @@ export function ComposerAttachmentChips(props: {
   onRemoveSkill?: () => void;
   onInspectSkill?: (skill: SkillSelection) => void;
   onRemoveImage: (id: string) => void;
+  onUpdatePaste?: (id: string, content: string) => void;
   onRemovePaste: (id: string) => void;
 }) {
   const isImageItem = (img: ImageItem) => {
@@ -464,26 +465,13 @@ export function ComposerAttachmentChips(props: {
             </div>
           </Show>
 
-          <For each={props.pastes}>
-            {(p) => (
-              <div
-                class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)]/50 px-2.5 py-1 text-[11px] text-[var(--accent-text)]"
-                title={p.preview}
-              >
-                <ClipboardPaste size={11} class="shrink-0" />
-                <span class="font-mono font-medium">
-                  {t("timeline.pastedLinesChip", { count: p.lines })}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => props.onRemovePaste(p.id)}
-                  class="hover:text-[var(--danger-text)] cursor-pointer"
-                >
-                  <X size={11} />
-                </button>
-              </div>
-            )}
-          </For>
+          <Show when={props.pastes.length > 0}>
+            <ComposerPasteChips
+              pastes={props.pastes}
+              onUpdatePaste={props.onUpdatePaste}
+              onRemovePaste={props.onRemovePaste}
+            />
+          </Show>
           <Show when={(props.contexts?.length ?? 0) > 0 && props.onRemoveContext}>
             <ComposerContextChips
               contexts={props.contexts ?? []}

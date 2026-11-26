@@ -211,6 +211,10 @@ export async function loadUsageHistory(
         endDate: res.endDate || (res.days[res.days.length - 1]?.date ?? today),
         fetchedAt: Date.now(),
       };
+    } else if (manual && cachedOverview) {
+      // Keep overlapping days in sync without extending the TTL of untouched days.
+      const refreshed = new Map(res.days.map((day) => [day.date, day]));
+      cachedOverview.days = cachedOverview.days.map((day) => refreshed.get(day.date) ?? day);
     }
     setUsageHistory(res.days.map(priceHistoryDay));
     loadedSelection = selection;

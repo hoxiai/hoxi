@@ -609,9 +609,9 @@ func renderTrayIconPixels(pixels []uint32, size int, attention, running int, ava
 		}
 	}
 
-	// 2. Hoxi 7x8 fine dot-matrix H mark (38 anti-aliased circles centered in 32x32)
-	const dotStep = 2.45
-	const dotRadius = 0.88
+	// 2. Hoxi 7x8 fine dot-matrix H mark (38 anti-aliased circles, ~66% duty cycle, centered in 32x32)
+	const dotStep = 2.50
+	const dotRadius = 0.83
 	const dotStartX = (32.0 - 6.0*dotStep) / 2.0
 	const dotStartY = (32.0 - 7.0*dotStep) / 2.0
 	for y := 5; y <= 26; y++ {

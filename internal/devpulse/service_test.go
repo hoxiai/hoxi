@@ -32,10 +32,11 @@ func (s *stubPulseSource) SessionDirectories(string) (string, string) {
 }
 func (s *stubPulseSource) CandidateDirectories() []string { return s.candidates }
 func (s *stubPulseSource) SourceKey() SourceKey           { return s.sourceKey }
-func (s *stubPulseSource) VisitSessions(minUpdatedMs int64, fn func(sessionID string, visitTurns func(func(TurnUsage)))) {
+func (s *stubPulseSource) VisitSessions(minUpdatedMs int64, fn func(sessionID string, visitTurns func(func(TurnUsage)))) error {
 	if s.visitSessions != nil {
 		s.visitSessions(minUpdatedMs, fn)
 	}
+	return nil
 }
 func (s *stubPulseSource) NotImportedTurnSQLClause(string, string, string, string) string {
 	return "1=1"
@@ -142,6 +143,15 @@ func TestCollectGitDailyStatsCountsNonASCIIUntrackedFiles(t *testing.T) {
 	}
 }
 
+func mustDailyPulse(t *testing.T, svc *Service, forced bool) DailyPulseResponse {
+	t.Helper()
+	res, err := svc.DailyPulse("", "", forced)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
 func TestDailyPulseAndHistoryInProcessSQLite(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "hoxi.db")
 	t.Setenv("HOXI_DB_PATH", dbPath)
@@ -168,7 +178,7 @@ func TestDailyPulseAndHistoryInProcessSQLite(t *testing.T) {
 	}
 
 	svc := NewService(&stubPulseSource{})
-	pulse := svc.DailyPulse("", "", true)
+	pulse := mustDailyPulse(t, svc, true)
 	if pulse.DbSessionsCount != 1 || pulse.DbTurnsCount != 1 || pulse.DbTotalTokens != 2050 {
 		t.Fatalf("unexpected pulse counts: %+v", pulse)
 	}
@@ -370,6 +380,18 @@ func TestDailyPulseAndHistoryCountReasoningAndCacheWriteOnlySQLiteTurns(t *testi
 	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	ts := startOfToday.Add(time.Hour).UnixMilli()
 
+	// A present but not yet initialized DB fails the first query. Even with an
+	// unchanged fingerprint both cache layers must retry after the schema appears.
+	if err := os.WriteFile(dbPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(&stubPulseSource{sourceKey: SourceKey{RunnerRev: 1}})
+	w := httptest.NewRecorder()
+	svc.HandleDailyPulse(w, httptest.NewRequest(http.MethodGet, "/api/hoxi/dev-pulse", nil))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("failed SQLite query returned %d, want 503", w.Code)
+	}
+
 	err := sqlitecli.WithReadWrite(context.Background(), dbPath, 3*time.Second, func(ctx context.Context, db *sql.DB) error {
 		_, execErr := db.ExecContext(ctx, `
 			CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT, title TEXT, time_created INTEGER);
@@ -384,8 +406,7 @@ func TestDailyPulseAndHistoryCountReasoningAndCacheWriteOnlySQLiteTurns(t *testi
 		t.Fatal(err)
 	}
 
-	svc := NewService(&stubPulseSource{})
-	pulse := svc.DailyPulse("", "", true)
+	pulse := mustDailyPulse(t, svc, false)
 	if pulse.DbTurnsCount != 1 || pulse.DbReasoningTokens != 150 || pulse.DbCacheWriteTokens != 250 || pulse.DbTotalTokens != 400 {
 		t.Fatalf("unexpected pulse for reasoning/cache_write-only turn: %+v", pulse)
 	}
@@ -446,19 +467,19 @@ func TestDailyPulseRefreshesUsageWhenSourceKeyChangesWithinGitTTL(t *testing.T) 
 	}
 	svc := NewService(&dynamicKeyPulseSource{stubPulseSource: src, rev: &rev})
 
-	p1 := svc.DailyPulse("", "", false)
+	p1 := mustDailyPulse(t, svc, false)
 	if p1.DbInputTokens != 500 || gitCalls.Load() != 1 {
 		t.Fatalf("first pulse = %+v gitCalls=%d", p1, gitCalls.Load())
 	}
 	// Same sourceKey hits full cache.
-	p2 := svc.DailyPulse("", "", false)
+	p2 := mustDailyPulse(t, svc, false)
 	if p2.DbInputTokens != 500 || gitCalls.Load() != 1 {
 		t.Fatalf("cached pulse = %+v gitCalls=%d", p2, gitCalls.Load())
 	}
 	// Runner revision bumps within 15s TTL: usage must refresh immediately while reusing cached git stats.
 	tokens.Store(1200)
 	rev.Store(2)
-	p3 := svc.DailyPulse("", "", false)
+	p3 := mustDailyPulse(t, svc, false)
 	if p3.DbInputTokens != 1200 || gitCalls.Load() != 1 {
 		t.Fatalf("expected fresh tokens (1200) with reused git cache (gitCalls=1), got tokens=%d gitCalls=%d", p3.DbInputTokens, gitCalls.Load())
 	}
@@ -532,7 +553,7 @@ func TestDailyPulseUsageRefreshCoalescesAndNeverClobbersNewerForcedGitRefresh(t 
 	svc := NewService(&dynamicKeyPulseSource{stubPulseSource: src, rev: &rev})
 
 	// Seed initial cached entry with clean git (0 additions) and rev=1.
-	p1 := svc.DailyPulse("", "", false)
+	p1 := mustDailyPulse(t, svc, false)
 	if p1.UncommittedAdditions != 0 || p1.DbInputTokens != 100 {
 		t.Fatalf("initial pulse = %+v", p1)
 	}
@@ -554,7 +575,7 @@ func TestDailyPulseUsageRefreshCoalescesAndNeverClobbersNewerForcedGitRefresh(t 
 
 	// Concurrently run a forced refresh that sees the new dirty git file (2 additions).
 	untrackedLines.Store(2)
-	forcedRes := svc.DailyPulse("", "", true)
+	forcedRes := mustDailyPulse(t, svc, true)
 	if forcedRes.UncommittedAdditions != 2 {
 		t.Fatalf("forced pulse expected 2 uncommitted additions, got %+v", forcedRes)
 	}
@@ -564,7 +585,7 @@ func TestDailyPulseUsageRefreshCoalescesAndNeverClobbersNewerForcedGitRefresh(t 
 	close(releaseUsage)
 	wg.Wait()
 
-	after := svc.DailyPulse("", "", false)
+	after := mustDailyPulse(t, svc, false)
 	if after.UncommittedAdditions != 2 {
 		t.Fatalf("stale lightweight refresh clobbered newer forced git stats: got %+v", after)
 	}

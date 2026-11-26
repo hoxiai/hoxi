@@ -624,3 +624,43 @@ func TestAddOnLoginInvokedAfterAuthorizationWithoutDeadlock(t *testing.T) {
 		t.Fatalf("AddOnLogin callbacks observed (%q, %q), want (new-token, test@example.com)", got1, got2)
 	}
 }
+
+func TestNewServiceDoesNotLaunchOSBrowserUnderGoTest(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOXI_HOME", filepath.Join(tmp, "hoxi-home"))
+	fakeBin := filepath.Join(tmp, "bin")
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(tmp, "browser-launched")
+	stub := "#!/bin/sh\necho \"$@\" >> " + marker + "\n"
+	for _, name := range []string{"open", "xdg-open"} {
+		if err := os.WriteFile(filepath.Join(fakeBin, name), []byte(stub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", fakeBin)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "pending"})
+	}))
+	defer srv.Close()
+	t.Setenv("HOXI_SERVER_URL", srv.URL)
+
+	svc := NewService(nil)
+	t.Cleanup(svc.CancelAuthorization)
+	if svc.launchBrowser != nil {
+		t.Fatal("NewService must not wire OS browser launcher under go test")
+	}
+	res, err := svc.StartAuthorization(context.Background())
+	if err != nil || res == nil || res.AuthURL == "" {
+		t.Fatalf("StartAuthorization = (%+v, %v), want auth URL", res, err)
+	}
+	if _, err := svc.OpenPortalPage("rewards"); err != nil {
+		t.Fatalf("OpenPortalPage: %v", err)
+	}
+	openBrowser(res.AuthURL)
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("OS browser launcher unexpectedly executed during go test (stat err=%v)", err)
+	}
+}

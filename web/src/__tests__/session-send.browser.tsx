@@ -218,6 +218,102 @@ async function testBusyQueueSendKeepsComposerFocus() {
   } finally { c.cleanup(); }
 }
 
+async function testPastedChipEditPopover() {
+  fixture();
+  const sentPrompts: string[] = [];
+  hoxiAPI.sendPromptAsync = async (_id, promptText) => {
+    sentPrompts.push(promptText);
+  };
+  const waitExit = () => new Promise<void>((resolve) => setTimeout(resolve, 200));
+  const pasteLarge = (field: HTMLTextAreaElement, text: string) => {
+    const dt = new DataTransfer();
+    dt.setData("text/plain", text);
+    field.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+  };
+  const setEditorValue = (value: string) => {
+    const area = document.querySelector<HTMLTextAreaElement>("[data-paste-editor-textarea]")!;
+    assertTrue(Boolean(area), "paste edit popover should render textarea");
+    area.value = value;
+    area.dispatchEvent(new Event("input", { bubbles: true }));
+    return area;
+  };
+  const c = composer();
+  try {
+    const original = Array.from({ length: 12 }, (_, i) => `log line ${i + 1}`).join("\n");
+    pasteLarge(c.field(), original);
+    await frame();
+
+    const chip = c.host.querySelector<HTMLElement>("[data-composer-paste-chip]")!;
+    assertTrue(Boolean(chip), "large paste should collapse into a paste chip");
+    const editBtn = chip.querySelector<HTMLButtonElement>("[data-paste-edit-btn]")!;
+    const removeBtn = chip.querySelector<HTMLButtonElement>("[data-paste-remove-btn]")!;
+    assertTrue(Boolean(editBtn && removeBtn), "paste chip should render edit and remove buttons");
+    assertEqual(editBtn.nextElementSibling, removeBtn, "edit button should sit immediately left of delete button");
+    assertTrue(
+      editBtn.getBoundingClientRect().right <= removeBtn.getBoundingClientRect().left + 1,
+      "edit button should be positioned to the left of delete button"
+    );
+
+    // Open popover and cancel with Escape -> preserves original content
+    editBtn.click();
+    await frame();
+    const area1 = setEditorValue("discarded edit");
+    area1.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    await waitExit();
+    assertTrue(!document.querySelector("[data-composer-paste-popover]"), "Escape should close paste popover");
+    assertTrue(chip.textContent?.includes(t("timeline.pastedLinesChip", { count: 12 })), "Escape must keep original 12 lines");
+
+    // Reopen popover, edit, and save via Save button
+    c.host.querySelector<HTMLButtonElement>("[data-paste-edit-btn]")!.click();
+    await frame();
+    setEditorValue("alpha\nbeta\ngamma");
+    document.querySelector<HTMLButtonElement>("[data-paste-editor-save]")!.click();
+    await waitExit();
+    assertTrue(!document.querySelector("[data-composer-paste-popover]"), "Save should close paste popover");
+    assertTrue(
+      c.host.querySelector("[data-composer-paste-chip]")!.textContent?.includes(t("timeline.pastedLinesChip", { count: 3 })),
+      "saving edited text should update chip line count"
+    );
+
+    // Reopen a second time (verifies chip ref survives update), edit, and save with Cmd+Enter
+    c.host.querySelector<HTMLButtonElement>("[data-paste-edit-btn]")!.click();
+    await frame();
+    const popoverRect = document.querySelector<HTMLElement>("[data-composer-paste-popover]")!.getBoundingClientRect();
+    assertTrue(popoverRect.width > 200 && popoverRect.left >= 0 && popoverRect.top >= 0, "reopened popover stays anchored in viewport");
+    const area3 = setEditorValue("final line 1\nfinal line 2");
+    area3.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true, cancelable: true }));
+    await waitExit();
+    assertTrue(
+      c.host.querySelector("[data-composer-paste-chip]")!.textContent?.includes(t("timeline.pastedLinesChip", { count: 2 })),
+      "Cmd+Enter should save edited text and update chip"
+    );
+
+    // Send prompt and verify edited paste content is dispatched
+    c.type("check this");
+    c.send();
+    await frame();
+    assertEqual(sentPrompts.length, 1);
+    assertEqual(sentPrompts[0], "final line 1\nfinal line 2\n\ncheck this");
+
+    // Clearing content: outside click does not delete, explicit delete button does
+    pasteLarge(c.field(), original);
+    await frame();
+    c.host.querySelector<HTMLButtonElement>("[data-paste-edit-btn]")!.click();
+    await frame();
+    setEditorValue("   ");
+    document.body.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    await waitExit();
+    assertTrue(Boolean(c.host.querySelector("[data-composer-paste-chip]")), "clicking outside with blank text must not delete chip");
+
+    c.host.querySelector<HTMLButtonElement>("[data-paste-edit-btn]")!.click();
+    await frame();
+    setEditorValue("   ");
+    document.querySelector<HTMLButtonElement>("[data-paste-editor-save]")!.click();
+    await waitExit();
+    assertTrue(!c.host.querySelector("[data-composer-paste-chip]"), "explicitly saving blank text should remove paste chip");
+  } finally { c.cleanup(); }
+}
+
 export async function runBrowserTest(): Promise<string[]> {
   window.fetch = async () => new Response("{}", { headers: { "Content-Type": "application/json" } });
   const results: string[] = [];
@@ -229,6 +325,7 @@ export async function runBrowserTest(): Promise<string[]> {
     ["failed draft restoration preserves attachments and pasted blocks without duplicates", testDraftAttachments],
     ["a dispatched queued prompt replaces its bubble without blinking", testQueuedDispatchStaysVisible],
     ["queue send retains composer focus and its focus styling", testBusyQueueSendKeepsComposerFocus],
+    ["pasted line chip opens an anchored edit popover and dispatches updated text", testPastedChipEditPopover],
   ] as const) { await run(); results.push(name); }
   return results;
 }

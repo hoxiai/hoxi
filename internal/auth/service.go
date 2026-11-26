@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
@@ -60,11 +61,15 @@ type authorization struct {
 }
 
 func NewService(logger *slog.Logger) *Service {
+	launch := openBrowser
+	if testing.Testing() {
+		launch = nil
+	}
 	svc := &Service{
 		store:         NewTokenStore(),
 		logger:        logger,
 		serverBaseURL: hoxipaths.ServerBaseURL(),
-		launchBrowser: openBrowser,
+		launchBrowser: launch,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
@@ -710,6 +715,9 @@ func (s *Service) OpenPortalPage(target string) (string, error) {
 }
 
 func openBrowser(targetURL string) {
+	if testing.Testing() {
+		return
+	}
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":

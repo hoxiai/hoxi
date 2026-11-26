@@ -119,50 +119,51 @@ export function AccountSettingsTab() {
       <Show
         when={isLoggedIn()}
         fallback={
-          <div class="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/35 p-5 space-y-4">
-            <div class="flex flex-wrap items-center justify-between gap-4">
-              <div class="min-w-0 space-y-1">
-                <div class="text-[13.5px] font-semibold text-[var(--text-primary)]">
+          <div class="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/35 px-5 py-4 space-y-3">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="text-[13.5px] font-semibold text-[var(--text-primary)] truncate">
                   {t("settings.accountSignInTitle")}
-                </div>
-                <p class="text-[12px] text-[var(--text-muted)]">
-                  {t("settings.accountSignInDesc")}
-                </p>
+                </span>
+                <HelpTip text={t("settings.accountSignInDesc")} />
               </div>
 
-              <Show when={!desktopAuth.isAuthorizing}>
-                <button
-                  type="button"
-                  onClick={() => void startDesktopAuthorization()}
-                  class="shrink-0 inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--accent-primary)] hover:opacity-90 px-4 py-2 text-[12.5px] font-semibold text-[var(--accent-foreground)] shadow-sm transition-all active:scale-[0.99] cursor-pointer"
+              <Show
+                when={desktopAuth.isAuthorizing}
+                fallback={
+                  <button
+                    type="button"
+                    onClick={() => void startDesktopAuthorization()}
+                    class="shrink-0 inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--accent-primary)] hover:opacity-90 px-4 py-2 text-[12.5px] font-semibold text-[var(--accent-foreground)] shadow-sm transition-all active:scale-[0.99] cursor-pointer"
+                  >
+                    <span>{t("settings.accountOneClickLoginBtn")}</span>
+                    <ExternalLink size={13.5} />
+                  </button>
+                }
+              >
+                <div
+                  class="inline-flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 pl-3 pr-1.5 py-1.5 text-[12px] font-medium text-amber-500"
+                  title={isCustomAuthServer(desktopAuth.serverBaseUrl) ? desktopAuth.serverBaseUrl : undefined}
                 >
-                  <span>{t("settings.accountOneClickLoginBtn")}</span>
-                  <ExternalLink size={13.5} />
-                </button>
-              </Show>
-            </div>
-
-            <Show when={desktopAuth.isAuthorizing}>
-              <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5">
-                <div class="flex items-center gap-2 min-w-0 text-amber-500 text-[12px] font-medium">
                   <Spinner class="h-3.5 w-3.5 shrink-0" />
                   <span>{t("settings.accountWaitingBrowserAuth")}</span>
                   <Show when={isCustomAuthServer(desktopAuth.serverBaseUrl)}>
-                    <span class="font-mono text-[11px] text-[var(--text-muted)] truncate">
+                    <span class="font-mono text-[11px] text-[var(--text-muted)] max-w-[180px] truncate">
                       ({desktopAuth.serverBaseUrl})
                     </span>
                   </Show>
+                  <button
+                    type="button"
+                    onClick={() => void cancelDesktopAuthorization()}
+                    title={t("settings.accountCancelAuthBtn")}
+                    aria-label={t("settings.accountCancelAuthBtn")}
+                    class="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-[var(--text-muted)] hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                  >
+                    <X size={13} />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void cancelDesktopAuthorization()}
-                  class="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11.5px] text-[var(--text-muted)] hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer shrink-0"
-                >
-                  <X size={12} />
-                  <span>{t("settings.accountCancelAuthBtn")}</span>
-                </button>
-              </div>
-            </Show>
+              </Show>
+            </div>
 
             <Show when={desktopAuth.error}>
               <div class="text-[12px] text-rose-500 break-words">{desktopAuth.error}</div>

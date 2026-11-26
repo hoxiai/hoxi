@@ -53,11 +53,12 @@ type storedSession struct {
 	rec              SessionRecord
 	meta             SessionRecord        // protected by Store.mu; no transcript references
 	cache            transcriptCacheEntry // protected by Store.mu
-	summaryAccess    uint64               // protected by Store.mu; >0 when summaryTurns is cached
+	summaryAccess    uint64               // protected by Store.mu; >0 when a cold summary is cached
 	summaryTurns     []MessageTurn
 	usageTurns       []TurnUsageSummary
 	usageCached      bool
 	turnsLoaded      bool
+	turnsIncomplete  bool // partial replay may be displayed, but cannot supply usage rollups
 	hasRevertedTurns bool
 	active           bool
 	logLines         int
@@ -153,10 +154,10 @@ func (s *Store) ensureTurnsLocked(ss *storedSession) {
 	if ss.turnsLoaded {
 		return
 	}
-	ss.rec.Turns, ss.logLines = s.readTurns(ss.rec.ID)
+	ss.rec.Turns, ss.logLines, ss.turnsIncomplete = s.readTurnsWithStatus(ss.rec.ID)
 	editsHydrated := hydrateEditParts(ss.rec.ExternalID, ss.rec.Turns)
 	tokensHydrated := hydrateTurnTokens(ss.rec.ExternalID, ss.rec.Turns)
-	if editsHydrated || tokensHydrated {
+	if !ss.turnsIncomplete && (editsHydrated || tokensHydrated) {
 		if editsHydrated {
 			s.editMutations.Add(1)
 		}
@@ -214,6 +215,9 @@ func (s *Store) commitLocked(next SessionRecord, ss *storedSession) error {
 		return err
 	}
 	ss.rec, ss.turnsLoaded, ss.logLines = next, true, lines
+	if turnsChanged {
+		ss.turnsIncomplete = false
+	}
 	ss.edits = nil
 	ss.summaryTurns = nil
 	ss.usageTurns, ss.usageCached = nil, false
@@ -362,13 +366,7 @@ func (s *Store) VisitTurnsSummary(sessionID string, fn func(rec SessionRecord)) 
 		loaded = true
 	}
 	s.mu.Lock()
-	if s.records[ss.rec.ID] == ss && ss.summaryTurns != nil {
-		if ss.summaryAccess == 0 {
-			s.summarySessions++
-		}
-		s.clock++
-		ss.summaryAccess = s.clock
-	}
+	s.accountSummaryLocked(ss)
 	s.mu.Unlock()
 	rec := ss.rec
 	rec.Turns = ss.summaryTurns

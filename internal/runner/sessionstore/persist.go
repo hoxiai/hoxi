@@ -243,16 +243,13 @@ func (s *Store) persistSession(ss *storedSession, job *persistJob) {
 		live = len(ss.index.messages) + len(ss.index.parts)
 	}
 	compactNeeded := maintain && ss.logLines+len(entries) > 2*live+64
-	if compactNeeded && ss.turnsLoaded {
-		compact = cloneTurns(ss.rec.Turns)
-	}
 	id := ss.rec.ID
 	ss.mu.Unlock()
 
 	result := &persistResult{entries: entries, err: s.appendTurnEntries(ss, entries)}
-	if result.err == nil && compactNeeded && compact == nil {
-		turns, lines := s.readTurns(id)
-		if lines > 2*countCanonicalTurnLines(turns)+64 {
+	if result.err == nil && compactNeeded {
+		turns, lines, incomplete := s.readTurnsWithStatus(id)
+		if !incomplete && lines > 2*countCanonicalTurnLines(turns)+64 {
 			compact = turns
 		}
 	}

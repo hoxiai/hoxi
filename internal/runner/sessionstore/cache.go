@@ -66,16 +66,7 @@ func (s *Store) publishSessionAccountingLocked(ss *storedSession, refreshMeta bo
 			s.cachedSessions++
 			s.cachedBytes += ss.bodyBytes
 		}
-		if ss.summaryAccess > 0 && ss.summaryTurns == nil {
-			ss.summaryAccess = 0
-			s.summarySessions--
-		} else if ss.summaryTurns != nil && !ss.turnsLoaded {
-			if ss.summaryAccess == 0 {
-				s.summarySessions++
-			}
-			s.clock++
-			ss.summaryAccess = s.clock
-		}
+		s.accountSummaryLocked(ss)
 		s.clock++
 		if refreshMeta {
 			ss.meta = meta
@@ -188,6 +179,20 @@ func (s *Store) trimCache() {
 	s.trimSummaryCacheLocked()
 }
 
+// Both cold representations share one LRU slot. Caller holds ss.mu and s.mu.
+func (s *Store) accountSummaryLocked(ss *storedSession) {
+	if !ss.turnsLoaded && (ss.summaryTurns != nil || ss.usageCached) {
+		if ss.summaryAccess == 0 {
+			s.summarySessions++
+		}
+		s.clock++
+		ss.summaryAccess = s.clock
+	} else if ss.summaryAccess != 0 {
+		ss.summaryAccess = 0
+		s.summarySessions--
+	}
+}
+
 func (s *Store) trimSummaryCache() {
 	s.mu.RLock()
 	over := s.summaryMaxSessions > 0 && s.summarySessions > s.summaryMaxSessions
@@ -243,6 +248,7 @@ func (s *Store) trimSummaryCacheLocked() {
 		s.mu.Unlock()
 		if evict {
 			ss.summaryTurns = nil
+			ss.usageTurns, ss.usageCached = nil, false
 		}
 		ss.mu.Unlock()
 	}

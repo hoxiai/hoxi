@@ -309,7 +309,7 @@ func TestSummaryTurnsCacheIsBoundedAndCleanedOnDelete(t *testing.T) {
 		defer s.mu.RUnlock()
 		acct = s.summarySessions
 		for _, ss := range s.records {
-			if ss.summaryTurns != nil {
+			if ss.summaryTurns != nil || ss.usageCached {
 				actual++
 			}
 		}
@@ -365,6 +365,19 @@ func TestSummaryTurnsCacheIsBoundedAndCleanedOnDelete(t *testing.T) {
 	acct, actual = countCachedSummaries()
 	if acct != actual || actual > s.summaryMaxSessions {
 		t.Fatalf("after VisitTurnsSummary sweep: summarySessions=%d actual=%d, want both <= %d", acct, actual, s.summaryMaxSessions)
+	}
+
+	for i := 0; i < 10; i++ {
+		id := fmt.Sprintf("ses_cld_sum_%d", i)
+		s.VisitUsageTurns(id, func(_ SessionRecord, turns []TurnUsageSummary) {
+			if len(turns) != 1 || turns[0].ToolCallsTotal != 1 {
+				t.Fatalf("unexpected usage for %s: %+v", id, turns)
+			}
+		})
+		acct, actual = countCachedSummaries()
+		if acct != actual || actual > s.summaryMaxSessions {
+			t.Fatalf("after VisitUsageTurns: summarySessions=%d actual=%d, limit=%d", acct, actual, s.summaryMaxSessions)
+		}
 	}
 
 	// Deleting a session with a cached summary decrements summarySessions.

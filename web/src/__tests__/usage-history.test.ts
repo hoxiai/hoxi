@@ -364,9 +364,18 @@ describe("usage history pricing", () => {
       assertEqual(usageHistory()[0].date, fmt(-4));
       assertEqual(usageHistory()[2].date, fmt(-2));
 
-      // Manual refresh bypasses cache.
+      hoxiAPI.getDevPulseHistory = async () => {
+        fetchCalls++;
+        return { days: [historyDay({ date: fmt(0), turns: 99 })], startDate: fmt(0), endDate: fmt(0), timezone: "UTC" };
+      };
+      await loadUsageHistory({ kind: "days", days: 7 }, true);
+      await loadUsageHistory({ kind: "days", days: 14 }, false);
+      assertEqual(fetchCalls, 2, "switching ranges reuses the updated overview");
+      assertEqual(usageHistory().length, 14);
+      assertEqual(usageHistory()[13].turns, 99, "a wider range must not restore stale usage");
+
       await loadUsageHistory({ kind: "overview" }, true);
-      assertEqual(fetchCalls, 2, "manual refresh hits backend");
+      assertEqual(fetchCalls, 3, "manual refresh hits backend");
     } finally {
       clearUsageHistoryCache();
       hoxiAPI.getDevPulseHistory = origHistory;

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/hoxiai/hoxi/internal/diagnostics"
 	"github.com/hoxiai/hoxi/internal/llm"
@@ -32,6 +33,9 @@ const (
 	minContextScaleRatio = 0.55
 	maxContextScaleRatio = 1.35
 	minCalibrationTokens = 500
+
+	crossTurnCacheWarmTTL      = 5 * time.Minute
+	maxTurnContextCacheEntries = 64
 )
 
 // estimateTextUnits weights ASCII bytes at 4 units (~3.75 bytes/token when
@@ -193,6 +197,16 @@ type prefixFingerprint struct {
 	cacheRead    int
 }
 
+type turnContextSnapshot struct {
+	sessionID       string
+	scale           float64
+	lastPrompt      int
+	lastUsage       TokenUsage
+	lastObservedAt  time.Time
+	lastFingerprint prefixFingerprint
+	prefixCacheWarm bool
+}
+
 type contextTokenTracker struct {
 	anchored        bool
 	anchorPrompt    int
@@ -203,10 +217,101 @@ type contextTokenTracker struct {
 	prefixCacheWarm bool
 	lastUsage       TokenUsage
 	lastFingerprint prefixFingerprint
+	hasObservation  bool
+	observedPrompt  int
+	observedAt      time.Time
+	nowFn           func() time.Time
 }
 
 func newContextTokenTracker() *contextTokenTracker {
 	return &contextTokenTracker{}
+}
+
+func (t *contextTokenTracker) now() time.Time {
+	if t != nil && t.nowFn != nil {
+		return t.nowFn()
+	}
+	return time.Now()
+}
+
+func makeTurnContextCacheKey(cacheKey string, target llm.StreamTarget) string {
+	return strings.TrimSpace(cacheKey) + "\x00" +
+		strings.ToLower(strings.TrimSpace(target.ProviderID)) + "\x00" +
+		strings.ToLower(strings.TrimSpace(target.ModelID)) + "\x00" +
+		string(target.Protocol)
+}
+
+func prefixHashesMatch(prev, cur [][32]byte) bool {
+	if len(prev) == 0 || len(cur) < len(prev) {
+		return false
+	}
+	for i := range prev {
+		if prev[i] != cur[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// SeedFromPriorTurn restores cross-turn tokenizer calibration, exact prefix
+// anchoring, and (within the upstream cache TTL) warm-cache & drop-diagnostic
+// continuity using only zero-body SHA-256 digests from the previous turn.
+func (t *contextTokenTracker) SeedFromPriorTurn(
+	snap turnContextSnapshot,
+	now time.Time,
+	cacheKey, fullSystem string,
+	toolSpecs []ToolSpec,
+	msgs []Message,
+) {
+	if t == nil {
+		return
+	}
+	if snap.scale > 0 {
+		t.scale = snap.scale
+	}
+	prev := snap.lastFingerprint
+	if !prev.valid {
+		return
+	}
+	withinTTL := !snap.lastObservedAt.IsZero() && !now.Before(snap.lastObservedAt) && now.Sub(snap.lastObservedAt) <= crossTurnCacheWarmTTL
+	if withinTTL {
+		t.lastFingerprint = prev
+	}
+	cur := computePrefixFingerprint(cacheKey, fullSystem, toolSpecs, msgs, 0)
+	prefixUnchanged := cur.cacheKeyHash == prev.cacheKeyHash &&
+		cur.systemHash == prev.systemHash &&
+		cur.toolsHash == prev.toolsHash &&
+		prefixHashesMatch(prev.msgHashes, cur.msgHashes)
+	if !prefixUnchanged {
+		return
+	}
+	if snap.lastPrompt > 0 {
+		t.anchored = true
+		t.anchorPrompt = snap.lastPrompt
+		t.anchorMsgCount = len(prev.msgHashes)
+		t.anchorSystem = fullSystem
+		t.anchorToolCount = len(toolSpecs)
+	}
+	if withinTTL && snap.prefixCacheWarm && (snap.lastUsage.CacheRead > 0 || snap.lastUsage.CacheWrite > 0) {
+		t.prefixCacheWarm = true
+		t.lastUsage = snap.lastUsage
+	}
+}
+
+// Snapshot returns a zero-body summary of the latest observed provider step
+// in this turn for cross-turn session continuity.
+func (t *contextTokenTracker) Snapshot() (turnContextSnapshot, bool) {
+	if t == nil || !t.hasObservation {
+		return turnContextSnapshot{}, false
+	}
+	return turnContextSnapshot{
+		scale:           t.scale,
+		lastPrompt:      t.observedPrompt,
+		lastUsage:       t.lastUsage,
+		lastObservedAt:  t.observedAt,
+		lastFingerprint: t.lastFingerprint,
+		prefixCacheWarm: t.prefixCacheWarm,
+	}, true
 }
 
 func (t *contextTokenTracker) Scale() float64 {
@@ -281,6 +386,9 @@ func (t *contextTokenTracker) ObserveStep(sentMsgs []Message, fullSystem string,
 	t.anchorMsgCount = len(sentMsgs)
 	t.anchorSystem = fullSystem
 	t.anchorToolCount = len(toolSpecs)
+	t.hasObservation = true
+	t.observedPrompt = promptTokens
+	t.observedAt = t.now()
 
 	estPrompt := estimateTokens(sentMsgs, fullSystem) + estimateToolSpecsTokens(toolSpecs)
 	if estPrompt >= minCalibrationTokens {
@@ -434,6 +542,8 @@ func compactionTailAnchor(msgs []Message, historyLen, currentStep int) (tailStar
 
 const minCacheDropBaselineTokens = 2048
 
+var recordCacheDiagnostic = diagnostics.Record
+
 func computePrefixFingerprint(cacheKey, fullSystem string, toolSpecs []ToolSpec, msgs []Message, cacheRead int) prefixFingerprint {
 	fp := prefixFingerprint{
 		valid:        true,
@@ -527,7 +637,7 @@ func (t *contextTokenTracker) ObservePrefixCacheStability(
 		return
 	}
 	cause, shared := classifyPrefixCacheChange(prev, cur)
-	diagnostics.Record(diagnostics.Entry{
+	recordCacheDiagnostic(diagnostics.Entry{
 		Kind:       "cache",
 		Level:      "warn",
 		Source:     "agent",

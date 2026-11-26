@@ -96,6 +96,26 @@ func supportsOpenAIChatPromptCacheKey(target llm.StreamTarget) bool {
 	return isOpenAIChatModel(target.ModelID)
 }
 
+func isOpenRouterHost(target llm.StreamTarget) bool {
+	raw := strings.TrimSpace(target.BaseURL)
+	if raw == "" {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSpace(u.Hostname()))
+	return host == "openrouter.ai" || strings.HasSuffix(host, ".openrouter.ai")
+}
+
+func supportsOpenRouterTopLevelCacheControl(target llm.StreamTarget) bool {
+	if !isOpenRouterHost(target) {
+		return false
+	}
+	return strings.Contains(strings.ToLower(strings.TrimSpace(target.ModelID)), "claude")
+}
+
 func requiresToolReasoningField(target llm.StreamTarget, msgs []Message) bool {
 	for _, m := range msgs {
 		if m.Role != RoleAssistant {
@@ -245,6 +265,9 @@ func (d *openaiDriver) buildChatCompletionsRequest(req ModelRequest) (llm.Stream
 	if cacheKey != "" && supportsOpenAIChatPromptCacheKey(req.Target) {
 		payload["prompt_cache_key"] = cacheKey
 	}
+	if supportsOpenRouterTopLevelCacheControl(req.Target) {
+		payload["cache_control"] = map[string]string{"type": "ephemeral"}
+	}
 	if req.MaxTokens > 0 {
 		payload["max_completion_tokens"] = req.MaxTokens
 	}
@@ -344,8 +367,16 @@ func parseOpenAIChatSSE(ctx context.Context, body io.Reader, emit func(StreamEve
 			}
 			if details, ok := u["prompt_tokens_details"].(map[string]any); ok {
 				tu.CacheRead = intFromAny(details["cached_tokens"])
-			} else if hit := intFromAny(u["prompt_cache_hit_tokens"]); hit > 0 {
-				tu.CacheRead = hit
+				if cw := intFromAny(details["cache_write_tokens"]); cw > 0 {
+					tu.CacheWrite = cw
+				} else if cw := intFromAny(details["cache_creation_input_tokens"]); cw > 0 {
+					tu.CacheWrite = cw
+				}
+			}
+			if tu.CacheRead == 0 {
+				if hit := intFromAny(u["prompt_cache_hit_tokens"]); hit > 0 {
+					tu.CacheRead = hit
+				}
 			}
 			if details, ok := u["completion_tokens_details"].(map[string]any); ok {
 				tu.Reasoning = intFromAny(details["reasoning_tokens"])

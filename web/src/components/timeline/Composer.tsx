@@ -643,6 +643,7 @@ export default function Composer() {
             onRemoveSkill={() => selectComposerSkill(sessionID(), null)}
             onInspectSkill={(sk) => openSkillsBrowser(sk.key)}
             onRemoveImage={(id) => imgAttach.removeImage(id)}
+            onUpdatePaste={(id, content) => pasteCollapse.updatePaste(id, content)}
             onRemovePaste={(id) => pasteCollapse.removePaste(id)}
           />
 

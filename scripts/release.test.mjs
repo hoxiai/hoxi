@@ -1143,3 +1143,99 @@ test("package-dmg.sh sizes HFS+ DMG explicitly with headroom to avoid hdiutil EN
   assert.match(src, /-fs HFS\+/);
   assert.match(src, /-size "\$\{DMG_SIZE_MB\}m"/);
 });
+
+test("Windows NSIS installer uses valid ASCII ${U+XXXX} escapes and compiles with zero warnings", () => {
+  const installerDir = path.join(scripts, "../build/windows/installer");
+  const nsiPath = path.join(installerDir, "project.nsi");
+  const src = fs.readFileSync(nsiPath, "utf8");
+
+  // Keep project.nsi pure ASCII so Windows makensis under CP1252 cannot corrupt strings.
+  assert.match(src, /^[\x00-\x7F]*$/, "project.nsi must remain pure ASCII");
+  assert.doesNotMatch(src, /\$\\\{U\+/, "project.nsi must not backslash-escape NSIS ${U+XXXX} codepoints");
+
+  const decodeNsisUnicode = (raw) => raw.replace(/\$\{U\+([0-9A-Fa-f]{4,6})\}/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)));
+  const langStrings = new Map();
+  for (const match of src.matchAll(/^LangString\s+(\S+)\s+\$\{(LANG_[A-Z]+)\}\s+"([^"]*)"/gm)) {
+    const [, key, lang, value] = match;
+    if (!langStrings.has(key)) langStrings.set(key, {});
+    langStrings.get(key)[lang] = decodeNsisUnicode(value);
+  }
+  assert.ok(langStrings.size >= 13, `expected at least 13 LangString keys, got ${langStrings.size}`);
+  for (const [key, locales] of langStrings) {
+    assert.ok(locales.LANG_SIMPCHINESE, `${key} missing LANG_SIMPCHINESE`);
+    assert.ok(locales.LANG_ENGLISH, `${key} missing LANG_ENGLISH`);
+    assert.doesNotMatch(locales.LANG_SIMPCHINESE, /U\+[0-9A-Fa-f]{4}/, `${key} zh-CN contains unexpanded codepoint`);
+    assert.doesNotMatch(locales.LANG_ENGLISH, /U\+[0-9A-Fa-f]{4}/, `${key} en-US contains unexpanded codepoint`);
+  }
+  assert.equal(langStrings.get("HOXI_SUBTITLE").LANG_SIMPCHINESE, "极速、轻量的原生 AI 工程指挥中心");
+  assert.equal(langStrings.get("HOXI_INSTALL_NOW").LANG_SIMPCHINESE, "立即安装");
+  assert.equal(langStrings.get("HOXI_CUSTOM_COLLAPSED").LANG_SIMPCHINESE, "自定义选项 ▾");
+  assert.equal(langStrings.get("HOXI_CUSTOM_COLLAPSED").LANG_ENGLISH, "Custom Options ▾");
+  assert.equal(langStrings.get("HOXI_CUSTOM_EXPANDED").LANG_SIMPCHINESE, "收起选项 ▴");
+  assert.equal(langStrings.get("HOXI_CUSTOM_EXPANDED").LANG_ENGLISH, "Hide Options ▴");
+  assert.equal(langStrings.get("HOXI_LAUNCH_NOW").LANG_SIMPCHINESE, "立即体验");
+
+  const makensisCandidates = [
+    "makensis",
+    "/opt/homebrew/bin/makensis",
+    "/usr/local/bin/makensis",
+    "C:\\Program Files (x86)\\NSIS\\makensis.exe",
+  ];
+  const makensisBin = makensisCandidates.find((bin) => spawnSync(bin, ["-VERSION"], { encoding: "utf8" }).status === 0);
+  if (!makensisBin) return;
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-nsis-check-"));
+  try {
+    const tmpInst = path.join(dir, "build", "windows", "installer");
+    fs.mkdirSync(tmpInst, { recursive: true });
+    fs.mkdirSync(path.join(dir, "build", "bin"), { recursive: true });
+    fs.copyFileSync(path.join(scripts, "../build/windows/icon.ico"), path.join(dir, "build/windows/icon.ico"));
+    for (const file of ["banner.bmp", "header.bmp", "wizard.bmp", "project.nsi"]) {
+      fs.copyFileSync(path.join(installerDir, file), path.join(tmpInst, file));
+    }
+    for (const notice of ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"]) {
+      fs.writeFileSync(path.join(dir, notice), "stub\n");
+    }
+    fs.writeFileSync(
+      path.join(tmpInst, "wails_tools.nsh"),
+      [
+        '!define INFO_PROJECTNAME "Hoxi"',
+        '!define INFO_PRODUCTNAME "Hoxi"',
+        '!define INFO_PRODUCTVERSION "0.7.5"',
+        '!define INFO_COPYRIGHT "Copyright Hoxi"',
+        '!define PRODUCT_EXECUTABLE "Hoxi.exe"',
+        '!define ARCH "amd64"',
+        "!macro wails.checkArchitecture", "!macroend",
+        "!macro wails.setShellContext", "!macroend",
+        "!macro wails.webview2runtime", "!macroend",
+        "!macro wails.files", "!macroend",
+        "!macro wails.associateFiles", "!macroend",
+        "!macro wails.associateCustomProtocols", "!macroend",
+        "!macro wails.writeUninstaller", 'WriteUninstaller "$INSTDIR\\uninstall.exe"', "!macroend",
+        "!macro wails.unassociateFiles", "!macroend",
+        "!macro wails.unassociateCustomProtocols", "!macroend",
+        "!macro wails.deleteUninstaller", "!macroend",
+      ].join("\n") + "\n",
+    );
+
+    const compile = spawnSync(
+      makensisBin,
+      ["-WX", "-V3", "-XSetCompress off", path.join(tmpInst, "project.nsi")],
+      { encoding: "utf8" },
+    );
+    assert.equal(compile.status, 0, `makensis failed:\n${compile.stdout}\n${compile.stderr}`);
+    assert.doesNotMatch(compile.stdout + compile.stderr, /warning 6000/i);
+
+    const exeBytes = fs.readFileSync(path.join(dir, "build/bin/Hoxi-amd64-installer.exe"));
+    for (const expected of ["极速、轻量的原生 AI 工程指挥中心", "立即安装", "自定义选项 ▾", "Custom Options ▾", "立即体验"]) {
+      assert.ok(
+        exeBytes.includes(Buffer.from(expected, "utf16le")),
+        `compiled installer missing UTF-16LE string: ${expected}`,
+      );
+    }
+    assert.equal(exeBytes.includes(Buffer.from("U+6781", "utf16le")), false, "compiled installer contains raw U+6781");
+    assert.equal(exeBytes.includes(Buffer.from("U+6781", "ascii")), false, "compiled installer contains ASCII U+6781");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

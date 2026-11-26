@@ -73,7 +73,10 @@ type Engine struct {
 	retryDelay     []time.Duration
 	retryBudget    time.Duration
 	customRetry    bool
+	nowFn          func() time.Time
 	noFastMode     sync.Map
+	turnContextMu  sync.Mutex
+	turnContextMap map[string]turnContextSnapshot
 	subtaskMu      sync.RWMutex
 	subtaskSem     chan struct{}
 }
@@ -114,6 +117,67 @@ func (e *Engine) SetMaxConcurrentSubtasks(limit int) {
 	e.subtaskMu.Lock()
 	e.subtaskSem = make(chan struct{}, limit)
 	e.subtaskMu.Unlock()
+}
+
+// ForgetSession removes cached cross-turn context calibration/prefix snapshots
+// associated with sessionID.
+func (e *Engine) ForgetSession(sessionID string) {
+	sid := strings.TrimSpace(sessionID)
+	if e == nil || sid == "" {
+		return
+	}
+	prefix := sid + "\x00"
+	e.turnContextMu.Lock()
+	for k, v := range e.turnContextMap {
+		if strings.HasPrefix(k, prefix) || v.sessionID == sid {
+			delete(e.turnContextMap, k)
+		}
+	}
+	e.turnContextMu.Unlock()
+}
+
+func (e *Engine) now() time.Time {
+	if e != nil && e.nowFn != nil {
+		return e.nowFn()
+	}
+	return time.Now()
+}
+
+func (e *Engine) loadTurnContextSnapshot(key string) (turnContextSnapshot, bool) {
+	if e == nil || key == "" {
+		return turnContextSnapshot{}, false
+	}
+	e.turnContextMu.Lock()
+	snap, ok := e.turnContextMap[key]
+	e.turnContextMu.Unlock()
+	return snap, ok
+}
+
+func (e *Engine) saveTurnContextSnapshot(key string, snap turnContextSnapshot) {
+	if e == nil || key == "" {
+		return
+	}
+	e.turnContextMu.Lock()
+	defer e.turnContextMu.Unlock()
+	if e.turnContextMap == nil {
+		e.turnContextMap = make(map[string]turnContextSnapshot)
+	}
+	if _, exists := e.turnContextMap[key]; !exists && len(e.turnContextMap) >= maxTurnContextCacheEntries {
+		var oldestKey string
+		var oldestAt time.Time
+		first := true
+		for k, v := range e.turnContextMap {
+			if first || v.lastObservedAt.Before(oldestAt) {
+				oldestKey = k
+				oldestAt = v.lastObservedAt
+				first = false
+			}
+		}
+		if oldestKey != "" {
+			delete(e.turnContextMap, oldestKey)
+		}
+	}
+	e.turnContextMap[key] = snap
 }
 
 func (e *Engine) acquireSubtaskSlot(ctx context.Context) (func(), error) {
@@ -211,6 +275,7 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 	compactLimit := effectiveCompactContextLimit(target.ContextLimit, toolSpecs)
 	contextThresholds := resolveTurnContextThresholds(target)
 	tokenTracker := newContextTokenTracker()
+	tokenTracker.nowFn = e.nowFn
 	loopGuard := newStepLoopGuard()
 
 	historyLen := len(req.History)
@@ -226,6 +291,22 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 	})
 	if req.onFinalMessages != nil {
 		defer func() { req.onFinalMessages(msgs) }()
+	}
+	effectiveCacheKey := strings.TrimSpace(req.CacheKey)
+	if effectiveCacheKey == "" {
+		effectiveCacheKey = strings.TrimSpace(req.SessionID)
+	}
+	if req.SubtaskDepth == 0 && effectiveCacheKey != "" {
+		if snap, ok := e.loadTurnContextSnapshot(makeTurnContextCacheKey(effectiveCacheKey, target)); ok {
+			initialFullSystem := appendSystemPromptSuffix(systemPrompt, systemSuffix)
+			tokenTracker.SeedFromPriorTurn(snap, e.now(), effectiveCacheKey, initialFullSystem, toolSpecs, msgs)
+		}
+		defer func() {
+			if snap, ok := tokenTracker.Snapshot(); ok {
+				snap.sessionID = strings.TrimSpace(req.SessionID)
+				e.saveTurnContextSnapshot(makeTurnContextCacheKey(effectiveCacheKey, target), snap)
+			}
+		}()
 	}
 
 	var emitMu sync.Mutex

@@ -231,8 +231,16 @@ func (d *geminiDriver) ParseSSE(ctx context.Context, body io.Reader, emit func(S
 		}
 		return nil
 	})
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err != nil {
-		return err
+		// Once Gemini has already delivered a terminal finishReason or [DONE],
+		// a trailing transport reset before clean EOF must not discard the
+		// completed candidate or re-run the step.
+		if !sawTerminal || !isPostTerminalDisconnectError(err) {
+			return err
+		}
 	}
 	if !sawTerminal {
 		return ErrIncompleteStream

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"iter"
 	"os"
 	"path/filepath"
 	"strings"
@@ -265,6 +266,36 @@ func prepareTurnsAppend(f *os.File) (cleanEnd int64, prependNewline bool, err er
 	return 0, false, nil
 }
 
+// turnLogLines retains the delimiter for byte offsets and accepts a final line
+// without one. Records written by the store have no fixed byte-size limit.
+func turnLogLines(r io.Reader) iter.Seq2[[]byte, error] {
+	return func(yield func([]byte, error) bool) {
+		reader := bufio.NewReaderSize(r, 64<<10)
+		var pending []byte
+		for {
+			fragment, err := reader.ReadSlice('\n')
+			if err == bufio.ErrBufferFull {
+				pending = append(pending, fragment...)
+				continue
+			}
+			if err != nil && err != io.EOF {
+				yield(nil, err)
+				return
+			}
+			if pending != nil {
+				fragment = append(pending, fragment...)
+				pending = nil
+			}
+			if len(fragment) > 0 && !yield(fragment, nil) {
+				return
+			}
+			if err == io.EOF {
+				return
+			}
+		}
+	}
+}
+
 // readTurns replays the log. A torn trailing line from a crash is skipped.
 func (s *Store) readTurns(id string) ([]MessageTurn, int) {
 	turns, lines, _ := s.readTurnsWithStatus(id)
@@ -274,17 +305,19 @@ func (s *Store) readTurns(id string) ([]MessageTurn, int) {
 func (s *Store) readTurnsWithStatus(id string) ([]MessageTurn, int, bool) {
 	f, err := os.Open(filepath.Join(s.sessionDir(id), sessionTurnsFile))
 	if err != nil {
-		return nil, 0, false
+		return nil, 0, !errors.Is(err, os.ErrNotExist)
 	}
 	defer f.Close()
 	var turns []MessageTurn
 	var index transcriptIndex
 	lines := 0
 	corrupted := false
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), 64*1024*1024)
-	for scanner.Scan() {
-		line := bytes.TrimSpace(scanner.Bytes())
+	for raw, err := range turnLogLines(f) {
+		if err != nil {
+			corrupted = true
+			break
+		}
+		line := bytes.TrimSpace(raw)
 		if len(line) == 0 {
 			continue
 		}
@@ -300,9 +333,6 @@ func (s *Store) readTurnsWithStatus(id string) ([]MessageTurn, int, bool) {
 		case e.Part != nil:
 			index.upsertPart(turns, *e.Part)
 		}
-	}
-	if scanner.Err() != nil {
-		corrupted = true
 	}
 	for i := range turns {
 		turns[i].Parts = dedupeClaudeStreamParts(turns[i].Parts)
@@ -410,21 +440,23 @@ func (s *Store) CompactIdleTurns() (compacted int, freedBytes int64) {
 			ss.mu.Unlock()
 			continue
 		}
-		_ = s.flushSessionLocked(ss)
+		if !s.flushSessionLocked(ss) {
+			ss.mu.Unlock()
+			continue
+		}
 		turnsPath := filepath.Join(s.sessionDir(id), sessionTurnsFile)
 		beforeInfo, err := os.Stat(turnsPath)
 		if err != nil || beforeInfo.Size() == 0 {
 			ss.mu.Unlock()
 			continue
 		}
-		turns := ss.rec.Turns
-		lines := ss.logLines
-		corrupted := false
-		if !ss.turnsLoaded {
-			turns, lines, corrupted = s.readTurnsWithStatus(id)
+		if ss.turnsLoaded && ss.logLines <= countCanonicalTurnLines(ss.rec.Turns) {
+			ss.mu.Unlock()
+			continue
 		}
-		if corrupted || lines > countCanonicalTurnLines(turns) {
-			ss.diskMu.Lock()
+		ss.diskMu.Lock()
+		turns, lines, incomplete := s.readTurnsWithStatus(id)
+		if !incomplete && lines > countCanonicalTurnLines(turns) {
 			if newLines, err := s.rewriteTurns(id, turns); err == nil {
 				if ss.turnsLoaded {
 					ss.logLines = newLines
@@ -434,8 +466,8 @@ func (s *Store) CompactIdleTurns() (compacted int, freedBytes int64) {
 					freedBytes += beforeInfo.Size() - afterInfo.Size()
 				}
 			}
-			ss.diskMu.Unlock()
 		}
+		ss.diskMu.Unlock()
 		ss.mu.Unlock()
 	}
 	return compacted, freedBytes

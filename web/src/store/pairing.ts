@@ -58,6 +58,20 @@ export function setPairingShortCodeRelayUrl(url: string): void {
   writeStoredRelayUrl(next);
 }
 
+function applyDefaultShortCodeRelay(defaultRelay: string): { shortCodeRelayUrl?: string } {
+  const next = defaultRelay.trim().replace(/\/+$/, "");
+  if (!next) return {};
+  const current = pairing.shortCodeRelayUrl.trim().replace(/\/+$/, "");
+  if (!current) {
+    return { shortCodeRelayUrl: next };
+  }
+  if (current.toLowerCase() === "https://link.hoxi.ai" && current.toLowerCase() !== next.toLowerCase()) {
+    writeStoredRelayUrl(next);
+    return { shortCodeRelayUrl: next };
+  }
+  return {};
+}
+
 // Fetches the current LAN pairing code. The QR is regenerated on every call so
 // the displayed address follows the machine's network.
 export async function loadPairingCode(): Promise<void> {
@@ -67,12 +81,11 @@ export async function loadPairingCode(): Promise<void> {
   try {
     const code = await pairingAPI.getCode();
     if (gen !== pairingGen) return;
-    const defaultRelay = (code.shortCodeRelayUrl || "").trim();
     setPairing({
       code,
       loaded: true,
       error: "",
-      ...(pairing.shortCodeRelayUrl || !defaultRelay ? {} : { shortCodeRelayUrl: defaultRelay }),
+      ...applyDefaultShortCodeRelay(code.shortCodeRelayUrl || ""),
     });
   } catch {
     if (gen !== pairingGen) return;
@@ -95,12 +108,11 @@ export async function rotatePairingToken(): Promise<void> {
   try {
     const code = await pairingAPI.rotate();
     if (gen === pairingGen) {
-      const defaultRelay = (code.shortCodeRelayUrl || "").trim();
       setPairing({
         code,
         loaded: true,
         error: "",
-        ...(pairing.shortCodeRelayUrl || !defaultRelay ? {} : { shortCodeRelayUrl: defaultRelay }),
+        ...applyDefaultShortCodeRelay(code.shortCodeRelayUrl || ""),
       });
     }
   } catch {

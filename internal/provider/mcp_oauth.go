@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
@@ -185,10 +186,12 @@ func (g *Service) handleProviderMCPOAuthStart(w http.ResponseWriter, r *http.Req
 	browserFn := g.openBrowserFunc
 	g.mcpOAuthMu.Unlock()
 
-	if browserFn == nil {
+	if browserFn == nil && !testing.Testing() {
 		browserFn = openProviderBrowser
 	}
-	go browserFn(authURL)
+	if browserFn != nil {
+		go browserFn(authURL)
+	}
 	go g.runMCPOAuthPollLoop(sess)
 
 	writeJSON(w, http.StatusOK, mcpOAuthStartResponse{State: state, AuthURL: authURL, SiteOrigin: siteOrigin})
@@ -544,6 +547,9 @@ func toFloat64(values ...any) float64 {
 }
 
 func openProviderBrowser(targetURL string) {
+	if testing.Testing() {
+		return
+	}
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":

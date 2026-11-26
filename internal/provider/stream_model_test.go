@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -459,5 +460,82 @@ func TestHTTP1FallbackTransportIsolatesCloneWithoutMutatingSharedTransport(t *te
 	}
 	if llm.IsHTTP2ProtocolError(&llm.StreamHTTPError{StatusCode: 500, Message: "http2 protocol_error"}) {
 		t.Fatal("structured HTTP status responses must not be classified as HTTP/2 transport resets")
+	}
+}
+
+type headerCaptureTransport func(*http.Request) (*http.Response, error)
+
+func (f headerCaptureTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func TestOpenStreamSendsGrokConvIDHeaderOnlyForXAIHosts(t *testing.T) {
+	_, workspace := setupIsolatedEnv(t)
+	cfgPath := filepath.Join(workspace, ".hoxi", "models.json")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `{"provider":{
+		"xai":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://api.x.ai/v1","apiKey":"sk-xai"},"models":{"grok-4":{}}},
+		"oa":{"npm":"@ai-sdk/openai","options":{"baseURL":"https://api.openai.com/v1","apiKey":"sk-oa"},"models":{"gpt-5":{}}}
+	}}`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotHeaders http.Header
+	SetStreamTransportForTest(headerCaptureTransport(func(r *http.Request) (*http.Response, error) {
+		gotHeaders = r.Header.Clone()
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader("data: [DONE]\n\n")),
+		}, nil
+	}))
+	defer SetStreamTransportForTest(nil)
+
+	svc := NewService(0, "", workspace, nil)
+
+	// Positive: xAI host + SessionID sends x-grok-conv-id for sticky KV cache routing.
+	xaiTarget := svc.ResolveStreamTarget("xai", "grok-4")
+	resp, err := svc.OpenStream(context.Background(), llm.StreamHTTPRequest{
+		Target:    xaiTarget,
+		SessionID: "ses_grok_sticky_1",
+		Body:      []byte(`{"model":"grok-4"}`),
+	})
+	if err != nil {
+		t.Fatalf("OpenStream xai failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	if got := gotHeaders.Get("x-grok-conv-id"); got != "ses_grok_sticky_1" {
+		t.Fatalf("expected x-grok-conv-id=ses_grok_sticky_1 on api.x.ai, got %q", got)
+	}
+
+	// Rejection 1: xAI host with empty SessionID must NOT send x-grok-conv-id.
+	resp, err = svc.OpenStream(context.Background(), llm.StreamHTTPRequest{
+		Target: xaiTarget,
+		Body:   []byte(`{"model":"grok-4"}`),
+	})
+	if err != nil {
+		t.Fatalf("OpenStream xai empty sid failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	if got := gotHeaders.Get("x-grok-conv-id"); got != "" {
+		t.Fatalf("expected no x-grok-conv-id when SessionID empty, got %q", got)
+	}
+
+	// Rejection 2: non-xAI host must NOT send x-grok-conv-id.
+	oaTarget := svc.ResolveStreamTarget("oa", "gpt-5")
+	resp, err = svc.OpenStream(context.Background(), llm.StreamHTTPRequest{
+		Target:    oaTarget,
+		SessionID: "ses_oa_1",
+		Body:      []byte(`{"model":"gpt-5"}`),
+	})
+	if err != nil {
+		t.Fatalf("OpenStream oa failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	if got := gotHeaders.Get("x-grok-conv-id"); got != "" {
+		t.Fatalf("expected no x-grok-conv-id on api.openai.com, got %q", got)
 	}
 }

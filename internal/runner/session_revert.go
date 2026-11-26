@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -179,24 +178,20 @@ func (s *Service) handleSessionRevert(w http.ResponseWriter, r *http.Request, se
 	// conversation-only revert) can never widen into a whole-tree restore.
 	revertScope := revertScopePaths
 	if targetSnap != "" && strings.TrimSpace(rec.WorktreePath) != "" {
-		if scopePaths, scoped, scopeErr := s.resolveLocalRevertPaths(rec, allTurns, targetIdx, body.PartID, targetSnap, baseSnap); scopeErr != nil {
-			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to restore workspace snapshot: %v", scopeErr))
+		scopePaths, scoped, err := s.resolveLocalRevertPaths(rec, allTurns, targetIdx, body.PartID, targetSnap, baseSnap)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to resolve workspace paths: %v", err))
 			return
-		} else if scoped {
-			if err := worktree.RestoreSnapshotPaths(rec.WorktreePath, targetSnap, scopePaths); err != nil {
-				writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to restore workspace snapshot: %v", err))
-				return
-			}
+		}
+		if scoped {
 			revertPaths = scopePaths
 			codeChanged = len(scopePaths) > 0
 		} else {
-			if err := worktree.RestoreSnapshot(rec.WorktreePath, targetSnap); err != nil {
-				writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to restore workspace snapshot: %v", err))
-				return
-			}
 			revertScope = revertScopeWorkspace
 		}
 	}
+	previous := rec
+	change := revertWorkspaceChange{dir: rec.WorktreePath, target: targetSnap, before: createdSnapshot, scope: revertScope, paths: revertPaths}
 
 	if rec.Revert == nil {
 		rec.RevertSnapshot = createdSnapshot
@@ -218,26 +213,11 @@ func (s *Service) handleSessionRevert(w http.ResponseWriter, r *http.Request, se
 	}
 	rec.UpdatedAt = time.Now().UnixMilli()
 
-	if rec.Runtime == "opencode" && rec.ExternalID != "" {
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-		payload := map[string]interface{}{"messageID": body.MessageID}
-		if body.PartID != "" {
-			payload["partID"] = body.PartID
-		}
-		err := s.openCodeJSON(ctx, http.MethodPost, "/session/"+rec.ExternalID+"/revert", rec.WorktreePath, payload, nil)
-		cancel()
-		if err != nil {
-			rec.ExternalID = ""
-			rec.ContextPending = len(rec.Turns) > 0
-			rec.ContextTurnCount = len(rec.Turns)
-		}
-	} else {
-		rec.ExternalID = ""
-		rec.ContextPending = len(rec.Turns) > 0
-		rec.ContextTurnCount = len(rec.Turns)
+	payload := map[string]interface{}{"messageID": body.MessageID}
+	if body.PartID != "" {
+		payload["partID"] = body.PartID
 	}
-
-	if err := s.store.Put(rec); err != nil {
+	if err := s.commitSessionRevert(r.Context(), previous, &rec, change, "revert", payload); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -275,20 +255,8 @@ func (s *Service) handleSessionUnrevert(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	if rec.RevertSnapshot != "" && strings.TrimSpace(rec.WorktreePath) != "" {
-		var err error
-		if revertScopeFor(rec) == revertScopeWorkspace {
-			err = worktree.RestoreSnapshot(rec.WorktreePath, rec.RevertSnapshot)
-		} else {
-			// A paths-scoped revert (including an empty set) must never widen to
-			// a whole-tree restore: later user work would be deleted.
-			err = worktree.RestoreSnapshotPaths(rec.WorktreePath, rec.RevertSnapshot, rec.RevertPaths)
-		}
-		if err != nil {
-			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to restore workspace snapshot: %v", err))
-			return
-		}
-	}
+	previous := rec
+	change := revertWorkspaceChange{dir: rec.WorktreePath, target: rec.RevertSnapshot, scope: revertScopeFor(rec), paths: rec.RevertPaths}
 	if len(rec.RevertedTurns) > 0 {
 		rec.Turns = cloneTurns(rec.RevertedTurns)
 	}
@@ -299,22 +267,7 @@ func (s *Service) handleSessionUnrevert(w http.ResponseWriter, r *http.Request, 
 	rec.RevertScope = ""
 	rec.UpdatedAt = time.Now().UnixMilli()
 
-	if rec.Runtime == "opencode" && rec.ExternalID != "" {
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-		err := s.openCodeJSON(ctx, http.MethodPost, "/session/"+rec.ExternalID+"/unrevert", rec.WorktreePath, map[string]interface{}{}, nil)
-		cancel()
-		if err != nil {
-			rec.ExternalID = ""
-			rec.ContextPending = len(rec.Turns) > 0
-			rec.ContextTurnCount = len(rec.Turns)
-		}
-	} else {
-		rec.ExternalID = ""
-		rec.ContextPending = len(rec.Turns) > 0
-		rec.ContextTurnCount = len(rec.Turns)
-	}
-
-	if err := s.store.Put(rec); err != nil {
+	if err := s.commitSessionRevert(r.Context(), previous, &rec, change, "unrevert", map[string]interface{}{}); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

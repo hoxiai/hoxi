@@ -97,17 +97,18 @@ func (s *gatewayDevPulseSource) SourceKey() devpulse.SourceKey {
 	}
 }
 
-func (s *gatewayDevPulseSource) VisitSessions(minUpdatedMs int64, fn func(sessionID string, visitTurns func(func(devpulse.TurnUsage)))) {
+func (s *gatewayDevPulseSource) VisitSessions(minUpdatedMs int64, fn func(sessionID string, visitTurns func(func(devpulse.TurnUsage)))) error {
 	if s.g == nil || s.g.runner == nil {
-		return
+		return nil
 	}
 	store := s.g.runner.Store()
+	var readErr error
 	store.EachMeta(func(rec runner.SessionRecord) {
-		if rec.UpdatedAt < minUpdatedMs || rec.Subagent {
+		if readErr != nil || rec.UpdatedAt < minUpdatedMs || rec.Subagent {
 			return
 		}
 		fn(rec.ID, func(yield func(devpulse.TurnUsage)) {
-			store.VisitUsageTurns(rec.ID, func(full runner.SessionRecord, turns []runner.TurnUsageSummary) {
+			readErr = store.VisitUsageTurns(rec.ID, func(full runner.SessionRecord, turns []runner.TurnUsageSummary) {
 				for i := range turns {
 					if isImportedRunnerTurn(turns[i].ID, turns[i].Imported, full) {
 						continue
@@ -117,6 +118,7 @@ func (s *gatewayDevPulseSource) VisitSessions(minUpdatedMs int64, fn func(sessio
 			})
 		})
 	})
+	return readErr
 }
 
 func (s *gatewayDevPulseSource) NotImportedTurnSQLClause(titleCol, dataCol, rowTimeCol, sessTimeCol string) string {
@@ -164,7 +166,7 @@ func usageSummaryToPulseUsage(turn runner.TurnUsageSummary, full runner.SessionR
 	if tokens := turn.Tokens; tokens != nil {
 		if tokens.Input > 0 || tokens.Output > 0 || tokens.Reasoning > 0 || tokens.Cache.Read > 0 || tokens.Cache.Write > 0 {
 			u.HasTokens = true
-			u.InputTokens = int64(tokens.Input)
+			u.InputTokens = accountingInputTokens(tokens, full.Runtime, turn.ProviderID)
 			u.OutputTokens = int64(tokens.Output)
 			u.ReasoningTokens = int64(tokens.Reasoning)
 			u.CacheReadTokens = int64(tokens.Cache.Read)
@@ -172,6 +174,18 @@ func usageSummaryToPulseUsage(turn runner.TurnUsageSummary, full runner.SessionR
 		}
 	}
 	return u
+}
+
+// Before v0.7.5 Codex stored inclusive input, and Total was exactly Input +
+// Output. New Codex records include cache reads in Total as a separate bucket.
+// Correct only the unambiguous old shape, including in precomputed sidecars.
+func accountingInputTokens(t *runner.MessageTokens, runtime, provider string) int64 {
+	if (provider == string(runner.RuntimeCodex) || runtime == string(runner.RuntimeCodex)) &&
+		t.Cache.Read > 0 && t.Input >= t.Cache.Read && t.Output >= 0 && t.Reasoning == 0 &&
+		t.Cache.Write == 0 && t.Total > 0 && t.Total-t.Input == t.Output {
+		return int64(t.Input - t.Cache.Read)
+	}
+	return int64(t.Input)
 }
 
 func (g *Gateway) ensureDevPulse() *devpulse.Service {

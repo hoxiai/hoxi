@@ -85,6 +85,7 @@ export default function ShareImageModal() {
   };
 
   onCleanup(() => {
+    loadGeneration++;
     activeAbort?.abort();
     activeAbort = null;
     if (copyTimer !== undefined) clearTimeout(copyTimer);
@@ -130,30 +131,13 @@ export default function ShareImageModal() {
     setLoadError("");
     setActivePage(0);
 
-    if (!req) {
-      setTurns([]);
-      setSelectedExchangeIDs(new Set<string>());
-      setDisabledImageIDs(new Set<string>());
-      disposeRendered(null);
-      return;
-    }
+    setTurns([]);
+    setSelectedExchangeIDs(new Set<string>());
+    setDisabledImageIDs(new Set<string>());
+    disposeRendered(null);
+    setLoadingTurns(Boolean(req));
+    if (!req) return;
 
-    const { immediate, initialPrefs, workDir } = untrack(() => ({
-      immediate: (workspace.messagesBySession[req.sessionID] ?? []) as ShareTurnInput[],
-      initialPrefs: shareImagePrefs(),
-      workDir: currentWorkDir(),
-    }));
-    if (immediate.length > 0) {
-      setTurns(immediate);
-      const grouped = groupTurnsIntoExchanges(immediate, {
-        hideLocalPaths: initialPrefs.hideLocalPaths,
-        redactSecrets: initialPrefs.redactSecrets,
-        workspaceDir: workDir,
-      });
-      setSelectedExchangeIDs(resolveInitialExchangeSelection(grouped.exchanges, req.focusMessageID));
-    }
-
-    setLoadingTurns(true);
     void fetchSessionExportTurns(req.sessionID)
       .then((fetched) => {
         if (gen !== loadGeneration || untrack(shareImageModal)?.sessionID !== req.sessionID) return;
@@ -171,9 +155,7 @@ export default function ShareImageModal() {
       })
       .catch((err) => {
         if (gen !== loadGeneration) return;
-        if (immediate.length === 0) {
-          setLoadError(err instanceof Error ? err.message : String(err));
-        }
+        setLoadError(err instanceof Error ? err.message : String(err));
       })
       .finally(() => {
         if (gen === loadGeneration) setLoadingTurns(false);
@@ -239,6 +221,7 @@ export default function ShareImageModal() {
     activeAbort?.abort();
     const controller = new AbortController();
     activeAbort = controller;
+    disposeRendered(null);
     setRendering(true);
     setRenderError("");
 

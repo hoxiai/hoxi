@@ -1,7 +1,6 @@
 package sessionstore
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -108,10 +107,11 @@ func scanTurnsUsage(f *os.File) ([]TurnUsageSummary, error) {
 	order := make([]string, 0, 16)
 	toolsByMsg := make(map[string]map[string]bool)
 
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), 64*1024*1024)
-	for scanner.Scan() {
-		line := bytes.TrimSpace(scanner.Bytes())
+	for raw, err := range turnLogLines(f) {
+		if err != nil {
+			return nil, err
+		}
+		line := bytes.TrimSpace(raw)
 		if len(line) == 0 {
 			continue
 		}
@@ -120,8 +120,12 @@ func scanTurnsUsage(f *os.File) ([]TurnUsageSummary, error) {
 			continue
 		}
 		var entry usageLogEntry
-		if json.Unmarshal(line, &entry) != nil {
-			continue
+		if err := json.Unmarshal(line, &entry); err != nil {
+			// A crash can leave an unfinished final append after the last full turn.
+			if raw[len(raw)-1] != '\n' {
+				continue
+			}
+			return nil, err
 		}
 		switch {
 		case entry.Info != nil:
@@ -145,9 +149,6 @@ func scanTurnsUsage(f *os.File) ([]TurnUsageSummary, error) {
 				delete(m, entry.Part.ID)
 			}
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
 	}
 
 	var out []TurnUsageSummary
@@ -235,21 +236,32 @@ func (s *Store) saveUsageSummary(id string, turns []TurnUsageSummary, source os.
 
 // VisitUsageTurns supplies lightweight per-turn token and tool counts for
 // usage/history rollups without hydrating full transcripts, running Antigravity
-// reasoning backfills, or thrashing the bounded summaryTurns LRU cache.
-func (s *Store) VisitUsageTurns(sessionID string, fn func(meta SessionRecord, turns []TurnUsageSummary)) bool {
+// reasoning backfills. Cold usage and transcript summaries share a bounded LRU.
+func (s *Store) VisitUsageTurns(sessionID string, fn func(meta SessionRecord, turns []TurnUsageSummary)) error {
 	ss := s.lockSession(sessionID, false)
 	if ss == nil {
-		return false
+		return nil
 	}
-	defer ss.mu.Unlock()
+	defer func() {
+		cached := ss.usageCached
+		if cached {
+			s.mu.Lock()
+			s.accountSummaryLocked(ss)
+			s.mu.Unlock()
+		}
+		ss.mu.Unlock()
+		if cached {
+			s.trimSummaryCache()
+		}
+	}()
 
-	if ss.turnsLoaded {
+	if ss.turnsLoaded && !ss.turnsIncomplete {
 		fn(ss.rec, summarizeTurnsUsage(ss.rec.Turns))
-		return true
+		return nil
 	}
 	if ss.usageCached {
 		fn(ss.rec, ss.usageTurns)
-		return true
+		return nil
 	}
 
 	f, err := os.Open(filepath.Join(s.sessionDir(ss.rec.ID), sessionTurnsFile))
@@ -257,17 +269,15 @@ func (s *Store) VisitUsageTurns(sessionID string, fn func(meta SessionRecord, tu
 		ss.usageTurns = nil
 		ss.usageCached = true
 		fn(ss.rec, nil)
-		return true
+		return nil
 	}
 	if err != nil {
-		fn(ss.rec, nil)
-		return true
+		return err
 	}
 	info, statErr := f.Stat()
 	if statErr != nil {
 		_ = f.Close()
-		fn(ss.rec, nil)
-		return true
+		return statErr
 	}
 	cached, ok, loadErr := s.loadUsageSummary(ss.rec.ID, info)
 	if ok {
@@ -275,17 +285,18 @@ func (s *Store) VisitUsageTurns(sessionID string, fn func(meta SessionRecord, tu
 		ss.usageTurns = cached
 		ss.usageCached = true
 		fn(ss.rec, cached)
-		return true
+		return nil
 	}
 	turns, scanErr := scanTurnsUsage(f)
 	_ = f.Close()
-	if scanErr == nil {
-		if loadErr == nil {
-			recordPersistenceError(s.saveUsageSummary(ss.rec.ID, turns, info))
-		}
-		ss.usageTurns = turns
-		ss.usageCached = true
+	if scanErr != nil {
+		return scanErr
 	}
+	if loadErr == nil {
+		recordPersistenceError(s.saveUsageSummary(ss.rec.ID, turns, info))
+	}
+	ss.usageTurns = turns
+	ss.usageCached = true
 	fn(ss.rec, turns)
-	return true
+	return nil
 }

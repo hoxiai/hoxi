@@ -1,9 +1,10 @@
 // web/src/components/models/OfficialChannelTab.tsx
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
-import { Check, LoaderCircle, RefreshCw, Sparkles } from "lucide-solid";
+import { Check, ExternalLink, LoaderCircle, RefreshCw, Sparkles, X } from "lucide-solid";
 import {
   AUTO_PROVIDER_ID,
   autoPools,
+  cancelDesktopAuthorization,
   connectOfficialChannel,
   desktopAuth,
   formatMemberPoints,
@@ -12,14 +13,14 @@ import {
   loadOfficialChannelModels,
   OFFICIAL_PROVIDER_ID,
   officialChannelState,
-  openSettingsModal,
   PRESET_AUTO_POOL_IDS,
   saveAutoPool,
   selectModel,
+  startDesktopAuthorization,
   workspace,
 } from "../../store/workspace";
 import { t } from "../../i18n";
-import { ProviderIcon } from "../icons";
+import { ProviderIcon, Spinner } from "../icons";
 import { HelpTip } from "../settings/setting-controls";
 
 function modelPointsLabel(
@@ -104,25 +105,48 @@ export default function OfficialChannelTab() {
               <HelpTip text={t("models.officialCardDesc")} />
             </div>
           </div>
-          <span class="shrink-0 rounded-full bg-[var(--bg-inset)] px-3 py-1.5 text-[12px] font-semibold text-[var(--accent-primary)]">
-            {t("models.officialPointsLabel", { points: formatMemberPoints(desktopAuth.member.points) })}
-          </span>
+          <Show when={desktopAuth.isLoggedIn}>
+            <span class="shrink-0 rounded-full bg-[var(--bg-inset)] px-3 py-1.5 text-[12px] font-semibold text-[var(--accent-primary)]">
+              {t("models.officialPointsLabel", { points: formatMemberPoints(desktopAuth.member.points) })}
+            </span>
+          </Show>
         </div>
 
         <Show
           when={desktopAuth.isLoggedIn}
           fallback={
-            <div class="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-[var(--border-subtle)] bg-[var(--bg-elevated)]/30 p-8 text-center">
-              <p class="text-[12px] text-[var(--text-muted)]">
-                {t("models.officialConnectLoginRequired")}
-              </p>
-              <button
-                type="button"
-                onClick={() => openSettingsModal("account")}
-                class="rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[12px] font-medium text-[var(--accent-foreground)] hover:opacity-90 cursor-pointer"
+            <div class="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-[var(--border-subtle)] bg-[var(--bg-elevated)]/30 p-7 text-center">
+              <Show
+                when={desktopAuth.isAuthorizing}
+                fallback={
+                  <button
+                    type="button"
+                    onClick={() => void startDesktopAuthorization()}
+                    title={t("settings.accountSignInTooltip")}
+                    class="inline-flex items-center gap-2 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[12.5px] font-semibold text-[var(--accent-foreground)] hover:opacity-90 transition-opacity cursor-pointer"
+                  >
+                    <span>{t("settings.accountOneClickLoginBtn")}</span>
+                    <ExternalLink size={13.5} />
+                  </button>
+                }
               >
-                {t("settings.accountSignInTitle")}
-              </button>
+                <div class="inline-flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 pl-3 pr-1.5 py-1.5 text-[12px] font-medium text-amber-500">
+                  <Spinner class="h-3.5 w-3.5 shrink-0" />
+                  <span>{t("settings.accountWaitingBrowserAuth")}</span>
+                  <button
+                    type="button"
+                    onClick={() => void cancelDesktopAuthorization()}
+                    title={t("settings.accountCancelAuthBtn")}
+                    aria-label={t("settings.accountCancelAuthBtn")}
+                    class="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-[var(--text-muted)] hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              </Show>
+              <Show when={desktopAuth.error}>
+                <div class="text-[12px] text-rose-500 break-words">{desktopAuth.error}</div>
+              </Show>
             </div>
           }
         >

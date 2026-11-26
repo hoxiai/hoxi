@@ -256,7 +256,7 @@ func requestLogFromTurn(turn runner.MessageTurn, rec runner.SessionRecord, runti
 		Level:      "info",
 	}
 	if tokens != nil {
-		entry.InputTokens = int64(tokens.Input)
+		entry.InputTokens = accountingInputTokens(tokens, rec.Runtime, info.ProviderID)
 		entry.OutputTokens = int64(tokens.Output)
 		entry.ReasoningTokens = int64(tokens.Reasoning)
 		entry.CacheReadTokens = int64(tokens.Cache.Read)

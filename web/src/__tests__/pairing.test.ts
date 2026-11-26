@@ -166,15 +166,19 @@ describe("lan pairing code", () => {
     }
   });
 
-  it("prefills shortCodeRelayUrl from backend default only when user has not set one", async () => {
+  it("prefills shortCodeRelayUrl from backend default and migrates retired link.hoxi.ai", async () => {
     const api = { ...pairingAPI };
     try {
       pairingAPI.getCode = async () => ({
         ...availableCode,
-        shortCodeRelayUrl: "https://link.hoxi.example",
+        shortCodeRelayUrl: "https://relay.hoxi.example",
       });
       await loadPairingCode();
-      assertEqual(pairing.shortCodeRelayUrl, "https://link.hoxi.example");
+      assertEqual(pairing.shortCodeRelayUrl, "https://relay.hoxi.example");
+
+      setPairingShortCodeRelayUrl("https://link.hoxi.ai/");
+      await loadPairingCode();
+      assertEqual(pairing.shortCodeRelayUrl, "https://relay.hoxi.example");
 
       setPairingShortCodeRelayUrl("https://selfhosted.example");
       await loadPairingCode();

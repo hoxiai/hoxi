@@ -290,8 +290,11 @@ func (s *Store) appendDiskLocked(ss *storedSession, touch, compact bool, extra .
 	ss.dirty, ss.pending = nil, nil
 	ss.dirtyInfos = nil
 	if live := len(ss.index.messages) + len(ss.index.parts); compact && ss.logLines > 2*live+64 {
-		if n, err := s.rewriteTurns(ss.rec.ID, ss.rec.Turns); err == nil {
-			ss.logLines = n
+		turns, _, incomplete := s.readTurnsWithStatus(ss.rec.ID)
+		if !incomplete {
+			if n, err := s.rewriteTurns(ss.rec.ID, turns); err == nil {
+				ss.logLines = n
+			}
 		}
 		if ss.metaDirty && s.writeMeta(ss.rec) == nil {
 			ss.metaDirty = false

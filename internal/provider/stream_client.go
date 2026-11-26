@@ -261,6 +261,9 @@ func (s *Service) OpenStream(ctx context.Context, req llm.StreamHTTPRequest) (*h
 			} else {
 				outReq.Header.Set("x-session-affinity", sid)
 				outReq.Header.Set("X-Session-Id", sid)
+				if isXAIHost(reqURL) {
+					outReq.Header.Set("x-grok-conv-id", sid)
+				}
 			}
 		}
 
@@ -462,6 +465,15 @@ func isOfficialAnthropicHost(rawURL string) bool {
 	}
 	host := strings.ToLower(u.Hostname())
 	return host == "api.anthropic.com" || strings.HasSuffix(host, ".anthropic.com")
+}
+
+func isXAIHost(rawURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == "api.x.ai" || strings.HasSuffix(host, ".x.ai")
 }
 
 func isOpenAIOnlyChatHost(rawURL string) bool {

@@ -144,7 +144,7 @@ func (s *Service) HandleHistory(w http.ResponseWriter, r *http.Request) {
 		if r.Context().Err() != nil {
 			return
 		}
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		writeJSONError(w, http.StatusServiceUnavailable, "usage history temporarily unavailable")
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
@@ -334,9 +334,9 @@ func mergeHistoryModel(target *HistoryDay, incoming HistoryModelStat) {
 // CollectRunnerHistory folds native-runtime usage (Claude Code, Antigravity,
 // Qoder, CodeBuddy) into the per-day series. OpenCode turns mirror hoxi.db and
 // are already counted, so they are skipped here.
-func (s *Service) CollectRunnerHistory(startMs, endMs int64, day func(string) *HistoryDay) {
+func (s *Service) CollectRunnerHistory(startMs, endMs int64, day func(string) *HistoryDay) error {
 	if s.source == nil {
-		return
+		return nil
 	}
 	loc := time.Now().Location()
 
@@ -344,7 +344,7 @@ func (s *Service) CollectRunnerHistory(startMs, endMs int64, day func(string) *H
 	seenNative := make(map[string]map[sessionKey]int)
 	seenOpenCode := make(map[string]map[string]bool)
 
-	s.source.VisitSessions(startMs, func(sessionID string, visitTurns func(func(TurnUsage))) {
+	err := s.source.VisitSessions(startMs, func(sessionID string, visitTurns func(func(TurnUsage))) {
 		visitTurns(func(turn TurnUsage) {
 			if turn.Role != "assistant" || turn.Created < startMs || turn.Created >= endMs {
 				return
@@ -396,6 +396,9 @@ func (s *Service) CollectRunnerHistory(startMs, endMs int64, day func(string) *H
 			seenNative[key][sessionKey{key, sessionID}]++
 		})
 	})
+	if err != nil {
+		return err
+	}
 	for key, sessions := range seenNative {
 		for sk := range sessions {
 			if !seenOpenCode[key][sk.sessionID] {
@@ -403,6 +406,7 @@ func (s *Service) CollectRunnerHistory(startMs, endMs int64, day func(string) *H
 			}
 		}
 	}
+	return nil
 }
 
 func sortHistoryModels(byDate map[string]*HistoryDay) {

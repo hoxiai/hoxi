@@ -27,6 +27,30 @@ func pulseTokenMessage(id, sessionID, modelID string, created int64, in, out, re
 	}
 }
 
+func TestHistoricalCodexUsageBuckets(t *testing.T) {
+	for _, tc := range []struct {
+		name, runtime      string
+		input, total, want int
+	}{
+		{"legacy", "codex", 1200, 1280, 800},
+		{"canonical", "codex", 800, 1280, 800},
+		{"unknown total", "codex", 1200, 0, 1200},
+		{"other runtime", "claude-code", 1200, 1280, 1200},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			info := pulseTokenMessage("msg_a_old", "ses_test", "model", 1, tc.input, 80, 0, 400)
+			info.Tokens.Total = tc.total
+			rec := runner.SessionRecord{Runtime: tc.runtime}
+			u := usageSummaryToPulseUsage(runner.TurnUsageSummary{ID: info.ID, Tokens: info.Tokens}, rec)
+			entry, ok := requestLogFromTurn(runner.MessageTurn{Info: info}, rec, tc.runtime, 0, false)
+			if !ok || entry.InputTokens != int64(tc.want) || u.InputTokens != int64(tc.want) ||
+				u.CacheReadTokens != 400 || entry.CacheReadTokens != 400 || info.Tokens.Input != tc.input {
+				t.Fatalf("unexpected accounting: pulse=%+v log=%+v stored=%+v", u, entry, info.Tokens)
+			}
+		})
+	}
+}
+
 // Native CLI runtimes (Claude Code, Antigravity, Qoder, CodeBuddy) never write
 // to hoxi.db. Their usage lives only in the runner transcript store, so the
 // pulse must fold it in or today's tokens silently under-report.

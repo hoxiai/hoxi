@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/hoxiai/hoxi/internal/diagnostics"
 	"github.com/hoxiai/hoxi/internal/llm"
 )
 
@@ -568,5 +570,206 @@ func TestProactiveInPlaceCompactionPreservesWarmPrefixAcrossFutileTightPrune(t *
 	}
 	if !inPlaceSawUnprunedRead {
 		t.Fatal("expected in-place compaction to reuse unmodified warm pre-prune prefix instead of post-tight-prune prefix")
+	}
+}
+
+func TestCrossTurnContextTrackerWarmInPlaceCompactionAndRejections(t *testing.T) {
+	ws := t.TempDir()
+	now := time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)
+	largeText := strings.Repeat("immutable spec line for cross-turn warm cache continuity\n", 180)
+	history := []Message{
+		{Role: RoleUser, Content: []ContentBlock{{Type: ContentText, Text: "Spec 1: " + largeText}}},
+		{Role: RoleAssistant, Content: []ContentBlock{{Type: ContentText, Text: "Understood 1."}}},
+		{Role: RoleUser, Content: []ContentBlock{{Type: ContentText, Text: "Spec 2: " + largeText}}},
+		{Role: RoleAssistant, Content: []ContentBlock{{Type: ContentText, Text: "Understood 2."}}},
+	}
+
+	var turn2InPlaceUsed bool
+	client := &inPlaceCompactionClient{
+		target: llm.StreamTarget{
+			BaseURL:      "https://api.openai.com/v1",
+			Protocol:     llm.ProtocolOpenAI,
+			HasEndpoint:  true,
+			ContextLimit: 24_000, // hardCap = 19,904
+			OutputLimit:  4096,
+		},
+		reply: func(call int, body map[string]any) (string, error) {
+			switch call {
+			case 1:
+				// Turn 1 Step 1 ends warm right at 20,000 prompt tokens.
+				return strings.Join([]string{
+					`data: {"choices":[{"delta":{"content":"Turn 1 complete."},"finish_reason":"stop"}],"usage":{"prompt_tokens":20000,"completion_tokens":30,"prompt_tokens_details":{"cached_tokens":18500}}}`,
+					`data: [DONE]`,
+				}, "\n") + "\n", nil
+			case 2:
+				// Turn 2 Step 1 MUST inherit warm cache + anchored tokens from Turn 1 and
+				// run warm IN-PLACE compaction (keeping tools & prompt_cache_key) before main call!
+				if tools, _ := body["tools"].([]any); len(tools) > 0 && body["prompt_cache_key"] == "ses_cross_turn" {
+					msgs, _ := body["messages"].([]any)
+					if len(msgs) > 0 {
+						last, _ := msgs[len(msgs)-1].(map[string]any)
+						if txt, _ := last["content"].(string); strings.Contains(txt, "<context_compaction_request>") {
+							turn2InPlaceUsed = true
+						}
+					}
+				}
+				return strings.Join([]string{
+					`data: {"choices":[{"delta":{"content":"## Cross-turn Checkpoint\n- Preserved"},"finish_reason":"stop"}],"usage":{"prompt_tokens":20200,"completion_tokens":40,"prompt_tokens_details":{"cached_tokens":19900}}}`,
+					`data: [DONE]`,
+				}, "\n") + "\n", nil
+			case 3:
+				return strings.Join([]string{
+					`data: {"choices":[{"delta":{"content":"Turn 2 complete."},"finish_reason":"stop"}],"usage":{"prompt_tokens":2200,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":0}}}`,
+					`data: [DONE]`,
+				}, "\n") + "\n", nil
+			default:
+				return "", fmt.Errorf("unexpected call %d", call)
+			}
+		},
+	}
+
+	eng := NewDefaultEngine(client)
+	eng.nowFn = func() time.Time { return now }
+
+	var turn1Final []Message
+	if err := eng.RunTurn(context.Background(), TurnRequest{
+		SessionID:       "ses_cross_turn",
+		WorktreeDir:     ws,
+		Mode:            "build",
+		ProviderID:      "openai",
+		ModelID:         "gpt-5",
+		History:         history,
+		UserPrompt:      "Turn 1 prompt",
+		onFinalMessages: func(m []Message) { turn1Final = append([]Message(nil), m...) },
+	}); err != nil {
+		t.Fatalf("Turn 1 failed: %v", err)
+	}
+
+	// Turn 2 arrives 30 seconds later (within 5m TTL) with Turn 1's final messages as History.
+	now = now.Add(30 * time.Second)
+	if err := eng.RunTurn(context.Background(), TurnRequest{
+		SessionID:   "ses_cross_turn",
+		WorktreeDir: ws,
+		Mode:        "build",
+		ProviderID:  "openai",
+		ModelID:     "gpt-5",
+		History:     turn1Final,
+		UserPrompt:  "Turn 2 prompt",
+	}); err != nil {
+		t.Fatalf("Turn 2 failed: %v", err)
+	}
+	if !turn2InPlaceUsed || len(client.reqs) != 3 {
+		t.Fatalf("expected Turn 2 Step 1 to run warm in-place compaction (total 3 calls), used=%v calls=%d", turn2InPlaceUsed, len(client.reqs))
+	}
+
+	// Cross-turn cache-drop diagnostic detection within TTL.
+	var recordedDiags []diagnostics.Entry
+	origRecord := recordCacheDiagnostic
+	recordCacheDiagnostic = func(e diagnostics.Entry) { recordedDiags = append(recordedDiags, e) }
+	defer func() { recordCacheDiagnostic = origRecord }()
+
+	sessDrop := "ses_cross_drop"
+	dropClient := &inPlaceCompactionClient{
+		target: llm.StreamTarget{
+			BaseURL:      "https://api.openai.com/v1",
+			Protocol:     llm.ProtocolOpenAI,
+			HasEndpoint:  true,
+			ContextLimit: 128_000,
+			OutputLimit:  4096,
+		},
+		reply: func(call int, _ map[string]any) (string, error) {
+			if call == 1 {
+				return `data: {"choices":[{"delta":{"content":"ok1"},"finish_reason":"stop"}],"usage":{"prompt_tokens":12000,"completion_tokens":10,"prompt_tokens_details":{"cached_tokens":10000}}}` + "\n\ndata: [DONE]\n\n", nil
+			}
+			return `data: {"choices":[{"delta":{"content":"ok2"},"finish_reason":"stop"}],"usage":{"prompt_tokens":12100,"completion_tokens":10,"prompt_tokens_details":{"cached_tokens":0}}}` + "\n\ndata: [DONE]\n\n", nil
+		},
+	}
+	dropEng := NewDefaultEngine(dropClient)
+	dropEng.nowFn = func() time.Time { return now }
+	var dropTurn1 []Message
+	if err := dropEng.RunTurn(context.Background(), TurnRequest{
+		SessionID:       sessDrop,
+		WorktreeDir:     ws,
+		Mode:            "build",
+		ProviderID:      "openai",
+		ModelID:         "gpt-5",
+		UserPrompt:      "hello",
+		onFinalMessages: func(m []Message) { dropTurn1 = append([]Message(nil), m...) },
+	}); err != nil {
+		t.Fatalf("drop Turn 1 failed: %v", err)
+	}
+	now = now.Add(20 * time.Second)
+	if err := dropEng.RunTurn(context.Background(), TurnRequest{
+		SessionID:   sessDrop,
+		WorktreeDir: ws,
+		Mode:        "build",
+		ProviderID:  "openai",
+		ModelID:     "gpt-5",
+		History:     dropTurn1,
+		UserPrompt:  "follow up",
+	}); err != nil {
+		t.Fatalf("drop Turn 2 failed: %v", err)
+	}
+	foundDropDiag := false
+	for _, entry := range recordedDiags {
+		if entry.SessionID == sessDrop && entry.Kind == "cache" && strings.Contains(entry.Message, "upstream_evicted_prefix_unchanged") {
+			foundDropDiag = true
+			break
+		}
+	}
+	if !foundDropDiag {
+		t.Fatalf("expected cross-turn prompt cache drop diagnostic for unchanged prefix, got: %+v", recordedDiags)
+	}
+
+	// Rejections: TTL expiry (>5m), mutated prefix, model switch, ForgetSession, and 64-entry cap.
+	specs := []ToolSpec{{Name: "read", Description: "read file"}}
+	m1 := []Message{{Role: RoleUser, Content: []ContentBlock{{Type: ContentText, Text: strings.Repeat("alpha ", 600)}}}}
+	m2 := append(append([]Message(nil), m1...), Message{Role: RoleAssistant, Content: []ContentBlock{{Type: ContentText, Text: "done"}}})
+	mMut := []Message{{Role: RoleUser, Content: []ContentBlock{{Type: ContentText, Text: "changed"}}}, m2[1]}
+
+	baseTracker := newContextTokenTracker()
+	baseTracker.nowFn = func() time.Time { return now }
+	baseTracker.ObserveStep(m1, "sys", specs, TokenUsage{Input: 500, CacheRead: 9500})
+	baseTracker.ObservePrefixCacheStability("ses_rej", llm.StreamTarget{ProviderID: "openai", ModelID: "gpt-5"}, "ses_rej", "sys", specs, m1, TokenUsage{Input: 500, CacheRead: 9500})
+	snap, ok := baseTracker.Snapshot()
+	if !ok {
+		t.Fatal("expected valid snapshot")
+	}
+
+	expired := newContextTokenTracker()
+	expired.SeedFromPriorTurn(snap, now.Add(crossTurnCacheWarmTTL+time.Second), "ses_rej", "sys", specs, m2)
+	if expired.IsPrefixCacheWarm() || expired.lastFingerprint.valid {
+		t.Fatalf("expired snapshot must not mark cache warm or inherit drop fingerprint: warm=%v fp=%v", expired.IsPrefixCacheWarm(), expired.lastFingerprint.valid)
+	}
+	if !expired.anchored || expired.Scale() != snap.scale {
+		t.Fatalf("expired snapshot with unchanged prefix should still retain exact anchor and scale: anchored=%v scale=%.3f", expired.anchored, expired.Scale())
+	}
+
+	mutated := newContextTokenTracker()
+	mutated.SeedFromPriorTurn(snap, now.Add(10*time.Second), "ses_rej", "sys", specs, mMut)
+	if mutated.IsPrefixCacheWarm() || mutated.anchored {
+		t.Fatalf("mutated prefix must not anchor or mark warm: warm=%v anchored=%v", mutated.IsPrefixCacheWarm(), mutated.anchored)
+	}
+
+	// Model switch isolation + ForgetSession + bounded cache eviction (<= 64).
+	kA := makeTurnContextCacheKey("ses_iso", llm.StreamTarget{ProviderID: "openai", ModelID: "gpt-5", Protocol: llm.ProtocolOpenAI})
+	kB := makeTurnContextCacheKey("ses_iso", llm.StreamTarget{ProviderID: "anthropic", ModelID: "claude-opus-4-6", Protocol: llm.ProtocolAnthropic})
+	if kA == kB {
+		t.Fatal("distinct provider/model must not collide in turnContextCache")
+	}
+	eng.ForgetSession("ses_cross_turn")
+	if _, exists := eng.loadTurnContextSnapshot(makeTurnContextCacheKey("ses_cross_turn", llm.StreamTarget{ProviderID: "openai", ModelID: "gpt-5", Protocol: llm.ProtocolOpenAI})); exists {
+		t.Fatal("expected ForgetSession to remove cached snapshot")
+	}
+	for i := 0; i < maxTurnContextCacheEntries+10; i++ {
+		s := snap
+		s.lastObservedAt = now.Add(time.Duration(i) * time.Second)
+		eng.saveTurnContextSnapshot(fmt.Sprintf("ses_cap_%d\x00openai\x00gpt-5\x00openai", i), s)
+	}
+	eng.turnContextMu.Lock()
+	gotLen := len(eng.turnContextMap)
+	eng.turnContextMu.Unlock()
+	if gotLen > maxTurnContextCacheEntries {
+		t.Fatalf("turnContextMap exceeded cap %d: got %d", maxTurnContextCacheEntries, gotLen)
 	}
 }

@@ -185,6 +185,15 @@ func (s *Service) probeVideoModel(parentCtx context.Context, conn imageGenConn) 
 	if status < 200 || status >= 300 {
 		return errors.New(redactSecretInText(extractAPIErrorMessage(status, body), conn.APIKey))
 	}
+	if !isGoogle {
+		want := strings.TrimPrefix(strings.TrimSpace(conn.ModelID), "models/")
+		for _, item := range parseOpenAIModelsPayload(body) {
+			if item.ID == want {
+				return nil
+			}
+		}
+		return fmt.Errorf("provider model list did not confirm model %q", want)
+	}
 	return nil
 }
 

@@ -27,13 +27,13 @@
   opacity: 0.8;
 }
 
-/* The dot-matrix H sits centered inside the 24-unit orbit ring. */
+/* The dot-matrix H sits centered inside the 24-unit orbit ring (16px face). */
 [data-component="hoxi-activity-logo"] [data-slot="face"] {
   position: absolute;
-  left: 18.75%;
-  top: 18.75%;
-  width: 62.5%;
-  height: 62.5%;
+  left: 16.6667%;
+  top: 16.6667%;
+  width: 66.6667%;
+  height: 66.6667%;
   transform-origin: 50% 50%;
 }
 
@@ -72,7 +72,7 @@
 
 @keyframes hoxi-activity-spark {
   0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.28); opacity: 0.45; }
+  50% { transform: scale(1.15); opacity: 0.45; }
 }
 
 @media (prefers-reduced-motion: reduce) {

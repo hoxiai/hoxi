@@ -5,11 +5,11 @@ Unicode true
 ##
 ## QQ-style minimalist 1-click installer built on MUI2 + nsDialogs:
 ##   - Clean white & Hoxi brand-blue card layout with a single prominent
-##     " / Install Now" action button.
-##   - Collapsible "  / Custom Options " drawer for changing
-##     the install directory and desktop shortcut preference.
+##     "Install Now" action button.
+##   - Collapsible "Custom Options" drawer for changing
+##     the install directory, desktop shortcut, and PATH preferences.
 ##   - Minimalist single-bar installation progress (`ShowInstDetails nevershow`)
-##     followed by a one-click " / Launch Hoxi" finish screen.
+##     followed by a one-click "Launch Hoxi" finish screen.
 ##
 ## Defaults to per-user installation (%LOCALAPPDATA%\Programs\Hoxi) so that:
 ##   1. Installation does not require UAC Administrator elevation.
@@ -112,43 +112,43 @@ Page custom HoxiFinishPageCreate HoxiFinishPageLeave
 !insertmacro MUI_LANGUAGE "SimpChinese"
 !insertmacro MUI_LANGUAGE "English"
 
-LangString HOXI_SUBTITLE ${LANG_SIMPCHINESE} "$\{U+6781\}$\{U+901F\}$\{U+3001\}$\{U+8F7B\}$\{U+91CF\}$\{U+7684\}$\{U+539F\}$\{U+751F\} AI $\{U+5DE5\}$\{U+7A0B\}$\{U+6307\}$\{U+6325\}$\{U+4E2D\}$\{U+5FC3\}"
+LangString HOXI_SUBTITLE ${LANG_SIMPCHINESE} "${U+6781}${U+901F}${U+3001}${U+8F7B}${U+91CF}${U+7684}${U+539F}${U+751F} AI ${U+5DE5}${U+7A0B}${U+6307}${U+6325}${U+4E2D}${U+5FC3}"
 LangString HOXI_SUBTITLE ${LANG_ENGLISH}     "Fast, minimalist command center for parallel AI engineering"
 
-LangString HOXI_INSTALL_NOW ${LANG_SIMPCHINESE} "$\{U+7ACB\}$\{U+5373\}$\{U+5B89\}$\{U+88C5\}"
+LangString HOXI_INSTALL_NOW ${LANG_SIMPCHINESE} "${U+7ACB}${U+5373}${U+5B89}${U+88C5}"
 LangString HOXI_INSTALL_NOW ${LANG_ENGLISH}     "Install Now"
 
-LangString HOXI_CUSTOM_COLLAPSED ${LANG_SIMPCHINESE} "$\{U+81EA\}$\{U+5B9A\}$\{U+4E49\}$\{U+9009\}$\{U+9879\} $\{U+25BE\}"
-LangString HOXI_CUSTOM_COLLAPSED ${LANG_ENGLISH}     "Custom Options $\{U+25BE\}"
+LangString HOXI_CUSTOM_COLLAPSED ${LANG_SIMPCHINESE} "${U+81EA}${U+5B9A}${U+4E49}${U+9009}${U+9879} ${U+25BE}"
+LangString HOXI_CUSTOM_COLLAPSED ${LANG_ENGLISH}     "Custom Options ${U+25BE}"
 
-LangString HOXI_CUSTOM_EXPANDED ${LANG_SIMPCHINESE} "$\{U+6536\}$\{U+8D77\}$\{U+9009\}$\{U+9879\} $\{U+25B4\}"
-LangString HOXI_CUSTOM_EXPANDED ${LANG_ENGLISH}     "Hide Options $\{U+25B4\}"
+LangString HOXI_CUSTOM_EXPANDED ${LANG_SIMPCHINESE} "${U+6536}${U+8D77}${U+9009}${U+9879} ${U+25B4}"
+LangString HOXI_CUSTOM_EXPANDED ${LANG_ENGLISH}     "Hide Options ${U+25B4}"
 
-LangString HOXI_BROWSE_BTN ${LANG_SIMPCHINESE} "$\{U+6D4F\}$\{U+89C8\}..."
+LangString HOXI_BROWSE_BTN ${LANG_SIMPCHINESE} "${U+6D4F}${U+89C8}..."
 LangString HOXI_BROWSE_BTN ${LANG_ENGLISH}     "Browse..."
 
-LangString HOXI_BROWSE_TITLE ${LANG_SIMPCHINESE} "$\{U+9009\}$\{U+62E9\} ${INFO_PRODUCTNAME} $\{U+5B89\}$\{U+88C5\}$\{U+76EE\}$\{U+5F55\}"
+LangString HOXI_BROWSE_TITLE ${LANG_SIMPCHINESE} "${U+9009}${U+62E9} ${INFO_PRODUCTNAME} ${U+5B89}${U+88C5}${U+76EE}${U+5F55}"
 LangString HOXI_BROWSE_TITLE ${LANG_ENGLISH}     "Select ${INFO_PRODUCTNAME} installation folder"
 
-LangString HOXI_OPT_DESKTOP ${LANG_SIMPCHINESE} "$\{U+521B\}$\{U+5EFA\}$\{U+684C\}$\{U+9762\}$\{U+5FEB\}$\{U+6377\}$\{U+65B9\}$\{U+5F0F\}"
+LangString HOXI_OPT_DESKTOP ${LANG_SIMPCHINESE} "${U+521B}${U+5EFA}${U+684C}${U+9762}${U+5FEB}${U+6377}${U+65B9}${U+5F0F}"
 LangString HOXI_OPT_DESKTOP ${LANG_ENGLISH}     "Create desktop shortcut"
 
-LangString HOXI_OPT_PATH ${LANG_SIMPCHINESE} "$\{U+6DFB\}$\{U+52A0\}$\{U+5230\}$\{U+7528\}$\{U+6237\} PATH $\{U+73AF\}$\{U+5883\}$\{U+53D8\}$\{U+91CF\}"
+LangString HOXI_OPT_PATH ${LANG_SIMPCHINESE} "${U+6DFB}${U+52A0}${U+5230}${U+7528}${U+6237} PATH ${U+73AF}${U+5883}${U+53D8}${U+91CF}"
 LangString HOXI_OPT_PATH ${LANG_ENGLISH}     "Add to user PATH environment variable"
 
-LangString HOXI_INSTALLING_TITLE ${LANG_SIMPCHINESE} "$\{U+6B63\}$\{U+5728\}$\{U+5B89\}$\{U+88C5\} ${INFO_PRODUCTNAME}..."
+LangString HOXI_INSTALLING_TITLE ${LANG_SIMPCHINESE} "${U+6B63}${U+5728}${U+5B89}${U+88C5} ${INFO_PRODUCTNAME}..."
 LangString HOXI_INSTALLING_TITLE ${LANG_ENGLISH}     "Installing ${INFO_PRODUCTNAME}..."
 
-LangString HOXI_INSTALLING_SUBTITLE ${LANG_SIMPCHINESE} "$\{U+6B63\}$\{U+5728\}$\{U+914D\}$\{U+7F6E\}$\{U+8FD0\}$\{U+884C\}$\{U+73AF\}$\{U+5883\}$\{U+FF0C\}$\{U+8BF7\}$\{U+7A0D\}$\{U+5019\}..."
+LangString HOXI_INSTALLING_SUBTITLE ${LANG_SIMPCHINESE} "${U+6B63}${U+5728}${U+914D}${U+7F6E}${U+8FD0}${U+884C}${U+73AF}${U+5883}${U+FF0C}${U+8BF7}${U+7A0D}${U+5019}..."
 LangString HOXI_INSTALLING_SUBTITLE ${LANG_ENGLISH}     "Setting up your workspace, please wait..."
 
-LangString HOXI_FINISH_TITLE ${LANG_SIMPCHINESE} "${INFO_PRODUCTNAME} $\{U+5B89\}$\{U+88C5\}$\{U+5B8C\}$\{U+6210\}"
+LangString HOXI_FINISH_TITLE ${LANG_SIMPCHINESE} "${INFO_PRODUCTNAME} ${U+5B89}${U+88C5}${U+5B8C}${U+6210}"
 LangString HOXI_FINISH_TITLE ${LANG_ENGLISH}     "${INFO_PRODUCTNAME} is Ready"
 
-LangString HOXI_FINISH_SUBTITLE ${LANG_SIMPCHINESE} "$\{U+4E00\}$\{U+5207\}$\{U+51C6\}$\{U+5907\}$\{U+5C31\}$\{U+7EEA\}$\{U+FF0C\}$\{U+5373\}$\{U+523B\}$\{U+5F00\}$\{U+542F\}$\{U+9AD8\}$\{U+6548\} AI $\{U+5DE5\}$\{U+7A0B\}$\{U+4F53\}$\{U+9A8C\}"
+LangString HOXI_FINISH_SUBTITLE ${LANG_SIMPCHINESE} "${U+4E00}${U+5207}${U+51C6}${U+5907}${U+5C31}${U+7EEA}${U+FF0C}${U+5373}${U+523B}${U+5F00}${U+542F}${U+9AD8}${U+6548} AI ${U+5DE5}${U+7A0B}${U+4F53}${U+9A8C}"
 LangString HOXI_FINISH_SUBTITLE ${LANG_ENGLISH}     "Everything is set up and ready to go"
 
-LangString HOXI_LAUNCH_NOW ${LANG_SIMPCHINESE} "$\{U+7ACB\}$\{U+5373\}$\{U+4F53\}$\{U+9A8C\}"
+LangString HOXI_LAUNCH_NOW ${LANG_SIMPCHINESE} "${U+7ACB}${U+5373}${U+4F53}${U+9A8C}"
 LangString HOXI_LAUNCH_NOW ${LANG_ENGLISH}     "Launch ${INFO_PRODUCTNAME}"
 
 Name "${INFO_PRODUCTNAME}"
@@ -236,20 +236,20 @@ Function HoxiQuickInstallPageCreate
     SendMessage $SubtitleLabel ${WM_SETFONT} $SubtitleFont 1
     SetCtlColors $SubtitleLabel 0x64748B 0xFFFFFF
 
-    # Prominent centered 1-click " / Install Now" button
+    # Prominent centered 1-click "Install Now" button
     ${NSD_CreateButton} 102u 132u 126u 26u "$(HOXI_INSTALL_NOW)"
     Pop $InstallBtn
     CreateFont $BtnFont "Microsoft YaHei UI" "11" "700"
     SendMessage $InstallBtn ${WM_SETFONT} $BtnFont 1
     ${NSD_OnClick} $InstallBtn HoxiOnClickInstallNow
 
-    # Subtle bottom toggle for "  / Custom Options "
+    # Subtle bottom toggle for "Custom Options"
     ${NSD_CreateButton} 125u 164u 80u 14u "$(HOXI_CUSTOM_COLLAPSED)"
     Pop $CustomToggleBtn
     SendMessage $CustomToggleBtn ${WM_SETFONT} $SubtitleFont 1
     ${NSD_OnClick} $CustomToggleBtn HoxiOnToggleCustomOptions
 
-    # Collapsible custom options drawer (hidden until user clicks " ")
+    # Collapsible custom options drawer (hidden until user clicks "Custom Options")
     ${NSD_CreateDirRequest} 28u 184u 222u 14u "$INSTDIR"
     Pop $DirEdit
     SendMessage $DirEdit ${WM_SETFONT} $SubtitleFont 1

@@ -437,6 +437,49 @@ describe("desktop authorization start and cancel flow", () => {
     }
   });
 
+  it("keeps polling after a transient failure and ignores an earlier flow's late status", async () => {
+    const { startAuth, cancelAuth, getStatus } = authAPI;
+    const originalInterval = globalThis.setInterval;
+    const originalClear = globalThis.clearInterval;
+    const timers = new Map<number, () => Promise<void>>();
+    let nextID = 0;
+    globalThis.setInterval = ((tick: () => Promise<void>) => {
+      timers.set(++nextID, tick);
+      return nextID;
+    }) as typeof setInterval;
+    globalThis.clearInterval = ((id: number) => { timers.delete(id); }) as typeof clearInterval;
+    try {
+      authAPI.startAuth = async () => ({ state: "test", authUrl: "about:blank" });
+      authAPI.cancelAuth = async () => ({ success: true });
+      authAPI.getStatus = async () => { throw new Error("offline"); };
+      await startDesktopAuthorization();
+      await timers.get(nextID)!();
+      assertEqual(timers.size, 1);
+      assertEqual(desktopAuth.isAuthorizing, true);
+
+      type Status = Awaited<ReturnType<typeof getStatus>>;
+      let finish!: (status: Status) => void;
+      authAPI.getStatus = () => new Promise((resolve) => { finish = resolve; });
+      const previous = timers.get(nextID)!();
+      await cancelDesktopAuthorization();
+      await startDesktopAuthorization();
+      const terminal: Status = { isLoggedIn: false, isAuthorizing: false, serverBaseUrl: "https://hoxi.ai" };
+      finish(terminal);
+      await previous;
+      assertEqual(timers.size, 1);
+      assertEqual(desktopAuth.isAuthorizing, true);
+      authAPI.getStatus = async () => terminal;
+      await timers.get(nextID)!();
+      assertEqual(timers.size, 0);
+      assertEqual(desktopAuth.isAuthorizing, false);
+    } finally {
+      await cancelDesktopAuthorization();
+      Object.assign(authAPI, { startAuth, cancelAuth, getStatus });
+      globalThis.setInterval = originalInterval;
+      globalThis.clearInterval = originalClear;
+    }
+  });
+
   it("cancels backend if user cancels while startAuth is still in flight", async () => {
     const origStart = authAPI.startAuth;
     const origCancel = authAPI.cancelAuth;

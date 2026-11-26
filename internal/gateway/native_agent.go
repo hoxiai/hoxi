@@ -99,6 +99,9 @@ func (g *gatewayNativeAgent) ForgetSession(sessionID string) {
 		agent.DeleteSessionTodos(sid)
 		agent.DeleteSessionBackgroundProcs(sid)
 		agent.DeleteSessionSubtasks(sid)
+		if g != nil && g.engine != nil {
+			g.engine.ForgetSession(sid)
+		}
 	}
 	if g == nil || sid == "" {
 		return

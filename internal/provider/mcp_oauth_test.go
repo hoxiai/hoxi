@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -250,5 +252,51 @@ func TestProviderMCPOAuthPKCEAndProvisioning(t *testing.T) {
 	mcpHeaders, _ := gatewayMCP["headers"].(map[string]interface{})
 	if gotAuth, _ := mcpHeaders["Authorization"].(string); gotAuth != "Bearer hox_mcp_test_token_123" {
 		t.Fatalf("expected persisted mcp Authorization header, got %q", gotAuth)
+	}
+}
+
+func TestProviderMCPOAuthDoesNotLaunchOSBrowserUnderGoTest(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOXI_HOME", filepath.Join(tmp, "hoxi-home"))
+	fakeBin := filepath.Join(tmp, "bin")
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(tmp, "browser-launched")
+	stub := "#!/bin/sh\necho \"$@\" >> '" + strings.ReplaceAll(marker, "'", "'\\''") + "'\n"
+	for _, name := range []string{"open", "xdg-open"} {
+		if err := os.WriteFile(filepath.Join(fakeBin, name), []byte(stub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", fakeBin)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	svc := NewService(0, "", tmp, http.NotFoundHandler())
+	svc.mcpOAuthPollInterval = 1 * time.Hour
+
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+
+	startBody, _ := json.Marshal(mcpOAuthStartRequest{
+		ProviderID:   "hoxi-gateway",
+		ProviderName: "Hoxi Gateway",
+		SiteURL:      server.URL,
+		BaseURL:      "https://api.hoxi.ai/v1",
+	})
+	startReq := httptest.NewRequest(http.MethodPost, "/api/hoxi/provider/mcp-oauth/start", bytes.NewReader(startBody))
+	startRec := httptest.NewRecorder()
+	mux.ServeHTTP(startRec, startReq)
+	if startRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on start, got %d: %s", startRec.Code, startRec.Body.String())
+	}
+
+	openProviderBrowser(server.URL + "/api/oauth/authorize")
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("OS browser launcher unexpectedly executed during go test (stat err=%v)", err)
 	}
 }

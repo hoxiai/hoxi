@@ -171,6 +171,21 @@ export function setSessionDraft(key: string, draft: SessionComposerDraft) {
   }
 }
 
+export function computePasteMeta(content: string): {
+  lines: number;
+  chars: number;
+  preview: string;
+} {
+  const lineList = content.split(/\r\n|\n|\r/);
+  const firstNonEmpty =
+    lineList.map((l) => l.trim()).find((l) => l.length > 0) || "Pasted text";
+  return {
+    lines: lineList.length,
+    chars: content.length,
+    preview: firstNonEmpty.slice(0, 48),
+  };
+}
+
 /**
  * Ported from kilocode usePasteCollapse.ts:
  * Collapses large multi-line pastes (>= 10 lines or >= 600 chars) into compact chips
@@ -182,24 +197,31 @@ export function createPasteCollapse() {
   const handleTextPaste = (ev: ClipboardEvent): boolean => {
     const raw = ev.clipboardData?.getData("text/plain") ?? "";
     if (!raw) return false;
-    const lineList = raw.split(/\r\n|\n|\r/);
-    if (lineList.length < 10 && raw.length < 600) {
+    const meta = computePasteMeta(raw);
+    if (meta.lines < 10 && meta.chars < 600) {
       return false;
     }
     ev.preventDefault();
-    const firstNonEmpty =
-      lineList.map((l) => l.trim()).find((l) => l.length > 0) || "Pasted text";
     setPastes((prev) => [
       ...prev,
       {
         id: `pst_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        lines: lineList.length,
-        chars: raw.length,
-        preview: firstNonEmpty.slice(0, 48),
+        ...meta,
         content: raw,
       },
     ]);
     return true;
+  };
+
+  const updatePaste = (id: string, nextContent: string) => {
+    if (!nextContent.trim()) {
+      setPastes((prev) => prev.filter((p) => p.id !== id));
+      return;
+    }
+    const meta = computePasteMeta(nextContent);
+    setPastes((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, ...meta, content: nextContent } : p))
+    );
   };
 
   const removePaste = (id: string) => {
@@ -221,6 +243,7 @@ export function createPasteCollapse() {
   return {
     pastes,
     handleTextPaste,
+    updatePaste,
     removePaste,
     clearPastes,
     replacePastes,

@@ -550,6 +550,47 @@ describe("Slash command active chip, CJK command names, and mid-sentence hoistin
     assertEqual(removeLeadingSlashCommand(`/${valName} ${targetCompany}`), targetCompany);
     assertEqual(removeLeadingSlashCommand(`  /${valName}   `), "");
   });
+
+  it("updates collapsed paste content metadata and removes paste when cleared", () => {
+    createRoot((dispose) => {
+      try {
+        const pasteCollapse = createPasteCollapse();
+        const raw = Array.from({ length: 12 }, (_, idx) => `line ${idx + 1}`).join("\n");
+        let prevented = false;
+        const handled = pasteCollapse.handleTextPaste({
+          clipboardData: { getData: () => raw },
+          preventDefault: () => {
+            prevented = true;
+          },
+        } as unknown as ClipboardEvent);
+
+        assertEqual(handled, true);
+        assertEqual(prevented, true);
+        assertEqual(pasteCollapse.pastes().length, 1);
+        const pasteID = pasteCollapse.pastes()[0].id;
+        assertEqual(pasteCollapse.pastes()[0].lines, 12);
+        assertEqual(pasteCollapse.pastes()[0].preview, "line 1");
+
+        const edited = "redacted header\nsecond line\nthird line";
+        pasteCollapse.updatePaste(pasteID, edited);
+        assertEqual(pasteCollapse.pastes().length, 1);
+        assertEqual(pasteCollapse.pastes()[0].id, pasteID);
+        assertEqual(pasteCollapse.pastes()[0].lines, 3);
+        assertEqual(pasteCollapse.pastes()[0].chars, edited.length);
+        assertEqual(pasteCollapse.pastes()[0].preview, "redacted header");
+        assertEqual(
+          pasteCollapse.expandIntoPrompt("please review"),
+          `${edited}\n\nplease review`
+        );
+
+        pasteCollapse.updatePaste(pasteID, "   \n\t  ");
+        assertEqual(pasteCollapse.pastes().length, 0);
+        assertEqual(pasteCollapse.expandIntoPrompt("please review"), "please review");
+      } finally {
+        dispose();
+      }
+    });
+  });
 });
 
 

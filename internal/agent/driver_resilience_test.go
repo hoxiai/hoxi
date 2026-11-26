@@ -492,3 +492,120 @@ func TestClassifyPrefixCacheChangePinpointsExactDivergence(t *testing.T) {
 		t.Fatalf("expected history_mutated_at=0/1, got cause=%q shared=%d", cause, shared)
 	}
 }
+
+func TestOpenRouterClaudeTopLevelCacheControlAndRejections(t *testing.T) {
+	drv := newOpenAIDriver(false)
+	msgs := []Message{{Role: RoleUser, Content: []ContentBlock{{Type: ContentText, Text: "inspect repo"}}}}
+
+	// Positive: OpenRouter + Anthropic Claude emits top-level automatic cache_control.
+	orClaude, err := drv.BuildRequest(ModelRequest{
+		SessionID: "ses_or_claude",
+		Target: llm.StreamTarget{
+			BaseURL:  "https://openrouter.ai/api/v1",
+			ModelID:  "anthropic/claude-opus-4-6",
+			Protocol: llm.ProtocolOpenAI,
+		},
+		System:   "system prompt",
+		Messages: msgs,
+	})
+	if err != nil {
+		t.Fatalf("BuildRequest failed: %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(orClaude.Body, &body); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	cc, _ := body["cache_control"].(map[string]any)
+	if cc["type"] != "ephemeral" {
+		t.Fatalf("expected OpenRouter Claude top-level cache_control={type:ephemeral}, got: %s", orClaude.Body)
+	}
+	if _, hasPK := body["prompt_cache_key"]; hasPK {
+		t.Fatalf("expected OpenRouter Claude not to inject prompt_cache_key, got: %s", orClaude.Body)
+	}
+
+	// Rejection 1: OpenRouter non-Claude (OpenAI GPT-5) must NOT inject cache_control.
+	orGPT, err := drv.BuildRequest(ModelRequest{
+		SessionID: "ses_or_gpt",
+		Target: llm.StreamTarget{
+			BaseURL:  "https://openrouter.ai/api/v1",
+			ModelID:  "openai/gpt-5",
+			Protocol: llm.ProtocolOpenAI,
+		},
+		Messages: msgs,
+	})
+	if err != nil {
+		t.Fatalf("BuildRequest failed: %v", err)
+	}
+	if strings.Contains(string(orGPT.Body), `"cache_control"`) || !strings.Contains(string(orGPT.Body), `"prompt_cache_key":"ses_or_gpt"`) {
+		t.Fatalf("expected OpenRouter GPT-5 to use prompt_cache_key without cache_control, got: %s", orGPT.Body)
+	}
+
+	// Rejection 2: Non-OpenRouter OpenAI-compatible proxy + Claude must NOT inject cache_control.
+	proxyClaude, err := drv.BuildRequest(ModelRequest{
+		SessionID: "ses_proxy_claude",
+		Target: llm.StreamTarget{
+			BaseURL:  "https://proxy.example.com/openai/v1",
+			ModelID:  "claude-opus-4-6",
+			Protocol: llm.ProtocolOpenAI,
+		},
+		Messages: msgs,
+	})
+	if err != nil {
+		t.Fatalf("BuildRequest failed: %v", err)
+	}
+	if strings.Contains(string(proxyClaude.Body), `"cache_control"`) {
+		t.Fatalf("non-OpenRouter proxy must not inject top-level cache_control, got: %s", proxyClaude.Body)
+	}
+}
+
+func TestGeminiPostTerminalDisconnectToleranceAndErrorRejections(t *testing.T) {
+	drv := newGeminiDriver()
+
+	// Positive: trailing io.ErrUnexpectedEOF AFTER finishReason=STOP survives with usage and text.
+	bodyOK := &failAfterBodyReader{
+		payload: []byte(`data: {"candidates":[{"content":{"parts":[{"text":"Fixed."}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":120,"candidatesTokenCount":10,"cachedContentTokenCount":100}}` + "\n\n"),
+		err:     io.ErrUnexpectedEOF,
+	}
+	var gotText, gotFinish string
+	var gotUsage *TokenUsage
+	if err := drv.ParseSSE(context.Background(), bodyOK, func(se StreamEvent) {
+		switch se.Kind {
+		case EventTextDelta:
+			gotText += se.Delta
+		case EventUsage:
+			gotUsage = se.Usage
+		case EventFinish:
+			gotFinish = se.Finish
+		}
+	}); err != nil {
+		t.Fatalf("expected Gemini post-terminal disconnect to survive, got: %v", err)
+	}
+	if gotText != "Fixed." || gotFinish != "stop" || gotUsage == nil || gotUsage.CacheRead != 100 || gotUsage.Input != 20 {
+		t.Fatalf("unexpected Gemini output text=%q finish=%q usage=%+v", gotText, gotFinish, gotUsage)
+	}
+
+	// Rejection 1: disconnect BEFORE finishReason must fail.
+	preTerm := &failAfterBodyReader{
+		payload: []byte(`data: {"candidates":[{"content":{"parts":[{"text":"Half"}]}}]}` + "\n\n"),
+		err:     io.ErrUnexpectedEOF,
+	}
+	if err := drv.ParseSSE(context.Background(), preTerm, func(StreamEvent) {}); err == nil {
+		t.Fatal("expected pre-terminal EOF on Gemini SSE to fail")
+	}
+
+	// Rejection 2: structured JSON error frame after finishReason must still fail.
+	errFrame := strings.Join([]string{
+		`data: {"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}`,
+		`data: {"error":{"message":"backend quota exceeded"}}`,
+	}, "\n") + "\n"
+	if err := drv.ParseSSE(context.Background(), strings.NewReader(errFrame), func(StreamEvent) {}); err == nil || !strings.Contains(err.Error(), "gemini stream error") {
+		t.Fatalf("expected Gemini JSON error frame to fail, got: %v", err)
+	}
+
+	// Rejection 3: canceled context must fail even after terminal frame.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := drv.ParseSSE(ctx, strings.NewReader(`data: {"candidates":[{"finishReason":"STOP"}]}`+"\n\n"), func(StreamEvent) {}); err == nil {
+		t.Fatal("expected canceled context to fail Gemini ParseSSE")
+	}
+}

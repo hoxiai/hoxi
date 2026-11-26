@@ -118,9 +118,9 @@ static NSImage *hoxi_create_statusbar_icon(void) {
         CGContextSaveGState(cg);
         [[NSColor blackColor] setFill];
 
-        // 7x8 fine dot-matrix H (38 circles), crisp at 18pt Retina template resolution.
-        const CGFloat step = 1.95;
-        const CGFloat radius = 0.70;
+        // 7x8 fine dot-matrix H (38 circles, ~66% duty cycle), crisp at 18pt Retina template resolution.
+        const CGFloat step = 1.96;
+        const CGFloat radius = 0.65;
         const CGFloat startX = (18.0 - 6.0 * step) / 2.0;
         const CGFloat startY = (18.0 - 7.0 * step) / 2.0;
         for (int row = 0; row < 8; row++) {

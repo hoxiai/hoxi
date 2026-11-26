@@ -442,6 +442,11 @@ func parseOpenAIResponsesSSE(ctx context.Context, body io.Reader, emit func(Stre
 					}
 					if inDet, ok := u["input_tokens_details"].(map[string]any); ok {
 						tu.CacheRead = intFromAny(inDet["cached_tokens"])
+						if cw := intFromAny(inDet["cache_write_tokens"]); cw > 0 {
+							tu.CacheWrite = cw
+						} else if cw := intFromAny(inDet["cache_creation_input_tokens"]); cw > 0 {
+							tu.CacheWrite = cw
+						}
 					}
 					if outDet, ok := u["output_tokens_details"].(map[string]any); ok {
 						tu.Reasoning = intFromAny(outDet["reasoning_tokens"])

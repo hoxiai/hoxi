@@ -374,6 +374,7 @@ func TestProbeNonChatTranslateAndEmbeddingModelsWithoutCallingChat(t *testing.T)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"data": []map[string]any{
 					{"id": "alimt-image-translate", "capabilities": []string{"image_translate"}},
+					{"id": "qwen-mt-image"}, {"id": "text-embedding-3-small"}, {"id": "bge-reranker-v2-m3"},
 				},
 			})
 		case r.URL.Path == "/v1/chat/completions" || r.URL.Path == "/chat/completions":
@@ -401,6 +402,11 @@ func TestProbeNonChatTranslateAndEmbeddingModelsWithoutCallingChat(t *testing.T)
 		if cat != "image_translate" && cat != "embedding" && cat != "rerank" {
 			t.Fatalf("unexpected category %q for %s", cat, mid)
 		}
+	}
+	if err := svc.probeVideoModel(context.Background(), imageGenConn{
+		ProviderID: "ainode", ModelID: "text-embedding-3", BaseURL: baseOrigin, NPM: "@ai-sdk/openai-compatible",
+	}); err == nil {
+		t.Fatal("a reachable model list must not verify a missing model or partial ID match")
 	}
 	if atomic.LoadInt32(&chatCalls) != 0 {
 		t.Fatalf("non-chat probes must never hit /chat/completions, got %d calls", atomic.LoadInt32(&chatCalls))

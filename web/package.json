@@ -9,6 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "node scripts/run-script.js scripts/run-tests.ts",
+    "test:share-image": "node scripts/run-browser-test.mjs src/__tests__/share-image.browser.tsx --production",
     "test:commit-transition": "node scripts/run-browser-test.mjs src/__tests__/commit-transition.browser.tsx",
     "test:session-page": "node scripts/run-browser-test.mjs src/__tests__/session-page.browser.tsx",
     "test:activity-group": "node scripts/run-browser-test.mjs src/__tests__/activity-group.browser.tsx",

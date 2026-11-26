@@ -54,10 +54,10 @@ func TestVisitUsageTurnsCachesSummaryAndRebuildsOnChangeOrCorruption(t *testing.
 	}
 	s2 := NewStore(dir)
 	var got []TurnUsageSummary
-	if !s2.VisitUsageTurns(rec.ID, func(_ SessionRecord, turns []TurnUsageSummary) {
+	if err := s2.VisitUsageTurns(rec.ID, func(_ SessionRecord, turns []TurnUsageSummary) {
 		got = append([]TurnUsageSummary(nil), turns...)
-	}) {
-		t.Fatal("VisitUsageTurns returned false")
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if len(got) != 1 {
 		t.Fatalf("len(got) = %d, want 1 assistant turn: %+v", len(got), got)
@@ -81,10 +81,10 @@ func TestVisitUsageTurnsCachesSummaryAndRebuildsOnChangeOrCorruption(t *testing.
 	}
 	s3 := NewStore(dir)
 	got = nil
-	if !s3.VisitUsageTurns(rec.ID, func(_ SessionRecord, turns []TurnUsageSummary) {
+	if err := s3.VisitUsageTurns(rec.ID, func(_ SessionRecord, turns []TurnUsageSummary) {
 		got = append([]TurnUsageSummary(nil), turns...)
-	}) {
-		t.Fatal("VisitUsageTurns after corrupt sidecar failed")
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if len(got) != 1 || got[0].ToolCallsTotal != 2 || got[0].ToolCallsFailed != 1 {
 		t.Fatalf("unexpected rebuilt summary: %+v", got)
@@ -151,10 +151,10 @@ func TestVisitUsageTurnsPreservesImportedAndUpgradesV1WithoutCorruptBackup(t *te
 
 	s2 := NewStore(dir)
 	var got []TurnUsageSummary
-	if !s2.VisitUsageTurns(rec.ID, func(_ SessionRecord, turns []TurnUsageSummary) {
+	if err := s2.VisitUsageTurns(rec.ID, func(_ SessionRecord, turns []TurnUsageSummary) {
 		got = append([]TurnUsageSummary(nil), turns...)
-	}) {
-		t.Fatal("VisitUsageTurns returned false")
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if len(got) != 2 || !got[0].Imported || got[1].Imported {
 		t.Fatalf("expected [imported=true, imported=false] after v1 upgrade, got %+v", got)

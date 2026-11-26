@@ -195,24 +195,11 @@ func buildHistoryIndex(f *os.File) (*historyLogIndex, error) {
 		return nil, err
 	}
 	idx := &historyLogIndex{Version: 1}
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), 64*1024*1024)
 	var offset int64
-	// Include the newline in each token so offsets also work after a
-	// crash leaves a final valid JSON record without a terminating newline.
-	scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {
-		for i, b := range data {
-			if b == '\n' {
-				return i + 1, data[:i+1], nil
-			}
+	for line, err := range turnLogLines(f) {
+		if err != nil {
+			return nil, err
 		}
-		if atEOF && len(data) > 0 {
-			return len(data), data, nil
-		}
-		return 0, nil, nil
-	})
-	for scanner.Scan() {
-		line := scanner.Bytes()
 		var probe struct {
 			Info *struct {
 				ID string `json:"id"`
@@ -230,7 +217,7 @@ func buildHistoryIndex(f *os.File) (*historyLogIndex, error) {
 		}
 		offset += int64(len(line))
 	}
-	return idx, scanner.Err()
+	return idx, nil
 }
 
 // Called under this session's lock (and its disk lock when a writer is active).
@@ -297,11 +284,11 @@ func (s *Store) readIndexedHistoryPage(id string, page HistoryPage) ([]MessageTu
 	var transcript transcriptIndex
 	reader := bufio.NewReaderSize(f, 64*1024)
 	for _, offset := range offsets {
-		reader.Reset(io.NewSectionReader(f, offset.offset, (64<<20)+1))
-		line, err := reader.ReadBytes('\n')
-		if len(line) > 64<<20 {
-			return nil, errors.New("history record exceeds replay limit")
+		if _, err := f.Seek(offset.offset, io.SeekStart); err != nil {
+			return nil, err
 		}
+		reader.Reset(f)
+		line, err := reader.ReadBytes('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
 			return nil, err
 		}

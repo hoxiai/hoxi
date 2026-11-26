@@ -316,6 +316,7 @@ func (s *Service) computeHistory(ctx context.Context, q historyQuery, targets []
 	dbDays := make(map[string]*HistoryDay)
 	runnerDays := make(map[string]*HistoryDay)
 	var gitDays map[string]gitHistoryDayStat
+	var runnerErr error
 	dbOK := true
 
 	var wg sync.WaitGroup
@@ -326,7 +327,7 @@ func (s *Service) computeHistory(ctx context.Context, q historyQuery, targets []
 	}()
 	go func() {
 		defer wg.Done()
-		s.CollectRunnerHistory(startMs, endMs, mapDayGetter(runnerDays))
+		runnerErr = s.CollectRunnerHistory(startMs, endMs, mapDayGetter(runnerDays))
 	}()
 	go func() {
 		defer wg.Done()
@@ -336,6 +337,10 @@ func (s *Service) computeHistory(ctx context.Context, q historyQuery, targets []
 
 	if err := ctx.Err(); err != nil {
 		return HistoryResponse{}, false, err
+	}
+
+	if runnerErr != nil {
+		return HistoryResponse{}, false, runnerErr
 	}
 
 	byDate := make(map[string]*HistoryDay, q.days)

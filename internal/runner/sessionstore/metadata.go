@@ -13,6 +13,7 @@ import (
 type SessionMetadata struct {
 	Title, ProjectID, ProviderID, ModelID, Mode, ExternalID string
 	ArchivedAt                                              int64
+	ContextTurnCount                                        int
 	ContextPending                                          bool
 	CLISystemDigests                                        map[string][]string
 }
@@ -32,11 +33,11 @@ func (s *Store) updateMetadata(id string, touch bool, fn func(*SessionMetadata))
 	next := ss.rec
 	meta := SessionMetadata{Title: next.Title, ProjectID: next.ProjectID, ProviderID: next.ProviderID,
 		ModelID: next.ModelID, Mode: next.Mode, ExternalID: next.ExternalID, ArchivedAt: next.ArchivedAt,
-		ContextPending: next.ContextPending, CLISystemDigests: CloneStringSliceMap(next.CLISystemDigests)}
+		ContextTurnCount: next.ContextTurnCount, ContextPending: next.ContextPending, CLISystemDigests: CloneStringSliceMap(next.CLISystemDigests)}
 	fn(&meta)
 	next.Title, next.ProjectID, next.ProviderID = meta.Title, meta.ProjectID, meta.ProviderID
 	next.ModelID, next.Mode, next.ExternalID = meta.ModelID, meta.Mode, meta.ExternalID
-	next.ArchivedAt, next.ContextPending = meta.ArchivedAt, meta.ContextPending
+	next.ArchivedAt, next.ContextPending, next.ContextTurnCount = meta.ArchivedAt, meta.ContextPending, meta.ContextTurnCount
 	next.CLISystemDigests = CloneStringSliceMap(meta.CLISystemDigests)
 	if touch {
 		next.UpdatedAt = time.Now().UnixMilli()

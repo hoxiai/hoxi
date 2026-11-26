@@ -135,7 +135,7 @@ type Source interface {
 	SessionDirectories(sessionID string) (workDir, projectDir string)
 	CandidateDirectories() []string
 	SourceKey() SourceKey
-	VisitSessions(minUpdatedMs int64, fn func(sessionID string, visitTurns func(func(TurnUsage))))
+	VisitSessions(minUpdatedMs int64, fn func(sessionID string, visitTurns func(func(TurnUsage)))) error
 	NotImportedTurnSQLClause(titleCol, dataCol, rowTimeCol, sessTimeCol string) string
 	RunGit(workDir string, args ...string) (string, error)
 	RunGitRaw(workDir string, args ...string) (string, error)
@@ -165,12 +165,14 @@ type pulseEntry struct {
 type pulseFlight struct {
 	wg  sync.WaitGroup
 	res DailyPulseResponse
+	err error
 }
 
 type usageFlight struct {
 	wg             sync.WaitGroup
 	startOfTodayMs int64
 	sourceKey      SourceKey
+	err            error
 	res            DailyPulseResponse
 }
 
@@ -241,11 +243,15 @@ func (s *Service) HandleDailyPulse(w http.ResponseWriter, r *http.Request) {
 	dir := strings.TrimSpace(r.URL.Query().Get("directory"))
 	sessionID := strings.TrimSpace(r.URL.Query().Get("sessionID"))
 	forced := strings.TrimSpace(r.URL.Query().Get("refresh")) != ""
-	res := s.DailyPulse(dir, sessionID, forced)
+	res, err := s.DailyPulse(dir, sessionID, forced)
+	if err != nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "daily usage temporarily unavailable")
+		return
+	}
 	writeJSON(w, http.StatusOK, res)
 }
 
-func (s *Service) DailyPulse(dir, sessionID string, forced bool) DailyPulseResponse {
+func (s *Service) DailyPulse(dir, sessionID string, forced bool) (DailyPulseResponse, error) {
 	targets := s.ResolveGitTargets(dir, sessionID)
 	cacheKey := TargetsCacheKey(targets)
 
@@ -269,7 +275,7 @@ func (s *Service) DailyPulse(dir, sessionID string, forced bool) DailyPulseRespo
 			if entry.usageKey == sourceKey {
 				res := cloneDailyPulseResponse(entry.res)
 				s.mu.Unlock()
-				return res
+				return res, nil
 			}
 			// Git stats are still within TTL, but token usage changed; reuse
 			// the cached git totals and recompute only lightweight token usage.
@@ -277,7 +283,10 @@ func (s *Service) DailyPulse(dir, sessionID string, forced bool) DailyPulseRespo
 			gitAt := entry.at
 			s.mu.Unlock()
 
-			usageKey := s.collectDailyUsage(now, startOfTodayMs, false, &res)
+			usageKey, err := s.collectDailyUsage(now, startOfTodayMs, false, &res)
+			if err != nil {
+				return DailyPulseResponse{}, err
+			}
 
 			s.mu.Lock()
 			if cur, ok := s.entries[cacheKey]; ok && cur.at.Equal(gitAt) && cur.startOfTodayMs == startOfTodayMs {
@@ -289,12 +298,12 @@ func (s *Service) DailyPulse(dir, sessionID string, forced bool) DailyPulseRespo
 				}
 			}
 			s.mu.Unlock()
-			return res
+			return res, nil
 		}
 		if flight, ok := s.inflight[cacheKey]; ok {
 			s.mu.Unlock()
 			flight.wg.Wait()
-			return cloneDailyPulseResponse(flight.res)
+			return cloneDailyPulseResponse(flight.res), flight.err
 		}
 	}
 	var flight *pulseFlight
@@ -310,8 +319,8 @@ func (s *Service) DailyPulse(dir, sessionID string, forced bool) DailyPulseRespo
 		DbModels: []DailyModelStat{},
 	}
 
-	usageKey := s.collectDailyUsage(now, startOfTodayMs, forced, &res)
-	if len(targets) > 0 {
+	usageKey, err := s.collectDailyUsage(now, startOfTodayMs, forced, &res)
+	if err == nil && len(targets) > 0 {
 		s.CollectGitDailyStats(targets, startOfToday, &res)
 	}
 
@@ -334,7 +343,7 @@ func (s *Service) DailyPulse(dir, sessionID string, forced bool) DailyPulseRespo
 		}
 	}
 	cachedRes := cloneDailyPulseResponse(res)
-	if cur, ok := s.entries[cacheKey]; forced || !ok || cur.startOfTodayMs != startOfTodayMs || !cur.at.After(computeStartedAt) {
+	if cur, ok := s.entries[cacheKey]; err == nil && (forced || !ok || cur.startOfTodayMs != startOfTodayMs || !cur.at.After(computeStartedAt)) {
 		s.entries[cacheKey] = pulseEntry{
 			at:             computeStartedAt,
 			startOfTodayMs: startOfTodayMs,
@@ -344,12 +353,13 @@ func (s *Service) DailyPulse(dir, sessionID string, forced bool) DailyPulseRespo
 	}
 	if flight != nil {
 		flight.res = cachedRes
+		flight.err = err
 		delete(s.inflight, cacheKey)
 		flight.wg.Done()
 	}
 	s.mu.Unlock()
 
-	return res
+	return res, err
 }
 
 func cloneDailyPulseResponse(src DailyPulseResponse) DailyPulseResponse {
@@ -383,7 +393,7 @@ func copyDailyUsage(dst *DailyPulseResponse, src DailyPulseResponse) {
 	copy(dst.DbModels, src.DbModels)
 }
 
-func (s *Service) collectDailyUsage(now time.Time, startOfTodayMs int64, forced bool, res *DailyPulseResponse) SourceKey {
+func (s *Service) collectDailyUsage(now time.Time, startOfTodayMs int64, forced bool, res *DailyPulseResponse) (SourceKey, error) {
 	var sourceKey SourceKey
 	if s.source != nil {
 		sourceKey = s.source.SourceKey()
@@ -399,7 +409,7 @@ func (s *Service) collectDailyUsage(now time.Time, startOfTodayMs int64, forced 
 			copyDailyUsage(res, s.usageRes)
 			cachedKey := s.usageKey
 			s.mu.Unlock()
-			return cachedKey
+			return cachedKey, nil
 		}
 		if existing := s.usageInflight; existing != nil &&
 			existing.startOfTodayMs == startOfTodayMs &&
@@ -407,7 +417,7 @@ func (s *Service) collectDailyUsage(now time.Time, startOfTodayMs int64, forced 
 			s.mu.Unlock()
 			existing.wg.Wait()
 			copyDailyUsage(res, existing.res)
-			return existing.sourceKey
+			return existing.sourceKey, existing.err
 		}
 		flight = &usageFlight{
 			startOfTodayMs: startOfTodayMs,
@@ -422,12 +432,14 @@ func (s *Service) collectDailyUsage(now time.Time, startOfTodayMs int64, forced 
 	usage := DailyPulseResponse{
 		DbModels: []DailyModelStat{},
 	}
-	s.queryOpenCodeDailyDB(startOfTodayMs, &usage)
-	s.CollectRunnerDailyUsage(startOfTodayMs, &usage)
+	err := s.queryOpenCodeDailyDB(startOfTodayMs, &usage)
+	if err == nil {
+		err = s.CollectRunnerDailyUsage(startOfTodayMs, &usage)
+	}
 
 	cachedUsage := cloneDailyPulseResponse(usage)
 	s.mu.Lock()
-	if forced || s.usageStartMs != startOfTodayMs || !s.usageAt.After(computeStartedAt) {
+	if err == nil && (forced || s.usageStartMs != startOfTodayMs || !s.usageAt.After(computeStartedAt)) {
 		s.usageAt = computeStartedAt
 		s.usageStartMs = startOfTodayMs
 		s.usageKey = sourceKey
@@ -435,6 +447,7 @@ func (s *Service) collectDailyUsage(now time.Time, startOfTodayMs int64, forced 
 	}
 	if flight != nil {
 		flight.res = cachedUsage
+		flight.err = err
 		if s.usageInflight == flight {
 			s.usageInflight = nil
 		}
@@ -443,15 +456,15 @@ func (s *Service) collectDailyUsage(now time.Time, startOfTodayMs int64, forced 
 	s.mu.Unlock()
 
 	copyDailyUsage(res, usage)
-	return sourceKey
+	return sourceKey, err
 }
 
 // CollectRunnerDailyUsage folds native-runtime token usage into the pulse.
 // OpenCode sessions are skipped: their turns mirror hoxi.db, which the SQLite
 // step already counted, so adding them here would double count.
-func (s *Service) CollectRunnerDailyUsage(startOfTodayMs int64, res *DailyPulseResponse) {
+func (s *Service) CollectRunnerDailyUsage(startOfTodayMs int64, res *DailyPulseResponse) error {
 	if s.source == nil {
-		return
+		return nil
 	}
 	index := make(map[string]int, len(res.DbModels))
 	for i := range res.DbModels {
@@ -466,7 +479,7 @@ func (s *Service) CollectRunnerDailyUsage(startOfTodayMs int64, res *DailyPulseR
 		input, output, reasoning    int64
 		cacheRead, cacheWrite, cost float64
 	)
-	s.source.VisitSessions(startOfTodayMs, func(_ string, visitTurns func(func(TurnUsage))) {
+	err := s.source.VisitSessions(startOfTodayMs, func(_ string, visitTurns func(func(TurnUsage))) {
 		hasNativeTurnToday := false
 		hasOpenCodeTurnToday := false
 		visitTurns(func(turn TurnUsage) {
@@ -516,6 +529,9 @@ func (s *Service) CollectRunnerDailyUsage(startOfTodayMs int64, res *DailyPulseR
 			sessions++
 		}
 	})
+	if err != nil {
+		return err
+	}
 	res.DbSessionsCount += sessions
 	res.DbToolCallsTotal += toolsTotal
 	res.DbToolCallsFailed += toolsFailed
@@ -523,7 +539,7 @@ func (s *Service) CollectRunnerDailyUsage(startOfTodayMs int64, res *DailyPulseR
 		res.DbLatestTurnTs = latestTurnTs
 	}
 	if turns == 0 {
-		return
+		return nil
 	}
 	res.DbTurnsCount += turns
 	res.DbInputTokens += input
@@ -533,6 +549,7 @@ func (s *Service) CollectRunnerDailyUsage(startOfTodayMs int64, res *DailyPulseR
 	res.DbCacheWriteTokens += int64(cacheWrite)
 	res.DbTotalTokens += input + output + reasoning + int64(cacheRead) + int64(cacheWrite)
 	res.DbTotalCost += cost
+	return nil
 }
 
 func mergeDailyModel(res *DailyPulseResponse, index map[string]int, u TurnUsage) {
@@ -566,13 +583,16 @@ func (s *Service) notImportedClause(titleCol, dataCol, rowTimeCol, sessTimeCol s
 	return "1=1"
 }
 
-func (s *Service) queryOpenCodeDailyDB(startOfTodayMs int64, res *DailyPulseResponse) {
+func (s *Service) queryOpenCodeDailyDB(startOfTodayMs int64, res *DailyPulseResponse) error {
 	dbPath := hoxipaths.DBPath()
 	if dbPath == "" {
-		return
+		return nil
 	}
 	if _, err := os.Stat(dbPath); err != nil {
-		return
+		if os.IsNotExist(err) {
+			return nil // Native-only installs need no OpenCode DB.
+		}
+		return err
 	}
 
 	msgClause := s.notImportedClause("s.title", "m.data", "m.time_created", "s.time_created")
@@ -640,7 +660,7 @@ FROM (
 
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
-	_ = sqlitecli.WithReadOnly(ctx, dbPath, 5*time.Second, func(ctx context.Context, db *sql.DB) error {
+	return sqlitecli.WithReadOnly(ctx, dbPath, 5*time.Second, func(ctx context.Context, db *sql.DB) error {
 		rows, err := db.QueryContext(ctx, modelsSQL, startOfTodayMs)
 		if err != nil {
 			return err
@@ -680,7 +700,9 @@ FROM (
 		if err := db.QueryRowContext(ctx, sessionsSQL, startOfTodayMs).Scan(&sessCount); err != nil {
 			return err
 		}
-		_ = db.QueryRowContext(ctx, toolsSQL, startOfTodayMs-partMessageLookbackMs, startOfTodayMs).Scan(&toolsTotal, &toolsFailed)
+		if err := db.QueryRowContext(ctx, toolsSQL, startOfTodayMs-partMessageLookbackMs, startOfTodayMs).Scan(&toolsTotal, &toolsFailed); err != nil {
+			return err
+		}
 
 		res.DbSessionsCount = sessCount
 		res.DbToolCallsTotal = toolsTotal

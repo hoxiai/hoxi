@@ -360,8 +360,7 @@ export async function refreshAuthStatus(): Promise<AuthStatusSnapshot | null> {
   const flowSeq = authFlowSeq;
   try {
     const snap = await authAPI.getStatus();
-    if (generation !== authGeneration) return null;
-    const staleAuthFlow = flowSeq !== authFlowSeq;
+    if (generation !== authGeneration || flowSeq !== authFlowSeq) return null;
     const wasLoggedIn = desktopAuth.isLoggedIn;
     const accountSwitched =
       wasLoggedIn &&
@@ -377,11 +376,9 @@ export async function refreshAuthStatus(): Promise<AuthStatusSnapshot | null> {
       memberRequestSeq++;
       if (accountSwitched) notifyAccountChanged();
     }
-    const nextAuthorizing =
-      staleAuthFlow && !snap.isLoggedIn ? desktopAuth.isAuthorizing : snap.isAuthorizing;
     setDesktopAuth({
       isLoggedIn: snap.isLoggedIn,
-      isAuthorizing: nextAuthorizing,
+      isAuthorizing: snap.isAuthorizing,
       user: snap.user || null,
       expiresAt: snap.expiresAt || null,
       serverBaseUrl: snap.serverBaseUrl,
@@ -399,7 +396,7 @@ export async function refreshAuthStatus(): Promise<AuthStatusSnapshot | null> {
       }
       stopPolling();
       void refreshDesktopMember();
-    } else if (!nextAuthorizing) {
+    } else if (!snap.isAuthorizing) {
       stopPolling();
       memberRequestSeq++;
       setDesktopAuth("member", { ...DEFAULT_MEMBER_STATE });
@@ -432,10 +429,14 @@ export async function startDesktopAuthorization(): Promise<string | null> {
 
     stopPolling();
     // 开启前端每 1.5 秒轻量同步状态
+    let checking = false;
     pollTimer = setInterval(async () => {
-      const snap = await refreshAuthStatus();
-      if (seq !== authFlowSeq || snap?.isLoggedIn || !snap?.isAuthorizing) {
-        stopPolling();
+      if (checking || seq !== authFlowSeq) return;
+      checking = true;
+      try {
+        await refreshAuthStatus();
+      } finally {
+        checking = false;
       }
     }, 1500);
 
