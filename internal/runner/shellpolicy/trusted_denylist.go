@@ -40,6 +40,9 @@ var (
 	trustedSSHExecOptRe = regexp.MustCompile(`(?i)(?:proxycommand|localcommand|permitlocalcommand|knownhostscommand)`)
 
 	trustedDotEnvGlobRe = regexp.MustCompile(`(?i)(?:^|[\s'"=(@<>:,/])[^\s;&|'"]*\*\.env(?:\.[A-Za-z0-9_.-]+)?(?:$|[\s;&|)'"*?])`)
+
+	// A direct interpreter with a single, literal stdin delimiter and no other shell syntax.
+	trustedStdinInterpreterRe = regexp.MustCompile(`^[ \t]*([A-Za-z0-9.]+)(?:[ \t]+-)?[ \t]*<<-?[ \t]*(?:'[A-Za-z_][A-Za-z0-9_]*'|"[A-Za-z_][A-Za-z0-9_]*")[ \t]*$`)
 )
 
 func isTrustedExplicitHighRisk(item map[string]interface{}, worktree string) bool {
@@ -94,14 +97,19 @@ func isTrustedHighRiskCommand(cmd, worktree string) bool {
 	}
 	forms := destructiveScanForms(cmd)
 	for _, form := range forms {
-		if matchesTrustedHighRiskForm(form, worktree) {
+		segments := form
+		if form == cmd {
+			// Only original source has authoritative heredoc boundaries.
+			segments = afterReadOnlyInterpreterHeredoc(cmd)
+		}
+		if matchesTrustedHighRiskForm(form, segments, worktree) {
 			return true
 		}
 	}
 	return false
 }
 
-func matchesTrustedHighRiskForm(form, worktree string) bool {
+func matchesTrustedHighRiskForm(form, segments, worktree string) bool {
 	if hasProtectedGitOutput(form) {
 		return true
 	}
@@ -133,10 +141,40 @@ func matchesTrustedHighRiskForm(form, worktree string) bool {
 	if referencesCredentialEnvVar(form) {
 		return true
 	}
-	if hasTrustedHighRiskSegments(form, worktree, 0) {
+	if hasTrustedHighRiskSegments(segments, worktree, 0) {
 		return true
 	}
 	return hasBraceObfuscatedRisk(form)
+}
+
+// Function arguments and array subscripts in literal Python/Node input are
+// not shell commands. Skip a verified read-only body only for the shell
+// segment walk. All credential, destructive and dynamic checks see the
+// original text, and the shell resumes at the first matching terminator.
+func afterReadOnlyInterpreterHeredoc(command string) string {
+	header, _, ok := strings.Cut(command, "\n")
+	start := strings.Index(header, "<<")
+	if !ok || start < 0 {
+		return command
+	}
+	m := trustedStdinInterpreterRe.FindStringSubmatch(header)
+	if m == nil {
+		return command
+	}
+	family, _ := inlineScriptTool(m[1])
+	if family != "python" && family != "python3" && family != "node" {
+		return command
+	}
+	p := newUParser(command)
+	p.i = start
+	if !p.readHeredocMarker() {
+		return command
+	}
+	p.i = len(header) + 1
+	if !p.readHeredocBodies() || readOnlyScriptCategory(family, p.cur.stdinText) != "" {
+		return command
+	}
+	return command[p.i:]
 }
 
 func hasTrustedDotEnvGlob(s string) bool {

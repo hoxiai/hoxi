@@ -28,6 +28,7 @@ import {
 import { inlineScriptsReadOnly } from "./inline-script-readonly.js";
 import { inlineScriptTool } from "./script-interpreter.js";
 import { destructiveScanForms } from "./shell-substitution.js";
+import { unattendedScriptCategoryWith } from "./unattended-policy.js";
 
 const SECRET_CMD_RE = new RegExp(
   [
@@ -290,6 +291,11 @@ function classifyBashRisk(candidates, fallbackHighRisk) {
   if (delMatch) {
     const verb = (delMatch[1] || delMatch[2] || delMatch[3] || "rm").toLowerCase();
     return { code: "destructive_delete", severity: "danger", detail: verb };
+  }
+  // Detect credential commands such as a Keychain lookup by their parsed
+  // arguments. A search pattern mentioning the same command is ordinary data.
+  if (candidates.some((cmd) => unattendedScriptCategoryWith(unwrapSandboxCommand(cmd), () => "") === "secret")) {
+    return { code: "secret_read", severity: "danger" };
   }
   return fallbackHighRisk ? { code: "high_risk", severity: "danger" } : null;
 }

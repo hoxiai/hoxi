@@ -1,4 +1,6 @@
 [
+  { "command": "python3 - <<'PY'\nimport sqlite3\ndb = sqlite3.connect('file:data/app.db?mode=ro', uri=True)\nfor row in db.execute('SELECT id FROM logs'):\n    print(row[:2])\nPY", "decision": "ask", "destructive": false },
+  { "command": "python3 - <<'PY'\nprint('done')\nPY\nsource .env", "decision": "ask", "destructive": true },
   { "command": "node -e 'const fs = require(\"fs\"); const f = fs.readdirSync(\"dist\").find(x => x.startsWith(\"bundle-\")); console.log(fs.readFileSync(\"dist/\" + f, \"utf8\"));'", "decision": "ask", "destructive": false },
   { "command": "rg -n --regexp=shutdown src", "decision": "allow", "destructive": false },
   { "command": "rg -inC2 -g '*.go' --regexp=shutdown src", "decision": "allow", "destructive": false },

@@ -93,12 +93,13 @@ describe("permission command chains", () => {
 
   it("matches shared permission-request.cases.json fixture", () => {
     const env = (globalThis as any).process.env as Record<string, string | undefined>;
-    const cases: Array<{ name: string; request: unknown; destructive: boolean; hoxiHome?: string }> = requestCases;
+    const cases: Array<{ name: string; request: Record<string, unknown>; destructive: boolean; hoxiHome?: string; reason?: string }> = requestCases;
     for (const c of cases) {
       const previous = env.HOXI_HOME;
       try {
         if (c.hoxiHome) env.HOXI_HOME = c.hoxiHome;
-        assertEqual(isDestructivePermissionRequest(c.request as Record<string, unknown>), c.destructive, c.name);
+        assertEqual(isDestructivePermissionRequest(c.request), c.destructive, c.name);
+        if (c.reason) assertEqual(explainPermissionRequest(c.request).code, c.reason, c.name);
       } finally {
         if (previous === undefined) delete env.HOXI_HOME;
         else env.HOXI_HOME = previous;

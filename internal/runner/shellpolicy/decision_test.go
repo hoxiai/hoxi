@@ -29,6 +29,7 @@ func TestDestructiveRequestsMatchSharedFixture(t *testing.T) {
 		Name        string                 `json:"name"`
 		Request     map[string]interface{} `json:"request"`
 		Destructive bool                   `json:"destructive"`
+		Trusted     *bool                  `json:"trusted"`
 		HoxiHome    string                 `json:"hoxiHome"`
 	}
 	if err := json.Unmarshal(raw, &cases); err != nil {
@@ -44,6 +45,11 @@ func TestDestructiveRequestsMatchSharedFixture(t *testing.T) {
 			}
 			if got := isDestructivePermissionRequest(c.Request); got != c.Destructive {
 				t.Errorf("destructive = %v, want %v", got, c.Destructive)
+			}
+			if c.Trusted != nil {
+				if got := approvalAutoApproves(c.Request, ApprovalPolicy{Mode: ApprovalModeTrusted}, nil, "/repo"); got != *c.Trusted {
+					t.Errorf("trusted approval = %v, want %v", got, *c.Trusted)
+				}
 			}
 		})
 	}
