@@ -70,6 +70,7 @@ export * from "./session-capabilities";
 export * from "./session-transcripts";
 export * from "./context-contributors";
 export * from "./context-protocol";
+export * from "./collab-prompt";
 export * from "./timeline-activity";
 export * from "./transcript-search";
 export { createTranscriptSearchClient } from "./transcript-search-client";

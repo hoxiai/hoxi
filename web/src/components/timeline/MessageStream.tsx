@@ -47,6 +47,7 @@ import {
 import { EarlierTurnsBanner } from "./EarlierTurnsBanner";
 import { UserTurnItem } from "./UserTurnItem";
 import TaskTimelineBar from "./TaskTimelineBar";
+import { CollabSessionBanner } from "./CollabSessionBanner";
 import { SubagentSessionBanner } from "./SubagentSessionBanner";
 import QueuedPromptsList from "./QueuedPromptsList";
 import { SessionSkeleton } from "./SessionSkeleton";
@@ -387,6 +388,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
   return (
     <div class="relative flex flex-1 min-h-0 flex-col" style={{ display: props.hidden ? "none" : undefined }}>
       <SubagentSessionBanner />
+      <CollabSessionBanner />
       {/* No container-type here: in WebKit a size container above the scroller lays out
           its subtree before new nodes get styles, clamping the bottom-pinned scrollTop. */}
       <div class="relative flex-1 min-h-0">

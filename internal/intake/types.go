@@ -204,6 +204,7 @@ type RunSessionRequest struct {
 	Directory   string
 	SessionID   string
 	Title       string
+	System      string
 	Prompt      string
 	Attachments []AttachmentRef
 	Mode        string

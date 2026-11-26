@@ -1,6 +1,11 @@
 // web/src/store/context-protocol.ts
 // Standard structured context-attachment protocol (hoxi-context v1) separating
 // human-readable display metadata, on-demand entity references, and LLM payloads.
+import {
+  extractCollabPromptTitleFallback,
+  formatCollabPromptForClipboard,
+  formatCollabPromptForExport,
+} from "./collab-prompt";
 
 export type ContextItemKind = "quote" | "entity" | "record" | "snapshot";
 
@@ -649,6 +654,8 @@ export function parseHoxiContextPrompt(raw: string): ParsedContextPrompt {
 }
 
 export function extractContextTitleFallback(rawPrompt: string): string {
+  const collabTitle = extractCollabPromptTitleFallback(rawPrompt);
+  if (collabTitle) return collabTitle;
   const parsed = parseHoxiContextPrompt(rawPrompt);
   if (!parsed.hasContext) return rawPrompt;
   if (parsed.bodyText.trim()) return parsed.bodyText;
@@ -693,6 +700,8 @@ export function prettyFormatContextBody(raw: string): { text: string; isJson: bo
 }
 
 export function formatContextPromptForExport(raw: string): string {
+  const collabExport = formatCollabPromptForExport(raw);
+  if (collabExport !== null) return collabExport;
   const parsed = parseHoxiContextPrompt(raw);
   if (!parsed.hasContext) return raw;
   const sections: string[] = [];
@@ -722,6 +731,8 @@ export function formatContextPromptForExport(raw: string): string {
 }
 
 export function formatContextPromptForClipboard(raw: string): string {
+  const collabClip = formatCollabPromptForClipboard(raw);
+  if (collabClip !== null) return collabClip;
   const parsed = parseHoxiContextPrompt(raw);
   if (!parsed.hasContext) return raw;
   const sections: string[] = [];

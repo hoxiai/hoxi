@@ -30,11 +30,13 @@ import {
   openAttachmentInInspector,
   openImagePreview,
   openStagedMediaExternally,
+  parseCollabPrompt,
   parseHoxiContextPrompt,
   resolveMediaPlaybackURL,
   sessionDirectory,
   workspace,
 } from "../../store/workspace";
+import { CollabPromptCard } from "./CollabPromptCard";
 import { UserContextBlocks } from "./UserContextBlocks";
 import { FileIcon, Icon } from "../icons";
 import { t } from "../../i18n";
@@ -523,7 +525,10 @@ export function UserTextPartView(props: {
   };
   let containerRef: HTMLDivElement | undefined;
 
-  const parsed = createMemo(() => parseHoxiContextPrompt(props.part.text || ""));
+  const collab = createMemo(() => parseCollabPrompt(props.part.text || ""));
+  const parsed = createMemo(() =>
+    collab() ? { envelopes: [], bodyText: "", hasContext: false } : parseHoxiContextPrompt(props.part.text || "")
+  );
   const bodyText = () => parsed().bodyText;
 
   const lineCount = createMemo(() => {
@@ -574,59 +579,74 @@ export function UserTextPartView(props: {
   return (
     <Show when={Boolean(props.part.text)}>
       <div ref={containerRef} data-part-id={props.part.id}>
-        <Show when={parsed().hasContext}>
-          <UserContextBlocks
-            envelopes={parsed().envelopes}
-            partId={props.part.id}
-            forceExpand={props.forceExpand}
-          />
-        </Show>
-        <Show when={Boolean(bodyText())}>
-          <div
-            class={`whitespace-pre-wrap break-words leading-[1.65] text-[var(--text-primary)] selectable-text ${
-              isCollapsible() && !isExpanded()
-                ? "max-h-[196px] overflow-hidden [mask-image:linear-gradient(to_bottom,black_65%,transparent_100%)]"
-                : ""
-            }`}
-            style={{ "font-size": "var(--app-chat-text-size)" }}
-          >
-            <Show when={slashCommand()} fallback={bodyText()}>
-              {(cmd) => (
-                <>
-                  <span
-                    title={cmd().command.description || cmd().command.rawToken}
-                    class={`inline-flex items-center gap-1 rounded-md border border-[var(--accent-border)] bg-[var(--bg-panel)]/85 px-1.5 py-0.5 align-baseline font-mono text-[12px] font-semibold text-[var(--accent-primary)] ${
-                      cmd().restText && !cmd().restText.startsWith("\n") ? "mr-1.5" : ""
-                    }`}
+        <Show
+          when={collab()}
+          fallback={
+            <>
+              <Show when={parsed().hasContext}>
+                <UserContextBlocks
+                  envelopes={parsed().envelopes}
+                  partId={props.part.id}
+                  forceExpand={props.forceExpand}
+                />
+              </Show>
+              <Show when={Boolean(bodyText())}>
+                <div
+                  class={`whitespace-pre-wrap break-words leading-[1.65] text-[var(--text-primary)] selectable-text ${
+                    isCollapsible() && !isExpanded()
+                      ? "max-h-[196px] overflow-hidden [mask-image:linear-gradient(to_bottom,black_65%,transparent_100%)]"
+                      : ""
+                  }`}
+                  style={{ "font-size": "var(--app-chat-text-size)" }}
+                >
+                  <Show when={slashCommand()} fallback={bodyText()}>
+                    {(cmd) => (
+                      <>
+                        <span
+                          title={cmd().command.description || cmd().command.rawToken}
+                          class={`inline-flex items-center gap-1 rounded-md border border-[var(--accent-border)] bg-[var(--bg-panel)]/85 px-1.5 py-0.5 align-baseline font-mono text-[12px] font-semibold text-[var(--accent-primary)] ${
+                            cmd().restText && !cmd().restText.startsWith("\n") ? "mr-1.5" : ""
+                          }`}
+                        >
+                          <Terminal size={11} class="shrink-0" />
+                          <span>{cmd().command.rawToken}</span>
+                        </span>
+                        {cmd().restText}
+                      </>
+                    )}
+                  </Show>
+                </div>
+                <Show when={isCollapsible() && !props.forceExpand}>
+                  <button
+                    type="button"
+                    onClick={toggleExpanded}
+                    class="mt-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[12px] font-medium text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer select-none"
                   >
-                    <Terminal size={11} class="shrink-0" />
-                    <span>{cmd().command.rawToken}</span>
-                  </span>
-                  {cmd().restText}
-                </>
-              )}
-            </Show>
-          </div>
-          <Show when={isCollapsible() && !props.forceExpand}>
-            <button
-              type="button"
-              onClick={toggleExpanded}
-              class="mt-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[12px] font-medium text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer select-none"
-            >
-              <Icon
-                name="chevron-down"
-                size="small"
-                class={`transition-transform duration-150 ${expanded() ? "rotate-180" : ""}`}
-              />
-              <span>
-                {expanded()
-                  ? t("timeline.collapsePrompt")
-                  : lineCount() > USER_PROMPT_FOLD_LINES
-                    ? t("timeline.expandPromptLines", { count: lineCount() })
-                    : t("timeline.expandPrompt")}
-              </span>
-            </button>
-          </Show>
+                    <Icon
+                      name="chevron-down"
+                      size="small"
+                      class={`transition-transform duration-150 ${expanded() ? "rotate-180" : ""}`}
+                    />
+                    <span>
+                      {expanded()
+                        ? t("timeline.collapsePrompt")
+                        : lineCount() > USER_PROMPT_FOLD_LINES
+                          ? t("timeline.expandPromptLines", { count: lineCount() })
+                          : t("timeline.expandPrompt")}
+                    </span>
+                  </button>
+                </Show>
+              </Show>
+            </>
+          }
+        >
+          {(parsedCollab) => (
+            <CollabPromptCard
+              parsed={parsedCollab()}
+              partId={props.part.id}
+              forceExpand={props.forceExpand}
+            />
+          )}
         </Show>
       </div>
     </Show>

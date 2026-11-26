@@ -102,6 +102,7 @@ import "../src/__tests__/gateway-directory.test";
 import "../src/__tests__/orchestrator-mode.test";
 import "../src/__tests__/schedules.test";
 import "../src/__tests__/context-protocol.test";
+import "../src/__tests__/collab-prompt.test";
 import "../src/__tests__/display-layer.test";
 import "../src/__tests__/rich-views.test";
 import "../src/__tests__/model-capabilities.test";

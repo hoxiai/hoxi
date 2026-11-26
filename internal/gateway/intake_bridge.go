@@ -257,8 +257,9 @@ func (b *gatewayIntakeSessions) RunTurn(ctx context.Context, sessionID string, r
 		return "", errors.New("runner is unavailable")
 	}
 	turn := runner.PromptRequest{
-		Text:  req.Prompt,
-		Agent: strings.TrimSpace(req.Mode),
+		Text:   req.Prompt,
+		System: req.System,
+		Agent:  strings.TrimSpace(req.Mode),
 	}
 	provider := strings.TrimSpace(req.Provider)
 	model := strings.TrimSpace(req.Model)

@@ -115,13 +115,13 @@ func (s *Service) ApproveAndRun(ctx context.Context, in ApproveTaskInput) (TaskI
 	s.approving[taskID] = true
 	prevStatus := item.Status
 	existingSid := strings.TrimSpace(item.SessionID)
-	var prompt string
+	var system, prompt string
 	var atts []AttachmentRef
 	if existingSid != "" && prevStatus == StatusReopened {
-		prompt = BuildFollowupFixPrompt(item)
+		system, prompt = BuildFollowupFixTurn(item)
 		atts = latestTesterAttachments(item)
 	} else {
-		prompt = BuildInitialFixPrompt(item)
+		system, prompt = BuildInitialFixTurn(item)
 		atts = collectInitialTaskAttachments(item)
 	}
 	mode := strings.TrimSpace(in.Mode)
@@ -132,6 +132,7 @@ func (s *Service) ApproveAndRun(ctx context.Context, in ApproveTaskInput) (TaskI
 		Directory:   item.Directory,
 		SessionID:   existingSid,
 		Title:       "QA · " + item.Title,
+		System:      system,
 		Prompt:      prompt,
 		Attachments: atts,
 		Mode:        mode,

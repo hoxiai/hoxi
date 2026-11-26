@@ -1,5 +1,5 @@
 // web/src/components/timeline/UserTurnItem.tsx
-import { createSignal, Index, onCleanup, Show } from "solid-js";
+import { createMemo, createSignal, Index, onCleanup, Show } from "solid-js";
 import type { MessagePart } from "../../services/sse-types";
 import type { MessageTurn } from "../../store/workspace";
 import {
@@ -10,6 +10,7 @@ import {
   openAttachmentContextMenu,
   openAttachmentInInspector,
   openImagePreview,
+  parseCollabPrompt,
   resolveTurnSkillStatus,
   revertToHere,
   workspace,
@@ -83,6 +84,27 @@ export function UserTurnItem(props: {
     }
   };
 
+  const collabRole = createMemo(() => {
+    for (const part of props.turn.parts) {
+      if (part.type === "text" && part.text) {
+        const parsed = parseCollabPrompt(part.text);
+        if (parsed) return parsed.role;
+      }
+    }
+    return null;
+  });
+
+  const bubbleClass = () => {
+    const role = collabRole();
+    if (role === "pm") {
+      return "max-w-[88%] rounded-2xl border border-[var(--violet-border)]/80 border-l-[3px] border-l-[var(--violet-text)]/70 bg-[var(--violet-surface)]/80 px-3.5 py-2.5 space-y-2";
+    }
+    if (role === "qa") {
+      return "max-w-[88%] rounded-2xl border border-[var(--warn-border)]/80 border-l-[3px] border-l-[var(--warn-text)]/75 bg-[var(--warn-surface)]/70 px-3.5 py-2.5 space-y-2";
+    }
+    return "max-w-[88%] rounded-2xl border border-[var(--accent-border)]/75 bg-[var(--accent-surface)] px-3.5 py-2.5 space-y-2";
+  };
+
   return (
     <div
       data-turn-id={props.turn.info.id}
@@ -94,7 +116,7 @@ export function UserTurnItem(props: {
           : ""
       }`}
     >
-      <div class="max-w-[88%] rounded-2xl border border-[var(--accent-border)]/75 bg-[var(--accent-surface)] px-3.5 py-2.5 space-y-2">
+      <div class={bubbleClass()}>
         <Show
           when={resolveTurnSkillStatus(
             props.allTurns,

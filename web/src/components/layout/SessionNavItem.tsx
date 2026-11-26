@@ -8,6 +8,7 @@ import {
   isSubagentDrawerExpanded,
   loadMoreSubagents,
   openShareImageModal,
+  parseCollabSessionTitle,
   partitionVisibleSubagents,
   renameSessionTitle,
   selectSession,
@@ -85,12 +86,21 @@ export function SessionNavItem(props: SessionNavItemProps) {
         )
       : { visible: [] as SessionInfo[], hiddenCount: 0 },
   );
-  const displayTitle = () =>
+  const collabBadge = createMemo(() =>
     isPlaceholderSessionTitle(props.session.title)
+      ? null
+      : parseCollabSessionTitle(props.session.title)
+  );
+  const displayTitle = () => {
+    if (isPlaceholderSessionTitle(props.session.title)) return t("leftNav.newThread");
+    const collab = collabBadge();
+    if (collab) return collab.cleanTitle;
+    return props.session.title || "";
+  };
+  const rowTooltip = () => {
+    const title = isPlaceholderSessionTitle(props.session.title)
       ? t("leftNav.newThread")
       : props.session.title || "";
-  const rowTooltip = () => {
-    const title = displayTitle();
     if (!props.projectName) return title;
     return props.projectTitle
       ? `[${props.projectName}] ${title}\n${props.projectTitle}`
@@ -265,6 +275,19 @@ export function SessionNavItem(props: SessionNavItemProps) {
               <span class="shrink-0 rounded border border-[var(--border-subtle)] bg-[var(--bg-hover)] px-1 py-0.5 text-[11px] font-medium leading-none text-[var(--text-muted)]">
                 {t("timeline.turnPaused")}
               </span>
+            </Show>
+            <Show when={collabBadge()}>
+              {(cb) => (
+                <span
+                  class={`shrink-0 rounded border px-1 py-0.5 font-mono text-[10px] font-semibold leading-none tracking-tight ${
+                    cb().role === "pm"
+                      ? "border-[var(--violet-border)]/75 bg-[var(--violet-surface)] text-[var(--violet-text)]"
+                      : "border-[var(--warn-border)]/75 bg-[var(--warn-surface)] text-[var(--warn-text)]"
+                  }`}
+                >
+                  {cb().role === "pm" ? "PM" : "QA"}
+                </span>
+              )}
             </Show>
             <span
               class={`session-row-title truncate text-[14px] flex-1 leading-snug ${
