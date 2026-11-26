@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/chromedp/cdproto/emulation"
@@ -86,9 +87,12 @@ type scope struct {
 	transferLedgerID  string
 	env               StoreEnvConfig
 	envFingerprint    string
-	proxyBridge       *loopbackProxyBridge
-	previewOrigin     string
-	previewProxy      *previewOriginProxy
+	proxyBridge            *loopbackProxyBridge
+	previewOrigin          string
+	previewProxy           *previewOriginProxy
+	previewNavBlocked      atomic.Uint64
+	previewNavBlockedAcked uint64
+	previewLastAllowedURL  string
 }
 
 type Service struct {
@@ -551,6 +555,13 @@ func (sc *scope) start(ctx context.Context) error {
 	sc.tabs[sc.tabID] = browser
 	sc.trackNavigation(browser, sc.tabID)
 	sc.viewports[sc.tabID] = sc.viewport()
+	if sc.isPreviewScope() {
+		sc.installPreviewBrowserGuard(browser)
+		if err := sc.installPreviewTabGuard(browser, sc.tabID); err != nil {
+			sc.resetBrowser()
+			return err
+		}
+	}
 	return nil
 }
 

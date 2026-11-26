@@ -265,6 +265,12 @@ func (sc *scope) withTab(ctx context.Context, tasks ...chromedp.Action) error {
 		sc.trackNavigation(tab, sc.tabID)
 		sc.tabCancels[sc.tabID] = cancel
 		sc.viewports[sc.tabID] = sc.viewport()
+		if sc.isPreviewScope() {
+			if err := sc.installPreviewTabGuard(tab, sc.tabID); err != nil {
+				sc.releaseTab(sc.tabID)
+				return err
+			}
+		}
 	}
 	op, cancel := context.WithCancel(tab)
 	stop := context.AfterFunc(ctx, cancel)

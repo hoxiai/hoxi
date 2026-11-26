@@ -19,7 +19,10 @@ import (
 	"github.com/hoxiai/hoxi/internal/diagnostics"
 )
 
-const previewProxyDialTimeout = 5 * time.Second
+const (
+	previewProxyDialTimeout    = 5 * time.Second
+	previewMaxSubresourceHosts = 256
+)
 
 var (
 	errPreviewTargetBlocked = errors.New("preview target address is blocked")
@@ -46,129 +49,6 @@ var (
 
 func isReservedHoxiLoopbackPort(port int) bool {
 	return reservedHoxiLoopbackPorts[port]
-}
-
-// parseNonCanonicalIPv4 recognizes legacy inet_aton numeric IPv4 forms that
-// browsers/OS resolvers accept (e.g. 127.1, 0177.0.0.1, 0x7f000001, 2130706433).
-func parseNonCanonicalIPv4(host string) (netip.Addr, bool) {
-	if host == "" {
-		return netip.Addr{}, false
-	}
-	parts := strings.Split(host, ".")
-	if len(parts) < 1 || len(parts) > 4 {
-		return netip.Addr{}, false
-	}
-	vals := make([]uint64, len(parts))
-	for i, part := range parts {
-		if part == "" {
-			return netip.Addr{}, false
-		}
-		v, err := strconv.ParseUint(part, 0, 64)
-		if err != nil {
-			return netip.Addr{}, false
-		}
-		vals[i] = v
-	}
-	var ip32 uint32
-	switch len(vals) {
-	case 1:
-		if vals[0] > 0xffffffff {
-			return netip.Addr{}, false
-		}
-		ip32 = uint32(vals[0])
-	case 2:
-		if vals[0] > 0xff || vals[1] > 0xffffff {
-			return netip.Addr{}, false
-		}
-		ip32 = uint32(vals[0]<<24) | uint32(vals[1])
-	case 3:
-		if vals[0] > 0xff || vals[1] > 0xff || vals[2] > 0xffff {
-			return netip.Addr{}, false
-		}
-		ip32 = uint32(vals[0]<<24) | uint32(vals[1]<<16) | uint32(vals[2])
-	case 4:
-		if vals[0] > 0xff || vals[1] > 0xff || vals[2] > 0xff || vals[3] > 0xff {
-			return netip.Addr{}, false
-		}
-		ip32 = uint32(vals[0]<<24) | uint32(vals[1]<<16) | uint32(vals[2]<<8) | uint32(vals[3])
-	}
-	return netip.AddrFrom4([4]byte{byte(ip32 >> 24), byte(ip32 >> 16), byte(ip32 >> 8), byte(ip32)}), true
-}
-
-// extractWildcardDNSIP extracts an embedded IPv4 address from wildcard DNS
-// hostnames such as 127.0.0.1.nip.io, app-127-0-0-1.sslip.io, or 7f000001.nip.io.
-func extractWildcardDNSIP(host string) (netip.Addr, bool) {
-	var prefix string
-	for _, suffix := range []string{".nip.io", ".sslip.io", ".xip.io"} {
-		if strings.HasSuffix(host, suffix) {
-			prefix = strings.TrimSuffix(host, suffix)
-			break
-		}
-	}
-	if prefix == "" {
-		return netip.Addr{}, false
-	}
-	labels := strings.Split(prefix, ".")
-	// Dotted IPv4 at the tail of the prefix: e.g. foo.127.0.0.1.nip.io
-	if len(labels) >= 4 {
-		cand := strings.Join(labels[len(labels)-4:], ".")
-		if ip, err := netip.ParseAddr(cand); err == nil {
-			return ip.Unmap(), true
-		}
-	}
-	last := labels[len(labels)-1]
-	// Hex IPv4 label: e.g. 7f000001.nip.io or app-7f000001.nip.io
-	if len(last) >= 8 {
-		hexPart := last[len(last)-8:]
-		if v, err := strconv.ParseUint(hexPart, 16, 32); err == nil {
-			return netip.AddrFrom4([4]byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)}), true
-		}
-	}
-	// Dash-separated IPv4: e.g. 127-0-0-1.nip.io or foo-127-0-0-1.sslip.io
-	dashParts := strings.Split(last, "-")
-	if len(dashParts) >= 4 {
-		cand := strings.Join(dashParts[len(dashParts)-4:], ".")
-		if ip, err := netip.ParseAddr(cand); err == nil {
-			return ip.Unmap(), true
-		}
-	}
-	return netip.Addr{}, false
-}
-
-func isLoopbackPreviewHost(host string) bool {
-	h := strings.ToLower(strings.TrimSuffix(strings.Trim(strings.TrimSpace(host), "[]"), "."))
-	if h == "" {
-		return false
-	}
-	if h == "localhost" || h == "localhost.localdomain" || h == "wails" ||
-		h == "wails.localhost" || h == "app.wails.localhost" ||
-		strings.HasSuffix(h, ".localhost") ||
-		h == "localtest.me" || strings.HasSuffix(h, ".localtest.me") ||
-		h == "lvh.me" || strings.HasSuffix(h, ".lvh.me") ||
-		h == "vcap.me" || strings.HasSuffix(h, ".vcap.me") {
-		return true
-	}
-	if ip, err := netip.ParseAddr(h); err == nil {
-		return ip.Unmap().IsLoopback()
-	}
-	if ip, ok := parseNonCanonicalIPv4(h); ok {
-		return ip.IsLoopback()
-	}
-	if ip, ok := extractWildcardDNSIP(h); ok {
-		return ip.IsLoopback()
-	}
-	return false
-}
-
-func isBlockedPreviewWildcardHost(host string) bool {
-	h := strings.ToLower(strings.TrimSuffix(strings.Trim(strings.TrimSpace(host), "[]"), "."))
-	if ip, ok := parseNonCanonicalIPv4(h); ok && isBlockedPreviewIP(ip) {
-		return true
-	}
-	if ip, ok := extractWildcardDNSIP(h); ok && isBlockedPreviewIP(ip) {
-		return true
-	}
-	return false
 }
 
 func parseOriginAuthority(allowedOrigin string) (scheme, host string, port int, canonical string, err error) {
@@ -203,20 +83,24 @@ func parseOriginAuthority(allowedOrigin string) (scheme, host string, port int, 
 // cross-origin redirects, blocked IPs, and DNS-resolved Hoxi loopback ports are
 // blocked at the transport layer before any socket is dialed.
 type previewOriginProxy struct {
-	allowedOrigin string
-	allowedScheme string
-	allowedHost   string
-	allowedPort   int
-	lookupIP      func(ctx context.Context, host string) ([]netip.Addr, error)
-	dialer        *net.Dialer
-	ln            net.Listener
-	srv           *http.Server
-	transport     *http.Transport
-	blocked       atomic.Uint64
-	closeOnce     sync.Once
-	mu            sync.Mutex
-	closed        bool
-	conns         map[net.Conn]struct{}
+	allowedOrigin        string
+	allowedScheme        string
+	allowedHost          string
+	allowedPort          int
+	lookupIP             func(ctx context.Context, host string) ([]netip.Addr, error)
+	dialer               *net.Dialer
+	ln                   net.Listener
+	srv                  *http.Server
+	transport            *http.Transport
+	subresourceTransport *http.Transport
+	blocked              atomic.Uint64
+	navBlocked           atomic.Uint64
+	subresourceMu        sync.Mutex
+	subresourceHosts     map[string]time.Time
+	closeOnce            sync.Once
+	mu                   sync.Mutex
+	closed               bool
+	conns                map[net.Conn]struct{}
 }
 
 func startPreviewOriginProxy(allowedOrigin string) (*previewOriginProxy, error) {
@@ -247,12 +131,23 @@ func startPreviewOriginProxyWithLookup(allowedOrigin string, lookup func(ctx con
 			Timeout:   previewProxyDialTimeout,
 			KeepAlive: 30 * time.Second,
 		},
-		ln:    ln,
-		conns: make(map[net.Conn]struct{}),
+		ln:               ln,
+		subresourceHosts: make(map[string]time.Time),
+		conns:            make(map[net.Conn]struct{}),
 	}
 	p.transport = &http.Transport{
 		Proxy:                 nil,
 		DialContext:           p.dialAllowedTarget,
+		DisableCompression:    true,
+		ForceAttemptHTTP2:     false,
+		MaxIdleConns:          32,
+		IdleConnTimeout:       30 * time.Second,
+		TLSHandshakeTimeout:   previewProxyDialTimeout,
+		ResponseHeaderTimeout: 30 * time.Second,
+	}
+	p.subresourceTransport = &http.Transport{
+		Proxy:                 nil,
+		DialContext:           p.dialPublicSubresourceTarget,
 		DisableCompression:    true,
 		ForceAttemptHTTP2:     false,
 		MaxIdleConns:          32,
@@ -283,6 +178,71 @@ func (p *previewOriginProxy) BlockedCount() uint64 {
 		return 0
 	}
 	return p.blocked.Load()
+}
+
+func (p *previewOriginProxy) NavBlockedCount() uint64 {
+	if p == nil {
+		return 0
+	}
+	return p.navBlocked.Load()
+}
+
+func (p *previewOriginProxy) AllowSubresourceHost(host string, port int, ttl time.Duration) {
+	if p == nil || (port != 80 && port != 443) {
+		return
+	}
+	norm := strings.ToLower(strings.Trim(strings.TrimSpace(host), "[]"))
+	if !isPublicSubresourceHostname(norm) {
+		return
+	}
+	if ttl <= 0 {
+		ttl = 30 * time.Second
+	}
+	now := time.Now()
+	key := net.JoinHostPort(norm, strconv.Itoa(port))
+	p.subresourceMu.Lock()
+	defer p.subresourceMu.Unlock()
+	if len(p.subresourceHosts) >= previewMaxSubresourceHosts {
+		for k, exp := range p.subresourceHosts {
+			if now.After(exp) {
+				delete(p.subresourceHosts, k)
+			}
+		}
+		if len(p.subresourceHosts) >= previewMaxSubresourceHosts {
+			// Evict oldest entry to keep map strictly bounded.
+			var oldestKey string
+			var oldestExp time.Time
+			for k, exp := range p.subresourceHosts {
+				if oldestKey == "" || exp.Before(oldestExp) {
+					oldestKey, oldestExp = k, exp
+				}
+			}
+			if oldestKey != "" {
+				delete(p.subresourceHosts, oldestKey)
+			}
+		}
+	}
+	p.subresourceHosts[key] = now.Add(ttl)
+}
+
+func (p *previewOriginProxy) isAllowedSubresourceHost(host string, port int) bool {
+	if p == nil || (port != 80 && port != 443) {
+		return false
+	}
+	norm := strings.ToLower(strings.Trim(strings.TrimSpace(host), "[]"))
+	if !isPublicSubresourceHostname(norm) {
+		return false
+	}
+	key := net.JoinHostPort(norm, strconv.Itoa(port))
+	now := time.Now()
+	p.subresourceMu.Lock()
+	exp, ok := p.subresourceHosts[key]
+	if ok && now.After(exp) {
+		delete(p.subresourceHosts, key)
+		ok = false
+	}
+	p.subresourceMu.Unlock()
+	return ok
 }
 
 func (p *previewOriginProxy) trackConn(conn net.Conn) bool {
@@ -327,6 +287,9 @@ func (p *previewOriginProxy) Close() {
 		}
 		if p.transport != nil {
 			p.transport.CloseIdleConnections()
+		}
+		if p.subresourceTransport != nil {
+			p.subresourceTransport.CloseIdleConnections()
 		}
 	})
 }
@@ -388,6 +351,118 @@ func (p *previewOriginProxy) dialAllowedTarget(ctx context.Context, network, add
 	return nil, fmt.Errorf("failed to connect to %s", addr)
 }
 
+func (p *previewOriginProxy) dialPublicSubresourceTarget(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, portStr, err := net.SplitHostPort(strings.TrimSpace(addr))
+	if err != nil {
+		p.blocked.Add(1)
+		return nil, errPreviewTargetBlocked
+	}
+	normHost := strings.ToLower(strings.Trim(strings.TrimSpace(host), "[]"))
+	port, err := strconv.Atoi(portStr)
+	if err != nil || (port != 80 && port != 443) || !p.isAllowedSubresourceHost(normHost, port) {
+		p.blocked.Add(1)
+		return nil, errPreviewTargetBlocked
+	}
+	var ips []netip.Addr
+	if literal, parseErr := netip.ParseAddr(normHost); parseErr == nil {
+		ips = []netip.Addr{literal}
+	} else {
+		resolved, lookErr := p.lookupIP(ctx, normHost)
+		if lookErr != nil {
+			return nil, lookErr
+		}
+		if len(resolved) == 0 {
+			return nil, fmt.Errorf("no IP addresses resolved for %s", normHost)
+		}
+		ips = resolved
+	}
+	for _, ip := range ips {
+		if !isPublicSubresourceIP(ip) {
+			p.blocked.Add(1)
+			return nil, errPreviewTargetBlocked
+		}
+	}
+	var lastErr error
+	for _, ip := range ips {
+		target := net.JoinHostPort(ip.Unmap().String(), strconv.Itoa(port))
+		conn, dialErr := p.dialer.DialContext(ctx, network, target)
+		if dialErr == nil {
+			return conn, nil
+		}
+		lastErr = dialErr
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("failed to connect to %s", addr)
+}
+
+func isTopLevelNavHTTPRequest(r *http.Request, onAllowedOrigin bool) bool {
+	mode := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Mode")))
+	dest := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Dest")))
+	if dest == "document" {
+		return true
+	}
+	if dest != "" {
+		return false
+	}
+	// Absent Sec-Fetch-Dest: treat as top-level nav only when Sec-Fetch-Mode
+	// explicitly says navigate, or on a same-origin redirect (never Chrome's
+	// background telemetry probes to foreign hosts).
+	return mode == "navigate" || onAllowedOrigin
+}
+
+func isNavigationLikeHTTPRequest(r *http.Request) bool {
+	mode := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Mode")))
+	dest := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Dest")))
+	if mode == "navigate" || dest == "" {
+		return true
+	}
+	switch dest {
+	case "document", "iframe", "frame", "fencedframe", "object", "embed":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAllowedSubresourceHTTPDest(r *http.Request) bool {
+	mode := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Mode")))
+	dest := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Dest")))
+	if mode == "navigate" {
+		return false
+	}
+	switch dest {
+	case "image", "font", "style", "audio", "video", "script", "manifest", "empty":
+		return true
+	default:
+		return false
+	}
+}
+
+func copyPreviewProxyResponseBody(w http.ResponseWriter, resp *http.Response) {
+	limited := io.LimitReader(resp.Body, 256<<20)
+	ct := strings.ToLower(resp.Header.Get("Content-Type"))
+	flusher, canFlush := w.(http.Flusher)
+	if !canFlush || !strings.Contains(ct, "text/event-stream") {
+		_, _ = io.Copy(w, limited)
+		return
+	}
+	buf := make([]byte, 4096)
+	for {
+		n, err := limited.Read(buf)
+		if n > 0 {
+			if _, wErr := w.Write(buf[:n]); wErr != nil {
+				return
+			}
+			flusher.Flush()
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
 func (p *previewOriginProxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodConnect {
 		p.handleConnect(w, r)
@@ -405,12 +480,27 @@ func (p *previewOriginProxy) handleConnect(w http.ResponseWriter, r *http.Reques
 	}
 	normHost := strings.ToLower(strings.Trim(strings.TrimSpace(host), "[]"))
 	port, err := strconv.Atoi(portStr)
-	if err != nil || normHost != p.allowedHost || port != p.allowedPort {
+	if err != nil {
+		p.blocked.Add(1)
+		http.Error(w, "invalid preview tunnel port", http.StatusForbidden)
+		return
+	}
+	isSameOrigin := normHost == p.allowedHost && port == p.allowedPort
+	isPublicSub := !isSameOrigin && port == 443 && p.isAllowedSubresourceHost(normHost, port)
+	if !isSameOrigin && !isPublicSub {
+		// Still block unapproved CONNECT tunnels (including Chrome background
+		// services) at the transport layer without attributing them to a user
+		// top-level navigation; page navigations are tracked via CDP Fetch.
 		p.blocked.Add(1)
 		http.Error(w, "cross-origin preview tunnel blocked", http.StatusForbidden)
 		return
 	}
-	upConn, err := p.dialAllowedTarget(r.Context(), "tcp", net.JoinHostPort(p.allowedHost, strconv.Itoa(p.allowedPort)))
+	var upConn net.Conn
+	if isSameOrigin {
+		upConn, err = p.dialAllowedTarget(r.Context(), "tcp", net.JoinHostPort(p.allowedHost, strconv.Itoa(p.allowedPort)))
+	} else {
+		upConn, err = p.dialPublicSubresourceTarget(r.Context(), "tcp", net.JoinHostPort(normHost, strconv.Itoa(port)))
+	}
 	if err != nil {
 		if errors.Is(err, errPreviewTargetBlocked) {
 			http.Error(w, "preview target address is not allowed", http.StatusForbidden)
@@ -445,10 +535,10 @@ func (p *previewOriginProxy) handleConnect(w http.ResponseWriter, r *http.Reques
 	if clientBuf != nil && clientBuf.Reader.Buffered() > 0 {
 		cConn = &bufferedConn{Conn: clientConn, r: clientBuf.Reader}
 	}
-	// On an http:// preview origin, CONNECT is only needed for plain ws://
+	// On an http:// preview origin, same-origin CONNECT is only needed for plain ws://
 	// upgrades; reject TLS ClientHello (record type 0x16) so https:// cannot
 	// bypass scheme lock on a dual-protocol port.
-	if p.allowedScheme == "http" {
+	if isSameOrigin && p.allowedScheme == "http" {
 		br := bufio.NewReader(cConn)
 		_ = clientConn.SetReadDeadline(time.Now().Add(previewProxyDialTimeout))
 		first, peekErr := br.Peek(1)
@@ -458,6 +548,7 @@ func (p *previewOriginProxy) handleConnect(w http.ResponseWriter, r *http.Reques
 		}
 		if len(first) == 1 && first[0] == 0x16 {
 			p.blocked.Add(1)
+			p.navBlocked.Add(1)
 			return
 		}
 		cConn = &bufferedConn{Conn: clientConn, r: br}
@@ -483,23 +574,36 @@ func (p *previewOriginProxy) handleConnect(w http.ResponseWriter, r *http.Reques
 func (p *previewOriginProxy) handleForwardHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL == nil || (r.URL.Scheme != "http" && r.URL.Scheme != "https") || r.URL.Host == "" {
 		p.blocked.Add(1)
+		p.navBlocked.Add(1)
 		http.Error(w, "absolute http(s) URL required", http.StatusBadRequest)
 		return
 	}
 	gotOrigin, err := canonicalPreviewOrigin(r.URL)
-	if err != nil || gotOrigin != p.allowedOrigin {
-		p.blocked.Add(1)
-		http.Error(w, "cross-origin preview request blocked", http.StatusForbidden)
-		return
+	isSameOrigin := err == nil && gotOrigin == p.allowedOrigin
+	transport := p.transport
+	if !isSameOrigin {
+		subHost, subPort, ok := validatePublicSubresourceURL(r.URL)
+		if !ok || r.URL.Scheme != "http" || subPort != 80 || !isAllowedSubresourceHTTPDest(r) || !p.isAllowedSubresourceHost(subHost, subPort) {
+			p.blocked.Add(1)
+			if isTopLevelNavHTTPRequest(r, false) {
+				p.navBlocked.Add(1)
+			}
+			http.Error(w, "cross-origin preview request blocked", http.StatusForbidden)
+			return
+		}
+		transport = p.subresourceTransport
 	}
 	outReq := r.Clone(r.Context())
 	outReq.RequestURI = ""
 	for _, h := range previewHopByHopHeaders {
 		outReq.Header.Del(h)
 	}
-	resp, err := p.transport.RoundTrip(outReq)
+	resp, err := transport.RoundTrip(outReq)
 	if err != nil {
 		if errors.Is(err, errPreviewTargetBlocked) {
+			if isTopLevelNavHTTPRequest(r, isSameOrigin) {
+				p.navBlocked.Add(1)
+			}
 			http.Error(w, "preview target address is not allowed", http.StatusForbidden)
 			return
 		}
@@ -508,21 +612,36 @@ func (p *previewOriginProxy) handleForwardHTTP(w http.ResponseWriter, r *http.Re
 	}
 	defer resp.Body.Close()
 
-	// Block cross-origin redirects before Chrome can follow them.
+	// Block cross-origin redirects on navigations and any redirect to non-public targets.
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 		if loc := strings.TrimSpace(resp.Header.Get("Location")); loc != "" {
 			ref, parseErr := url.Parse(loc)
 			if parseErr != nil {
 				p.blocked.Add(1)
+				if isTopLevelNavHTTPRequest(r, isSameOrigin) {
+					p.navBlocked.Add(1)
+				}
 				http.Error(w, "cross-origin preview redirect blocked", http.StatusForbidden)
 				return
 			}
 			dest := r.URL.ResolveReference(ref)
 			destOrigin, oErr := canonicalPreviewOrigin(dest)
 			if oErr != nil || destOrigin != p.allowedOrigin {
-				p.blocked.Add(1)
-				http.Error(w, "cross-origin preview redirect blocked", http.StatusForbidden)
-				return
+				allowSubRedir := false
+				if !isNavigationLikeHTTPRequest(r) && isAllowedSubresourceHTTPDest(r) {
+					if destHost, destPort, ok := validatePublicSubresourceURL(dest); ok {
+						p.AllowSubresourceHost(destHost, destPort, 30*time.Second)
+						allowSubRedir = true
+					}
+				}
+				if !allowSubRedir {
+					p.blocked.Add(1)
+					if isTopLevelNavHTTPRequest(r, isSameOrigin) {
+						p.navBlocked.Add(1)
+					}
+					http.Error(w, "cross-origin preview redirect blocked", http.StatusForbidden)
+					return
+				}
 			}
 		}
 	}
@@ -536,5 +655,5 @@ func (p *previewOriginProxy) handleForwardHTTP(w http.ResponseWriter, r *http.Re
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, io.LimitReader(resp.Body, 256<<20))
+	copyPreviewProxyResponseBody(w, resp)
 }

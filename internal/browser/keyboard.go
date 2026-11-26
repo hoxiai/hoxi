@@ -3,7 +3,6 @@ package browser
 import (
 	"context"
 	"errors"
-	"runtime"
 	"strings"
 	"unicode/utf8"
 
@@ -87,13 +86,17 @@ func keyAction(key string) (chromedp.Action, error) {
 			}
 			event.Modifiers |= modifiers
 			// Headless Chrome on macOS does not resolve Cocoa editing shortcuts
-			// from Meta key events alone. Supply the matching CDP edit command.
-			shortcut := input.ModifierCtrl
-			if runtime.GOOS == "darwin" {
-				shortcut = input.ModifierMeta
-			}
-			if event.Type == input.KeyDown && modifiers == shortcut && (name == "a" || name == "A") {
-				event.Commands = []string{"selectAll"}
+			// from Meta/Ctrl key events alone, and remote PM clients may use a
+			// different OS modifier than the host. Supply matching CDP commands.
+			if event.Type == input.KeyDown {
+				switch {
+				case (modifiers == input.ModifierCtrl || modifiers == input.ModifierMeta) && (name == "a" || name == "A"):
+					event.Commands = []string{"selectAll"}
+				case (modifiers == input.ModifierCtrl || modifiers == input.ModifierMeta) && (name == "z" || name == "Z"):
+					event.Commands = []string{"undo"}
+				case (modifiers == (input.ModifierCtrl|input.ModifierShift) || modifiers == (input.ModifierMeta|input.ModifierShift)) && (name == "z" || name == "Z"):
+					event.Commands = []string{"redo"}
+				}
 			}
 			if err := event.Do(ctx); err != nil {
 				return err

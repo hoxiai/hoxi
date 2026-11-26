@@ -444,6 +444,9 @@ func (sc *scope) resetBrowser() {
 		sc.previewProxy.Close()
 		sc.previewProxy = nil
 	}
+	sc.previewNavBlocked.Store(0)
+	sc.previewNavBlockedAcked = 0
+	sc.previewLastAllowedURL = ""
 	sc.env = StoreEnvConfig{}
 	sc.envFingerprint = ""
 	if sc.persistentProfile {

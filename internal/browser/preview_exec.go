@@ -423,30 +423,51 @@ func (sc *scope) navigatePreviewBounded(reqCtx, opctx context.Context, targetURL
 	return err
 }
 
-func (sc *scope) enforcePreviewOrigin(reqCtx, opctx context.Context, allowedOrigin, fallbackURL string, allowErrorTab bool, beforeBlocked uint64) (State, bool, error) {
+func (sc *scope) enforcePreviewOrigin(reqCtx, opctx context.Context, allowedOrigin, fallbackURL string, allowErrorTab bool) (State, bool, error) {
 	st, err := sc.state(opctx)
 	if err != nil {
 		return emptyState(), false, err
 	}
+	hadBlockedNav := sc.consumePreviewNavBlocked()
 	// Close stray popup tabs opened by target="_blank" so the preview remains single-tab and isolated.
+	// If a same-origin link used target="_blank", follow it in the main preview tab instead of dropping it.
 	if len(st.Tabs) > 1 {
+		var sameOriginPopupURL string
 		for _, tab := range st.Tabs {
 			if tab.ID == sc.tabID {
 				continue
 			}
+			if sameOriginPopupURL == "" && isAllowedPreviewTabURL(allowedOrigin, tab.URL) {
+				sameOriginPopupURL = tab.URL
+			} else if !isBlankTabURL(tab.URL) && !isAllowedPreviewTabURL(allowedOrigin, tab.URL) {
+				hadBlockedNav = true
+			}
 			_ = target.CloseTarget(target.ID(tab.ID)).Do(opctx)
 			sc.releaseTab(tab.ID)
+		}
+		if sameOriginPopupURL != "" && !hadBlockedNav {
+			_ = sc.navigatePreviewBounded(reqCtx, opctx, sameOriginPopupURL)
 		}
 		if refreshed, rErr := sc.state(opctx); rErr == nil {
 			st = refreshed
 		}
+		if sc.consumePreviewNavBlocked() {
+			hadBlockedNav = true
+		}
+	}
+	revertTarget := sc.previewLastAllowedURL
+	if !isAllowedPreviewTabURL(allowedOrigin, revertTarget) {
+		revertTarget = fallbackURL
+	}
+	if !isAllowedPreviewTabURL(allowedOrigin, revertTarget) {
+		revertTarget = allowedOrigin + "/"
 	}
 	if isPreviewErrorTabURL(st.URL) {
-		proxyBlocked := sc.previewProxy != nil && sc.previewProxy.BlockedCount() > beforeBlocked
-		if proxyBlocked {
-			if isAllowedPreviewTabURL(allowedOrigin, fallbackURL) {
-				_ = sc.navigatePreviewBounded(reqCtx, opctx, fallbackURL)
+		if hadBlockedNav {
+			if isAllowedPreviewTabURL(allowedOrigin, revertTarget) {
+				_ = sc.navigatePreviewBounded(reqCtx, opctx, revertTarget)
 				if reverted, rErr := sc.state(opctx); rErr == nil && isAllowedPreviewTabURL(allowedOrigin, reverted.URL) {
+					sc.previewLastAllowedURL = reverted.URL
 					return reverted, true, nil
 				}
 			}
@@ -457,18 +478,21 @@ func (sc *scope) enforcePreviewOrigin(reqCtx, opctx context.Context, allowedOrig
 		}
 		return st, false, errors.New("preview target is unreachable")
 	}
-	if isBlankTabURL(st.URL) || isAllowedPreviewTabURL(allowedOrigin, st.URL) {
-		return st, false, nil
+	if isAllowedPreviewTabURL(allowedOrigin, st.URL) {
+		sc.previewLastAllowedURL = st.URL
+		return st, hadBlockedNav, nil
+	}
+	if isBlankTabURL(st.URL) {
+		return st, hadBlockedNav, nil
 	}
 	// Tab navigated outside allowedOrigin (e.g. external link or redirect): revert immediately.
-	revertTarget := fallbackURL
-	if !isAllowedPreviewTabURL(allowedOrigin, revertTarget) {
-		revertTarget = allowedOrigin + "/"
-	}
 	_ = sc.navigatePreviewBounded(reqCtx, opctx, revertTarget)
 	st, err = sc.state(opctx)
 	if err != nil {
 		return emptyState(), true, err
+	}
+	if isAllowedPreviewTabURL(allowedOrigin, st.URL) {
+		sc.previewLastAllowedURL = st.URL
 	}
 	return st, true, nil
 }
@@ -512,8 +536,7 @@ func (s *Service) PreviewState(ctx context.Context, scopeID, directory, allowedO
 	}
 	opctx, stopOp := sc.browserOpCtx(ctx)
 	defer stopOp()
-	beforeBlocked := sc.previewProxy.BlockedCount()
-	st, blocked, err := sc.enforcePreviewOrigin(ctx, opctx, origin, origin+"/", true, beforeBlocked)
+	st, blocked, err := sc.enforcePreviewOrigin(ctx, opctx, origin, origin+"/", true)
 	if err != nil {
 		return PreviewSnapshot{}, err
 	}
@@ -584,17 +607,18 @@ func (s *Service) PreviewAction(ctx context.Context, scopeID, directory, allowed
 	hasPrevPage := false
 	if curState, stErr := sc.state(opctx); stErr == nil && isAllowedPreviewTabURL(origin, curState.URL) {
 		fallbackURL = curState.URL
+		sc.previewLastAllowedURL = curState.URL
 		hasPrevPage = true
 	}
 
-	beforeBlocked := sc.previewProxy.BlockedCount()
 	switch act.Action {
 	case "navigate":
 		if err := sc.navigatePreviewBounded(ctx, opctx, act.URL); err != nil {
-			if sc.previewProxy != nil && sc.previewProxy.BlockedCount() > beforeBlocked {
+			if sc.consumePreviewNavBlocked() {
 				if hasPrevPage && !justStarted {
 					_ = sc.navigatePreviewBounded(ctx, opctx, fallbackURL)
 					if reverted, rErr := sc.state(opctx); rErr == nil && isAllowedPreviewTabURL(origin, reverted.URL) {
+						sc.previewLastAllowedURL = reverted.URL
 						return sc.previewSnapshotFromState(origin, reverted, true), nil
 					}
 				}
@@ -619,7 +643,7 @@ func (s *Service) PreviewAction(ctx context.Context, scopeID, directory, allowed
 		}
 	}
 
-	st, blocked, err := sc.enforcePreviewOrigin(ctx, opctx, origin, fallbackURL, act.Action == "resize", beforeBlocked)
+	st, blocked, err := sc.enforcePreviewOrigin(ctx, opctx, origin, fallbackURL, act.Action == "resize")
 	if err != nil {
 		if justStarted {
 			sc.resetBrowser()
@@ -657,8 +681,11 @@ func (s *Service) PreviewFrame(ctx context.Context, scopeID, directory, allowedO
 	opctx, stopOp := sc.browserOpCtx(ctx)
 	defer stopOp()
 
-	beforeBlocked := sc.previewProxy.BlockedCount()
-	st, blocked, err := sc.enforcePreviewOrigin(ctx, opctx, origin, origin+defaultPath, false, beforeBlocked)
+	fallbackURL := sc.previewLastAllowedURL
+	if !isAllowedPreviewTabURL(origin, fallbackURL) {
+		fallbackURL = origin + defaultPath
+	}
+	st, blocked, err := sc.enforcePreviewOrigin(ctx, opctx, origin, fallbackURL, false)
 	if err != nil {
 		return nil, PreviewSnapshot{}, err
 	}
