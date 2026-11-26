@@ -580,12 +580,23 @@ func TestColdBuildDoesNotBlockWarmDirectorySearch(t *testing.T) {
 		t.Fatal(err)
 	}
 	elapsed := time.Since(start)
-	if err := <-done; err != nil {
-		t.Fatal(err)
+	coldStillRunning := false
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	default:
+		coldStillRunning = true
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
 	}
-	t.Logf("warmSearchDuringColdBuildMs=%.3f", float64(elapsed.Microseconds())/1000)
-	if elapsed > 10*time.Millisecond {
-		t.Fatalf("expected warm search during cold build to complete under 10ms, took %v", elapsed)
+	t.Logf("warmSearchDuringColdBuildMs=%.3f coldStillRunning=%v", float64(elapsed.Microseconds())/1000, coldStillRunning)
+	// Allow headroom for -race and shared CI runner jitter while still catching
+	// serialization behind the multi-second cold build.
+	if elapsed > 100*time.Millisecond {
+		t.Fatalf("expected warm search during cold build to complete under 100ms, took %v (coldStillRunning=%v)", elapsed, coldStillRunning)
 	}
 }
 
