@@ -165,4 +165,7 @@ func TestPreviewScopeRejectsNonPreviewIDsAndAlwaysForcesHeadless(t *testing.T) {
 	if stillPresent {
 		t.Fatalf("ClosePreview should remove scope")
 	}
+	if !isPreviewErrorTabURL("chrome-error://chromewebdata/") || isPreviewErrorTabURL("http://127.0.0.1:5173/") {
+		t.Fatalf("isPreviewErrorTabURL classification mismatch")
+	}
 }
