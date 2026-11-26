@@ -26,7 +26,7 @@ func codeBuddyDotDirs() []string {
 		return nil
 	}
 	var out []string
-	for _, sub := range []string{".codebuddy", ".codebuddycn"} {
+	for _, sub := range []string{".codebuddy", ".codebuddycn", ".workbuddy", ".workbuddycn"} {
 		p := filepath.Join(home, sub)
 		if st, err := os.Stat(p); err == nil && st.IsDir() {
 			out = append(out, p)
@@ -47,15 +47,21 @@ func codeBuddyAppSupportDirs() []string {
 		filepath.Join(home, "Library", "Application Support", "CodeBuddy CN"),
 		filepath.Join(home, "Library", "Application Support", "CodeBuddy"),
 		filepath.Join(home, "Library", "Application Support", "CodeBuddyExtension"),
+		filepath.Join(home, "Library", "Application Support", "WorkBuddy CN"),
+		filepath.Join(home, "Library", "Application Support", "WorkBuddy"),
 		filepath.Join(home, ".config", "CodeBuddy CN"),
 		filepath.Join(home, ".config", "CodeBuddy"),
 		filepath.Join(home, ".config", "CodeBuddyExtension"),
+		filepath.Join(home, ".config", "WorkBuddy CN"),
+		filepath.Join(home, ".config", "WorkBuddy"),
 	}
 	if appData := strings.TrimSpace(os.Getenv("APPDATA")); appData != "" {
 		candidates = append(candidates,
 			filepath.Join(appData, "CodeBuddy CN"),
 			filepath.Join(appData, "CodeBuddy"),
 			filepath.Join(appData, "CodeBuddyExtension"),
+			filepath.Join(appData, "WorkBuddy CN"),
+			filepath.Join(appData, "WorkBuddy"),
 		)
 	}
 	var out []string

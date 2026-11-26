@@ -1,10 +1,14 @@
 import { reconcile, unwrap } from "solid-js/store";
 import { hoxiAPI, authAPI, runnerAPI, type LocalCLIStatusItem, type ProviderInfo } from "../services/api";
 import { loadProviders } from "../store/workspace-providers";
+import { resolveSessionTargetRuntime } from "../store/session-query";
 import {
+  clearFreeOpenCodeSetupError,
   connectProviderWithKey,
   disconnectLocalCLIModel,
   disconnectProvider,
+  enableFreeOpenCodeModels,
+  freeOpenCodeSetupState,
   saveCustomProvider,
   syncLocalCLIModel,
 } from "../store/provider-connections";
@@ -508,5 +512,151 @@ describe("provider disconnect and CLI re-import lifecycle", () => {
     } finally {
       setLocalCLIStatusItems(savedCLI);
     }
+  });
+});
+
+describe("one-click free OpenCode model setup", () => {
+  it("reuses an existing OpenCode binary without reinstalling and selects its 0x free model", async () => {
+    await withProviders(async () => {
+      let installCalls = 0;
+      hoxiAPI.listProviders = async () => ({ all: [], connected: [], default: {} });
+      hoxiAPI.getLocalCLIStatus = async () => ({ tools: [] });
+      hoxiAPI.installEngine = async () => {
+        installCalls += 1;
+        return { ok: true, openCodeBinPath: "/opt/homebrew/bin/opencode", openCodeVersion: "1.19.3", ready: false, cliReady: true };
+      };
+      runnerAPI.listModels = async (rt) =>
+        rt === "opencode"
+          ? {
+              installed: true,
+              available: true,
+              default: "opencode/beam-free",
+              models: [
+                { id: "opencode/beam-free", name: "Beam Free", free: true, multiplier: "0x", reasoning: true },
+                { id: "anthropic/claude-sonnet-4-5", name: "Claude Sonnet 4.5", free: false },
+              ],
+            }
+          : { installed: false, available: false, models: [], default: "" };
+
+      const res = await enableFreeOpenCodeModels();
+      assertDeepEqual(installCalls, 0);
+      assertDeepEqual(res, {
+        providerID: "opencode",
+        modelID: "opencode/beam-free",
+        installedNow: false,
+        freeCount: 1,
+      });
+      assertDeepEqual(workspace.selectedModel, { providerID: "opencode", modelID: "opencode/beam-free" });
+      assertDeepEqual(workspace.defaultAI.model, { providerID: "opencode", modelID: "opencode/beam-free" });
+      assertDeepEqual(freeOpenCodeSetupState.phase, "idle");
+    });
+  });
+
+  it("installs OpenCode when absent, re-enables it if disabled, and selects a free model", async () => {
+    await withProviders(async () => {
+      let installed = false;
+      let installCalls = 0;
+      let disabledProviders = ["opencode"];
+
+      hoxiAPI.listProviders = async () => ({ all: [], connected: [], default: {} });
+      hoxiAPI.getGlobalConfig = async () => ({ disabled_providers: [...disabledProviders] });
+      hoxiAPI.updateGlobalConfig = async (patch: Record<string, any>) => {
+        if (Array.isArray(patch.disabled_providers)) {
+          disabledProviders = [...patch.disabled_providers];
+        }
+        return { disabled_providers: disabledProviders };
+      };
+      hoxiAPI.disposeGlobal = async () => {};
+      hoxiAPI.getLocalCLIStatus = async () => ({ tools: [] });
+      hoxiAPI.installEngine = async () => {
+        installCalls += 1;
+        installed = true;
+        return { ok: true, openCodeBinPath: "~/.hoxi/bin/opencode", openCodeVersion: "1.19.3", ready: false, cliReady: true };
+      };
+      runnerAPI.listModels = async (rt) =>
+        rt === "opencode" && installed
+          ? {
+              installed: true,
+              available: true,
+              default: "opencode/big-pickle",
+              models: [{ id: "opencode/big-pickle", name: "Big Pickle", free: true, multiplier: "0x" }],
+            }
+          : { installed: false, available: false, models: [], default: "" };
+
+      setWorkspace("globalConfig", { disabled_providers: ["opencode"] });
+      const res = await enableFreeOpenCodeModels();
+      assertDeepEqual(installCalls, 1);
+      assertDeepEqual(disabledProviders, []);
+      assertDeepEqual(res.installedNow, true);
+      assertDeepEqual(res.modelID, "opencode/big-pickle");
+      assertDeepEqual(workspace.selectedModel, { providerID: "opencode", modelID: "opencode/big-pickle" });
+    });
+  });
+
+  it("records setup error and preserves empty selection when OpenCode install fails", async () => {
+    await withProviders(async () => {
+      hoxiAPI.listProviders = async () => ({ all: [], connected: [], default: {} });
+      hoxiAPI.installEngine = async () => {
+        throw new Error("mirror download failed");
+      };
+      runnerAPI.listModels = async () => ({ installed: false, available: false, models: [], default: "" });
+
+      let caught = "";
+      try {
+        await enableFreeOpenCodeModels();
+      } catch (err: any) {
+        caught = err?.message || "";
+      }
+      assertTrue(caught.includes("mirror download failed"), "install error must propagate");
+      assertDeepEqual(freeOpenCodeSetupState.phase, "error");
+      assertTrue((freeOpenCodeSetupState.error || "").includes("mirror download failed"), "error state must be recorded");
+      assertDeepEqual(workspace.selectedModel, null);
+      clearFreeOpenCodeSetupError();
+      assertDeepEqual(freeOpenCodeSetupState.phase, "idle");
+      assertDeepEqual(freeOpenCodeSetupState.error, null);
+    });
+  });
+
+  it("ignores installed-but-unauthenticated runners and does not let an empty hoxi opencode shell shadow CLI free models", async () => {
+    await withProviders(async () => {
+      hoxiAPI.listProviders = async () => ({ all: [], connected: [], default: {} });
+      hoxiAPI.getHoxiModelsConfig = async () => ({
+        hoxiProviders: {
+          opencode: { name: "OpenCode", options: {}, models: {} },
+        },
+        openCodeProviders: [],
+        configPath: "test",
+      });
+      hoxiAPI.getLocalCLIStatus = async () => ({ tools: [] });
+      runnerAPI.listModels = async (rt) => {
+        if (rt === "qoder") {
+          return {
+            installed: true,
+            available: false,
+            default: "Auto",
+            models: [{ id: "Auto", name: "Auto" }],
+          };
+        }
+        if (rt === "opencode") {
+          return {
+            installed: true,
+            available: true,
+            default: "opencode/beam-free",
+            models: [{ id: "opencode/beam-free", name: "Beam Free", free: true, multiplier: "0x" }],
+          };
+        }
+        return { installed: false, available: false, models: [], default: "" };
+      };
+
+      await loadProviders(true);
+      assertTrue(!workspace.connectedProviders.includes("qoder"), "unauthenticated Qoder must not be connected");
+      assertTrue(workspace.connectedProviders.includes("opencode"), "OpenCode runner must override empty hoxi shell");
+      assertDeepEqual(resolveSessionTargetRuntime(null, "opencode"), "opencode");
+
+      const res = await enableFreeOpenCodeModels();
+      assertDeepEqual(res.modelID, "opencode/beam-free");
+      assertDeepEqual(res.installedNow, false);
+      assertDeepEqual(workspace.selectedModel, { providerID: "opencode", modelID: "opencode/beam-free" });
+    });
   });
 });

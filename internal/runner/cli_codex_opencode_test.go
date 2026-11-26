@@ -3,6 +3,9 @@ package runner
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -10,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/sqlitecli"
+	"github.com/hoxiai/hoxi/internal/testutil/execstub"
 )
 
 func TestBuildCodexAndOpenCodeCLIArgs(t *testing.T) {
@@ -160,5 +164,34 @@ INSERT INTO part VALUES ('prt_a_1', 'ses_legacy_42', 'msg_a_legacy', 17000000040
 	}
 	if migrated.Runtime != string(RuntimeNative) || migrated.ProviderID != "anthropic" || migrated.ModelID != "claude-sonnet-4-5" || len(migrated.Turns) != 2 {
 		t.Fatalf("unexpected migrated record: runtime=%q provider=%q model=%q turns=%d", migrated.Runtime, migrated.ProviderID, migrated.ModelID, len(migrated.Turns))
+	}
+}
+
+func TestQoderModelsReportsUnauthenticatedWhenNotLoggedIn(t *testing.T) {
+	binDir := t.TempDir()
+	unauthQoder := execstub.Write(t, binDir, "qoderclicn-unauth", "printf 'Not logged in\\n'\n")
+	t.Setenv("QODER_BIN", "")
+	t.Setenv("QODER_CN_BIN", unauthQoder)
+
+	svc := NewService(t.TempDir(), nil, nil, filepath.Join(t.TempDir(), "store.json"))
+	defer svc.CloseAll()
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/hoxi/runner/qoder/models?refresh=1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("qoder unauth models returned %d: %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Installed     bool `json:"installed"`
+		Authenticated bool `json:"authenticated"`
+		Available     bool `json:"available"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("qoder unauth invalid JSON: %v", err)
+	}
+	if !payload.Installed || payload.Authenticated || payload.Available {
+		t.Fatalf("expected installed=true, authenticated=false, available=false for unlogged Qoder, got %+v", payload)
 	}
 }

@@ -350,3 +350,151 @@ exit 1
 		t.Fatalf("expected newer server models_cache.json to lead with gpt-6.2-sol, got %+v", serverSnap)
 	}
 }
+
+func TestParseOpenCodeModelsVerboseAndPlainOutput(t *testing.T) {
+	verboseRaw := `anthropic/claude-sonnet-4-5
+{
+  "id": "claude-sonnet-4-5",
+  "providerID": "anthropic",
+  "name": "Claude Sonnet 4.5",
+  "status": "active",
+  "cost": { "input": 3, "output": 15 },
+  "limit": { "context": 200000, "output": 64000 },
+  "capabilities": { "reasoning": true, "attachment": true, "input": { "image": true } },
+  "variants": { "low": {}, "high": {} }
+}
+openai/gpt-5
+{
+  "id": "gpt-5",
+  "providerID": "openai",
+  "name": "GPT-5",
+  "status": "active",
+  "cost": { "input": 0, "output": 0 },
+  "limit": { "context": 400000, "output": 128000 },
+  "capabilities": { "reasoning": true }
+}
+opencode/deprecated-free
+{
+  "id": "deprecated-free",
+  "providerID": "opencode",
+  "name": "Old Free",
+  "status": "deprecated",
+  "cost": { "input": 0, "output": 0 }
+}
+opencode/beam-free
+{
+  "id": "beam-free",
+  "providerID": "opencode",
+  "name": "Beam Free",
+  "status": "active",
+  "cost": { "input": 0, "output": 0, "cache": { "read": 0, "write": 0 } },
+  "limit": { "context": 1048576, "output": 131072 },
+  "capabilities": { "reasoning": true, "attachment": false, "input": { "image": false } },
+  "variants": { "low": {}, "medium": {}, "high": {}, "xhigh": {}, "max": {} }
+}
+opencode/big-pickle
+{
+  "id": "big-pickle",
+  "providerID": "opencode",
+  "name": "Big Pickle",
+  "status": "active",
+  "cost": { "input": 0, "output": 0 },
+  "limit": { "context": 200000, "output": 32000 },
+  "capabilities": { "reasoning": true },
+  "variants": {}
+}
+`
+	items := ParseOpenCodeModelsOutput(verboseRaw)
+	if len(items) != 4 {
+		t.Fatalf("expected 4 active models (deprecated excluded), got %d: %+v", len(items), items)
+	}
+	if items[0].ID != "opencode/beam-free" || !items[0].Free || items[0].Multiplier != "0x" || items[0].Name != "Beam Free" {
+		t.Fatalf("expected opencode/beam-free ranked first as free 0x, got %+v", items[0])
+	}
+	if items[0].ContextLimit != 1048576 || items[0].OutputLimit != 131072 || len(items[0].Efforts) != 5 || items[0].DefaultEffort != "medium" {
+		t.Fatalf("unexpected beam-free metadata: %+v", items[0])
+	}
+	if items[1].ID != "opencode/big-pickle" || !items[1].Free || items[1].Multiplier != "0x" {
+		t.Fatalf("expected opencode/big-pickle ranked second as free 0x, got %+v", items[1])
+	}
+	if items[2].ID != "anthropic/claude-sonnet-4-5" || items[2].Free || !items[2].Image || items[2].InputCost != 3 {
+		t.Fatalf("expected paid anthropic model after free models, got %+v", items[2])
+	}
+	if items[3].ID != "openai/gpt-5" || items[3].Free {
+		t.Fatalf("zero-cost third-party placeholder must not be marked free, got %+v", items[3])
+	}
+
+	plainItems := ParseOpenCodeModelsOutput("anthropic/claude-sonnet-4-5\nopencode/big-pickle\nopencode/deepseek-v4.1-flash-free\n")
+	if len(plainItems) != 3 {
+		t.Fatalf("expected 3 plain models, got %d", len(plainItems))
+	}
+	if !plainItems[0].Free || !plainItems[1].Free || plainItems[2].Free {
+		t.Fatalf("expected built-in opencode free models ranked first in plain mode, got %+v", plainItems)
+	}
+}
+
+func TestDiscoverOpenCodeCLIModelsFallbackAndWorkBuddyPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	// Stub rejects --verbose and succeeds on plain `models` to verify fallback.
+	ocStub := execstub.Write(t, tmpDir, "opencode", `
+if [ "$1" = "models" ] && [ "$2" = "--verbose" ]; then
+  exit 1
+fi
+if [ "$1" = "models" ]; then
+  printf 'opencode/beam-free\nanthropic/claude-sonnet-4-5\n'
+  exit 0
+fi
+exit 1
+`)
+	t.Setenv("HOXI_OPENCODE_BIN", ocStub)
+	prevTimeout := ocCLIProbeTimeout
+	ocCLIProbeTimeout = 15 * time.Second
+	t.Cleanup(func() { ocCLIProbeTimeout = prevTimeout })
+
+	items := DiscoverOpenCodeCLIModelsWithRefresh(true)
+	if len(items) != 2 || items[0].ID != "opencode/beam-free" || !items[0].Free || items[1].Free {
+		t.Fatalf("expected fallback plain OpenCode discovery with free model first, got %+v", items)
+	}
+
+	fakeHome := t.TempDir()
+	wbBinDir := filepath.Join(fakeHome, ".workbuddy", "bin")
+	if err := os.MkdirAll(wbBinDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wbBin := execstub.Write(t, wbBinDir, "codebuddy", "exit 0\n")
+	t.Setenv("HOME", fakeHome)
+	t.Setenv("USERPROFILE", fakeHome)
+	t.Setenv("PATH", "")
+	t.Setenv("CODEBUDDY_BIN", "")
+	t.Setenv("CODEBUDDY_HOME", "")
+	t.Setenv("LOCALAPPDATA", "")
+	if got := ResolveCodeBuddyBinary(); got != wbBin {
+		t.Fatalf("ResolveCodeBuddyBinary() = %q, want %q from ~/.workbuddy/bin", got, wbBin)
+	}
+
+	// HOXI_OPENCODE="opencode.exe" must be treated as the default name, not a literal path.
+	hoxiHome := t.TempDir()
+	hoxiBinDir := filepath.Join(hoxiHome, "bin")
+	if err := os.MkdirAll(hoxiBinDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	managedOC := execstub.Write(t, hoxiBinDir, "opencode", "exit 0\n")
+	t.Setenv("HOXI_HOME", hoxiHome)
+	t.Setenv("HOXI_OPENCODE_BIN", "")
+	t.Setenv("HOXI_OPENCODE", "opencode.exe")
+	if got := ResolveOpenCodeBinary(); got != managedOC {
+		t.Fatalf("ResolveOpenCodeBinary() with HOXI_OPENCODE=opencode.exe = %q, want %q", got, managedOC)
+	}
+
+	// Qoder login status distinguishes authenticated vs unauthenticated binaries.
+	unauthQoder := execstub.Write(t, tmpDir, "qoderclicn-unauth", "printf 'Not logged in. Please run qoderclicn login.\\n'\n")
+	t.Setenv("QODER_BIN", "")
+	t.Setenv("QODER_CN_BIN", unauthQoder)
+	prevQTimeout := qoderProbeTimeout
+	qoderProbeTimeout = 15 * time.Second
+	t.Cleanup(func() { qoderProbeTimeout = prevQTimeout })
+	unauthModels, authed := DiscoverQoderStatusWithRefresh(true)
+	if authed || len(unauthModels) == 0 {
+		t.Fatalf("expected unauthenticated Qoder to report authed=false with fallback defaults, got authed=%v len=%d", authed, len(unauthModels))
+	}
+}

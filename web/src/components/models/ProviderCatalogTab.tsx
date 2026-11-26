@@ -17,10 +17,13 @@ import {
 import type { ProviderInfo } from "../../services/api";
 import {
   cancelProviderMcpOAuth,
+  clearFreeOpenCodeSetupError,
   connectProviderWithMcpOAuth,
   desktopAuth,
   disconnectProvider,
+  enableFreeOpenCodeModels,
   fetchGateways,
+  freeOpenCodeSetupState,
   getProviderSourceLabel,
   isCustomOrConfiguredProvider,
   isImportedOpenCodeProvider,
@@ -55,6 +58,37 @@ export default function ProviderCatalogTab() {
   const [actionError, setActionError] = createSignal<string | null>(null);
 
   const rowBusy = (id: string) => busyID() === id || disconnectingID() === id;
+
+  const isFreeSetupBusy = createMemo(
+    () =>
+      freeOpenCodeSetupState.phase === "checking" ||
+      freeOpenCodeSetupState.phase === "installing" ||
+      freeOpenCodeSetupState.phase === "loading"
+  );
+
+  const freeSetupLabel = createMemo(() => {
+    switch (freeOpenCodeSetupState.phase) {
+      case "checking":
+        return t("models.freeSetupChecking");
+      case "installing":
+        return t("models.freeSetupInstalling");
+      case "loading":
+        return t("models.freeSetupLoading");
+      default:
+        return t("models.freeSetupActionBtn");
+    }
+  });
+
+  const onEnableFreeModels = async () => {
+    if (isFreeSetupBusy()) return;
+    setActionError(null);
+    clearFreeOpenCodeSetupError();
+    try {
+      await enableFreeOpenCodeModels();
+    } catch {
+      /* freeOpenCodeSetupState.error surfaces inline */
+    }
+  };
 
   onMount(() => {
     void fetchGateways();
@@ -303,8 +337,41 @@ export default function ProviderCatalogTab() {
             <Show
               when={connectedProviders().length > 0}
               fallback={
-                <div class="rounded-xl border border-dashed border-[var(--border-subtle)] bg-[var(--bg-elevated)]/30 p-5 text-center text-[12px] text-[var(--text-muted)]">
-                  {t("models.noConnectedProviders")}
+                <div class="rounded-2xl border border-dashed border-[var(--border-subtle)] bg-[var(--bg-elevated)]/35 p-5 text-center space-y-3">
+                  <div class="space-y-1">
+                    <div class="text-[13px] font-semibold text-[var(--text-primary)]">
+                      {t("models.noConnectedProviders")}
+                    </div>
+                    <p class="mx-auto max-w-md text-[12px] text-[var(--text-muted)]">
+                      {t("models.freeSetupEmptyDesc")}
+                    </p>
+                  </div>
+                  <div class="flex flex-col items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={isFreeSetupBusy()}
+                      onClick={() => void onEnableFreeModels()}
+                      class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[12.5px] font-semibold text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-60 transition-opacity cursor-pointer"
+                    >
+                      <Show
+                        when={!isFreeSetupBusy()}
+                        fallback={<LoaderCircle size={13} class="animate-spin" />}
+                      >
+                        <Sparkles size={13} />
+                      </Show>
+                      {freeSetupLabel()}
+                    </button>
+                    <span class="text-[11px] text-[var(--text-faint)]">
+                      {t("models.freeSetupActionSub")}
+                    </span>
+                  </div>
+                  <Show when={freeOpenCodeSetupState.error}>
+                    {(msg) => (
+                      <div class="mx-auto max-w-md rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)]/50 px-3 py-1.5 text-[11.5px] text-[var(--danger-text)] break-words">
+                        {msg()}
+                      </div>
+                    )}
+                  </Show>
                 </div>
               }
             >

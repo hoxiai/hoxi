@@ -323,3 +323,24 @@ func TestStartResolvedEngineReportsFailureWithoutBackup(t *testing.T) {
 		t.Fatal("expected the start failure to surface")
 	}
 }
+
+// In pure Go Native mode (openCodePort == 0), EnsureEngine resolves or installs
+// the OpenCode CLI binary without spawning a background `opencode serve` daemon.
+func TestEnsureEngineCLIOnlyWhenPortIsZero(t *testing.T) {
+	bin := fakeOpenCodeBinary(t)
+	logPath := filepath.Join(t.TempDir(), "launches.log")
+	t.Setenv("HOXI_FAKE_OPENCODE_LOG", logPath)
+	a := newEngineTestApp(t, bin, 0)
+	defer a.killChild()
+
+	got, err := a.EnsureEngine(context.Background())
+	if err != nil {
+		t.Fatalf("EnsureEngine(port=0): %v", err)
+	}
+	if got != bin {
+		t.Fatalf("EnsureEngine(port=0) = %q, want %q", got, bin)
+	}
+	if launches := launchCount(logPath); launches != 0 {
+		t.Fatalf("expected CLI-only EnsureEngine not to spawn opencode serve, got %d launches", launches)
+	}
+}

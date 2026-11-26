@@ -140,6 +140,7 @@ var (
 	qoderCachedKey    string
 	qoderCachedTime   time.Time
 	qoderCachedList   []ModelItem
+	qoderCachedAuth   bool
 	qoderPreferredBin string
 )
 
@@ -357,10 +358,21 @@ func DiscoverQoderModels() []ModelItem {
 	return DiscoverQoderModelsWithRefresh(false)
 }
 
+// DiscoverQoderStatus returns Qoder's model list alongside whether at least one
+// installed Qoder CLI edition is currently logged in.
+func DiscoverQoderStatus() ([]ModelItem, bool) {
+	return DiscoverQoderStatusWithRefresh(false)
+}
+
 func DiscoverQoderModelsWithRefresh(forceRefresh bool) []ModelItem {
+	items, _ := DiscoverQoderStatusWithRefresh(forceRefresh)
+	return items
+}
+
+func DiscoverQoderStatusWithRefresh(forceRefresh bool) ([]ModelItem, bool) {
 	intlBin, cnBin := ResolveQoderBinaries()
 	if intlBin == "" && cnBin == "" {
-		return nil
+		return nil, false
 	}
 	cacheKey := intlBin + "|" + cnBin
 	qoderModelsMu.Lock()
@@ -369,11 +381,12 @@ func DiscoverQoderModelsWithRefresh(forceRefresh bool) []ModelItem {
 	if !forceRefresh && qoderCachedKey == cacheKey && len(qoderCachedList) > 0 && time.Since(qoderCachedTime) < 10*time.Minute {
 		out := make([]ModelItem, len(qoderCachedList))
 		copy(out, qoderCachedList)
-		return out
+		return out, qoderCachedAuth
 	}
 
 	cnModels, cnAuth := probeQoderBinaryModels(cnBin)
 	intlModels, intlAuth := probeQoderBinaryModels(intlBin)
+	authenticated := cnAuth || intlAuth
 
 	if intlAuth && !cnAuth {
 		qoderPreferredBin = intlBin
@@ -448,7 +461,8 @@ func DiscoverQoderModelsWithRefresh(forceRefresh bool) []ModelItem {
 	qoderCachedKey = cacheKey
 	qoderCachedTime = time.Now()
 	qoderCachedList = items
-	return items
+	qoderCachedAuth = authenticated
+	return items, authenticated
 }
 
 // QoderReasoningEffort clamps requested to the efforts modelID supports, or

@@ -517,17 +517,18 @@ func (s *Service) handleQoderModels(w http.ResponseWriter, r *http.Request) {
 	}
 	forceRefresh := r.URL.Query().Get("refresh") == "1" || r.URL.Query().Get("refresh") == "true"
 	bin := agentcli.ResolveQoderBinary()
-	models := agentcli.DiscoverQoderModelsWithRefresh(forceRefresh)
+	models, authenticated := agentcli.DiscoverQoderStatusWithRefresh(forceRefresh)
 	defaultModel := ""
 	if len(models) > 0 {
 		defaultModel = models[0].ID
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"installed":  bin != "",
-		"available":  bin != "",
-		"binaryPath": bin,
-		"default":    defaultModel,
-		"models":     models,
+		"installed":     bin != "",
+		"authenticated": authenticated,
+		"available":     bin != "" && authenticated,
+		"binaryPath":    bin,
+		"default":       defaultModel,
+		"models":        models,
 	})
 }
 

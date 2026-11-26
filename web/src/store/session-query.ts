@@ -201,6 +201,13 @@ export function sessionNeedsModelSelection(sessionID?: string | null): boolean {
   return rt === "opencode" || rt === "native";
 }
 
+function hasConfiguredNonRunnerProvider(providerID?: string | null): boolean {
+  const pid = providerID || "";
+  if (!pid || !workspace.hoxiProviders?.[pid]) return false;
+  const prov = workspace.providers.find((p) => p.id === pid);
+  return prov?.source !== "runner";
+}
+
 export function resolveSessionTargetRuntime(
   sessionID?: string | null,
   providerID?: string | null
@@ -208,7 +215,7 @@ export function resolveSessionTargetRuntime(
   if (providerID === ORCHESTRATOR_PROVIDER_ID) {
     return "native";
   }
-  const hasConfigured = Boolean(workspace.hoxiProviders?.[providerID || ""]);
+  const hasConfigured = hasConfiguredNonRunnerProvider(providerID);
   const found = sessionID ? workspace.sessions.find((s) => s.id === sessionID) : undefined;
   const stickyEngine: AgentEngineMode =
     found?.runtime === "native"
@@ -232,7 +239,7 @@ export function sessionRuntimeForID(sessionID?: string | null): SessionRuntime {
     const draftProv = resolved?.providerID;
     return resolveRunnerRuntimeForProvider(
       draftProv,
-      Boolean(workspace.hoxiProviders?.[draftProv || ""]),
+      hasConfiguredNonRunnerProvider(draftProv),
       preferredAgentEngine()
     );
   }

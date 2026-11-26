@@ -150,6 +150,7 @@ export const hoxiAPI = {
     openCodeBinPath: string;
     openCodeVersion: string;
     ready: boolean;
+    cliReady?: boolean;
   }> {
     return requestJSON("/api/hoxi/engine/install", {
       method: "POST",

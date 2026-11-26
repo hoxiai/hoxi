@@ -2,7 +2,7 @@ package app
 
 import (
 	"context"
-	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/opencode"
@@ -108,12 +108,18 @@ func (a *DesktopApp) ensureEngine(ctx context.Context, restart bool) (string, er
 	a.engineMu.Lock()
 	defer a.engineMu.Unlock()
 
-	if a.openCodePort == 0 || a.openCodePass == "" {
-		return "", errors.New("opencode endpoint is not configured")
+	logger := a.logger
+	if logger == nil {
+		logger = slog.Default()
 	}
-	binPath, err := opencode.ResolveOrInstall(ctx, a.cfg.OpenCode, a.logger)
+	binPath, err := opencode.ResolveOrInstall(ctx, a.cfg.OpenCode, logger)
 	if err != nil {
 		return "", err
+	}
+	// In pure Go Native mode (openCodePort == 0), resolve/install the pinned
+	// OpenCode binary for on-demand CLI turns without spawning `opencode serve`.
+	if a.openCodePort == 0 || a.openCodePass == "" {
+		return binPath, nil
 	}
 	if !restart {
 		if err := opencode.WaitForHealth(ctx, a.openCodePort, a.openCodePass, engineProbeTimeout); err == nil {

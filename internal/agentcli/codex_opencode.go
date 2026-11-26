@@ -52,7 +52,9 @@ func ResolveCodexBinary() string {
 // ResolveOpenCodeBinary locates the standalone `opencode` CLI binary.
 func ResolveOpenCodeBinary() string {
 	for _, key := range []string{"HOXI_OPENCODE_BIN", "HOXI_OPENCODE"} {
-		if env := strings.TrimSpace(os.Getenv(key)); env != "" && env != "opencode" {
+		if env := strings.TrimSpace(os.Getenv(key)); env != "" &&
+			!strings.EqualFold(env, "opencode") &&
+			!strings.EqualFold(env, "opencode.exe") {
 			return FirstExecutableFile(env)
 		}
 	}
@@ -618,60 +620,4 @@ func BuildCodexRunnerModels(snap CodexCatalogSnapshot) []ModelItem {
 // DiscoverCodexModelsWithRefresh returns available models for the Codex CLI runner.
 func DiscoverCodexModelsWithRefresh(forceRefresh bool) []ModelItem {
 	return BuildCodexRunnerModels(DiscoverCodexCatalog(forceRefresh))
-}
-
-var (
-	ocCLIModelsMu   sync.Mutex
-	ocCLICachedBin  string
-	ocCLICachedTime time.Time
-	ocCLICachedList []ModelItem
-)
-
-// DiscoverOpenCodeCLIModelsWithRefresh queries `opencode models` (cached 2m) for single-turn CLI mode.
-func DiscoverOpenCodeCLIModelsWithRefresh(forceRefresh bool) []ModelItem {
-	bin := ResolveOpenCodeBinary()
-	if bin == "" {
-		return nil
-	}
-	ocCLIModelsMu.Lock()
-	defer ocCLIModelsMu.Unlock()
-	if !forceRefresh && ocCLICachedBin == bin && len(ocCLICachedList) > 0 && time.Since(ocCLICachedTime) < 2*time.Minute {
-		return append([]ModelItem(nil), ocCLICachedList...)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	cmd := subproc.CommandContext(ctx, bin, "models")
-	cmd.Env = WithSystemProxy(WithUserBinPath(os.Environ()))
-	cmd.WaitDelay = time.Second
-	raw, err := cmd.Output()
-	var items []ModelItem
-	if err == nil && len(bytes.TrimSpace(raw)) > 0 {
-		seen := make(map[string]bool)
-		for _, line := range strings.Split(string(raw), "\n") {
-			slug := strings.TrimSpace(line)
-			if slug == "" || strings.ContainsAny(slug, " \t") || !strings.Contains(slug, "/") || seen[slug] {
-				continue
-			}
-			seen[slug] = true
-			items = append(items, ModelItem{
-				ID:           slug,
-				Name:         slug,
-				ProviderID:   RuntimeOpenCode,
-				Runtime:      RuntimeOpenCode,
-				Reasoning:    true,
-				Efforts:      []string{"low", "medium", "high"},
-				ContextLimit: 200000,
-				OutputLimit:  64000,
-			})
-			if len(items) >= 120 {
-				break
-			}
-		}
-	}
-	if len(items) > 0 {
-		ocCLICachedBin = bin
-		ocCLICachedTime = time.Now()
-		ocCLICachedList = items
-	}
-	return append([]ModelItem(nil), ocCLICachedList...)
 }

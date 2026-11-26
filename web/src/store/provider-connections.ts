@@ -4,9 +4,11 @@ import { t } from "../i18n";
 import {
   hoxiAPI,
   isRunnerAuthMode,
+  runnerAPI,
   type LocalCLIStatusItem,
   type ProviderAuthAuthorization,
 } from "../services/api";
+import { errorMessageOf } from "../services/http";
 import type { ProviderMcpOAuthPollResponse } from "../services/platform-api";
 import { desktopAuth } from "./auth-state";
 import { disposeOpenCodeInstance, patchGlobalConfig } from "./global-config";
@@ -14,6 +16,7 @@ import {
   AUTO_PROVIDER_ID,
   inferDedicatedMediaModality,
   inferProviderNpmFromEndpoint,
+  isModelFree,
   isNonChatUtilityModelID,
   isNonThinkingGeminiModelID,
   supportsMultimodalImageEditModelID,
@@ -393,6 +396,105 @@ export async function toggleDisabledProvider(providerID: string, disabled: boole
   await hoxiAPI.disposeGlobal().catch(() => {});
   await loadProviders();
   void refreshMediaCapabilities();
+}
+
+export type FreeOpenCodeSetupPhase = "idle" | "checking" | "installing" | "loading" | "error";
+
+export interface FreeOpenCodeSetupState {
+  phase: FreeOpenCodeSetupPhase;
+  error: string | null;
+}
+
+export const [freeOpenCodeSetupState, setFreeOpenCodeSetupState] =
+  createStore<FreeOpenCodeSetupState>({
+    phase: "idle",
+    error: null,
+  });
+
+export interface FreeOpenCodeSetupResult {
+  providerID: "opencode";
+  modelID: string;
+  installedNow: boolean;
+  freeCount: number;
+}
+
+let inFlightFreeOpenCodeSetup: Promise<FreeOpenCodeSetupResult> | null = null;
+
+export function clearFreeOpenCodeSetupError(): void {
+  if (freeOpenCodeSetupState.phase === "error" || freeOpenCodeSetupState.error) {
+    setFreeOpenCodeSetupState({ phase: "idle", error: null });
+  }
+}
+
+/**
+ * Ensures OpenCode CLI is available (reusing an existing local binary or
+ * installing Hoxi's SHA-256-pinned binary when absent), refreshes provider
+ * catalogs, and selects a ready-to-use free (0x) OpenCode model.
+ */
+export async function enableFreeOpenCodeModels(): Promise<FreeOpenCodeSetupResult> {
+  if (inFlightFreeOpenCodeSetup) {
+    return inFlightFreeOpenCodeSetup;
+  }
+  const run = async (): Promise<FreeOpenCodeSetupResult> => {
+    setFreeOpenCodeSetupState({ phase: "checking", error: null });
+    try {
+      const disabledList = Array.isArray(workspace.globalConfig?.disabled_providers)
+        ? workspace.globalConfig.disabled_providers
+        : [];
+      if (disabledList.includes("opencode")) {
+        await toggleDisabledProvider("opencode", false);
+      }
+
+      const probe = await runnerAPI.listModels("opencode", true).catch(() => null);
+      const alreadyInstalled = Boolean(probe?.installed ?? probe?.available);
+      let installedNow = false;
+      if (!alreadyInstalled) {
+        setFreeOpenCodeSetupState({ phase: "installing", error: null });
+        await hoxiAPI.installEngine(false);
+        installedNow = true;
+      }
+
+      setFreeOpenCodeSetupState({ phase: "loading", error: null });
+      await Promise.allSettled([
+        loadProviders(true),
+        ensureLocalCLIStatusLoaded(true),
+      ]);
+
+      const ocProv = workspace.providers.find((p) => p.id === "opencode");
+      const entries = Object.entries(ocProv?.models || {});
+      const freeEntries = entries.filter(([mID, mInfo]) => isModelFree("opencode", mID, mInfo));
+      const defaultOCModel = workspace.defaultModels.opencode;
+      const chosenID =
+        freeEntries[0]?.[0] ||
+        (defaultOCModel && ocProv?.models?.[defaultOCModel] ? defaultOCModel : undefined) ||
+        entries[0]?.[0];
+
+      if (!chosenID) {
+        throw new Error(t("models.freeSetupNoModelsError"));
+      }
+
+      const target: SelectedModel = { providerID: "opencode", modelID: chosenID };
+      if (!workspace.defaultAI.model) {
+        selectDefaultModel(target);
+      }
+      selectProviderModelPreservingBusySession(target);
+      setFreeOpenCodeSetupState({ phase: "idle", error: null });
+      return {
+        providerID: "opencode",
+        modelID: chosenID,
+        installedNow,
+        freeCount: freeEntries.length,
+      };
+    } catch (err) {
+      const message = errorMessageOf(err, t("models.freeSetupFailed"));
+      setFreeOpenCodeSetupState({ phase: "error", error: message });
+      throw err;
+    } finally {
+      inFlightFreeOpenCodeSetup = null;
+    }
+  };
+  inFlightFreeOpenCodeSetup = run();
+  return inFlightFreeOpenCodeSetup;
 }
 
 /** Installs the pinned engine when missing, or restarts the supervised daemon. */

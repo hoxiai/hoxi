@@ -409,8 +409,8 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
     }
 
     const registerRunnerProvider = (pid: string, name: string, r: any) => {
-      const isInstalled = Boolean(r?.installed ?? r?.available);
-      if (!isInstalled || !Array.isArray(r?.models) || r.models.length === 0) return;
+      const isAvailable = r?.available !== undefined ? Boolean(r.available) : Boolean(r?.installed);
+      if (!isAvailable || !Array.isArray(r?.models) || r.models.length === 0) return;
       const models: Record<string, any> = {};
       for (const m of r.models) {
         if (!m?.id) continue;
@@ -465,7 +465,14 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
     if (!hoxiMap["codex"]) {
       registerRunnerProvider("codex", t("timeline.runtimeCodexLocal"), codexRunner);
     }
-    if (!hoxiMap["opencode"]) {
+    const hoxiOpenCode = hoxiMap["opencode"];
+    const hasConfiguredOpenCode = Boolean(
+      hoxiOpenCode &&
+        (Object.keys(hoxiOpenCode.models || {}).length > 0 ||
+          hoxiOpenCode.options?.apiKey ||
+          hoxiOpenCode.options?.baseURL)
+    );
+    if (!hasConfiguredOpenCode) {
       registerRunnerProvider("opencode", t("timeline.runtimeOpenCodeLocal"), openCodeCLIRunner);
     }
 

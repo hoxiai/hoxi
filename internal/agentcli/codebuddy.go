@@ -38,6 +38,16 @@ func ResolveCodeBuddyBinary() string {
 		candidates = append(candidates,
 			filepath.Join(home, ".codebuddy", "bin", "codebuddy"),
 			filepath.Join(home, ".codebuddy", "bin", "cbc"),
+			filepath.Join(home, ".workbuddy", "bin", "codebuddy"),
+			filepath.Join(home, ".workbuddy", "bin", "cbc"),
+		)
+	}
+	if localApp := strings.TrimSpace(os.Getenv("LOCALAPPDATA")); localApp != "" {
+		candidates = append(candidates,
+			filepath.Join(localApp, "codebuddy", "bin", "codebuddy"),
+			filepath.Join(localApp, "codebuddy", "bin", "cbc"),
+			filepath.Join(localApp, "Programs", "codebuddy", "codebuddy"),
+			filepath.Join(localApp, "workbuddy", "bin", "codebuddy"),
 		)
 	}
 	for _, dir := range CommonUserBinDirs() {

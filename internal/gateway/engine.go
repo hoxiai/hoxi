@@ -36,6 +36,7 @@ type engineInstallResponse struct {
 	OpenCodeBinPath string `json:"openCodeBinPath"`
 	OpenCodeVersion string `json:"openCodeVersion"`
 	Ready           bool   `json:"ready"`
+	CLIReady        bool   `json:"cliReady"`
 }
 
 // engineReady probes the supervised daemon's health endpoint. When Hoxi runs
@@ -152,5 +153,6 @@ func (g *Gateway) handleEngineInstall(w http.ResponseWriter, r *http.Request) {
 		OpenCodeBinPath: binPath,
 		OpenCodeVersion: opencode.ResolveVersion(binPath),
 		Ready:           g.engineReady(),
+		CLIReady:        strings.TrimSpace(binPath) != "",
 	})
 }

@@ -243,3 +243,29 @@ func TestExtractSemanticVersionAndManagedPathClassification(t *testing.T) {
 		t.Fatal("explicit path must not be treated as default binary config")
 	}
 }
+
+func TestNewOpenCodeDownloadClientUsesSystemProxyTransport(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:7890")
+	t.Setenv("NO_PROXY", "")
+	client := newOpenCodeDownloadClient()
+	tr, ok := client.Transport.(*http.Transport)
+	if !ok || tr == nil || tr.Proxy == nil {
+		t.Fatalf("expected non-nil *http.Transport with Proxy configured, got %T", client.Transport)
+	}
+	extReq, err := http.NewRequest(http.MethodGet, "https://github.com/anomalyco/opencode/releases", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyURL, err := tr.Proxy(extReq)
+	if err != nil || proxyURL == nil || proxyURL.String() != "http://127.0.0.1:7890" {
+		t.Fatalf("expected external download to honor proxy, got %v (err=%v)", proxyURL, err)
+	}
+	loopReq, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:5410/healthz", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loopProxy, err := tr.Proxy(loopReq)
+	if err != nil || loopProxy != nil {
+		t.Fatalf("expected loopback request to bypass proxy, got %v (err=%v)", loopProxy, err)
+	}
+}

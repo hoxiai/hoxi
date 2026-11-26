@@ -38,7 +38,9 @@ func TestEngineInstallRoute(t *testing.T) {
 	if recOK.Code != http.StatusOK || calls != 1 {
 		t.Fatalf("expected installer to run once and return 200, got %d calls=%d", recOK.Code, calls)
 	}
-	if !strings.Contains(recOK.Body.String(), `"ok":true`) || !strings.Contains(recOK.Body.String(), `"openCodeBinPath":"/opt/custom/opencode"`) {
+	if !strings.Contains(recOK.Body.String(), `"ok":true`) ||
+		!strings.Contains(recOK.Body.String(), `"openCodeBinPath":"/opt/custom/opencode"`) ||
+		!strings.Contains(recOK.Body.String(), `"cliReady":true`) {
 		t.Fatalf("unexpected response body: %s", recOK.Body.String())
 	}
 

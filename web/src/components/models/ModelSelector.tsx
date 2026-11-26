@@ -25,7 +25,6 @@ import {
   isCustomOrConfiguredProvider,
   isFavoriteModel,
   isNonChatUtilityModelID,
-  isOpenCodeProviderAvailable,
   OFFICIAL_PROVIDER_ID,
   ORCHESTRATOR_PROVIDER_ID,
   openProviderModal,
@@ -53,6 +52,7 @@ import {
   type FlattenedModel,
 } from "./model-selector-utils";
 import { ModelDetailsPopover } from "./ModelDetailsPopover";
+import { ModelEmptyState } from "./ModelEmptyState";
 import { ModelProbeBadge, ModelProbeButton } from "./ModelProbeControl";
 import { OrchestratorSelectorRow } from "./OrchestratorSelectorRow";
 import { SelectedModelHoverCard } from "./SelectedModelHoverCard";
@@ -185,18 +185,9 @@ export default function ModelSelector(props: { openRequest?: number }) {
     extractFlattenedModels(workspace.providers, connectedSet(), workspace.globalConfig)
   );
 
-  const connectedModels = createMemo<FlattenedModel[]>(() => {
-    const conn = allModels().filter((m) => m.connected);
-    if (conn.length > 0) return conn;
-    const allowOpenCodeFree = isOpenCodeProviderAvailable(connectedSet(), workspace.globalConfig);
-    const freeModels = allModels().filter(
-      (m) => (allowOpenCodeFree ? m.providerID === "opencode" || m.free : m.free && m.providerID !== "opencode")
-    );
-    if (freeModels.length > 0) return freeModels;
-    return allModels()
-      .filter((m) => allowOpenCodeFree || m.providerID !== "opencode")
-      .slice(0, 30);
-  });
+  const connectedModels = createMemo<FlattenedModel[]>(() =>
+    allModels().filter((m) => m.connected)
+  );
 
   const freeConnectedModels = createMemo<FlattenedModel[]>(() =>
     connectedModels().filter((m) => m.free)
@@ -596,8 +587,9 @@ export default function ModelSelector(props: { openRequest?: number }) {
               <div class="flex-1 overflow-y-auto p-1.5 space-y-0.5">
                 <Show
                   when={
-                    (!query().trim() && (rail() === "connected" || rail() === AUTO_PROVIDER_ID)) ||
-                    /orchestrat|exec|\u7f16\u6392|\u6267\u884c/i.test(query().trim())
+                    connectedModels().length > 0 &&
+                    ((!query().trim() && (rail() === "connected" || rail() === AUTO_PROVIDER_ID)) ||
+                      /orchestrat|exec|\u7f16\u6392|\u6267\u884c/i.test(query().trim()))
                   }
                 >
                   <OrchestratorSelectorRow onClosePopover={() => setOpen(false)} />
@@ -605,20 +597,34 @@ export default function ModelSelector(props: { openRequest?: number }) {
                 <Show
                   when={filteredModels().length > 0}
                   fallback={
-                    <div class="flex h-full flex-col items-center justify-center p-4 text-center text-[12px] text-[var(--text-muted)]">
-                      <p>{t("models.noModelsFound")}</p>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setOpen(false);
-                          openProviderModal("providers", null);
-                        }}
-                        class="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-1.5 text-[12px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
-                      >
-                        <KeyRound size={12} />
-                        {t("models.connectProviderOrAdd")}
-                      </button>
-                    </div>
+                    <Show
+                      when={
+                        !query().trim() &&
+                        ((connectedModels().length === 0 && (rail() === "connected" || rail() === "free")) ||
+                          (connectedModels().length > 0 && rail() === "free" && freeConnectedModels().length === 0))
+                      }
+                      fallback={
+                        <div class="flex h-full flex-col items-center justify-center p-4 text-center text-[12px] text-[var(--text-muted)]">
+                          <p>{t("models.noModelsFound")}</p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setOpen(false);
+                              openProviderModal("providers", null);
+                            }}
+                            class="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-1.5 text-[12px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+                          >
+                            <KeyRound size={12} />
+                            {t("models.connectProviderOrAdd")}
+                          </button>
+                        </div>
+                      }
+                    >
+                      <ModelEmptyState
+                        mode={connectedModels().length === 0 ? "empty" : "free-empty"}
+                        onClosePopover={() => setOpen(false)}
+                      />
+                    </Show>
                   }
                 >
                   <For each={filteredModels()}>

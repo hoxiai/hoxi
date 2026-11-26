@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -370,6 +371,28 @@ func OfficialReleaseURLs(goos, goarch string) (urls []string, isZip bool, err er
 	return candidates, isZip, nil
 }
 
+// newOpenCodeDownloadClient constructs an HTTP client that honors both
+// environment proxy variables and the OS system proxy (macOS/Windows GUI apps
+// launched outside a shell do not inherit HTTP_PROXY/HTTPS_PROXY).
+func newOpenCodeDownloadClient() *http.Client {
+	transport := &http.Transport{
+		Proxy: agentcli.SystemProxyURL,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          10,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+	return &http.Client{
+		Timeout:   3 * time.Minute,
+		Transport: transport,
+	}
+}
+
 func downloadOfficialOpenCode(ctx context.Context, logger *slog.Logger) (string, error) {
 	binDir := hoxipaths.BinDir()
 	if binDir == "" {
@@ -393,7 +416,7 @@ func downloadOfficialOpenCode(ctx context.Context, logger *slog.Logger) (string,
 		return "", err
 	}
 
-	client := &http.Client{Timeout: 90 * time.Second}
+	client := newOpenCodeDownloadClient()
 	targetPath, err := installFromMirrors(ctx, client, dlURLs, isZip, expectedSHA, binDir, binName)
 	if err != nil {
 		return "", err

@@ -627,7 +627,8 @@ func detectQoderCLIStatus(hoxiMap map[string]interface{}) LocalCLIStatusItem {
 	bin := agentcli.ResolveQoderBinary()
 	var models []string
 	var defModel string
-	for _, m := range agentcli.DiscoverQoderModels() {
+	qoderModels, qoderAuth := agentcli.DiscoverQoderStatus()
+	for _, m := range qoderModels {
 		if m.ID != "" {
 			models = appendUniqueString(models, m.ID)
 			if defModel == "" {
@@ -660,8 +661,8 @@ func detectQoderCLIStatus(hoxiMap map[string]interface{}) LocalCLIStatusItem {
 		ID:            ExternalToolQoder,
 		Name:          "Qoder",
 		Installed:     stats.Installed || bin != "",
-		Authenticated: bin != "" || customConn,
-		Connected:     bin != "" || customConn,
+		Authenticated: (bin != "" && qoderAuth) || customConn,
+		Connected:     (bin != "" && qoderAuth) || customConn,
 		DefaultModel:  defModel,
 		Models:        models,
 		SessionCount:  stats.SessionCount,
