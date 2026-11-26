@@ -289,6 +289,12 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		}
 		return ""
 	})
+	g.pairing.SetRelayDeviceID(func() string {
+		if g.extensionRemoteRelayBaseURL() == "" {
+			return ""
+		}
+		return g.extensionRemoteRelayDeviceID()
+	})
 	g.pairing.SetDefaultShortCodeRelayURL(g.extensionDefaultShortCodeRelayURL)
 	g.intake = newGatewayIntakeService(g)
 	g.scheduler = newGatewaySchedulerService(g)

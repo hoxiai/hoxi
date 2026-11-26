@@ -320,7 +320,7 @@ func (g *Gateway) serveTunnelRequest(w http.ResponseWriter, r *http.Request) {
 func droppedRemoteHeader(key string) bool {
 	lower := strings.ToLower(strings.TrimSpace(key))
 	switch lower {
-	case "origin", "referer", "cookie", "authorization", "x-auth", "x-hoxi-token", "x-hoxi-relay-token", "x-hoxi-relay-auth":
+	case "origin", "referer", "cookie", "authorization", "x-auth", "x-hoxi-token", "x-hoxi-relay-token", "x-hoxi-relay-auth", "x-hoxi-device-id":
 		return true
 	}
 	return strings.HasPrefix(lower, "sec-") ||

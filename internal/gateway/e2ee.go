@@ -39,6 +39,9 @@ func (g *Gateway) appendPairingBootstrap(resp map[string]any, r *http.Request, k
 	if relayURL := g.pairing.RelayURL(); relayURL != "" {
 		resp["relay"] = relayURL
 		resp["relayUrl"] = relayURL
+		if devID := g.pairing.RelayDeviceID(); devID != "" {
+			resp["relayDeviceId"] = devID
+		}
 		if src == remoteSourceLAN || src == remoteSourceRelay {
 			if relayTok, err := g.pairing.RelayToken(); err == nil && relayTok != "" {
 				resp["relayToken"] = relayTok

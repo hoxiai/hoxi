@@ -29,18 +29,19 @@ import (
 // JSON shape the phone's QR scanner already understands:
 // {"url","token","type","entrance"}.
 type Payload struct {
-	URL        string   `json:"url"`
-	Peers      []string `json:"peers,omitempty"`
-	Token      string   `json:"token"`
-	RelayToken string   `json:"relayToken,omitempty"`
-	E2EEKey    string   `json:"e2eeKey,omitempty"`
-	Type       string   `json:"type"`
-	Entrance   string   `json:"entrance"`
-	Relay      string   `json:"relay,omitempty"`
-	Host       string   `json:"host"`
-	Port       int      `json:"port"`
-	Hostname   string   `json:"hostname"`
-	Available  bool     `json:"available"`
+	URL           string   `json:"url"`
+	Peers         []string `json:"peers,omitempty"`
+	Token         string   `json:"token"`
+	RelayToken    string   `json:"relayToken,omitempty"`
+	RelayDeviceID string   `json:"relayDeviceId,omitempty"`
+	E2EEKey       string   `json:"e2eeKey,omitempty"`
+	Type          string   `json:"type"`
+	Entrance      string   `json:"entrance"`
+	Relay         string   `json:"relay,omitempty"`
+	Host          string   `json:"host"`
+	Port          int      `json:"port"`
+	Hostname      string   `json:"hostname"`
+	Available     bool     `json:"available"`
 }
 
 // Code is a Payload plus the rendered QR image.
@@ -57,12 +58,13 @@ type Code struct {
 
 // Service builds pairing codes for this desktop.
 type Service struct {
-	tokenPath string
-	port      int
-	hostname  func() string
-	lanHost   func() string
-	lanPeers  func() []string
-	relayURL  func() string
+	tokenPath     string
+	port          int
+	hostname      func() string
+	lanHost       func() string
+	lanPeers      func() []string
+	relayURL      func() string
+	relayDeviceID func() string
 
 	mu                       sync.Mutex
 	defaultShortCodeRelayURL func() string
@@ -92,6 +94,14 @@ func NewService(tokenPath string, port int) *Service {
 func (s *Service) SetRelayURL(fn func() string) {
 	s.mu.Lock()
 	s.relayURL = fn
+	s.mu.Unlock()
+}
+
+// SetRelayDeviceID registers a callback returning the stable per-device relay
+// routing ID associated with the active off-LAN relay URL, or "" when unused.
+func (s *Service) SetRelayDeviceID(fn func() string) {
+	s.mu.Lock()
+	s.relayDeviceID = fn
 	s.mu.Unlock()
 }
 
@@ -148,6 +158,9 @@ func (s *Service) Code() (Code, error) {
 	if relay := s.relay(); relay != "" {
 		code.Relay = relay
 		code.RelayToken = relayToken
+		if devID := s.RelayDeviceID(); devID != "" {
+			code.RelayDeviceID = devID
+		}
 	}
 	host := strings.TrimSpace(s.lanHost())
 	if host == "" && code.Relay == "" {
@@ -190,6 +203,9 @@ func (s *Service) Code() (Code, error) {
 	if code.Relay != "" {
 		scannable["relay"] = code.Relay
 		scannable["relayToken"] = code.RelayToken
+		if code.RelayDeviceID != "" {
+			scannable["relayDeviceId"] = code.RelayDeviceID
+		}
 	}
 	encoded, err := json.Marshal(scannable)
 	if err != nil {
@@ -216,6 +232,18 @@ func (s *Service) relay() string {
 // RelayURL returns this desktop's configured off-LAN relay URL, or "".
 func (s *Service) RelayURL() string {
 	return s.relay()
+}
+
+// RelayDeviceID returns this desktop's optional per-device relay routing ID,
+// or "" when the active relay does not require device disambiguation.
+func (s *Service) RelayDeviceID() string {
+	s.mu.Lock()
+	fn := s.relayDeviceID
+	s.mu.Unlock()
+	if fn == nil {
+		return ""
+	}
+	return strings.TrimSpace(fn())
 }
 
 // LanEndpoints returns the primary LAN URL and any secondary peer LAN/Tailscale URLs.

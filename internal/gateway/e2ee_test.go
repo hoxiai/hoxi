@@ -302,3 +302,34 @@ func TestRemoteE2EERejectsEnvelopeWhenRelayStripsHeader(t *testing.T) {
 		t.Fatalf("expected error mentioning X-Hoxi-E2EE, got: %s", rec.Body.String())
 	}
 }
+
+func TestRemoteBootstrapIncludesRelayDeviceIDAndStripsRoutingHeader(t *testing.T) {
+	g, _, relayToken := ingressGateway(t)
+	g.pairing.SetRelayURL(func() string { return "https://alice.node.example.test" })
+	g.pairing.SetRelayDeviceID(func() string { return "dev_mac_studio_1" })
+
+	req := httptest.NewRequest(http.MethodGet, "/api/hoxi/bootstrap", nil)
+	req.Host = "alice.node.example.test"
+	req.RemoteAddr = "203.0.113.9:51001"
+	req.Header.Set("X-Auth", relayToken)
+	req.Header.Set("X-Hoxi-Device-Id", "dev_mac_studio_1")
+	rec := httptest.NewRecorder()
+	g.ServeIngressRequest(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("bootstrap status = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if got := body["relay"]; got != "https://alice.node.example.test" {
+		t.Fatalf("bootstrap relay = %v, want https://alice.node.example.test", got)
+	}
+	if got := body["relayDeviceId"]; got != "dev_mac_studio_1" {
+		t.Fatalf("bootstrap relayDeviceId = %v, want dev_mac_studio_1", got)
+	}
+	if got := req.Header.Get("X-Hoxi-Device-Id"); got != "" {
+		t.Fatalf("expected X-Hoxi-Device-Id stripped by sanitizeRemoteRequest, still got %q", got)
+	}
+}

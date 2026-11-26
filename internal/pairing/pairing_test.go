@@ -536,3 +536,35 @@ func TestShortCodeRateLimitAggregatesIPv6Slash64(t *testing.T) {
 		t.Fatalf("different IPv6 /64 status = %d, want 201", otherRec.Code)
 	}
 }
+
+func TestPairingCodeAndShortCodeIncludeRelayDeviceID(t *testing.T) {
+	svc := NewService(filepath.Join(t.TempDir(), "pairing.json"), 5417)
+	svc.lanHost = func() string { return "192.168.1.20" }
+	svc.lanPeers = func() []string { return []string{"192.168.1.20"} }
+	svc.SetRelayDeviceID(func() string { return "dev_abc123" })
+
+	// Without an active relay URL, relayDeviceId stays omitted.
+	noRelayCode, err := svc.Code()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if noRelayCode.RelayDeviceID != "" {
+		t.Fatalf("RelayDeviceID without relay = %q, want empty", noRelayCode.RelayDeviceID)
+	}
+
+	svc.SetRelayURL(func() string { return "https://alice.node.example.test" })
+	withRelayCode, err := svc.Code()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withRelayCode.RelayDeviceID != "dev_abc123" {
+		t.Fatalf("Code().RelayDeviceID = %q, want dev_abc123", withRelayCode.RelayDeviceID)
+	}
+	ticket, err := svc.ShortCodeTicket()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ticket.RelayDeviceID != "dev_abc123" {
+		t.Fatalf("ShortCodeTicket().RelayDeviceID = %q, want dev_abc123", ticket.RelayDeviceID)
+	}
+}

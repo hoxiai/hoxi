@@ -34,14 +34,15 @@ func DefaultShortCodeRelayURL() string {
 // never observe the end-to-end encryption master key; clients derive or obtain
 // E2EEKey directly from the desktop via X25519 KEX (/api/hoxi/bootstrap).
 type ShortCodeTicket struct {
-	Type       string   `json:"type"`
-	URL        string   `json:"url"`
-	Peers      []string `json:"peers,omitempty"`
-	Relay      string   `json:"relay,omitempty"`
-	Token      string   `json:"token"`
-	RelayToken string   `json:"relayToken,omitempty"`
-	Hostname   string   `json:"hostname,omitempty"`
-	KEX        string   `json:"kex"`
+	Type          string   `json:"type"`
+	URL           string   `json:"url"`
+	Peers         []string `json:"peers,omitempty"`
+	Relay         string   `json:"relay,omitempty"`
+	Token         string   `json:"token"`
+	RelayToken    string   `json:"relayToken,omitempty"`
+	RelayDeviceID string   `json:"relayDeviceId,omitempty"`
+	Hostname      string   `json:"hostname,omitempty"`
+	KEX           string   `json:"kex"`
 }
 
 // PublishedShortCode holds the active short-code allocation for this desktop.
@@ -270,14 +271,15 @@ func (s *Service) ShortCodeTicket() (ShortCodeTicket, error) {
 		return ShortCodeTicket{}, errors.New("desktop has no reachable LAN or relay endpoint")
 	}
 	return ShortCodeTicket{
-		Type:       code.Type,
-		URL:        code.URL,
-		Peers:      code.Peers,
-		Relay:      code.Relay,
-		Token:      code.Token,
-		RelayToken: code.RelayToken,
-		Hostname:   code.Hostname,
-		KEX:        KEXAlgorithm,
+		Type:          code.Type,
+		URL:           code.URL,
+		Peers:         code.Peers,
+		Relay:         code.Relay,
+		Token:         code.Token,
+		RelayToken:    code.RelayToken,
+		RelayDeviceID: code.RelayDeviceID,
+		Hostname:      code.Hostname,
+		KEX:           KEXAlgorithm,
 	}, nil
 }
 

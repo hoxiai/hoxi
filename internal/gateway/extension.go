@@ -53,6 +53,14 @@ type RelayEndpointExtension interface {
 	RemoteRelayBaseURL() string
 }
 
+// RelayDeviceIdentityExtension may be implemented by an Extension to supply the
+// stable per-device identifier associated with its RemoteRelayBaseURL so mobile
+// clients can target a specific desktop via X-Hoxi-Device-Id when multiple
+// desktops share one relay hostname.
+type RelayDeviceIdentityExtension interface {
+	RemoteRelayDeviceID() string
+}
+
 // RelayLifecycleExtension may be implemented by an Extension that runs a
 // background reverse relay bound to the desktop host lifecycle.
 type RelayLifecycleExtension interface {
@@ -258,6 +266,20 @@ func (g *Gateway) extensionRemoteRelayBaseURL() string {
 		if provider, ok := ext.(RelayEndpointExtension); ok {
 			if base := strings.TrimRight(strings.TrimSpace(provider.RemoteRelayBaseURL()), "/"); base != "" {
 				return base
+			}
+		}
+	}
+	return ""
+}
+
+func (g *Gateway) extensionRemoteRelayDeviceID() string {
+	if g == nil {
+		return ""
+	}
+	for _, ext := range g.extensions {
+		if provider, ok := ext.(RelayDeviceIdentityExtension); ok {
+			if id := strings.TrimSpace(provider.RemoteRelayDeviceID()); id != "" {
+				return id
 			}
 		}
 	}
