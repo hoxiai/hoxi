@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"path"
@@ -309,6 +310,23 @@ func (b *gatewayIntakeSessions) SanitizedTimeline(sessionID string) (intake.Sani
 					if cat == "todo" {
 						step.Kind = "todo"
 						step.Todos = todos
+					}
+					if cat == "edit" {
+						files, adds, dels := intake.ExtractToolFileChanges(part.Tool, part.State.Input, part.State.Metadata)
+						if label == "修改项目文件" && len(files) > 0 {
+							if len(files) > 1 {
+								step.Label = fmt.Sprintf("修改 %s 等 %d 个文件", files[0].File, len(files))
+							} else if files[0].File != "" {
+								step.Label = "修改 " + files[0].File
+							}
+						}
+						if part.State.Status != "error" {
+							step.Additions = adds
+							step.Deletions = dels
+							if len(files) > 0 {
+								step.Files = files
+							}
+						}
 					}
 					if part.State.Time != nil {
 						step.StartTime = part.State.Time.Start

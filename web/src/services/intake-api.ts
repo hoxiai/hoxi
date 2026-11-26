@@ -73,6 +73,12 @@ export interface SanitizedTodoItem {
   status: string;
 }
 
+export interface SanitizedFileChange {
+  file: string;
+  additions?: number;
+  deletions?: number;
+}
+
 export interface SanitizedExecutionStep {
   id: string;
   kind: "tool" | "text" | "todo";
@@ -81,6 +87,9 @@ export interface SanitizedExecutionStep {
   text?: string;
   status?: "pending" | "running" | "completed" | "error" | string;
   todos?: SanitizedTodoItem[];
+  additions?: number;
+  deletions?: number;
+  files?: SanitizedFileChange[];
   startTime?: number;
   endTime?: number;
 }

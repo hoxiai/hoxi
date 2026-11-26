@@ -380,17 +380,28 @@ func ScrubLocalPaths(text string) string {
 
 func safeBasename(raw string) string {
 	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
+	if trimmed == "" || trimmed == "~" {
 		return ""
 	}
 	slashed := strings.ReplaceAll(trimmed, `\`, "/")
 	slashed = lineColSuffixRe.ReplaceAllString(slashed, "")
 	slashed = strings.TrimRight(slashed, "/")
-	if slashed == "" {
+	if slashed == "" || slashed == "~" {
+		return ""
+	}
+	parts := strings.FieldsFunc(slashed, func(r rune) bool { return r == '/' })
+	if len(parts) == 0 {
+		return ""
+	}
+	lower0 := strings.ToLower(parts[0])
+	if (lower0 == "users" || lower0 == "home") && len(parts) <= 2 {
+		return ""
+	}
+	if len(parts) <= 3 && len(parts[0]) == 2 && parts[0][1] == ':' && strings.EqualFold(parts[1], "users") {
 		return ""
 	}
 	base := path.Base(slashed)
-	if base == "." || base == "/" || base == ".." {
+	if base == "" || base == "." || base == "/" || base == ".." || unixRootSegs[base] {
 		return ""
 	}
 	if len(base) > 64 {
@@ -403,7 +414,7 @@ func extractInputFilename(input map[string]interface{}) (string, int) {
 	if len(input) == 0 {
 		return "", 0
 	}
-	for _, key := range []string{"filePath", "file_path", "path", "Path", "target_file", "filename"} {
+	for _, key := range []string{"filePath", "file_path", "path", "Path", "target_file", "TargetFile", "targetFile", "AbsolutePath", "filename", "file"} {
 		if v, ok := input[key].(string); ok {
 			if base := safeBasename(v); base != "" {
 				return base, 1
@@ -508,15 +519,6 @@ func ClassifyAndLabelTool(toolName string, input map[string]interface{}) (catego
 			return "read", "读取 " + file, nil
 		}
 		return "read", "读取项目文件", nil
-	case "edit", "edit_file", "write", "write_file", "multiedit", "patch", "apply_patch", "replace_file_content", "multi_replace_file_content":
-		file, count := extractInputFilename(input)
-		if count > 1 && file != "" {
-			return "edit", fmt.Sprintf("修改 %s 等 %d 个文件", file, count), nil
-		}
-		if file != "" {
-			return "edit", "修改 " + file, nil
-		}
-		return "edit", "修改项目文件", nil
 	case "grep", "grep_search", "glob", "find_by_name", "list_dir", "ls", "hoxi_code_index", "search":
 		return "search", "检索相关代码模块", nil
 	case "bash", "run_command", "run_shell_command", "shell", "monitor":
@@ -524,6 +526,16 @@ func ClassifyAndLabelTool(toolName string, input map[string]interface{}) (catego
 	case "task", "invoke_subagent", "subagent":
 		return "subagent", "启动子任务协同排查", nil
 	default:
+		if isEditToolName(lower) {
+			file, count := extractInputFilename(input)
+			if count > 1 && file != "" {
+				return "edit", fmt.Sprintf("修改 %s 等 %d 个文件", file, count), nil
+			}
+			if file != "" {
+				return "edit", "修改 " + file, nil
+			}
+			return "edit", "修改项目文件", nil
+		}
 		return "other", "执行修复辅助步骤", nil
 	}
 }

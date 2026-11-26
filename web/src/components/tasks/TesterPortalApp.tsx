@@ -14,19 +14,12 @@ import {
 } from "solid-js";
 import {
   CheckCircle2,
-  CircleDashed,
   Clock,
-  FileCode2,
-  ListTodo,
   LoaderCircle,
-  MessageSquare,
   MinusCircle,
   Plus,
-  Search,
+  RotateCcw,
   ShieldAlert,
-  Terminal,
-  Wrench,
-  XCircle,
 } from "lucide-solid";
 import { t } from "../../i18n";
 import {
@@ -46,10 +39,14 @@ import {
   type IntakeAttachmentRef,
   type IntakeTaskComment,
   type IntakeTaskStatus,
-  type SanitizedExecutionStep,
 } from "../../store/workspace";
-import MarkdownInline from "../timeline/MarkdownInline";
 import MarkdownView from "../timeline/MarkdownView";
+import PortalExecutionTimeline, { PortalDiffSummaryBar } from "./PortalExecutionTimeline";
+import {
+  buildPortalConversationEntries,
+  selectMatchingPortalTimeline,
+  summarizeTimelineDiff,
+} from "./portal-timeline-helpers";
 import {
   TesterFloatingFeedbackComposer,
   TesterNewTaskComposer,
@@ -79,48 +76,20 @@ function portalStatusText(status: IntakeTaskStatus): string {
   }
 }
 
-function commentBadgeLabel(comment: IntakeTaskComment): string {
-  if (comment.authorRole === "developer") {
-    return t("tasks.portalDeveloperNoteLabel");
+function portalStatusTone(status: IntakeTaskStatus): string {
+  switch (status) {
+    case "running":
+      return "bg-[var(--accent-surface)] text-[var(--accent-primary)]";
+    case "succeeded":
+    case "awaiting_retest":
+    case "resolved":
+      return "bg-[var(--ok-surface)] text-[var(--ok-text)]";
+    case "failed":
+    case "reopened":
+      return "bg-[var(--danger-surface)] text-[var(--danger-text)]";
+    default:
+      return "bg-[var(--bg-inset)] text-[var(--text-secondary)]";
   }
-  if (comment.action === "reopen") {
-    return t("tasks.portalRetestReopenLabel");
-  }
-  if (comment.action === "pass") {
-    return t("tasks.portalRetestPassedLabel");
-  }
-  return comment.authorLabel || t("tasks.portalTesterCommentLabel");
-}
-
-function StepCategoryIcon(props: { category?: string; status?: string }) {
-  return (
-    <Switch>
-      <Match when={props.status === "running" || props.status === "pending"}>
-        <LoaderCircle size={14} class="shrink-0 animate-spin text-[var(--accent-primary)]" />
-      </Match>
-      <Match when={props.status === "error"}>
-        <XCircle size={14} class="shrink-0 text-[var(--danger-text)]" />
-      </Match>
-      <Match when={props.category === "search"}>
-        <Search size={13} class="shrink-0 text-[var(--text-muted)]" />
-      </Match>
-      <Match when={props.category === "command"}>
-        <Terminal size={13} class="shrink-0 text-[var(--text-muted)]" />
-      </Match>
-      <Match when={props.category === "edit"}>
-        <Wrench size={13} class="shrink-0 text-[var(--accent-primary)]" />
-      </Match>
-      <Match when={true}>
-        <FileCode2 size={13} class="shrink-0 text-[var(--text-muted)]" />
-      </Match>
-    </Switch>
-  );
-}
-
-function formatStepDuration(start?: number, end?: number): string {
-  if (!start || !end || end <= start) return "";
-  const sec = (end - start) / 1000;
-  return sec < 10 ? `${sec.toFixed(1)}s` : `${Math.round(sec)}s`;
 }
 
 function PortalAttachmentGallery(props: { items: IntakeAttachmentRef[] }) {
@@ -161,74 +130,66 @@ function PortalAttachmentGallery(props: { items: IntakeAttachmentRef[] }) {
   );
 }
 
-// Non-expandable execution step row: renders Markdown explanations & status without exposing source code or diffs.
-function SanitizedStepRow(props: { step: SanitizedExecutionStep; streaming?: boolean }) {
-  const duration = () => formatStepDuration(props.step.startTime, props.step.endTime);
-
+function PortalCommentEntry(props: { comment: IntakeTaskComment }) {
   return (
     <Switch>
-      <Match when={props.step.kind === "text" && props.step.text}>
-        <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/65 px-4 py-3 text-[var(--text-primary)]">
-          <MarkdownView
-            content={props.step.text!}
-            density="chat"
-            streaming={props.streaming}
-          />
+      {/* Developer reply: borderless left-accent note, matching desktop prose tone */}
+      <Match when={props.comment.authorRole === "developer"}>
+        <div class="border-l-2 border-[var(--ok-text)]/50 pl-3.5 py-0.5 space-y-1.5">
+          <div class="text-[11px] font-medium text-[var(--ok-text)]">
+            {t("tasks.portalDeveloperNoteLabel")}
+          </div>
+          <Show when={props.comment.text}>
+            <div class="text-[var(--text-primary)]">
+              <MarkdownView content={props.comment.text} density="chat" />
+            </div>
+          </Show>
+          <PortalAttachmentGallery items={props.comment.attachments ?? []} />
         </div>
       </Match>
-      <Match when={props.step.kind === "todo" && (props.step.todos ?? []).length > 0}>
-        <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-3.5 py-2.5">
-          <div class="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-[var(--text-muted)]">
-            <ListTodo size={13} class="text-[var(--accent-primary)]" />
-            <span>{props.step.label || t("tasks.groupTodos")}</span>
+
+      {/* Retest passed milestone: quiet inline confirmation, no card wrapper */}
+      <Match when={props.comment.action === "pass"}>
+        <div class="space-y-1 py-1">
+          <div class="inline-flex items-center gap-1.5 text-[12px] font-medium text-[var(--ok-text)]">
+            <CheckCircle2 size={13.5} class="shrink-0" />
+            <span>{t("tasks.portalRetestPassedLabel")}</span>
           </div>
-          <div class="space-y-1">
-            <For each={props.step.todos ?? []}>
-              {(todo) => (
-                <div class="flex items-start gap-2 text-[12.5px] leading-[1.55] text-[var(--text-secondary)]">
-                  <span class="mt-0.5 shrink-0">
-                    <Show
-                      when={todo.status === "completed"}
-                      fallback={
-                        <Show
-                          when={todo.status === "in_progress"}
-                          fallback={<CircleDashed size={12} class="text-[var(--text-muted)]" />}
-                        >
-                          <LoaderCircle size={12} class="animate-spin text-[var(--accent-primary)]" />
-                        </Show>
-                      }
-                    >
-                      <CheckCircle2 size={12} class="text-[var(--ok-text)]" />
-                    </Show>
-                  </span>
-                  <div
-                    class={`min-w-0 flex-1 break-words ${
-                      todo.status === "completed" ? "line-through opacity-75" : ""
-                    }`}
-                  >
-                    <MarkdownInline text={todo.content} />
-                  </div>
-                </div>
-              )}
-            </For>
-          </div>
+          <Show when={props.comment.text}>
+            <div class="pl-5 text-[var(--text-secondary)]">
+              <MarkdownView content={props.comment.text} density="compact" />
+            </div>
+          </Show>
+          <Show when={(props.comment.attachments ?? []).length > 0}>
+            <div class="pl-5">
+              <PortalAttachmentGallery items={props.comment.attachments ?? []} />
+            </div>
+          </Show>
         </div>
       </Match>
-      <Match when={props.step.kind === "tool"}>
-        <div class="flex select-none items-center justify-between gap-2 rounded-lg border border-[var(--border-subtle)]/70 bg-[var(--bg-inset)]/70 px-3 py-1.5">
-          <div class="flex min-w-0 items-center gap-2">
-            <StepCategoryIcon category={props.step.category} status={props.step.status} />
-            <span class="truncate text-[12px] text-[var(--text-secondary)]">
-              {props.step.label}
-            </span>
-          </div>
-          <div class="flex shrink-0 items-center gap-2">
-            <Show when={duration()}>
-              <span class="font-mono text-[10px] text-[var(--text-faint)]">{duration()}</span>
+
+      {/* Tester follow-up / reopen: right-aligned soft bubble without heavy border, matching desktop UserTurnItem */}
+      <Match when={true}>
+        <div class="flex flex-col items-end">
+          <div
+            class={`max-w-[85%] rounded-2xl px-3.5 py-2.5 space-y-1.5 ${
+              props.comment.action === "reopen"
+                ? "bg-[var(--danger-surface)]/60"
+                : "bg-[var(--accent-surface)]"
+            }`}
+          >
+            <Show when={props.comment.action === "reopen"}>
+              <div class="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--danger-text)]">
+                <RotateCcw size={11} class="shrink-0" />
+                <span>{t("tasks.portalRetestReopenLabel")}</span>
+              </div>
             </Show>
-            <Show when={props.step.status === "completed"}>
-              <CheckCircle2 size={12} class="text-[var(--ok-text)]" />
+            <Show when={props.comment.text}>
+              <div class="text-[var(--text-primary)]">
+                <MarkdownView content={props.comment.text} density="chat" />
+              </div>
             </Show>
+            <PortalAttachmentGallery items={props.comment.attachments ?? []} />
           </div>
         </div>
       </Match>
@@ -251,10 +212,14 @@ export default function TesterPortalApp() {
     onCleanup(cleanup);
   });
 
-  const timelineTurns = createMemo(() => portalTimeline()?.turns ?? []);
+  const matchedTimeline = createMemo(() =>
+    selectMatchingPortalTimeline(activePortalTask()?.id, portalTimeline())
+  );
+  const timelineTurns = createMemo(() => matchedTimeline()?.turns ?? []);
+  const timelineDiff = createMemo(() => summarizeTimelineDiff(timelineTurns()));
   const isLiveBusy = createMemo(() => {
     const cur = activePortalTask();
-    return Boolean((cur && cur.status === "running") || portalTimeline()?.busy);
+    return Boolean((cur && cur.status === "running") || matchedTimeline()?.busy);
   });
   const hasFloatingComposer = createMemo(() => {
     const cur = activePortalTask();
@@ -280,7 +245,7 @@ export default function TesterPortalApp() {
 
   // Auto-follow streaming output only when user is already near the bottom.
   createEffect(() => {
-    const tl = portalTimeline();
+    const tl = matchedTimeline();
     if (!tl || !isLiveBusy() || !stickToBottom() || !scrollerRef) return;
     const raf = requestAnimationFrame(() => {
       if (scrollerRef && stickToBottom()) {
@@ -304,14 +269,14 @@ export default function TesterPortalApp() {
           </div>
         }
       >
-        {/* Left pane: project header + submitted tasks list (NO right-side code inspector) */}
-        <aside class="flex w-64 sm:w-72 shrink-0 flex-col px-2.5 py-2.5">
-          <div class="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3.5 py-3 shadow-[var(--elevation-1)]">
-            <div class="flex items-center justify-between gap-2">
-              <span class="truncate text-[13px] font-semibold text-[var(--text-primary)]">
+        {/* Left pane: flat borderless project header + task list */}
+        <aside class="flex w-64 sm:w-72 shrink-0 flex-col px-3 py-3">
+          <div class="border-b border-[var(--border-subtle)]/50 pb-3">
+            <div class="flex items-center justify-between gap-2 px-1">
+              <span class="truncate text-[13.5px] font-semibold text-[var(--text-primary)]">
                 {portalProjectName() || t("tasks.portalBadge")}
               </span>
-              <span class="inline-flex shrink-0 items-center gap-1 rounded-full bg-[var(--bg-inset)] px-2 py-0.5 text-[10px] text-[var(--text-muted)]">
+              <span class="inline-flex shrink-0 items-center gap-1 text-[10.5px] text-[var(--text-muted)]">
                 <span
                   class={`h-1.5 w-1.5 rounded-full ${
                     portalConnected() ? "bg-[var(--ok-text)]" : "bg-[var(--text-muted)]"
@@ -323,22 +288,22 @@ export default function TesterPortalApp() {
               </span>
             </div>
             <Show when={portalTesterLabel()}>
-              <p class="mt-0.5 truncate text-[11px] text-[var(--text-muted)]">
+              <p class="mt-0.5 truncate px-1 text-[11px] text-[var(--text-muted)]">
                 {portalTesterLabel()}
               </p>
             </Show>
             <button
               type="button"
               onClick={() => selectPortalTask(null)}
-              class="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3 py-2 text-[12px] font-medium text-[var(--accent-foreground)] shadow-xs hover:opacity-90 transition-opacity cursor-pointer"
+              class="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3 py-2 text-[12px] font-medium text-[var(--accent-foreground)] hover:opacity-90 transition-opacity cursor-pointer"
             >
               <Plus size={14} />
               <span>{t("tasks.portalNewTaskBtn")}</span>
             </button>
           </div>
 
-          <div class="mt-2.5 min-h-0 flex-1 overflow-y-auto px-0.5 py-1">
-            <p class="mb-1.5 px-2 text-[11px] font-medium text-[var(--text-muted)]">
+          <div class="mt-2.5 min-h-0 flex-1 overflow-y-auto py-1">
+            <p class="mb-1.5 px-2 text-[11px] font-medium text-[var(--text-faint)]">
               {t("tasks.portalTaskListTitle")}
             </p>
             <Show
@@ -349,15 +314,15 @@ export default function TesterPortalApp() {
                 </p>
               }
             >
-              <div class="space-y-1">
+              <div class="space-y-0.5">
                 <For each={portalTasks()}>
                   {(item) => (
                     <button
                       type="button"
                       onClick={() => selectPortalTask(item.id)}
-                      class={`flex w-full flex-col gap-1 rounded-xl px-3 py-2 text-left transition-colors cursor-pointer ${
+                      class={`flex w-full flex-col gap-0.5 rounded-lg px-2.5 py-2 text-left transition-colors cursor-pointer ${
                         activePortalTaskID() === item.id
-                          ? "bg-[var(--bg-selected)] text-[var(--text-primary)] ring-1 ring-[var(--accent-border)]"
+                          ? "bg-[var(--bg-selected)] text-[var(--text-primary)]"
                           : "hover:bg-[var(--bg-hover)] text-[var(--text-secondary)]"
                       }`}
                     >
@@ -383,7 +348,7 @@ export default function TesterPortalApp() {
           </div>
         </aside>
 
-        {/* Center main pane-island: scrollable Markdown stream + floating bottom glass composer */}
+        {/* Center main pane-island: direct canvas prose + folded progress + floating bottom glass composer */}
         <main class="pane-island relative my-2 mr-2 flex min-w-0 flex-1 flex-col overflow-hidden">
           <div
             ref={scrollerRef}
@@ -397,15 +362,15 @@ export default function TesterPortalApp() {
               class="pointer-events-none sticky top-0 z-10 -mb-6 h-6 w-full shrink-0 bg-gradient-to-b from-[var(--bg-panel)] to-transparent"
             />
             <div
-              class="mx-auto flex w-full max-w-[calc(var(--thread-max-width)+3rem)] flex-1 flex-col space-y-4 px-4 sm:px-6 pt-6"
+              class="mx-auto flex w-full max-w-[var(--thread-max-width)] flex-1 flex-col px-5 sm:px-8 pt-7"
               style={{
                 "padding-bottom": hasFloatingComposer()
                   ? `${Math.max(152, floatingHeight() + 24)}px`
-                  : "32px",
+                  : "40px",
               }}
             >
               <Show when={portalError()}>
-                <div class="rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-4 py-2.5 text-[12px] text-[var(--danger-text)]">
+                <div class="mb-4 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-4 py-2.5 text-[12px] text-[var(--danger-text)]">
                   {portalError()}
                 </div>
               </Show>
@@ -418,18 +383,48 @@ export default function TesterPortalApp() {
                   const followupComments = createMemo(() =>
                     (task().comments ?? []).filter((c) => c.action !== "submit")
                   );
+                  const entries = createMemo(() =>
+                    buildPortalConversationEntries(timelineTurns(), followupComments())
+                  );
+                  const lastExecutionIndex = createMemo(() => {
+                    const list = entries();
+                    for (let i = list.length - 1; i >= 0; i--) {
+                      if (list[i].kind === "execution") return i;
+                    }
+                    return -1;
+                  });
+                  const standaloneDeveloperNote = createMemo(() => {
+                    const note = task().developerNote?.trim();
+                    if (!note) return "";
+                    const duplicated = followupComments().some(
+                      (c) => c.authorRole === "developer" && c.text?.trim() === note
+                    );
+                    return duplicated ? "" : note;
+                  });
+                  const isWaitingApproval = () =>
+                    task().status === "staged" || task().status === "reopened";
+
                   return (
-                    <div class="space-y-4">
-                      {/* Task summary card with full Markdown support */}
-                      <div class="space-y-3 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/55 p-5">
+                    <div class="space-y-6">
+                      {/* Clean issue header rendered directly on the canvas (no outer box) */}
+                      <header class="space-y-3">
                         <div class="flex items-start justify-between gap-3">
-                          <h2 class="text-[16px] font-semibold tracking-tight text-[var(--text-primary)] selectable-text">
+                          <h2 class="text-[18px] font-semibold leading-snug tracking-tight text-[var(--text-primary)] selectable-text">
                             {task().title}
                           </h2>
-                          <span class="shrink-0 rounded-full bg-[var(--accent-surface)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--accent-primary)]">
-                            {portalStatusText(task().status)}
+                          <span
+                            class={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium ${portalStatusTone(
+                              task().status
+                            )}`}
+                          >
+                            <Show when={isLiveBusy()}>
+                              <LoaderCircle size={11} class="animate-spin" />
+                            </Show>
+                            <span>{portalStatusText(task().status)}</span>
                           </span>
                         </div>
+
+                        <PortalDiffSummaryBar diff={timelineDiff()} scopeKey={task().id} />
 
                         <Show when={task().description}>
                           <div class="text-[var(--text-primary)]">
@@ -438,148 +433,105 @@ export default function TesterPortalApp() {
                         </Show>
 
                         <Show when={task().steps}>
-                          <div class="rounded-xl border border-[var(--border-subtle)]/75 bg-[var(--bg-inset)] px-3.5 py-2.5">
-                            <div class="mb-1 text-[11px] font-medium text-[var(--text-muted)]">
+                          <div class="border-l-2 border-[var(--border-subtle)] pl-3.5 py-0.5 space-y-1">
+                            <div class="text-[11px] font-medium text-[var(--text-muted)]">
                               {t("tasks.portalStepsLabel")}
                             </div>
-                            <MarkdownView content={task().steps!} density="compact" />
+                            <div class="text-[var(--text-secondary)]">
+                              <MarkdownView content={task().steps!} density="compact" />
+                            </div>
                           </div>
                         </Show>
 
                         <PortalAttachmentGallery items={task().attachments ?? []} />
-
-                        <Show
-                          when={
-                            Boolean(task().developerNote?.trim()) &&
-                            !followupComments().some(
-                              (c) =>
-                                c.authorRole === "developer" &&
-                                c.text?.trim() === task().developerNote?.trim()
-                            )
-                          }
-                        >
-                          <div class="rounded-xl border border-[var(--ok-border)] bg-[var(--ok-surface)]/75 px-3.5 py-2.5">
-                            <div class="mb-1 text-[11px] font-semibold text-[var(--ok-text)]">
-                              {t("tasks.portalDeveloperNoteLabel")}
-                            </div>
-                            <MarkdownView content={task().developerNote!} density="compact" />
-                          </div>
-                        </Show>
 
                         <Show when={task().status === "failed" && task().error}>
                           <div class="rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3.5 py-2.5 text-[12px] text-[var(--danger-text)]">
                             {task().error}
                           </div>
                         </Show>
-                      </div>
+                      </header>
 
-                      {/* Staged / waiting notice */}
-                      <Show when={task().status === "staged" || task().status === "reopened"}>
-                        <div class="flex items-center gap-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-4 py-3 text-[12px] text-[var(--text-secondary)]">
-                          <Clock size={15} class="shrink-0 text-[var(--accent-primary)]" />
-                          <span>
-                            {task().status === "reopened"
-                              ? t("tasks.portalReopenedBanner")
-                              : t("tasks.portalStagedBanner")}
-                          </span>
-                        </div>
-                      </Show>
-
-                      {/* Sanitized Live Execution Process (hidden while staged/reopened with no output yet) */}
-                      <Show
-                        when={
-                          !(
-                            (task().status === "staged" || task().status === "reopened") &&
-                            timelineTurns().length === 0 &&
-                            !task().summary
-                          )
-                        }
-                      >
-                      <div class="space-y-2.5 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-5">
-                        <div class="flex items-center justify-between">
-                          <h3 class="text-[13px] font-semibold text-[var(--text-primary)]">
-                            {t("tasks.portalProcessTitle")}
-                          </h3>
-                          <Show when={isLiveBusy()}>
-                            <LoaderCircle size={14} class="animate-spin text-[var(--accent-primary)]" />
-                          </Show>
-                        </div>
-
+                      {/* Unified chronological conversation & execution stream */}
+                      <section class="border-t border-[var(--border-subtle)]/55 pt-5 space-y-5">
                         <Show
-                          when={timelineTurns().length > 0}
+                          when={entries().length > 0}
                           fallback={
                             <Show
                               when={task().summary}
                               fallback={
-                                <p class="py-6 text-center text-[12px] text-[var(--text-faint)]">
-                                  {t("tasks.portalProcessWaiting")}
-                                </p>
+                                <Show
+                                  when={!isWaitingApproval()}
+                                  fallback={
+                                    <div class="flex items-center gap-2 rounded-lg bg-[var(--bg-inset)]/55 px-3 py-2 text-[12px] text-[var(--text-muted)]">
+                                      <Clock size={14} class="shrink-0 text-[var(--accent-primary)]" />
+                                      <span>
+                                        {task().status === "reopened"
+                                          ? t("tasks.portalReopenedBanner")
+                                          : t("tasks.portalStagedBanner")}
+                                      </span>
+                                    </div>
+                                  }
+                                >
+                                  <p class="py-6 text-center text-[12px] text-[var(--text-faint)]">
+                                    {t("tasks.portalProcessWaiting")}
+                                  </p>
+                                </Show>
                               }
                             >
-                              <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/65 px-4 py-3 text-[var(--text-primary)]">
+                              <div class="text-[var(--text-primary)]">
                                 <MarkdownView content={task().summary!} density="chat" />
                               </div>
                             </Show>
                           }
                         >
-                          <div class="space-y-2.5">
-                            <For each={timelineTurns()}>
-                              {(turn, turnIdx) => (
-                                <div class="space-y-1.5">
-                                  <For each={turn.steps}>
-                                    {(step, stepIdx) => (
-                                      <SanitizedStepRow
-                                        step={step}
-                                        streaming={
-                                          isLiveBusy() &&
-                                          turnIdx() === timelineTurns().length - 1 &&
-                                          stepIdx() === turn.steps.length - 1
-                                        }
-                                      />
-                                    )}
-                                  </For>
-                                </div>
-                              )}
-                            </For>
+                          <For each={entries()}>
+                            {(entry, idx) => (
+                              <Show
+                                when={entry.kind === "execution"}
+                                fallback={
+                                  <PortalCommentEntry
+                                    comment={
+                                      (entry as Extract<typeof entry, { kind: "comment" }>).comment
+                                    }
+                                  />
+                                }
+                              >
+                                <PortalExecutionTimeline
+                                  turns={
+                                    (entry as Extract<typeof entry, { kind: "execution" }>).turns
+                                  }
+                                  busy={isLiveBusy() && idx() === lastExecutionIndex()}
+                                  isLastBlock={idx() === lastExecutionIndex()}
+                                  scopeKey={task().id}
+                                />
+                              </Show>
+                            )}
+                          </For>
+
+                          <Show when={isWaitingApproval()}>
+                            <div class="flex items-center gap-2 rounded-lg bg-[var(--bg-inset)]/55 px-3 py-2 text-[12px] text-[var(--text-muted)]">
+                              <Clock size={14} class="shrink-0 text-[var(--accent-primary)]" />
+                              <span>
+                                {task().status === "reopened"
+                                  ? t("tasks.portalReopenedBanner")
+                                  : t("tasks.portalStagedBanner")}
+                              </span>
+                            </div>
+                          </Show>
+                        </Show>
+
+                        <Show when={standaloneDeveloperNote()}>
+                          <div class="border-l-2 border-[var(--ok-text)]/50 pl-3.5 py-0.5 space-y-1.5">
+                            <div class="text-[11px] font-medium text-[var(--ok-text)]">
+                              {t("tasks.portalDeveloperNoteLabel")}
+                            </div>
+                            <div class="text-[var(--text-primary)]">
+                              <MarkdownView content={standaloneDeveloperNote()} density="chat" />
+                            </div>
                           </div>
                         </Show>
-                      </div>
-                      </Show>
-
-                      {/* Follow-up & retest conversation thread */}
-                      <Show when={followupComments().length > 0}>
-                        <div class="space-y-2.5 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-5">
-                          <div class="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--text-primary)]">
-                            <MessageSquare size={14} class="text-[var(--accent-primary)]" />
-                            <h3>{t("tasks.portalCommentsTitle")}</h3>
-                          </div>
-                          <div class="space-y-2.5">
-                            <For each={followupComments()}>
-                              {(comment) => (
-                                <div
-                                  class={`space-y-1.5 rounded-xl border px-3.5 py-2.5 ${
-                                    comment.authorRole === "developer"
-                                      ? "border-[var(--ok-border)] bg-[var(--ok-surface)]/55"
-                                      : comment.action === "reopen"
-                                        ? "border-[var(--danger-border)]/70 bg-[var(--danger-surface)]/45"
-                                        : "border-[var(--border-subtle)] bg-[var(--bg-elevated)]/65"
-                                  }`}
-                                >
-                                  <div class="flex items-center justify-between gap-2 text-[11px]">
-                                    <span class="font-semibold text-[var(--text-primary)]">
-                                      {commentBadgeLabel(comment)}
-                                    </span>
-                                  </div>
-                                  <Show when={comment.text}>
-                                    <MarkdownView content={comment.text} density="compact" />
-                                  </Show>
-                                  <PortalAttachmentGallery items={comment.attachments ?? []} />
-                                </div>
-                              )}
-                            </For>
-                          </div>
-                        </div>
-                      </Show>
+                      </section>
                     </div>
                   );
                 }}

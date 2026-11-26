@@ -82,6 +82,12 @@ export const tasks = {
   portalRetestReopenLabel: "Reopen feedback",
   portalRetestPassedLabel: "Retest passed",
   portalMarkdownHint: "Markdown & paste screenshots supported",
+  portalStepsSummary: "{count} steps executed",
+  portalStepsRunningCount: "{count} steps",
+  portalEditedFilesSummary: "{count} files changed",
+  portalEditedSingleFile: "Edited {file}",
+  portalEditedLinesOnly: "Code changes",
+  portalTodoProgress: "Plan · {done}/{total}",
 };
 
 export default tasks;

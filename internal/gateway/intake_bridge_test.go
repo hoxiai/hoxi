@@ -140,7 +140,32 @@ func TestIntakePortalIsolationAndSanitizedTimeline(t *testing.T) {
 						Status:   "completed",
 						Input:    map[string]interface{}{"Path": proj + "/src/LoginModal.tsx", "Replacement": "const TOP_SECRET = 1;"},
 						Output:   "diff --git a/LoginModal.tsx ... const TOP_SECRET = 1;",
-						Metadata: map[string]interface{}{"diff": "+const TOP_SECRET = 1;"},
+						Metadata: map[string]interface{}{"diff": "-const OLD_SECRET = 0;\n+const TOP_SECRET = 1;\n+const EXTRA = 2;"},
+					},
+				},
+				{
+					ID:   "prt_patch",
+					Type: "tool",
+					Tool: "apply_patch",
+					State: &runner.ToolState{
+						Status: "completed",
+						Input:  map[string]interface{}{},
+						Metadata: map[string]interface{}{
+							"files": []interface{}{
+								map[string]interface{}{"filePath": proj + "/src/A.tsx", "additions": 5, "deletions": 2},
+								map[string]interface{}{"filePath": proj + "/src/B.tsx", "additions": 3, "deletions": 0},
+							},
+						},
+					},
+				},
+				{
+					ID:   "prt_failed_edit",
+					Type: "tool",
+					Tool: "edit_file",
+					State: &runner.ToolState{
+						Status:   "error",
+						Input:    map[string]interface{}{"Path": proj + "/src/Broken.tsx"},
+						Metadata: map[string]interface{}{"filediff": map[string]interface{}{"file": "Broken.tsx", "additions": 99, "deletions": 11}},
 					},
 				},
 				{
@@ -159,13 +184,28 @@ func TestIntakePortalIsolationAndSanitizedTimeline(t *testing.T) {
 	}
 	encodedTL, _ := json.Marshal(tl)
 	rawJSON := string(encodedTL)
-	for _, forbidden := range []string{"SECRET_INTERNAL_REASONING", "TOP_SECRET", proj} {
+	for _, forbidden := range []string{"SECRET_INTERNAL_REASONING", "TOP_SECRET", "OLD_SECRET", proj} {
 		if strings.Contains(rawJSON, forbidden) {
 			t.Fatalf("sanitized timeline leaked %q: %s", forbidden, rawJSON)
 		}
 	}
 	if !strings.Contains(rawJSON, "修改 LoginModal.tsx") || !strings.Contains(rawJSON, "请重新点击确认按钮复测") {
 		t.Fatalf("expected sanitized step and summary in timeline, got: %s", rawJSON)
+	}
+	if len(tl.Turns) != 1 || len(tl.Turns[0].Steps) != 4 {
+		t.Fatalf("expected 4 sanitized steps, got: %+v", tl.Turns)
+	}
+	editStep := tl.Turns[0].Steps[0]
+	if editStep.Additions != 2 || editStep.Deletions != 1 || len(editStep.Files) != 1 || editStep.Files[0].File != "LoginModal.tsx" {
+		t.Fatalf("unexpected single edit step diff stats: %+v", editStep)
+	}
+	patchStep := tl.Turns[0].Steps[1]
+	if patchStep.Label != "修改 A.tsx 等 2 个文件" || patchStep.Additions != 8 || patchStep.Deletions != 2 || len(patchStep.Files) != 2 {
+		t.Fatalf("unexpected multi-file patch step stats: %+v", patchStep)
+	}
+	failedStep := tl.Turns[0].Steps[2]
+	if failedStep.Additions != 0 || failedStep.Deletions != 0 || len(failedStep.Files) != 0 {
+		t.Fatalf("failed edit must omit diff stats, got: %+v", failedStep)
 	}
 
 	// 6. EnsureSession must refuse non-Git directories rather than falling back to unisolated local mode.

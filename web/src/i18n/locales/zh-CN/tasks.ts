@@ -82,6 +82,12 @@ export const tasks = {
   portalRetestReopenLabel: "打回反馈",
   portalRetestPassedLabel: "复测通过",
   portalMarkdownHint: "支持 Markdown 格式与直接粘贴截图",
+  portalStepsSummary: "已执行 {count} 个步骤",
+  portalStepsRunningCount: "{count} 步",
+  portalEditedFilesSummary: "修改 {count} 个文件",
+  portalEditedSingleFile: "修改 {file}",
+  portalEditedLinesOnly: "代码改动",
+  portalTodoProgress: "修复计划 · {done}/{total}",
 };
 
 export default tasks;

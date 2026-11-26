@@ -134,6 +134,7 @@ export type {
   SanitizedExecutionStep,
   SanitizedExecutionTimeline,
   SanitizedExecutionTurn,
+  SanitizedFileChange,
   SanitizedTodoItem,
 } from "../services/intake-api";
 export type {

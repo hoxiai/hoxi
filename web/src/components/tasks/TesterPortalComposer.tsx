@@ -258,7 +258,7 @@ export function TesterNewTaskComposer(props: TesterNewTaskComposerProps = {}) {
             class="mt-2.5 w-full min-h-[84px] max-h-[220px] resize-none bg-transparent leading-[1.65] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none selectable-text"
           />
 
-          <div class="mt-2 rounded-xl border border-[var(--border-subtle)]/70 bg-[var(--bg-inset)]/70 px-3 py-2">
+          <div class="mt-2 border-t border-[var(--border-subtle)]/55 pt-2">
             <label class="mb-1 block text-[11px] font-medium text-[var(--text-muted)]">
               {t("tasks.portalStepsLabel")}
             </label>
@@ -484,8 +484,8 @@ export function TesterFloatingFeedbackComposer(props: TesterFloatingFeedbackComp
           }`}
         >
           <Show when={isRetestStage()}>
-            <div class="mb-2 flex items-center gap-2 rounded-xl border border-[var(--ok-border)] bg-[var(--ok-surface)]/70 px-3 py-1.5 text-[12px] font-medium text-[var(--ok-text)]">
-              <CheckCircle2 size={13.5} class="shrink-0" />
+            <div class="mb-2 flex items-center gap-1.5 px-0.5 text-[11.5px] font-medium text-[var(--ok-text)]">
+              <CheckCircle2 size={13} class="shrink-0" />
               <span>{t("tasks.portalRetestPrompt")}</span>
             </div>
           </Show>

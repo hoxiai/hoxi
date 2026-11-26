@@ -164,18 +164,28 @@ type SanitizedTodo struct {
 	Status  string `json:"status"`
 }
 
+// SanitizedFileChange reports a code-free filename (basename only) and line-change counts for an edited file.
+type SanitizedFileChange struct {
+	File      string `json:"file"`
+	Additions int    `json:"additions,omitempty"`
+	Deletions int    `json:"deletions,omitempty"`
+}
+
 // SanitizedStep is a non-expandable execution progress step shown to testers.
 // Raw tool inputs, file contents, diffs, shell commands, and local paths are omitted.
 type SanitizedStep struct {
-	ID        string          `json:"id"`
-	Kind      string          `json:"kind"` // "tool" | "text" | "todo"
-	Category  string          `json:"category,omitempty"`
-	Label     string          `json:"label,omitempty"`
-	Text      string          `json:"text,omitempty"`
-	Status    string          `json:"status,omitempty"` // "pending" | "running" | "completed" | "error"
-	Todos     []SanitizedTodo `json:"todos,omitempty"`
-	StartTime int64           `json:"startTime,omitempty"`
-	EndTime   int64           `json:"endTime,omitempty"`
+	ID        string                `json:"id"`
+	Kind      string                `json:"kind"` // "tool" | "text" | "todo"
+	Category  string                `json:"category,omitempty"`
+	Label     string                `json:"label,omitempty"`
+	Text      string                `json:"text,omitempty"`
+	Status    string                `json:"status,omitempty"` // "pending" | "running" | "completed" | "error"
+	Todos     []SanitizedTodo       `json:"todos,omitempty"`
+	Additions int                   `json:"additions,omitempty"`
+	Deletions int                   `json:"deletions,omitempty"`
+	Files     []SanitizedFileChange `json:"files,omitempty"`
+	StartTime int64                 `json:"startTime,omitempty"`
+	EndTime   int64                 `json:"endTime,omitempty"`
 }
 
 // SanitizedTurn groups one assistant execution cycle for the tester view.
