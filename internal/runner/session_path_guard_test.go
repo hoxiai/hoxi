@@ -588,4 +588,32 @@ func TestSessionPathScopeHardenedShellWorktreeAndReconcile(t *testing.T) {
 	default:
 		t.Fatal("expected pending path-scope violation to be rejected during reconcile")
 	}
+
+	// 5. Protecting root AI instruction files blocks creating NEW nested rule files in arbitrary
+	//    subdirectories (e.g. sub/AGENTS.md, packages/x/CLAUDE.md, sub/.cursorrules) across tools,
+	//    shell, and post-turn verification, without falsely blocking unrelated nested filenames like README.md.
+	ruleRec := SessionRecord{
+		ID:            "ses_nested_rules",
+		Runtime:       string(RuntimeNative),
+		ProjectDir:    repo,
+		WorktreePath:  repo,
+		ReadOnlyPaths: []string{"AGENTS.md", "CLAUDE.md", ".cursorrules", "README.md"},
+	}
+	for _, nestedBad := range []string{
+		"sub/AGENTS.md",
+		"packages/x/CLAUDE.md",
+		"packages/x/agents.md",
+		"deep/nested/.cursorrules",
+	} {
+		if _, bad := sessionWriteTargetViolation(ruleRec, repo, filepath.Join(repo, filepath.FromSlash(nestedBad))); !bad {
+			t.Errorf("expected creating nested rule file %q to be hard-denied", nestedBad)
+		}
+		if act, _ := sessionShellPolicyCheck(ruleRec, repo, "echo evil > "+nestedBad); act != "deny" {
+			t.Errorf("expected shell write to nested rule file %q to be hard-denied, got %q", nestedBad, act)
+		}
+	}
+	// Protecting root README.md does NOT falsely block docs/README.md.
+	if reason, bad := sessionWriteTargetViolation(ruleRec, repo, filepath.Join(repo, "docs", "README.md")); bad {
+		t.Fatalf("unexpected deny for docs/README.md: %s", reason)
+	}
 }

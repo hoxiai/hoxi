@@ -950,5 +950,7 @@
   { "command": "python3 - <<'PY' -- .env\nprint(\"ok\")\nPY", "decision": "ask", "destructive": true },
   { "command": "python3 - <<'EOF' | sh\nprint(\"rm -rf /\")\nEOF", "decision": "ask", "destructive": true },
   { "command": "python3 - <<'EOF' | awk '{system($0)}'\nprint(\"rm -rf /\")\nEOF", "decision": "ask", "destructive": true },
-  { "command": "`echo && python3 - <<'EOF' && echo`\nprint(\"chmod\")\nEOF", "decision": "ask", "destructive": true }
+  { "command": "`echo && python3 - <<'EOF' && echo`\nprint(\"chmod\")\nEOF", "decision": "ask", "destructive": true },
+  { "command": "python3 <<'EOF'-u\nprint(\"chmod\")\nEOF\nrm -rf /\nEOF-u", "decision": "ask", "destructive": true },
+  { "command": "python3 - <<'EOF'x\nprint(\"chmod\")\nEOFx", "decision": "ask", "destructive": true }
 ]

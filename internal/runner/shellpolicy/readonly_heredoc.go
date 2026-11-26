@@ -153,6 +153,9 @@ func scanReadOnlyHeredocLine(rawLine string, st *heredocScan) (string, []roHered
 				m.word = rawLine[j+1 : j+1+end]
 				m.quoted = true
 				j += end + 2
+				if j < len(rawLine) && !isWordBoundary(rawLine[j]) {
+					return rawLine, nil, false
+				}
 			} else {
 				return rawLine, nil, false
 			}

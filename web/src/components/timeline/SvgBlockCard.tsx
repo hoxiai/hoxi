@@ -64,7 +64,7 @@ export default function SvgBlockCard(props: {
     if (!complete()) return { svg: "" };
     return sanitizeSvgMarkup(props.code);
   });
-  const showPreview = () => viewMode() === "preview" && Boolean(sanitized().svg);
+  const showPreview = () => (isPortal() || viewMode() === "preview") && Boolean(sanitized().svg);
   const showError = () =>
     !streaming() && viewMode() === "preview" && !sanitized().svg && props.code.trim().length > 0;
 
@@ -263,36 +263,50 @@ export default function SvgBlockCard(props: {
             </button>
           </Show>
 
-          <button
-            type="button"
-            onClick={() => void handleCopy()}
-            title={copied() ? t("common.copied") : t("common.copy")}
-            class="inline-flex items-center justify-center rounded-md p-1 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-          >
-            <Show when={copied()} fallback={<Copy size={12} />}>
-              <Check size={12} class="text-[var(--ok-text)]" />
-            </Show>
-          </button>
+          <Show when={!isPortal()}>
+            <button
+              type="button"
+              onClick={() => void handleCopy()}
+              title={copied() ? t("common.copied") : t("common.copy")}
+              class="inline-flex items-center justify-center rounded-md p-1 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            >
+              <Show when={copied()} fallback={<Copy size={12} />}>
+                <Check size={12} class="text-[var(--ok-text)]" />
+              </Show>
+            </button>
+          </Show>
         </div>
       </div>
 
       <Show
         when={showPreview()}
         fallback={
-          <div>
-            <Show when={showError()}>
-              <div class="border-b border-[var(--border-subtle)] bg-[var(--warn-surface)]/40 px-3 py-1.5 text-[11px] text-[var(--warn-text)]">
-                {t("timeline.svgRenderFailed")}
+          <Show
+            when={!isPortal()}
+            fallback={
+              <div
+                data-hoxi-portal-visual-fallback="true"
+                class="flex min-h-[64px] items-center justify-center bg-[var(--bg-panel)]/55 px-4 py-4 text-[11.5px] text-[var(--warn-text)]"
+              >
+                <span>{t("timeline.portalVisualUnavailable")}</span>
               </div>
-            </Show>
-            <pre
-              data-scrollable
-              class="overflow-x-auto p-3.5 font-mono leading-[1.6] text-[var(--text-primary)] whitespace-pre selectable-text"
-              style={{ "font-size": "var(--app-code-text-size)" }}
-            >
-              <code>{props.code}</code>
-            </pre>
-          </div>
+            }
+          >
+            <div>
+              <Show when={showError()}>
+                <div class="border-b border-[var(--border-subtle)] bg-[var(--warn-surface)]/40 px-3 py-1.5 text-[11px] text-[var(--warn-text)]">
+                  {t("timeline.svgRenderFailed")}
+                </div>
+              </Show>
+              <pre
+                data-scrollable
+                class="overflow-x-auto p-3.5 font-mono leading-[1.6] text-[var(--text-primary)] whitespace-pre selectable-text"
+                style={{ "font-size": "var(--app-code-text-size)" }}
+              >
+                <code>{props.code}</code>
+              </pre>
+            </div>
+          </Show>
         }
       >
         <div

@@ -457,6 +457,8 @@ export const timeline: TimelineI18n = {
   turnFastTierBadge: "极速",
   mermaidDiagramLabel: "Mermaid 图表",
   mermaidRenderFailed: "Mermaid 图表渲染失败，已回退显示源码",
+  portalVisualLoading: "正在渲染可视化内容...",
+  portalVisualUnavailable: "当前可视化内容暂无法渲染",
   previewHtml: "预览页面",
   previewDocumentTooltip: "点击弹出层预览文档",
   dockToInspector: "固定到右侧",

@@ -201,9 +201,48 @@ func scopeRelIsAncestorOf(rel, target string) bool {
 	return rel == target || strings.HasPrefix(target, rel+"/")
 }
 
+var protectedNestedRuleNames = map[string]bool{
+	"agents.md":       true,
+	"agents.local.md": true,
+	"claude.md":       true,
+	"claude.local.md": true,
+	"context.md":      true,
+	"gemini.md":       true,
+	"codex.md":        true,
+	".cursorrules":    true,
+	".cursorignore":   true,
+	".windsurfrules":  true,
+	".clinerules":     true,
+	".rules":          true,
+	".cursor":         true,
+	".windsurf":       true,
+	".cline":          true,
+	".ai":             true,
+}
+
+func scopeRelMatchesProtectedNestedRule(rel, pattern string) bool {
+	normPat := normalizeScopeRel(pattern)
+	if normPat == "" || strings.Contains(normPat, "/") {
+		return false
+	}
+	if !protectedNestedRuleNames[strings.ToLower(normPat)] {
+		return false
+	}
+	normRel := normalizeScopeRel(rel)
+	if normRel == "" {
+		return false
+	}
+	for _, seg := range strings.Split(normRel, "/") {
+		if strings.EqualFold(seg, normPat) {
+			return true
+		}
+	}
+	return false
+}
+
 func matchScopePattern(rel string, patterns []string) (string, bool) {
 	for _, p := range patterns {
-		if scopeRelEqualOrUnder(rel, p) {
+		if scopeRelEqualOrUnder(rel, p) || scopeRelMatchesProtectedNestedRule(rel, p) {
 			return p, true
 		}
 	}

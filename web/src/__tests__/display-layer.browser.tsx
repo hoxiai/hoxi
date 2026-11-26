@@ -417,6 +417,48 @@ export async function runBrowserTest(): Promise<string[]> {
       portalRichImgs.some((src) => src.includes("/api/hoxi/collab/portal/attachments/att_1")),
       "portal StructuredRichView preserves safe portal attachment thumbnails"
     );
+    // Portal mode must hide raw source Copy buttons on Chart and Rich cards
+    const portalChartCopyBtn = portalChart!.querySelector(`button[title="${t("common.copy")}"]`);
+    const portalRichCopyBtn = portalRich!.querySelector(`button[title="${t("common.copy")}"]`);
+    assertEqual(portalChartCopyBtn, null, "portal ChartBlockCard hides raw-source Copy button");
+    assertEqual(portalRichCopyBtn, null, "portal RichBlockCard hides raw-source Copy button");
+
+    // Portal mode must NEVER expose raw <pre><code> DSL/JSON/SVG source during pending or failed visual renders
+    dispose();
+    const portalFallbackMd = [
+      "```mermaid",
+      "flowchart LR",
+      "  SECRET_DSL_NODE --> NEXT_NODE",
+      "```",
+      "",
+      "```chart",
+      "{invalid_chart_json_secret}",
+      "```",
+      "",
+      "```hoxi-cards",
+      "{invalid_cards_json_secret}",
+      "```",
+      "",
+      "```svg",
+      "<script>SECRET_SVG_PAYLOAD</script>",
+      "```",
+    ].join("\n");
+    dispose = render(() => <MarkdownView content={portalFallbackMd} density="chat" portal />, host);
+    await tick();
+
+    assertEqual(host.querySelectorAll("pre code").length, 0, "portal visual fallbacks never render raw <pre><code>");
+    assertTrue(
+      !host.textContent?.includes("SECRET_DSL_NODE") &&
+        !host.textContent?.includes("invalid_chart_json_secret") &&
+        !host.textContent?.includes("invalid_cards_json_secret") &&
+        !host.textContent?.includes("SECRET_SVG_PAYLOAD"),
+      "portal visual fallbacks never leak raw DSL, JSON, or SVG source into DOM"
+    );
+    assertEqual(
+      host.querySelector(`button[title="${t("common.copy")}"]`),
+      null,
+      "portal visual cards hide Copy buttons across mermaid/chart/rich/svg"
+    );
 
     return [
       "ChartBlockCard renders interactive SVG bar chart from declarative JSON",

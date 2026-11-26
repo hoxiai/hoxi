@@ -246,7 +246,58 @@ func ApplyPathScope(profile Profile, workspace string, scope PathScope, extraBas
 				}
 			}
 		}
+		for _, rel := range norm.ReadOnlyPaths {
+			if !strings.Contains(rel, "/") && protectedNestedRuleNames[strings.ToLower(rel)] {
+				pattern := `(^|/)` + caseInsensitiveLiteralRegex(rel) + `(/|$)`
+				rule := PathRule{Path: pattern, Kind: PathRegex}
+				out.Filesystem.DenyWrite = appendUniqueRule(out.Filesystem.DenyWrite, rule)
+				out.Filesystem.DenyExec = appendUniqueRule(out.Filesystem.DenyExec, rule)
+			}
+		}
 	}
 
 	return out, nil
+}
+
+var protectedNestedRuleNames = map[string]bool{
+	"agents.md":       true,
+	"agents.local.md": true,
+	"claude.md":       true,
+	"claude.local.md": true,
+	"context.md":      true,
+	"gemini.md":       true,
+	"codex.md":        true,
+	".cursorrules":    true,
+	".cursorignore":   true,
+	".windsurfrules":  true,
+	".clinerules":     true,
+	".rules":          true,
+	".cursor":         true,
+	".windsurf":       true,
+	".cline":          true,
+	".ai":             true,
+}
+
+func caseInsensitiveLiteralRegex(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteByte('[')
+			b.WriteRune(r - ('a' - 'A'))
+			b.WriteRune(r)
+			b.WriteByte(']')
+		case r >= 'A' && r <= 'Z':
+			b.WriteByte('[')
+			b.WriteRune(r)
+			b.WriteRune(r + ('a' - 'A'))
+			b.WriteByte(']')
+		case strings.ContainsRune(`.*+?()[]{}^$|\`, r):
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }

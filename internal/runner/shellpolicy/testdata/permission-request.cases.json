@@ -181,5 +181,7 @@
   {"name": "unquoted python heredoc with chmod string remains destructive", "destructive": true, "request": {"permission": "bash", "patterns": ["python3 - <<PY\nprint(\"chmod\")\nPY"]}},
   {"name": "piped-out python heredoc into sh remains destructive", "destructive": true, "request": {"permission": "bash", "patterns": ["python3 - <<'EOF' | sh\nprint(\"rm -rf /\")\nEOF"]}},
   {"name": "piped-out python heredoc into awk system remains destructive", "destructive": true, "request": {"permission": "bash", "patterns": ["python3 - <<'EOF' | awk '{system($0)}'\nprint(\"rm -rf /\")\nEOF"]}},
-  {"name": "backtick-wrapped python heredoc remains destructive", "destructive": true, "request": {"permission": "bash", "patterns": ["`echo && python3 - <<'EOF' && echo`\nprint(\"chmod\")\nEOF"]}}
+  {"name": "backtick-wrapped python heredoc remains destructive", "destructive": true, "request": {"permission": "bash", "patterns": ["`echo && python3 - <<'EOF' && echo`\nprint(\"chmod\")\nEOF"]}},
+  {"name": "adjacent suffix on quoted heredoc delimiter remains destructive", "destructive": true, "request": {"permission": "bash", "patterns": ["python3 <<'EOF'-u\nprint(\"chmod\")\nEOF\nrm -rf /\nEOF-u"]}},
+  {"name": "adjacent word on quoted heredoc delimiter remains destructive", "destructive": true, "request": {"permission": "bash", "patterns": ["python3 - <<'EOF'x\nprint(\"chmod\")\nEOFx"]}}
 ]

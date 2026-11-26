@@ -220,3 +220,53 @@ func TestApplyPathScopeSeatbeltEnforcement(t *testing.T) {
 		}
 	}
 }
+
+func TestApplyPathScopeBlocksNestedAIRuleFileCreation(t *testing.T) {
+	ws := resolvePathSymlinks(t.TempDir())
+	subDir := filepath.Join(ws, "packages", "feature")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	base, err := DefaultProfile(ws, NetworkDeny)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prof, err := ApplyPathScope(base, ws, PathScope{
+		ReadOnlyPaths: []string{"AGENTS.md", "CLAUDE.md", ".cursorrules"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, err := ProfileText(prof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, `[Aa][Gg][Ee][Nn][Tt][Ss]\.[Mm][Dd]`) {
+		t.Fatalf("expected case-insensitive AGENTS.md regex deny rule in Seatbelt profile:\n%s", text)
+	}
+	if !CanApply() {
+		return
+	}
+	// Attempting to create brand-new nested rule files inside an otherwise writable subdirectory must fail at kernel layer.
+	for _, target := range []string{
+		filepath.Join(subDir, "AGENTS.md"),
+		filepath.Join(subDir, "claude.md"),
+		filepath.Join(subDir, ".cursorrules"),
+	} {
+		bin, args, wErr := WrapShell(prof, "echo evil > "+shellQuote(target))
+		if wErr != nil {
+			t.Fatal(wErr)
+		}
+		if err := runCommand(bin, args...); err == nil {
+			t.Fatalf("expected Seatbelt to block creating nested rule file %s", target)
+		}
+	}
+	// Ordinary file in the same subdirectory remains writable.
+	bin, args, wErr := WrapShell(prof, "echo ok > "+shellQuote(filepath.Join(subDir, "notes.md")))
+	if wErr != nil {
+		t.Fatal(wErr)
+	}
+	if err := runCommand(bin, args...); err != nil {
+		t.Fatalf("expected ordinary nested file write to succeed: %v", err)
+	}
+}

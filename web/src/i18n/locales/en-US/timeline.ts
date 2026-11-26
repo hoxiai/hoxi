@@ -463,6 +463,8 @@ export const timeline = {
   turnFastTierBadge: "Fast",
   mermaidDiagramLabel: "Mermaid Diagram",
   mermaidRenderFailed: "Mermaid diagram could not be rendered; showing source",
+  portalVisualLoading: "Rendering visual preview...",
+  portalVisualUnavailable: "Unable to render this visual preview",
   previewHtml: "Preview HTML",
   previewDocumentTooltip: "Preview document in overlay",
   dockToInspector: "Dock to Right",

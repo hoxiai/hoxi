@@ -115,6 +115,7 @@ function scanReadOnlyHeredocLine(rawLine, st) {
         m.word = rawLine.slice(j + 1, end);
         m.quoted = true;
         j = end + 1;
+        if (j < rawLine.length && !isBoundary(rawLine[j])) return null;
       } else {
         return null;
       }
