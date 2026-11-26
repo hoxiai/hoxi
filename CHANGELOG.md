@@ -2,6 +2,12 @@
 
 All notable releases of **Hoxi Desktop** are documented below. Full per-version release notes are archived under [`docs/release-notes/`](docs/release-notes/) and consumed directly by `.github/workflows/release.yml` and `scripts/ai-release.sh`.
 
+## [v0.7.7](docs/release-notes/v0.7.7.md) — 2026-11-26
+
+- **One-Click CLI Onboarding & Runtime Discovery**: Added one-click free OpenCode setup, WorkBuddy CLI discovery, and Qoder authentication detection, and moved media routing directives onto per-turn delivery instead of the system prompt.
+- **Scoped Collaboration Portals & Origin-Locked Live Preview**: Enforced read-only and writable path boundaries for QA and external collaboration sessions, shipped origin-locked headless live preview with directory browsing, cold-start navigation recovery, popup blocking, and resize resilience; denoised portal cards and collaborator prompts with sanitized file diff counts, portal-safe Markdown charts/rich cards, desktop-to-portal QA session sync, and relay device-ID / affinity isolation.
+- **Approval Ergonomics, Security Hardening & Open-Core Workflow**: Eliminated approval prompts for verified read-only heredocs while blocking nested rule-file creation, heredoc suffix bypasses, portal card source/secret leaks, and cross-device scope gaps; fixed non-git session path checks, edit tool error rendering, and external collab plan hangs/ghost resumes, and adopted the upstream-first open-core workflow with CI hygiene gates.
+
 ## [v0.7.6](docs/release-notes/v0.7.6.md) — 2026-11-26
 
 - **Native Agent Context Budget, Cache Reuse & Token Efficiency**: Anchored context budgets to provider-reported usage with warm-cache compaction reuse, preserved OpenAI/Codex prompt cache keys through proxies, fixed UTF-8 compaction overestimation and oversized-segment re-summarization, hardened streaming disconnects/HTTP2 keepalive/timeout bash promotion and cross-model history, trimmed unnecessary token overhead across MCP discovery, rules, project memory, subtasks, and helper LLM calls, and surfaced truncated hit counts and diagnostic scopes in `codeindex`.
