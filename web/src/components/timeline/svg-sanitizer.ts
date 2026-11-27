@@ -1,6 +1,7 @@
 // web/src/components/timeline/svg-sanitizer.ts
 // Strict allowlist sanitizer and export utilities for inline ```svg code blocks
 // and Mermaid/Chart SVG exports. Never executes scripts or loads external URLs.
+import { saveBlobWithFeedback } from "../../store/workspace";
 
 const ALLOWED_SVG_TAGS = new Set([
   "svg", "g", "defs", "symbol", "use", "title", "desc",
@@ -220,21 +221,10 @@ export function svgToDataURL(svg: string): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
-function triggerBlobDownload(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
-}
-
 export function downloadSvgFile(svg: string, filename = "diagram.svg"): void {
   if (!svg || typeof document === "undefined") return;
   const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
-  triggerBlobDownload(blob, filename.endsWith(".svg") ? filename : `${filename}.svg`);
+  void saveBlobWithFeedback(blob, filename.endsWith(".svg") ? filename : `${filename}.svg`);
 }
 
 function ensureSvgExplicitDimensions(svg: string): {
@@ -317,8 +307,8 @@ export async function downloadSvgAsPng(
             resolve(false);
             return;
           }
-          triggerBlobDownload(blob, filename.endsWith(".png") ? filename : `${filename}.png`);
-          resolve(true);
+          void saveBlobWithFeedback(blob, filename.endsWith(".png") ? filename : `${filename}.png`)
+            .then(() => resolve(true));
         }, "image/png");
       } catch {
         resolve(false);

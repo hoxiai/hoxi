@@ -107,6 +107,7 @@ import "../src/__tests__/display-layer.test";
 import "../src/__tests__/rich-views.test";
 import "../src/__tests__/model-capabilities.test";
 import "../src/__tests__/share-image-model.test";
+import "../src/__tests__/file-save.test";
 
 // Guard against orphaned unit tests: every src/__tests__/*.test.{ts,tsx} file
 // must be imported above so newly added suites cannot silently go unexecuted.

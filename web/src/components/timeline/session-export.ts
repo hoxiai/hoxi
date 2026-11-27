@@ -1,5 +1,10 @@
 import type { MessageInfo, MessagePart } from "../../services/sse-types";
-import { fetchSessionExportTurns, formatContextPromptForExport, workspace } from "../../store/workspace";
+import {
+  fetchSessionExportTurns,
+  formatContextPromptForExport,
+  saveBlobWithFeedback,
+  workspace,
+} from "../../store/workspace";
 import { t } from "../../i18n";
 import { showMessage } from "../settings/confirm-dialog";
 import { expandInlineThinkingParts } from "./context-activity-parts";
@@ -114,18 +119,6 @@ export function buildSessionJSON(
   );
 }
 
-function download(content: string, filename: string, mime: string) {
-  const blob = new Blob([content], { type: `${mime};charset=utf-8` });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
-}
-
 function safeFilename(value: string): string {
   const cleaned = value.trim().replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, "-");
   return cleaned.slice(0, 80) || "hoxi-session";
@@ -136,12 +129,17 @@ export async function downloadSessionExport(sessionID: string, format: "markdown
   try {
     const turns = await fetchSessionExportTurns(sessionID);
     const base = safeFilename(title);
-    if (format === "json") {
-      download(buildSessionJSON(sessionID, turns), `${base}.json`, "application/json");
-    } else {
-      download(buildSessionMarkdown(sessionID, turns), `${base}.md`, "text/markdown");
-    }
-    return true;
+    const result =
+      format === "json"
+        ? await saveBlobWithFeedback(
+            new Blob([buildSessionJSON(sessionID, turns)], { type: "application/json;charset=utf-8" }),
+            `${base}.json`
+          )
+        : await saveBlobWithFeedback(
+            new Blob([buildSessionMarkdown(sessionID, turns)], { type: "text/markdown;charset=utf-8" }),
+            `${base}.md`
+          );
+    return result.status === "saved";
   } catch (error) {
     await showMessage(t("timeline.exportSessionFailed", {
       session: title,

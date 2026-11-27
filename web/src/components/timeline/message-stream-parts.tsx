@@ -25,6 +25,7 @@ import ContextActivityGroupComponent, {
 import type { MessageInfo, MessagePart } from "../../services/sse-types";
 import {
   defaultWorkspaceDir,
+  downloadAttachmentTarget,
   isLoopbackMediaURL,
   openAttachmentContextMenu,
   openAttachmentInInspector,
@@ -33,7 +34,9 @@ import {
   parseCollabPrompt,
   parseHoxiContextPrompt,
   resolveMediaPlaybackURL,
+  savedFileToast,
   sessionDirectory,
+  showAttachmentActionFeedback,
   workspace,
 } from "../../store/workspace";
 import { CollabPromptCard } from "./CollabPromptCard";
@@ -314,14 +317,27 @@ export function MediaAttachmentPlayer(props: {
             <span class="truncate font-mono text-[var(--text-secondary)]">
               {props.part.filename || "audio"}
             </span>
-            <a
-              href={mediaSrc()}
-              download={props.part.filename || "audio"}
-              class="shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-              title={props.part.filename || "audio"}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                void downloadAttachmentTarget({
+                  kind: "audio",
+                  src: props.part.url,
+                  downloadUrl: mediaSrc(),
+                  filename: props.part.filename || "audio",
+                  mime: props.part.mime,
+                }).then((ok) => {
+                  if (!ok && savedFileToast()?.result.status !== "error") {
+                    showAttachmentActionFeedback(t("timeline.downloadFailed"), "error");
+                  }
+                });
+              }}
+              class="shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+              title={t("timeline.downloadAudio")}
             >
               <Icon name="download" size="small" />
-            </a>
+            </button>
           </div>
           <audio
             controls
@@ -384,14 +400,27 @@ export function MediaAttachmentPlayer(props: {
             <span class="truncate font-mono text-[var(--text-secondary)]">
               {props.part.filename || "video"}
             </span>
-            <a
-              href={mediaSrc()}
-              download={props.part.filename || "video"}
-              class="shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-              title={props.part.filename || "video"}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                void downloadAttachmentTarget({
+                  kind: "video",
+                  src: props.part.url,
+                  downloadUrl: mediaSrc(),
+                  filename: props.part.filename || "video",
+                  mime: props.part.mime,
+                }).then((ok) => {
+                  if (!ok && savedFileToast()?.result.status !== "error") {
+                    showAttachmentActionFeedback(t("timeline.downloadFailed"), "error");
+                  }
+                });
+              }}
+              class="shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+              title={t("timeline.downloadVideo")}
             >
               <Icon name="download" size="small" />
-            </a>
+            </button>
           </div>
         </div>
       </Match>
@@ -484,15 +513,26 @@ function AssistantFilePartView(props: { part: Extract<MessagePart, { type: "file
             class="block max-h-[420px] max-w-full object-contain"
           />
         </button>
-        <a
-          href={props.part.url}
-          download={props.part.filename || "generated.png"}
-          onClick={(e) => e.stopPropagation()}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            void downloadAttachmentTarget({
+              kind: "image",
+              src: props.part.url,
+              filename: props.part.filename || "generated.png",
+              mime: props.part.mime,
+            }).then((ok) => {
+              if (!ok && savedFileToast()?.result.status !== "error") {
+                showAttachmentActionFeedback(t("timeline.downloadFailed"), "error");
+              }
+            });
+          }}
           title={t("timeline.downloadImage")}
-          class="absolute right-2 bottom-2 inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)]/90 px-2 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent-border)] opacity-0 group-hover/genimg:opacity-100 transition-opacity backdrop-blur-sm"
+          class="absolute right-2 bottom-2 inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)]/90 px-2 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent-border)] opacity-0 group-hover/genimg:opacity-100 transition-opacity backdrop-blur-sm cursor-pointer"
         >
           <Icon name="download" size="small" />
-        </a>
+        </button>
       </div>
     </Show>
   );

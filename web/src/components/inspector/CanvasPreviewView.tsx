@@ -20,6 +20,7 @@ import {
   canvasPreviewHistory,
   openDocumentPreview,
   openImagePreview,
+  saveBlobWithFeedback,
   selectCanvasPreview,
   workspace,
 } from "../../store/workspace";
@@ -95,14 +96,7 @@ export default function CanvasPreviewView() {
       return;
     }
     const blob = new Blob([entry.content], { type: "text/html;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${entry.title.replace(/[^\w-]+/g, "-") || "preview"}.html`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    void saveBlobWithFeedback(blob, `${entry.title.replace(/[^\w-]+/g, "-") || "preview"}.html`);
   };
 
   const handleExpandModal = () => {

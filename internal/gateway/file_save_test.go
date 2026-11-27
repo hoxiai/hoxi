@@ -251,3 +251,78 @@ func TestHandleSaveImagesSecurityAndRejections(t *testing.T) {
 		t.Fatalf("symlink destination = %d %s, want 400", rec.Code, rec.Body.String())
 	}
 }
+
+func TestHandleSaveFileGeneralExportsAndSecurity(t *testing.T) {
+	root := t.TempDir()
+	outDir := t.TempDir()
+	g := New(0, "test", root, nil, nil)
+	defer g.CloseBrowser()
+
+	mdContent := "# Session Notes\n\nAll good.\n"
+	mdDataURL := "data:text/markdown;base64," + base64.StdEncoding.EncodeToString([]byte(mdContent))
+	mdBody := `{"title":"Save Markdown","defaultDir":` + jsonString(outDir) + `,"filename":"notes-v1.2.md","dataUrl":` + jsonString(mdDataURL) + `}`
+
+	// 1. Tunnel allowlist & remote request denied.
+	if tunnelRouteAllowed(http.MethodPost, "/api/hoxi/file/save") || tunnelRouteAllowed(http.MethodGet, "/api/hoxi/file/save") {
+		t.Fatalf("/api/hoxi/file/save must never be in the tunnel allowlist")
+	}
+	rec := httptest.NewRecorder()
+	g.serveRemoteRequest(rec, httptest.NewRequest(http.MethodPost, "/api/hoxi/file/save", strings.NewReader(mdBody)), remoteSourceRelay)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("remote /api/hoxi/file/save = %d, want 403", rec.Code)
+	}
+
+	// 2. Headless returns supported=false.
+	rec = httptest.NewRecorder()
+	g.ServeHTTP(rec, localRequest(http.MethodPost, "/api/hoxi/file/save", strings.NewReader(mdBody)))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"supported":false`) {
+		t.Fatalf("headless save = %d %s, want supported=false", rec.Code, rec.Body.String())
+	}
+
+	// 3. Valid desktop save writes markdown atomically and appends .md when version dot present.
+	destNoExt := filepath.Join(outDir, "release-v0.8")
+	var seen SaveFileOptions
+	g.SetSaveFileDialog(func(opts SaveFileOptions) (string, error) {
+		seen = opts
+		return destNoExt, nil
+	})
+	rec = httptest.NewRecorder()
+	g.ServeHTTP(rec, localRequest(http.MethodPost, "/api/hoxi/file/save", strings.NewReader(mdBody)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("desktop save markdown = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	if seen.FilterPattern != "*.md" || seen.DefaultFilename != "notes-v1.2.md" {
+		t.Fatalf("unexpected SaveFileOptions: %+v", seen)
+	}
+	got, err := os.ReadFile(destNoExt + ".md")
+	if err != nil || string(got) != mdContent {
+		t.Fatalf("saved markdown mismatch: err=%v got=%q", err, string(got))
+	}
+
+	// 4. Reject executable extensions (input and chosen destination) and spoofed PNG.
+	shDataURL := "data:text/plain;base64," + base64.StdEncoding.EncodeToString([]byte("#!/bin/sh\necho hi"))
+	rec = httptest.NewRecorder()
+	g.ServeHTTP(rec, localRequest(http.MethodPost, "/api/hoxi/file/save", strings.NewReader(`{"filename":"evil.sh","dataUrl":`+jsonString(shDataURL)+`}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("disallowed input ext = %d %s, want 400", rec.Code, rec.Body.String())
+	}
+	g.SetSaveFileDialog(func(SaveFileOptions) (string, error) {
+		return filepath.Join(outDir, "evil.command"), nil
+	})
+	rec = httptest.NewRecorder()
+	g.ServeHTTP(rec, localRequest(http.MethodPost, "/api/hoxi/file/save", strings.NewReader(mdBody)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("disallowed destination ext = %d %s, want 400", rec.Code, rec.Body.String())
+	}
+
+	// 5. Strict token enforcement against spoofed Wails headers.
+	g.SetGatewayToken("save-file-boot-tok")
+	spoofed := httptest.NewRequest(http.MethodPost, "/api/hoxi/file/save", strings.NewReader(mdBody))
+	spoofed.Host = "wails"
+	spoofed.Header.Set("Origin", "wails://wails")
+	rec = httptest.NewRecorder()
+	g.ServeHTTP(rec, spoofed)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("spoofed Wails header without token = %d, want 403", rec.Code)
+	}
+}

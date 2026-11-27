@@ -97,6 +97,7 @@ export * from "./deep-link";
 export * from "./subagent-config";
 export * from "./image-viewer";
 export * from "./attachment-context-menu";
+export * from "./file-save";
 export * from "./share-image";
 export * from "./document-viewer";
 export * from "./rich-view-registry";

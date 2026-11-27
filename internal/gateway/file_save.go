@@ -20,9 +20,53 @@ const (
 	maxSaveImageBytes         = 20 << 20
 	maxSaveImagesTotalBytes   = 80 << 20
 	maxSaveImagesRequestBytes = int64(maxSaveImagesTotalBytes)*4/3 + (1 << 20)
+	maxSaveFileBytes          = 50 << 20
+	maxSaveFileRequestBytes   = int64(maxSaveFileBytes)*4/3 + (1 << 20)
 )
 
-var pngFileSignature = []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+var (
+	pngFileSignature = []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+
+	allowedSaveFileExts = map[string]string{
+		".png":  "PNG Image (*.png)",
+		".jpg":  "JPEG Image (*.jpg)",
+		".jpeg": "JPEG Image (*.jpeg)",
+		".webp": "WebP Image (*.webp)",
+		".gif":  "GIF Image (*.gif)",
+		".bmp":  "BMP Image (*.bmp)",
+		".avif": "AVIF Image (*.avif)",
+		".svg":  "SVG Image (*.svg)",
+		".md":   "Markdown (*.md)",
+		".json": "JSON (*.json)",
+		".txt":  "Plain Text (*.txt)",
+		".csv":  "CSV (*.csv)",
+		".html": "HTML (*.html)",
+		".xml":  "XML (*.xml)",
+		".yaml": "YAML (*.yaml)",
+		".yml":  "YAML (*.yml)",
+		".pdf":  "PDF Document (*.pdf)",
+		".docx": "Word Document (*.docx)",
+		".xlsx": "Excel Spreadsheet (*.xlsx)",
+		".xls":  "Excel Spreadsheet (*.xls)",
+		".pptx": "PowerPoint (*.pptx)",
+		".mp3":  "MP3 Audio (*.mp3)",
+		".wav":  "WAV Audio (*.wav)",
+		".m4a":  "M4A Audio (*.m4a)",
+		".ogg":  "OGG Audio (*.ogg)",
+		".flac": "FLAC Audio (*.flac)",
+		".mp4":  "MP4 Video (*.mp4)",
+		".webm": "WebM Video (*.webm)",
+		".mov":  "QuickTime Video (*.mov)",
+		".zip":  "ZIP Archive (*.zip)",
+	}
+
+	forbiddenSaveFileExts = map[string]bool{
+		".sh": true, ".zsh": true, ".bash": true, ".command": true, ".csh": true,
+		".exe": true, ".bat": true, ".cmd": true, ".ps1": true, ".msi": true, ".com": true, ".scr": true, ".vbs": true,
+		".app": true, ".dmg": true, ".pkg": true, ".dll": true, ".dylib": true, ".so": true,
+		".js": true, ".mjs": true, ".cjs": true, ".ts": true, ".py": true, ".rb": true, ".pl": true, ".php": true, ".jar": true,
+	}
+)
 
 // SetSaveFileDialog installs the native desktop save-file picker callback used
 // when exporting generated assets (such as share PNG cards) from the desktop UI.
@@ -419,5 +463,240 @@ func (g *Gateway) handleSaveImages(w http.ResponseWriter, r *http.Request) {
 		"canceled":  false,
 		"paths":     savedPaths,
 		"directory": dir,
+	})
+}
+
+func saveFileExtForMime(mimeType string) string {
+	clean := strings.ToLower(strings.TrimSpace(strings.Split(mimeType, ";")[0]))
+	switch clean {
+	case "image/png":
+		return ".png"
+	case "image/jpeg", "image/jpg":
+		return ".jpg"
+	case "image/webp":
+		return ".webp"
+	case "image/gif":
+		return ".gif"
+	case "image/bmp":
+		return ".bmp"
+	case "image/avif":
+		return ".avif"
+	case "image/svg+xml":
+		return ".svg"
+	case "text/markdown":
+		return ".md"
+	case "application/json":
+		return ".json"
+	case "text/plain":
+		return ".txt"
+	case "text/csv":
+		return ".csv"
+	case "text/html":
+		return ".html"
+	case "application/pdf":
+		return ".pdf"
+	case "audio/mpeg":
+		return ".mp3"
+	case "audio/wav", "audio/x-wav":
+		return ".wav"
+	case "audio/mp4":
+		return ".m4a"
+	case "audio/ogg":
+		return ".ogg"
+	case "audio/flac":
+		return ".flac"
+	case "video/mp4":
+		return ".mp4"
+	case "video/webm":
+		return ".webm"
+	case "video/quicktime":
+		return ".mov"
+	case "application/zip":
+		return ".zip"
+	default:
+		return ""
+	}
+}
+
+func sanitizeSaveExportFilename(raw, mimeType string) (string, string, error) {
+	normalized := strings.ReplaceAll(strings.TrimSpace(raw), "\\", "/")
+	base := filepath.Base(normalized)
+	if base == "." || base == "/" {
+		base = ""
+	}
+	var b strings.Builder
+	for _, r := range base {
+		if r < 0x20 || r == 0x7f || r == '/' || r == '\\' || r == ':' || r == '*' || r == '?' || r == '"' || r == '<' || r == '>' || r == '|' {
+			b.WriteByte('-')
+			continue
+		}
+		b.WriteRune(r)
+	}
+	cleaned := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(b.String()), "."))
+	rawExt := strings.ToLower(filepath.Ext(cleaned))
+	if forbiddenSaveFileExts[rawExt] {
+		return "", "", errors.New("unsupported file extension")
+	}
+
+	ext := ""
+	stem := cleaned
+	if _, ok := allowedSaveFileExts[rawExt]; ok {
+		ext = rawExt
+		stem = strings.TrimSpace(cleaned[:len(cleaned)-len(rawExt)])
+	} else {
+		ext = saveFileExtForMime(mimeType)
+	}
+	if ext == "" {
+		return "", "", errors.New("unsupported export file type")
+	}
+	runes := []rune(stem)
+	if len(runes) > 80 {
+		stem = strings.TrimSpace(string(runes[:80]))
+	}
+	if stem == "" || stem == "." || stem == ".." {
+		stem = "hoxi-export"
+	}
+	return stem + ext, ext, nil
+}
+
+func validateSaveFilePayload(ext string, raw []byte) error {
+	switch ext {
+	case ".png":
+		if !bytes.HasPrefix(raw, pngFileSignature) || http.DetectContentType(raw) != "image/png" {
+			return errors.New("invalid PNG payload")
+		}
+	case ".jpg", ".jpeg":
+		if len(raw) < 3 || raw[0] != 0xff || raw[1] != 0xd8 || raw[2] != 0xff {
+			return errors.New("invalid JPEG payload")
+		}
+	case ".gif":
+		if !bytes.HasPrefix(raw, []byte("GIF8")) {
+			return errors.New("invalid GIF payload")
+		}
+	case ".pdf":
+		if !bytes.HasPrefix(raw, []byte("%PDF-")) {
+			return errors.New("invalid PDF payload")
+		}
+	}
+	return nil
+}
+
+func (g *Gateway) handleSaveFile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	if err := g.verifyStrictDesktopTokenRequest("Save file")(r); err != nil {
+		writeJSONError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
+	var body struct {
+		Title      string `json:"title"`
+		DefaultDir string `json:"defaultDir"`
+		Filename   string `json:"filename"`
+		DataURL    string `json:"dataUrl"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxSaveFileRequestBytes)).Decode(&body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	mimeType, raw, err := attachment.DecodeDataURL(body.DataURL, "")
+	if err != nil || len(raw) == 0 {
+		writeJSONError(w, http.StatusBadRequest, "invalid file dataUrl")
+		return
+	}
+	if len(raw) > maxSaveFileBytes {
+		writeJSONError(w, http.StatusRequestEntityTooLarge, "file exceeds size limit")
+		return
+	}
+
+	cleanName, ext, err := sanitizeSaveExportFilename(body.Filename, mimeType)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateSaveFilePayload(ext, raw); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	g.dialogMu.RLock()
+	saveDialog := g.onSaveFileDialog
+	g.dialogMu.RUnlock()
+	if saveDialog == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"supported": false})
+		return
+	}
+
+	if !g.dialogPicking.CompareAndSwap(false, true) {
+		writeJSONError(w, http.StatusConflict, "file dialog is already open")
+		return
+	}
+	defer g.dialogPicking.Store(false)
+
+	defaultDir := sanitizeExistingDialogDir(body.DefaultDir)
+	if defaultDir == "" || isProtectedPickedDirectory(defaultDir) || isSensitiveCredentialPath(defaultDir) {
+		defaultDir = defaultUserDownloadsDir()
+	}
+
+	chosen, err := saveDialog(SaveFileOptions{
+		Title:            sanitizeDialogTitle(body.Title),
+		DefaultFilename:  cleanName,
+		DefaultDirectory: defaultDir,
+		FilterName:       allowedSaveFileExts[ext],
+		FilterPattern:    "*" + ext,
+	})
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	dest := strings.TrimSpace(chosen)
+	if dest == "" {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"supported": true,
+			"saved":     false,
+			"canceled":  true,
+			"path":      "",
+		})
+		return
+	}
+	if !filepath.IsAbs(dest) {
+		writeJSONError(w, http.StatusBadRequest, "save path must be absolute")
+		return
+	}
+	dest = filepath.Clean(dest)
+	chosenExt := strings.ToLower(filepath.Ext(dest))
+	if forbiddenSaveFileExts[chosenExt] {
+		writeJSONError(w, http.StatusBadRequest, "disallowed destination file extension")
+		return
+	}
+	if _, ok := allowedSaveFileExts[chosenExt]; !ok {
+		dest += ext
+	} else if chosenExt != ext {
+		if err := validateSaveFilePayload(chosenExt, raw); err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if isProtectedSaveDestination(dest) {
+		writeJSONError(w, http.StatusForbidden, "selected destination is protected")
+		return
+	}
+	if err := validateExistingSaveTarget(dest); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := writePNGFileAtomic(dest, raw); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "failed to save file: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"supported": true,
+		"saved":     true,
+		"canceled":  false,
+		"path":      dest,
+		"directory": filepath.Dir(dest),
 	})
 }

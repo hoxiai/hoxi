@@ -6,10 +6,13 @@ import { Check, Columns2, Download, Grid2x2, MessageSquarePlus, X } from "lucide
 import { t } from "../../i18n";
 import {
   activeDirectory,
+  downloadAttachmentTarget,
   isAnyPortalMode,
   openAttachmentContextMenu,
   openFileInInspector,
   openImagePreview,
+  savedFileToast,
+  showAttachmentActionFeedback,
   workspace,
   type ContextSource,
   type RichGalleryImage,
@@ -309,15 +312,26 @@ function GalleryTile(props: {
             {props.image.caption || props.image.alt || props.image.filename || `#${props.index + 1}`}
           </span>
           <Show when={downloadHref()}>
-            <a
-              href={downloadHref()}
-              download={props.image.filename || `image-${props.index + 1}.png`}
-              onClick={(e) => e.stopPropagation()}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                void downloadAttachmentTarget({
+                  kind: "image",
+                  src: res.src() || props.image.src,
+                  downloadUrl: downloadHref(),
+                  filename: props.image.filename || `image-${props.index + 1}.png`,
+                }).then((ok) => {
+                  if (!ok && savedFileToast()?.result.status !== "error") {
+                    showAttachmentActionFeedback(t("timeline.downloadFailed"), "error");
+                  }
+                });
+              }}
               title={t("timeline.downloadImage")}
-              class="shrink-0 rounded p-0.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors"
+              class="shrink-0 rounded p-0.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
             >
               <Download size={11} />
-            </a>
+            </button>
           </Show>
         </div>
       </Show>

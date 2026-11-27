@@ -1,4 +1,6 @@
 import { createRoot, createSignal } from "solid-js";
+import { buildTimelineActivity } from "../store/timeline-activity";
+import { matchSearchTurns, searchPart } from "../store/transcript-search-engine";
 import {
   extractContextTitleFallback,
   formatContextPromptForClipboard,
@@ -227,5 +229,76 @@ describe("Structured Context Reference Protocol (hoxi-context v1)", () => {
         dispose();
       }
     });
+  });
+
+  it("strips hoxi-context XML in timeline activity previews and transcript search", () => {
+    const promptWithContext = serializeContextEnvelopes(
+      [
+        {
+          version: 1,
+          source: { appId: "ops", appName: "Ops Console" },
+          items: [
+            {
+              kind: "entity",
+              title: "Order #42",
+              subtitle: "Pending refund",
+              ref: {
+                id: "ord_42",
+                resolve: { mcpTool: "ops_get_order", mcpArgs: { secret_token_attr: "internal_only" } },
+              },
+              content: "Customer requested refund for damaged item.",
+            },
+          ],
+        },
+      ],
+      "Please check whether this order qualifies for instant refund"
+    );
+
+    const segments = buildTimelineActivity([
+      {
+        info: {
+          id: "msg_user_ctx",
+          sessionID: "ses_ctx_preview",
+          role: "user",
+          time: { created: 1000 },
+        },
+        parts: [
+          {
+            id: "prt_user_ctx",
+            sessionID: "ses_ctx_preview",
+            messageID: "msg_user_ctx",
+            type: "text",
+            text: promptWithContext,
+          },
+        ],
+      },
+    ]);
+    assertEqual(segments.length, 1);
+    assertEqual(segments[0].preview, "Please check whether this order qualifies for instant refund");
+    assertTrue(!segments[0].preview.includes("<hoxi-context"), "timeline preview must not leak XML tags");
+
+    const searchable = searchPart({
+      id: "prt_user_ctx",
+      sessionID: "ses_ctx_preview",
+      messageID: "msg_user_ctx",
+      type: "text",
+      text: promptWithContext,
+    });
+    assertTrue(
+      !searchable.text?.includes("<hoxi-context") && !searchable.text?.includes("resolve-args"),
+      "transcript search text must strip hoxi-context XML tags and protocol attributes"
+    );
+    assertEqual(
+      matchSearchTurns([{ id: "msg_user_ctx", parts: [searchable] }], { source: "hoxi-context", flags: "gi" }).length,
+      0
+    );
+    assertEqual(
+      matchSearchTurns([{ id: "msg_user_ctx", parts: [searchable] }], { source: "Order #42", flags: "gi" }).length,
+      1
+    );
+    assertEqual(
+      matchSearchTurns([{ id: "msg_user_ctx", parts: [searchable] }], { source: "instant refund", flags: "gi" }).length,
+      1
+    );
   });
 });

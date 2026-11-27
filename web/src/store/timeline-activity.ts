@@ -1,6 +1,7 @@
 import { createMemo, mapArray, type Accessor } from "solid-js";
 import type { MessagePart } from "../services/sse-types";
 import type { MessageTurn } from "./workspace-state";
+import { extractContextTitleFallback } from "./context-protocol";
 
 export type TimelineActivityKind = "reasoning" | "explore" | "edit" | "shell" | "task" | "text" | "error";
 export interface TimelineActivitySegment {
@@ -70,7 +71,12 @@ function sameMetrics(a: PartMetric[], b: PartMetric[]): boolean {
 }
 
 function userPreview(turn: MessageTurn): string {
-  const text = turn.parts.filter((part) => part.type === "text").map((part) => part.text).join(" ").replace(/\s+/g, " ").trim();
+  const raw = turn.parts
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join(" ")
+    .trim();
+  const text = extractContextTitleFallback(raw).replace(/\s+/g, " ").trim();
   return text.length > 72 ? `${text.slice(0, 72)}…` : text;
 }
 

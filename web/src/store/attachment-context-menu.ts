@@ -6,6 +6,7 @@ import { hoxiAPI } from "../services/api";
 import { writeDesktopClipboard } from "../services/desktop-events";
 import { getGatewayToken, getLoopbackHTTPBase, isWailsDesktopWebView } from "../services/http";
 import { isAnyPortalMode } from "./intake-portal";
+import { saveBlobWithFeedback } from "./file-save";
 import {
   openAttachmentInInspector,
   openExternalFile,
@@ -467,8 +468,16 @@ export async function downloadAttachmentTarget(
   if (!href) return false;
 
   if (href.startsWith("data:") || href.startsWith("blob:")) {
-    triggerAnchorDownload(href, resolved.filename);
-    return true;
+    try {
+      const resp = await fetch(href);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const blob = await resp.blob();
+      const result = await saveBlobWithFeedback(blob, resolved.filename);
+      return result.status !== "error";
+    } catch {
+      triggerAnchorDownload(href, resolved.filename);
+      return true;
+    }
   }
 
   try {
@@ -477,10 +486,8 @@ export async function downloadAttachmentTarget(
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const blob = await resp.blob();
-    const objectURL = URL.createObjectURL(blob);
-    triggerAnchorDownload(objectURL, resolved.filename);
-    setTimeout(() => URL.revokeObjectURL(objectURL), 60_000);
-    return true;
+    const result = await saveBlobWithFeedback(blob, resolved.filename);
+    return result.status !== "error";
   } catch {
     if (isRemoteHttpURL(href)) {
       triggerAnchorDownload(href, resolved.filename, true);

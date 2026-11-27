@@ -1,6 +1,6 @@
 import type { MessagePart } from "../services/sse-types";
 import type { MessageTurn } from "./workspace-state";
-import { formatCollabPromptForClipboard } from "./collab-prompt";
+import { formatContextPromptForClipboard } from "./context-protocol";
 
 export interface TranscriptSearchOptions { query: string; matchCase: boolean; wholeWord: boolean; useRegex: boolean }
 export interface SearchTurn { id: string; parts: Array<{ id: string; text?: string; tool?: string; input?: unknown; output?: string }> }
@@ -20,8 +20,7 @@ export function searchPattern(options: TranscriptSearchOptions): SearchPattern {
 
 export function searchPart(part: MessagePart): SearchTurn["parts"][number] {
   if (part.type === "text") {
-    const collabVisible = formatCollabPromptForClipboard(part.text);
-    return { id: part.id, text: collabVisible !== null ? collabVisible : part.text };
+    return { id: part.id, text: formatContextPromptForClipboard(part.text) };
   }
   if (part.type === "reasoning") return { id: part.id, text: part.text };
   if (part.type === "tool") return { id: part.id, tool: part.tool, input: part.state.input,

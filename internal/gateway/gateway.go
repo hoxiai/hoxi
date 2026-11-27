@@ -583,6 +583,7 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 
 	g.mux.HandleFunc("/api/hoxi/dialog/open-directory", g.handleOpenDirectoryDialog)
 	g.mux.HandleFunc("/api/hoxi/file/save-images", g.handleSaveImages)
+	g.mux.HandleFunc("/api/hoxi/file/save", g.handleSaveFile)
 
 	g.mux.HandleFunc("/api/hoxi/desktop/focus", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

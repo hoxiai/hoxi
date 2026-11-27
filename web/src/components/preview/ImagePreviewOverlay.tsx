@@ -11,6 +11,7 @@ import {
   downloadAttachmentTarget,
   imageViewer,
   openAttachmentContextMenu,
+  savedFileToast,
   showAttachmentActionFeedback,
 } from "../../store/workspace";
 import { t } from "../../i18n";
@@ -76,7 +77,7 @@ export default function ImagePreviewOverlay() {
       localPath: payload.localPath,
       downloadUrl: payload.downloadUrl,
     }).then((ok) => {
-      if (!ok) {
+      if (!ok && savedFileToast()?.result.status !== "error") {
         showAttachmentActionFeedback(t("timeline.downloadFailed"), "error");
       }
     });

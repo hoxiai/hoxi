@@ -26,6 +26,7 @@ import {
   openAttachmentTargetExternally,
   openAttachmentTargetInInspector,
   resolveAttachmentMenuActions,
+  savedFileToast,
   showAttachmentActionFeedback,
   type AttachmentContextMenuState,
 } from "../../store/workspace";
@@ -155,7 +156,7 @@ function AttachmentContextMenuPopup(props: { menu: AttachmentContextMenuState })
     const target = props.menu.target;
     closeAttachmentContextMenu();
     void downloadAttachmentTarget(target).then((ok) => {
-      if (!ok) {
+      if (!ok && savedFileToast()?.result.status !== "error") {
         showAttachmentActionFeedback(t("timeline.downloadFailed"), "error");
       }
     });

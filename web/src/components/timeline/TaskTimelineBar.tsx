@@ -6,7 +6,7 @@ import type { MessageTurn } from "../../store/workspace";
 import {
   buildTimelineActivity,
   createTimelineActivity,
-  formatContextPromptForClipboard,
+  extractContextTitleFallback,
   openShareImageModal,
   shareImageModal,
   type TimelineActivityKind,
@@ -387,7 +387,7 @@ export default function TaskTimelineBar(props: {
           .map((p) => p.text)
           .join(" ")
           .trim();
-        const txt = formatContextPromptForClipboard(raw).replace(/\s+/g, " ").trim();
+        const txt = extractContextTitleFallback(raw).replace(/\s+/g, " ").trim();
         return {
           id: turn.info.id,
           index: idx + 1,

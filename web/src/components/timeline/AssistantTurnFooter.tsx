@@ -12,6 +12,7 @@ import {
   resumePausedSession,
   retryLastUserPrompt,
   revertToHere,
+  saveBlobWithFeedback,
   workspace,
 } from "../../store/workspace";
 import { Icon } from "../icons";
@@ -45,17 +46,11 @@ export function AssistantTurnFooter(props: {
   const [resuming, setResuming] = createSignal(false);
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
   let downloadTimer: ReturnType<typeof setTimeout> | undefined;
-  let revokeTimer: ReturnType<typeof setTimeout> | undefined;
-  let activeBlobURL: string | undefined;
+  let savingMarkdown = false;
 
   onCleanup(() => {
     if (copyTimer !== undefined) clearTimeout(copyTimer);
     if (downloadTimer !== undefined) clearTimeout(downloadTimer);
-    if (revokeTimer !== undefined) clearTimeout(revokeTimer);
-    if (activeBlobURL) {
-      URL.revokeObjectURL(activeBlobURL);
-      activeBlobURL = undefined;
-    }
   });
 
   const isLatestTurn = createMemo(() => {
@@ -270,34 +265,23 @@ export function AssistantTurnFooter(props: {
     });
   };
 
-  const downloadMarkdown = () => {
+  const downloadMarkdown = async () => {
+    if (savingMarkdown) return;
     const text = cycleSummary()?.finalText;
     if (!text) return;
+    savingMarkdown = true;
     try {
-      if (activeBlobURL) {
-        URL.revokeObjectURL(activeBlobURL);
-        activeBlobURL = undefined;
-      }
-      if (revokeTimer !== undefined) clearTimeout(revokeTimer);
       const content = text.endsWith("\n") ? text : `${text}\n`;
       const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      activeBlobURL = url;
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = deriveMarkdownDownloadFilename(text, props.info.sessionID);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      setDownloaded(true);
-      if (downloadTimer !== undefined) clearTimeout(downloadTimer);
-      downloadTimer = setTimeout(() => setDownloaded(false), 1800);
-      revokeTimer = setTimeout(() => {
-        if (activeBlobURL === url) activeBlobURL = undefined;
-        URL.revokeObjectURL(url);
-      }, 60_000);
-    } catch {
-      /* ignore */
+      const filename = deriveMarkdownDownloadFilename(text, props.info.sessionID);
+      const result = await saveBlobWithFeedback(blob, filename);
+      if (result.status === "saved") {
+        setDownloaded(true);
+        if (downloadTimer !== undefined) clearTimeout(downloadTimer);
+        downloadTimer = setTimeout(() => setDownloaded(false), 1800);
+      }
+    } finally {
+      savingMarkdown = false;
     }
   };
 

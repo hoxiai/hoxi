@@ -113,6 +113,24 @@ export const fileAndPtyAPI = {
       body: JSON.stringify(input),
     });
   },
+  saveFile(input: {
+    title?: string;
+    defaultDir?: string;
+    filename: string;
+    dataUrl: string;
+  }): Promise<{
+    supported: boolean;
+    saved?: boolean;
+    canceled?: boolean;
+    path?: string;
+    directory?: string;
+    error?: string;
+  }> {
+    return requestJSON(resolveDesktopLoopbackURL("/api/hoxi/file/save"), {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
   saveMemory(input: {
     scope: "project" | "session";
     sessionID?: string;
