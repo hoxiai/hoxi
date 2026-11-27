@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -576,22 +577,21 @@ func sendRemoteMCPRaw(
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		wwwAuth := strings.TrimSpace(resp.Header.Get("WWW-Authenticate"))
 		detail := strings.TrimSpace(string(body))
-		if detail == "" && wwwAuth != "" {
-			detail = wwwAuth
+		if detail == "" {
+			detail = strings.TrimSpace(resp.Header.Get("WWW-Authenticate"))
+		}
+		if detail != "" {
+			detail = ": " + detail
+		}
+		if isLocalWorkMCPURL(parsedURL) {
+			return nil, resp.StatusCode, resp.Header, fmt.Errorf(
+				"local Work MCP gateway rejected the request for %q (HTTP %d%s)", srv.Name, resp.StatusCode, detail,
+			)
 		}
 		return nil, resp.StatusCode, resp.Header, fmt.Errorf(
 			"MCP server %q requires OAuth authorization or re-authentication (HTTP %d%s) — reconnect %q in Hoxi Settings",
-			srv.Name,
-			resp.StatusCode,
-			func() string {
-				if detail != "" {
-					return ": " + detail
-				}
-				return ""
-			}(),
-			srv.Name,
+			srv.Name, resp.StatusCode, detail, srv.Name,
 		)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -644,17 +644,24 @@ func invokeStdioMCP(ctx context.Context, worktreeDir string, srv mcpServerSpec, 
 }
 
 func toStringMap(raw any) map[string]string {
-	m, ok := raw.(map[string]any)
-	if !ok || len(m) == 0 {
+	switch m := raw.(type) {
+	case map[string]string:
+		// Session MCP config is produced in Go, without a JSON round trip.
+		return maps.Clone(m)
+	case map[string]any:
+		if len(m) == 0 {
+			return nil
+		}
+		out := make(map[string]string, len(m))
+		for k, v := range m {
+			if s, ok := v.(string); ok {
+				out[k] = s
+			}
+		}
+		return out
+	default:
 		return nil
 	}
-	out := make(map[string]string, len(m))
-	for k, v := range m {
-		if s, ok := v.(string); ok {
-			out[k] = s
-		}
-	}
-	return out
 }
 
 func parseCommandSlice(cmdRaw, argsRaw any) []string {

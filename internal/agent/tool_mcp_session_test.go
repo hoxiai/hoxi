@@ -183,6 +183,94 @@ func TestRemoteMCPStreamableHTTPSessionReinitAndOAuth(t *testing.T) {
 	}
 }
 
+func TestNativeMCPLocalGatewayAuthorization(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("HOXI_HOME", home)
+	const bearer = "Bearer test-gateway-token"
+	const route = "/api/hoxi/work/apps/demo/mcp"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != route {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") != bearer {
+			http.Error(w, "valid local gateway token is required", http.StatusUnauthorized)
+			return
+		}
+		var rpc struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&rpc); err != nil {
+			http.Error(w, "invalid JSON-RPC request", http.StatusBadRequest)
+			return
+		}
+		var result json.RawMessage
+		switch rpc.Method {
+		case "initialize":
+			w.Header().Set("Mcp-Session-Id", "demo-session")
+			result = json.RawMessage(`{"protocolVersion":"2025-03-26","capabilities":{"tools":{}}}`)
+		case "notifications/initialized", "tools/list", "tools/call":
+			if r.Header.Get("Mcp-Session-Id") != "demo-session" {
+				http.Error(w, "missing MCP session header", http.StatusBadRequest)
+				return
+			}
+			switch rpc.Method {
+			case "notifications/initialized":
+				w.WriteHeader(http.StatusAccepted)
+				return
+			case "tools/list":
+				result = json.RawMessage(`{"tools":[{"name":"read_report","inputSchema":{"type":"object"}}]}`)
+			case "tools/call":
+				result = json.RawMessage(`{"content":[{"type":"text","text":"report read"}]}`)
+			}
+		default:
+			http.Error(w, "unexpected MCP method", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": result})
+	}))
+	t.Cleanup(server.Close)
+
+	for _, tt := range []struct {
+		name    string
+		headers any
+		want401 bool
+	}{
+		{name: "host headers", headers: map[string]string{"Authorization": bearer}},
+		{name: "JSON config headers", headers: map[string]any{"Authorization": bearer}},
+		{name: "invalid token", headers: map[string]string{"Authorization": "Bearer invalid"}, want401: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(ResetRemoteMCPSessions)
+			tc := ToolContext{WorktreeDir: t.TempDir(), MCPConfig: func() map[string]any {
+				return map[string]any{"mcp": map[string]any{"work-local-demo": map[string]any{
+					"type": "remote", "url": server.URL + route, "headers": tt.headers,
+				}}}
+			}}
+			listed, err := (&mcpListToolsTool{}).Execute(context.Background(), tc, json.RawMessage(`{"server":"work-local-demo"}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.want401 {
+				if !strings.Contains(listed.Output, "HTTP 401") || !strings.Contains(listed.Output, "local gateway token is required") || strings.Contains(listed.Output, "OAuth") {
+					t.Fatalf("expected a local gateway error, got %s", listed.Output)
+				}
+				return
+			}
+			if !strings.Contains(listed.Output, "- read_report:") {
+				t.Fatalf("report tool not discovered: %s", listed.Output)
+			}
+			called, err := (&mcpCallTool{}).Execute(context.Background(), tc, json.RawMessage(`{"server":"work-local-demo","tool":"read_report"}`))
+			if err != nil || called.IsError || !strings.Contains(called.Output, "report read") {
+				t.Fatalf("report tool call failed: %s; %v", called.Output, err)
+			}
+		})
+	}
+}
+
 func TestRemoteMCPSSRFBlocksMetadataBehindHTTPProxyAndTrailingDot(t *testing.T) {
 	for _, raw := range []string{
 		"http://metadata.google.internal./mcp",

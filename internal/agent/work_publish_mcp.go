@@ -17,8 +17,12 @@ func workPublishMCPTimeout(endpoint string, args map[string]any) time.Duration {
 		return mcpCallTimeout
 	}
 	u, err := url.Parse(endpoint)
-	if err == nil && isLoopbackHost(u.Hostname()) && strings.HasPrefix(u.Path, "/api/hoxi/work/apps/") && strings.HasSuffix(u.Path, "/mcp") {
+	if err == nil && isLocalWorkMCPURL(u) {
 		return 6 * time.Minute
 	}
 	return mcpCallTimeout
+}
+
+func isLocalWorkMCPURL(u *url.URL) bool {
+	return isLoopbackHost(u.Hostname()) && strings.HasPrefix(u.Path, "/api/hoxi/work/apps/") && strings.HasSuffix(u.Path, "/mcp")
 }
