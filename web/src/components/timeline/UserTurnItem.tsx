@@ -99,6 +99,9 @@ export function UserTurnItem(props: {
     if (role === "pm") {
       return "max-w-[88%] rounded-2xl border border-[var(--violet-border)]/80 border-l-[3px] border-l-[var(--violet-text)]/70 bg-[var(--violet-surface)]/80 px-3.5 py-2.5 space-y-2";
     }
+    if (role === "op") {
+      return "max-w-[88%] rounded-2xl border border-[var(--accent-border)]/85 border-l-[3px] border-l-[var(--accent-primary)]/80 bg-[var(--accent-surface)]/80 px-3.5 py-2.5 space-y-2";
+    }
     if (role === "qa") {
       return "max-w-[88%] rounded-2xl border border-[var(--warn-border)]/80 border-l-[3px] border-l-[var(--warn-text)]/75 bg-[var(--warn-surface)]/70 px-3.5 py-2.5 space-y-2";
     }

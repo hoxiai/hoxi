@@ -282,10 +282,12 @@ export function SessionNavItem(props: SessionNavItemProps) {
                   class={`shrink-0 rounded border px-1 py-0.5 font-mono text-[10px] font-semibold leading-none tracking-tight ${
                     cb().role === "pm"
                       ? "border-[var(--violet-border)]/75 bg-[var(--violet-surface)] text-[var(--violet-text)]"
-                      : "border-[var(--warn-border)]/75 bg-[var(--warn-surface)] text-[var(--warn-text)]"
+                      : cb().role === "op"
+                        ? "border-[var(--accent-border)]/75 bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                        : "border-[var(--warn-border)]/75 bg-[var(--warn-surface)] text-[var(--warn-text)]"
                   }`}
                 >
-                  {cb().role === "pm" ? "PM" : "QA"}
+                  {cb().role === "pm" ? "PM" : cb().role === "op" ? "OP" : "QA"}
                 </span>
               )}
             </Show>

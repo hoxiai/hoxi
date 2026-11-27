@@ -42,7 +42,7 @@ const SECRET_CMD_RE = new RegExp(
     String.raw`(?:google\/chrome|chromium|bravesoftware|microsoft(?:\\?\s|_)?edge|vivaldi|opera|arc\/user(?:\\?\s|_)?data|firefox|mozilla|library\/cookies|library\/safari)[^;&|\n]*?[\/\\](?:cookies(?:\.sqlite|\.binarycookies)?|login(?:\\?\s|_)data|web(?:\\?\s|_)data|logins\.json|key4\.db)(?:$|[\s'";&|)*?-])`,
     String.raw`\$\{?XDG_CONFIG_HOME\}?\/(?:gh|gcloud|opencode)(?:\/|$|[\s;&|)'"*?])`,
     String.raw`\.claude\/\.credentials\.json`,
-    String.raw`\.hoxi\/(?:models|media-roles|intake|collab(?:-joined)?|schedules|auth|tunnel(?:-dev)?|node-relay(?:-dev)?|cloudflared|pairing|relay-keys|work-apps|dataprofiles|approval-policy|hoxi)\.(?:json|db)`,
+    String.raw`\.hoxi\/(?:models|media-roles|intake|collab(?:-(?:joined|ops))?|schedules|auth|tunnel(?:-dev)?|node-relay(?:-dev)?|cloudflared|pairing|relay-keys|work-apps|dataprofiles|approval-policy|hoxi)\.(?:json|db)`,
     String.raw`\.docker\/config\.json`,
     String.raw`\b(?:curl|wget|http)\b[^\n]*?(?:authorization|bearer|x-api-key|\$\{?[A-Za-z_][A-Za-z0-9_]*(?:_KEY|_TOKEN|_SECRET)\b)`,
   ].join("|"),
@@ -81,7 +81,7 @@ const PUBLISH_OR_FORCE_RE = new RegExp(
     String.raw`\bhelm\s+(?:install|upgrade)\b`,
     String.raw`(?:\.\/)?scripts\/ai-release\.sh\b`,
     String.raw`\bdocker\s+(?:system\s+prune|rm|rmi)\b`,
-    String.raw`\/api\/hoxi\/(?:tools\/run|dataprofiles\b|intake\b|collab\b|work\/joined-collabs\b|schedules\b|computer\/(?:action|grant|pause|stop))\b`,
+    String.raw`\/api\/hoxi\/(?:tools\/run|dataprofiles\b|intake\b|collab\b|ops\b|work\/joined-collabs\b|schedules\b|computer\/(?:action|grant|pause|stop))\b`,
   ].join("|"),
   "i"
 );

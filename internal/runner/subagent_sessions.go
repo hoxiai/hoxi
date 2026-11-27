@@ -29,6 +29,7 @@ func (s *Service) childSessionFactory(parent SessionRecord, modelID, mode string
 			CommandSandbox: parent.CommandSandbox,
 			ReadOnlyPaths:  append([]string(nil), parent.ReadOnlyPaths...),
 			WritablePaths:  append([]string(nil), parent.WritablePaths...),
+			DeniedTools:    append([]string(nil), parent.DeniedTools...),
 			ModelID:        firstNonEmptyStr(spec.ModelID, modelID),
 			ProviderID:     firstNonEmptyStr(spec.ProviderID, parent.ProviderID),
 			Mode:           firstNonEmptyStr(spec.Mode, mode),

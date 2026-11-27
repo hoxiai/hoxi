@@ -183,6 +183,19 @@ Thanks!`;
     assertEqual(qaBadge!.role, "qa");
     assertEqual(qaBadge!.cleanTitle, "\u767b\u5f55\u6309\u94ae\u9519\u4f4d");
 
+    const opBadge = parseCollabSessionTitle("OP · 1688 \u4e3b\u56fe\u7cbe\u4fee");
+    assertTrue(opBadge !== null);
+    assertEqual(opBadge!.role, "op");
+    assertEqual(opBadge!.cleanTitle, "1688 \u4e3b\u56fe\u7cbe\u4fee");
+
+    const parsedOP = parseCollabPrompt(
+      '<untrusted_op_request mode="build" stage="initial" author="\u7f8e\u5de5-\u5c0f\u738b">\n\u5e2e\u6211\u4f18\u5316\u65b0\u54c1\u6807\u9898\n</untrusted_op_request>'
+    );
+    assertTrue(parsedOP !== null);
+    assertEqual(parsedOP!.role, "op");
+    assertEqual(parsedOP!.author, "\u7f8e\u5de5-\u5c0f\u738b");
+    assertEqual(parsedOP!.bodyText, "\u5e2e\u6211\u4f18\u5316\u65b0\u54c1\u6807\u9898");
+
     assertEqual(parseCollabSessionTitle("Refactor auth middleware"), null);
 
     const session: SessionInfo = {

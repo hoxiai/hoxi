@@ -60,10 +60,15 @@ export function CollabPromptCard(props: {
   };
 
   const isPM = () => props.parsed.role === "pm";
+  const isOP = () => props.parsed.role === "op";
   const isBodyExpanded = createMemo(() => bodyExpanded() || Boolean(props.forceExpand));
 
   const roleLabel = createMemo(() => {
-    const base = isPM() ? t("timeline.collabRolePM") : t("timeline.collabRoleQA");
+    const base = isPM()
+      ? t("timeline.collabRolePM")
+      : isOP()
+        ? t("timeline.collabRoleOP")
+        : t("timeline.collabRoleQA");
     const author = props.parsed.author?.trim();
     if (!author || author === base) return base;
     return `${base} · ${author}`;
@@ -111,10 +116,12 @@ export function CollabPromptCard(props: {
           class={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] font-semibold leading-none ${
             isPM()
               ? "border-[var(--violet-border)] bg-[var(--bg-panel)]/80 text-[var(--violet-text)]"
-              : "border-[var(--warn-border)] bg-[var(--bg-panel)]/80 text-[var(--warn-text)]"
+              : isOP()
+                ? "border-[var(--accent-border)] bg-[var(--bg-panel)]/80 text-[var(--accent-primary)]"
+                : "border-[var(--warn-border)] bg-[var(--bg-panel)]/80 text-[var(--warn-text)]"
           }`}
         >
-          <Show when={isPM()} fallback={<Bug size={11} class="shrink-0" />}>
+          <Show when={isPM() || isOP()} fallback={<Bug size={11} class="shrink-0" />}>
             <Sparkles size={11} class="shrink-0" />
           </Show>
           <span class="max-w-[200px] truncate">{roleLabel()}</span>

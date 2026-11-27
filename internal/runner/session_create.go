@@ -29,6 +29,7 @@ type CreateSessionRequest struct {
 	ReadOnlyPaths  []string `json:"readOnlyPaths,omitempty"`
 	DeniedPaths    []string `json:"deniedPaths,omitempty"`
 	WritablePaths  []string `json:"writablePaths,omitempty"`
+	DeniedTools    []string `json:"deniedTools,omitempty"`
 }
 
 func (s *Service) handleCreateSession(w http.ResponseWriter, r *http.Request) {
@@ -166,6 +167,7 @@ func (s *Service) CreateSession(body CreateSessionRequest, directory string) (Se
 		CommandSandbox: commandSandbox,
 		ReadOnlyPaths:  readOnlyPaths,
 		WritablePaths:  writablePaths,
+		DeniedTools:    normalizeDeniedTools(body.DeniedTools),
 		ModelID:        modelID,
 		ProviderID:     provID,
 		Mode:           firstNonEmptyStr(body.Mode, "build"),

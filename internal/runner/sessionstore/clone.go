@@ -154,6 +154,10 @@ func CloneRecord(r SessionRecord) SessionRecord {
 		out.WritablePaths = make([]string, len(r.WritablePaths))
 		copy(out.WritablePaths, r.WritablePaths)
 	}
+	if r.DeniedTools != nil {
+		out.DeniedTools = make([]string, len(r.DeniedTools))
+		copy(out.DeniedTools, r.DeniedTools)
+	}
 	if r.OpenCodeIDs != nil {
 		out.OpenCodeIDs = make([]string, len(r.OpenCodeIDs))
 		copy(out.OpenCodeIDs, r.OpenCodeIDs)

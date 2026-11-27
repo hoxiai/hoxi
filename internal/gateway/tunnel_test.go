@@ -63,6 +63,9 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 		{get, "/api/hoxi/cloudflared/status"}, {post, "/api/hoxi/cloudflared/enable"}, {post, "/api/hoxi/cloudflared/disable"},
 		{get, "/api/hoxi/auth"}, {post, "/api/hoxi/auth/cancel"}, {get, "/api/hoxi/models-config"},
 		{get, "/api/hoxi/dataprofiles"}, {post, "/api/hoxi/dataprofiles"}, {http.MethodDelete, "/api/hoxi/dataprofiles/p1"},
+		// Operations collaboration management and portal planes stay off the GoPanel tunnel.
+		{get, "/api/hoxi/ops/links"}, {post, "/api/hoxi/ops/links"}, {get, "/api/hoxi/ops/items"},
+		{post, "/api/hoxi/ops/items/handoff"}, {get, "/api/hoxi/ops/portal/info"}, {post, "/api/hoxi/ops/portal/app-service"},
 		// Scheduled tasks control plane stays desktop/local-host only.
 		{get, "/api/hoxi/schedules"}, {post, "/api/hoxi/schedules"}, {get, "/api/hoxi/schedules/sch_1"},
 		{http.MethodPatch, "/api/hoxi/schedules/sch_1"}, {http.MethodDelete, "/api/hoxi/schedules/sch_1"},

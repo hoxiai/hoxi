@@ -173,6 +173,7 @@ type SessionInfo struct {
 	CommandSandbox bool                 `json:"commandSandbox,omitempty"`
 	ReadOnlyPaths  []string             `json:"readOnlyPaths,omitempty"`
 	WritablePaths  []string             `json:"writablePaths,omitempty"`
+	DeniedTools    []string             `json:"deniedTools,omitempty"`
 	Branch         string               `json:"branch,omitempty"`
 	Managed        bool                 `json:"managed,omitempty"`
 	Revert         *SessionRevert       `json:"revert,omitempty"`
@@ -324,6 +325,7 @@ type SessionRecord struct {
 	CommandSandbox bool           `json:"commandSandbox,omitempty"`
 	ReadOnlyPaths  []string       `json:"readOnlyPaths,omitempty"`
 	WritablePaths  []string       `json:"writablePaths,omitempty"`
+	DeniedTools    []string       `json:"deniedTools,omitempty"`
 	RetainedBranch string         `json:"retainedBranch,omitempty"`
 	ModelID        string         `json:"modelID"`
 	ProviderID     string         `json:"providerID"`
@@ -377,12 +379,15 @@ func (r SessionRecord) ToSessionInfo() SessionInfo {
 		dir = r.ProjectDir
 	}
 	caps := RuntimeCapabilities(r.Runtime, r.Subagent)
-	var readOnlyPaths, writablePaths []string
+	var readOnlyPaths, writablePaths, deniedTools []string
 	if len(r.ReadOnlyPaths) > 0 {
 		readOnlyPaths = append([]string(nil), r.ReadOnlyPaths...)
 	}
 	if len(r.WritablePaths) > 0 {
 		writablePaths = append([]string(nil), r.WritablePaths...)
+	}
+	if len(r.DeniedTools) > 0 {
+		deniedTools = append([]string(nil), r.DeniedTools...)
 	}
 	return SessionInfo{
 		ID:             r.ID,
@@ -404,6 +409,7 @@ func (r SessionRecord) ToSessionInfo() SessionInfo {
 		CommandSandbox: r.CommandSandbox,
 		ReadOnlyPaths:  readOnlyPaths,
 		WritablePaths:  writablePaths,
+		DeniedTools:    deniedTools,
 		Branch:         r.Branch,
 		Revert:         r.Revert,
 		Capabilities:   &caps,

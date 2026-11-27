@@ -44,6 +44,7 @@ export function CollabSessionBanner() {
     <Show when={meta()}>
       {(info) => {
         const isPM = () => info().role === "pm";
+        const isOP = () => info().role === "op";
         const isDirect = () => info().workspace === "local";
         return (
           <div
@@ -51,7 +52,9 @@ export function CollabSessionBanner() {
             class={`flex items-center justify-between gap-2.5 border-b px-5 py-1.5 backdrop-blur-md text-[12px] ${
               isPM()
                 ? "border-[var(--violet-border)]/50 bg-[var(--bg-elevated)]/90"
-                : "border-[var(--warn-border)]/50 bg-[var(--bg-elevated)]/90"
+                : isOP()
+                  ? "border-[var(--accent-border)]/50 bg-[var(--bg-elevated)]/90"
+                  : "border-[var(--warn-border)]/50 bg-[var(--bg-elevated)]/90"
             }`}
           >
             {/* Left: Role badge, collaborator label, workspace isolation, restricted paths */}
@@ -60,14 +63,20 @@ export function CollabSessionBanner() {
                 class={`inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-semibold leading-none ${
                   isPM()
                     ? "border-[var(--violet-border)] bg-[var(--violet-surface)] text-[var(--violet-text)]"
-                    : "border-[var(--warn-border)] bg-[var(--warn-surface)] text-[var(--warn-text)]"
+                    : isOP()
+                      ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                      : "border-[var(--warn-border)] bg-[var(--warn-surface)] text-[var(--warn-text)]"
                 }`}
               >
-                <Show when={isPM()} fallback={<Bug size={11} class="shrink-0" />}>
+                <Show when={isPM() || isOP()} fallback={<Bug size={11} class="shrink-0" />}>
                   <Sparkles size={11} class="shrink-0" />
                 </Show>
                 <span>
-                  {isPM() ? t("timeline.collabBannerPM") : t("timeline.collabBannerQA")}
+                  {isPM()
+                    ? t("timeline.collabBannerPM")
+                    : isOP()
+                      ? t("timeline.collabBannerOP")
+                      : t("timeline.collabBannerQA")}
                 </span>
               </span>
 
@@ -77,7 +86,7 @@ export function CollabSessionBanner() {
                 </span>
               </Show>
 
-              <Show when={info().workspace}>
+              <Show when={info().workspace && !isOP()}>
                 <span
                   class={`inline-flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] font-medium leading-none ${
                     isDirect()

@@ -241,7 +241,7 @@ test("standalone browser plugin", async (t) => {
     );
 
     // Sensitive / protected paths (including .hoxi/intake.json and .hoxi/collab.json) require read approval first and are rejected before reaching fetch
-    for (const blockedPath of [".hoxi/cloudflared.json", ".hoxi/intake.json", ".hoxi/collab.json", ".hoxi/collab-joined.json", ".hoxi/media-roles.json", ".claude/.credentials.json", ".env", "../outside.go", "/etc/passwd"]) {
+    for (const blockedPath of [".hoxi/cloudflared.json", ".hoxi/intake.json", ".hoxi/collab.json", ".hoxi/collab-joined.json", ".hoxi/collab-ops.json", ".hoxi/media-roles.json", ".claude/.credentials.json", ".env", "../outside.go", "/etc/passwd"]) {
       for (const act of ["inspect", "map"]) {
         requests = [];
         asks = [];

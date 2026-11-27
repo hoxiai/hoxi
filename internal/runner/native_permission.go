@@ -33,6 +33,9 @@ func (s *Service) nativePermissionHook(rec SessionRecord, asstMsgID string) func
 		if latest, ok := s.effectiveSessionRecord(rec.ID); ok {
 			effRec = latest
 		}
+		if reason, denied := sessionDeniedToolReason(effRec, req.ToolName, args); denied {
+			return fmt.Errorf("%s", reason)
+		}
 		if reason, denied := sessionToolWriteViolation(effRec, effRec.WorktreePath, req.ToolName, args); denied {
 			return fmt.Errorf("%s", reason)
 		}

@@ -261,9 +261,13 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 	if eff, eOK := s.effectiveSessionRecord(cred.sessionID); eOK {
 		rec.ReadOnlyPaths = eff.ReadOnlyPaths
 		rec.WritablePaths = eff.WritablePaths
+		rec.DeniedTools = eff.DeniedTools
 		if eff.CommandSandbox {
 			rec.CommandSandbox = true
 		}
+	}
+	if reason, denied := sessionDeniedToolReason(rec, p.ToolCall.Name, p.ToolCall.Args); denied {
+		return hookDecisionDeny, reason
 	}
 	origin, ok := s.resolveAgyHookOrigin(r, rec, p.ConversationID)
 	if !ok {

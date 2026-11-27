@@ -55,22 +55,26 @@ func (s *Service) effectiveSessionRecord(sessionID string) (SessionRecord, bool)
 	if !ok {
 		return SessionRecord{}, false
 	}
-	if rec.HasPathScope() || strings.TrimSpace(rec.ParentID) == "" {
+	if strings.TrimSpace(rec.ParentID) == "" {
 		return rec, true
 	}
 	curID := strings.TrimSpace(rec.ParentID)
+	hasOwnPathScope := rec.HasPathScope()
 	for depth := 0; curID != "" && depth < 8; depth++ {
 		parent, pOK := s.store.Meta(curID)
 		if !pOK {
 			break
 		}
-		if parent.HasPathScope() {
+		if !hasOwnPathScope && parent.HasPathScope() {
 			rec.ReadOnlyPaths = append([]string(nil), parent.ReadOnlyPaths...)
 			rec.WritablePaths = append([]string(nil), parent.WritablePaths...)
-			if parent.CommandSandbox {
-				rec.CommandSandbox = true
-			}
-			break
+			hasOwnPathScope = true
+		}
+		if len(parent.DeniedTools) > 0 {
+			rec.DeniedTools = mergeUniqueToolRules(rec.DeniedTools, parent.DeniedTools)
+		}
+		if parent.CommandSandbox {
+			rec.CommandSandbox = true
 		}
 		if strings.TrimSpace(parent.ParentID) == curID {
 			break

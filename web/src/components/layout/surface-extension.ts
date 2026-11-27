@@ -73,6 +73,9 @@ export interface SurfaceExtension {
   renderExternalPortal?: () => JSX.Element;
   collaborationLinksButtonLabel?: () => string;
   collaborationLinkTabs?: () => CollaborationLinkTabSpec[];
+  isCustomCollaborationLinksModalActive?: () => boolean;
+  renderCollaborationLinksModal?: (props: { open: () => boolean; directory: () => string; onClose: () => void }) => JSX.Element;
+  shouldHideDefaultIntakeSection?: () => boolean;
   renderExtraTasksSection?: (props: { directory: () => string; visible: () => boolean }) => JSX.Element;
   hasExtraTasks?: () => boolean;
   hideGitControls?: boolean;

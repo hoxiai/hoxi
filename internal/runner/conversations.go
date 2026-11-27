@@ -588,6 +588,7 @@ func (s *Service) CreateConversation(ctx context.Context, body CreateSessionRequ
 		CommandSandbox: commandSandbox,
 		ReadOnlyPaths:  readOnlyPaths,
 		WritablePaths:  writablePaths,
+		DeniedTools:    normalizeDeniedTools(body.DeniedTools),
 		ModelID:        strings.TrimSpace(body.ModelID),
 		ProviderID:     strings.TrimSpace(body.ProviderID),
 		Mode:           firstNonEmptyStr(body.Mode, "build"),

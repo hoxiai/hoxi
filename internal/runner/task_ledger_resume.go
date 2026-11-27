@@ -172,7 +172,8 @@ func (s *Service) forgetLedgerSessions(seen map[string]bool) {
 
 func isExternalCollabInflightEntry(entry InflightTurnEntry) bool {
 	return strings.Contains(entry.CallerSystem, "<untrusted_pm_request>") ||
-		strings.Contains(entry.CallerSystem, "<untrusted_tester_report>")
+		strings.Contains(entry.CallerSystem, "<untrusted_tester_report>") ||
+		strings.Contains(entry.CallerSystem, "<untrusted_op_request>")
 }
 
 // settleStartupLedger inspects all in-flight turns left on disk by the previous

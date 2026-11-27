@@ -268,6 +268,8 @@ func sanitizeJoinPortalURL(raw string) (string, bool) {
 		prefix = "hpm_"
 	case "qa":
 		prefix = "hqa_"
+	case "op":
+		prefix = "hop_"
 	default:
 		return "", false
 	}

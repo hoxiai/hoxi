@@ -67,7 +67,7 @@ const DESTRUCTIVE_RE = new RegExp(
     String.raw`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?library\/keychains\/`,
     String.raw`(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:netrc|npmrc|pypirc|git-credentials|credentials\.json|claude\.json)(?:$|[\s;&|)'"*?])`,
     String.raw`\.claude\/\.credentials\.json`,
-    String.raw`\.hoxi\/(?:models|media-roles|intake|collab(?:-joined)?|schedules|auth|tunnel(?:-dev)?|node-relay(?:-dev)?|cloudflared|pairing|relay-keys|work-apps|dataprofiles|approval-policy|hoxi)\.(?:json|db)`,
+    String.raw`\.hoxi\/(?:models|media-roles|intake|collab(?:-(?:joined|ops))?|schedules|auth|tunnel(?:-dev)?|node-relay(?:-dev)?|cloudflared|pairing|relay-keys|work-apps|dataprofiles|approval-policy|hoxi)\.(?:json|db)`,
     String.raw`\.docker\/config\.json`,
     // .env / .env.* / .envrc and private key files
     ENV_FILE_PATTERN,
@@ -80,7 +80,7 @@ const DESTRUCTIVE_RE = new RegExp(
     String.raw`\bterraform\s+(?:destroy|apply)\b`,
     String.raw`\bkubectl\s+delete\b`,
     String.raw`\bdocker\s+(?:system\s+prune|rm|rmi)\b`,
-    String.raw`\/api\/hoxi\/(?:tools\/run|dataprofiles\b|intake\b|collab\b|work\/joined-collabs\b|schedules\b|computer\/(?:action|grant|pause|stop))\b`,
+    String.raw`\/api\/hoxi\/(?:tools\/run|dataprofiles\b|intake\b|collab\b|ops\b|work\/joined-collabs\b|schedules\b|computer\/(?:action|grant|pause|stop))\b`,
   ].join("|"),
   "i",
 );

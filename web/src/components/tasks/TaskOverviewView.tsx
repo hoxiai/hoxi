@@ -407,7 +407,9 @@ export default function TaskOverviewView() {
         {surfaceExtension.enabled
           ? surfaceExtension.renderExtraTasksSection?.({ directory, visible })
           : null}
-        <IntakeTasksSection />
+        <Show when={!(surfaceExtension.enabled && surfaceExtension.shouldHideDefaultIntakeSection?.())}>
+          <IntakeTasksSection />
+        </Show>
         <Show
           when={workspace.activeSessionID}
           fallback={
@@ -473,11 +475,26 @@ export default function TaskOverviewView() {
         </Show>
       </div>
 
-      <IntakeLinksModal
-        open={intakeLinksModalOpen()}
-        directory={directory()}
-        onClose={() => setIntakeLinksModalOpen(false)}
-      />
+      <Show
+        when={
+          surfaceExtension.enabled &&
+          surfaceExtension.isCustomCollaborationLinksModalActive?.() &&
+          surfaceExtension.renderCollaborationLinksModal
+        }
+        fallback={
+          <IntakeLinksModal
+            open={intakeLinksModalOpen()}
+            directory={directory()}
+            onClose={() => setIntakeLinksModalOpen(false)}
+          />
+        }
+      >
+        {surfaceExtension.renderCollaborationLinksModal?.({
+          open: intakeLinksModalOpen,
+          directory,
+          onClose: () => setIntakeLinksModalOpen(false),
+        })}
+      </Show>
     </div>
   );
 }

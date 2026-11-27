@@ -337,6 +337,7 @@ func (s *Service) handleSessionFork(w http.ResponseWriter, r *http.Request, sess
 		CommandSandbox:   rec.CommandSandbox,
 		ReadOnlyPaths:    append([]string(nil), rec.ReadOnlyPaths...),
 		WritablePaths:    append([]string(nil), rec.WritablePaths...),
+		DeniedTools:      append([]string(nil), rec.DeniedTools...),
 		Surface:          NormalizeSessionSurface(rec.Surface, rec.ProjectDir),
 		ModelID:          rec.ModelID,
 		ProviderID:       rec.ProviderID,

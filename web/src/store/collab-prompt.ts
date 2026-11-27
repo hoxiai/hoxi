@@ -5,7 +5,7 @@
 import type { MessageTurn } from "./workspace-state";
 import type { SessionInfo } from "../services/sse-types";
 
-export type CollabPromptRole = "pm" | "qa";
+export type CollabPromptRole = "pm" | "qa" | "op";
 export type CollabPromptMode = "plan" | "build";
 export type CollabPromptWorkspace = "worktree" | "local";
 export type CollabPromptStage = "initial" | "start_build" | "followup";
@@ -49,6 +49,7 @@ export interface CollabSessionMeta {
 
 const PM_TAG = "untrusted_pm_request";
 const QA_TAG = "untrusted_tester_report";
+const OP_TAG = "untrusted_op_request";
 
 function unescapeXmlAttr(value: string): string {
   return value.replace(/&(quot|lt|gt|amp|#10|#13|#9);/g, (_, ent: string) => {
@@ -451,7 +452,8 @@ export function parseCollabPrompt(raw: string): ParsedCollabPrompt | null {
   if (!raw || !raw.includes("<untrusted_")) return null;
   return (
     parseEnvelopeForTag(raw, PM_TAG, "pm") ??
-    parseEnvelopeForTag(raw, QA_TAG, "qa")
+    parseEnvelopeForTag(raw, QA_TAG, "qa") ??
+    parseEnvelopeForTag(raw, OP_TAG, "op")
   );
 }
 
@@ -464,7 +466,7 @@ export function formatCollabPromptForClipboard(raw: string): string | null {
 export function formatCollabPromptForExport(raw: string): string | null {
   const parsed = parseCollabPrompt(raw);
   if (!parsed) return null;
-  const roleTag = parsed.role === "pm" ? "PM" : "QA";
+  const roleTag = parsed.role === "pm" ? "PM" : parsed.role === "op" ? "OP" : "QA";
   const meta = [
     parsed.author ? `${roleTag} · ${parsed.author}` : roleTag,
     parsed.mode ? parsed.mode.toUpperCase() : "",
@@ -488,8 +490,9 @@ export function extractCollabPromptTitleFallback(raw: string): string | null {
 
 const PM_TITLE_PREFIX = /^PM\s*·\s*(.+)$/;
 const QA_TITLE_PREFIX = /^QA\s*·\s*(.+)$/;
+const OP_TITLE_PREFIX = /^OP\s*·\s*(.+)$/;
 
-/** Extracts a leading "PM · " or "QA · " collaboration role badge from a session title. */
+/** Extracts a leading "PM · ", "QA · ", or "OP · " collaboration role badge from a session title. */
 export function parseCollabSessionTitle(title?: string | null): CollabSessionTitleBadge | null {
   const trimmed = (title || "").trim();
   if (!trimmed) return null;
@@ -497,6 +500,8 @@ export function parseCollabSessionTitle(title?: string | null): CollabSessionTit
   if (pm?.[1]?.trim()) return { role: "pm", cleanTitle: pm[1].trim() };
   const qa = trimmed.match(QA_TITLE_PREFIX);
   if (qa?.[1]?.trim()) return { role: "qa", cleanTitle: qa[1].trim() };
+  const op = trimmed.match(OP_TITLE_PREFIX);
+  if (op?.[1]?.trim()) return { role: "op", cleanTitle: op[1].trim() };
   return null;
 }
 
