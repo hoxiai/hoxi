@@ -367,8 +367,15 @@ export default function ShareImageModal() {
         ? t("share.saveAllDialogTitle", { count: res.pages.length })
         : t("share.saveDialogTitle");
     try {
-      const outcome = await saveShareImagePages(res.pages, doc.title || doc.sessionID, { dialogTitle });
-      if (loadGeneration !== startLoadGen || renderGeneration !== startRenderGen) return;
+      const isCurrent = () => loadGeneration === startLoadGen && renderGeneration === startRenderGen;
+      const outcome = await saveShareImagePages(res.pages, doc.title || doc.sessionID, {
+        dialogTitle,
+        batchDialogTitle: (first, last) => first === last
+          ? t("share.savePageDialogTitle", { page: first })
+          : t("share.savePageRangeDialogTitle", { first, last }),
+        isCurrent,
+      });
+      if (!isCurrent()) return;
       if (outcome.status === "canceled") return;
       setSaveOutcome(outcome);
     } finally {
@@ -572,15 +579,23 @@ export default function ShareImageModal() {
                           </span>
                         );
                       }
+                      if (res.status === "partial") {
+                        return (
+                          <span class="truncate text-[var(--warn-text)]" title={res.error}>
+                            {res.error
+                              ? t("share.savePartialFailed", { count: res.savedCount, total: res.total, error: res.error })
+                              : t("share.savePartial", { count: res.savedCount, total: res.total })}
+                          </span>
+                        );
+                      }
                       if (res.status === "saved" && res.mode === "native") {
                         const primaryPath = res.paths[0];
                         const fullHint = res.paths.length > 1 ? res.directory || primaryPath : primaryPath;
                         const summaryText =
                           res.paths.length > 1
-                            ? t("share.savedBatchToDir", {
-                                count: res.paths.length,
-                                dir: formatSavedDisplayPath(res.directory || primaryPath),
-                              })
+                            ? res.directory
+                              ? t("share.savedBatchToDir", { count: res.paths.length, dir: formatSavedDisplayPath(res.directory) })
+                              : t("share.savedBatch", { count: res.paths.length })
                             : t("share.savedToPath", {
                                 path: formatSavedDisplayPath(primaryPath),
                               });

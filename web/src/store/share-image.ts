@@ -35,11 +35,15 @@ export interface ShareImageModalRequest {
 export type ShareSaveResult =
   | { status: "saved"; mode: "native"; paths: string[]; directory: string }
   | { status: "saved"; mode: "browser"; filenames: string[] }
+  | { status: "partial"; savedCount: number; total: number; error?: string }
   | { status: "canceled" }
   | { status: "error"; error: string };
 
 const PREFS_STORAGE_KEY = "hoxi.share-image-prefs:v1";
 const LAST_SAVE_DIR_STORAGE_KEY = "hoxi.share-image-last-dir:v1";
+// Match the bounded desktop /api/hoxi/file/save-images request in gateway/file_save.go.
+const NATIVE_SAVE_BATCH_COUNT = 32;
+const NATIVE_SAVE_BATCH_BYTES = 80 * 1024 * 1024;
 
 export const DEFAULT_SHARE_IMAGE_PREFS: ShareImagePreferences = {
   theme: "light",
@@ -170,15 +174,39 @@ function triggerBrowserDownloads(items: Array<{ filename: string; blob: Blob }>)
 
 function isUnavailableNativeSaveError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err || "");
-  if (/^HTTP (?:403|404|405):/.test(msg)) return true;
+  if (/selected (?:destination|directory) is protected|destination path is protected/i.test(msg)) {
+    return false;
+  }
+  if (/^HTTP (?:401|403|404|405):/.test(msg)) return true;
   if (!isWailsDesktopWebView() && /Failed to fetch|NetworkError|Load failed/i.test(msg)) return true;
   return false;
+}
+
+function nativeSaveBatches<T extends { blob: Blob }>(items: T[]): T[][] {
+  const batches: T[][] = [];
+  let batch: T[] = [];
+  let bytes = 0;
+  for (const item of items) {
+    if (batch.length >= NATIVE_SAVE_BATCH_COUNT || (batch.length && bytes + item.blob.size > NATIVE_SAVE_BATCH_BYTES)) {
+      batches.push(batch);
+      batch = [];
+      bytes = 0;
+    }
+    batch.push(item);
+    bytes += item.blob.size;
+  }
+  if (batch.length) batches.push(batch);
+  return batches;
 }
 
 export async function saveShareImagePages(
   pages: ReadonlyArray<{ blob: Blob }>,
   baseName: string,
-  options?: { dialogTitle?: string }
+  options?: {
+    dialogTitle?: string;
+    batchDialogTitle?: (firstPage: number, lastPage: number) => string;
+    isCurrent?: () => boolean;
+  }
 ): Promise<ShareSaveResult> {
   if (pages.length === 0) return { status: "canceled" };
   const stem = sanitizeShareImageFilename(baseName);
@@ -188,39 +216,48 @@ export async function saveShareImagePages(
   }));
 
   if (!isAnyPortalMode() && typeof hoxiAPI.saveImages === "function") {
+    const batches = nativeSaveBatches(items);
+    const paths: string[] = [];
+    const directories = new Set<string>();
+    const interrupted = (error?: string): ShareSaveResult => {
+      if (paths.length) return { status: "partial", savedCount: paths.length, total: items.length, error };
+      return error ? { status: "error", error } : { status: "canceled" };
+    };
+    let defaultDir = loadLastSaveDir();
     try {
-      const payload = await Promise.all(
-        items.map(async (item) => ({
-          filename: item.filename,
-          dataUrl: await blobToDataURL(item.blob),
-        }))
-      );
-      const res = await hoxiAPI.saveImages({
-        title: options?.dialogTitle,
-        defaultDir: loadLastSaveDir(),
-        images: payload,
-      });
-      if (res?.supported) {
-        if (res.canceled) return { status: "canceled" };
-        if (res.saved && Array.isArray(res.paths) && res.paths.length > 0) {
-          const directory = (res.directory || "").trim();
-          rememberLastSaveDir(directory);
-          return {
-            status: "saved",
-            mode: "native",
-            paths: res.paths,
-            directory,
-          };
+      for (const batch of batches) {
+        if (options?.isCurrent?.() === false) return interrupted();
+        const images = await Promise.all(batch.map(async ({ filename, blob }) => ({
+          filename, dataUrl: await blobToDataURL(blob),
+        })));
+        if (options?.isCurrent?.() === false) return interrupted();
+        const title = batches.length > 1
+          ? options?.batchDialogTitle?.(paths.length + 1, paths.length + batch.length) ?? options?.dialogTitle
+          : options?.dialogTitle;
+        const res = await hoxiAPI.saveImages({ title, defaultDir, images });
+        if (!res?.supported && !paths.length) break;
+        if (res?.canceled) return interrupted();
+        if (!res?.supported || !res.saved || !Array.isArray(res.paths) || res.paths.length !== batch.length) {
+          return interrupted(res?.error || "Could not save PNG");
         }
-        return { status: "error", error: res.error || "Could not save PNG" };
+        paths.push(...res.paths);
+        const directory = (res.directory || "").trim();
+        directories.add(directory);
+        if (directory) defaultDir = directory;
+        rememberLastSaveDir(directory);
+      }
+      if (paths.length) {
+        const [firstDirectory] = directories;
+        return { status: "saved", mode: "native", paths, directory: directories.size === 1 ? firstDirectory : "" };
       }
     } catch (err) {
-      if (!isUnavailableNativeSaveError(err)) {
-        return { status: "error", error: errorMessageOf(err, "Could not save PNG") };
+      if (paths.length || !isUnavailableNativeSaveError(err)) {
+        return interrupted(errorMessageOf(err, "Could not save PNG"));
       }
     }
   }
 
+  if (options?.isCurrent?.() === false) return { status: "canceled" };
   triggerBrowserDownloads(items);
   return {
     status: "saved",

@@ -12,6 +12,7 @@ import {
   MAX_SINGLE_CANVAS_LOGICAL_HEIGHT,
   paginateLayoutBlocks,
 } from "../components/share/share-image-layout";
+import { buildUserCollabHeader } from "../components/share/share-image-context-layout";
 import { LIGHT_PALETTE, type LayoutBlock, type LayoutLabels } from "../components/share/share-image-text";
 import { serializeContextEnvelopes } from "../store/context-protocol";
 import { formatSavedDisplayPath, sanitizeShareImageFilename } from "../store/share-image";
@@ -38,6 +39,22 @@ const TEST_LABELS: LayoutLabels = {
 const fixedMeasure = (text: string) => text.length * 8;
 
 describe("share image model & privacy", () => {
+  it("preserves the operations collaboration role in exported cards", () => {
+    const { exchanges } = groupTurnsIntoExchanges([{
+      info: { id: "op_msg", sessionID: "ses_op", role: "user", time: { created: 1 } },
+      parts: [{
+        id: "op_part", sessionID: "ses_op", messageID: "op_msg", type: "text",
+        text: '<untrusted_op_request author="Operations">Review the product copy.</untrusted_op_request>',
+      }],
+    }], { hideLocalPaths: true, redactSecrets: true });
+    const collab = exchanges[0].userCollab;
+    if (!collab) throw new Error("operations collaboration not parsed");
+    assertEqual(collab.role, "op");
+    const header = buildUserCollabHeader(collab, 400, LIGHT_PALETTE, fixedMeasure, TEST_LABELS);
+    assertEqual(header.roleBadge.text, "Operations");
+    assertEqual(header.roleBadge.tone, "op");
+  });
+
   it("redacts secrets idempotently and counts matches", () => {
     const sample = [
       "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
@@ -202,7 +219,7 @@ describe("share image model & privacy", () => {
         },
         {
           version: 1,
-          source: { appId: "shopark", appName: "Shopark" },
+          source: { appId: "demo-catalog", appName: "Demo Catalog" },
           items: [
             {
               kind: "entity",

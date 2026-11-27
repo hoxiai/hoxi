@@ -3,9 +3,9 @@ import ShareImageModal from "../components/share/ShareImageModal";
 import { setLocale } from "../i18n";
 import { hoxiAPI } from "../services/api";
 import { serializeContextEnvelopes } from "../store/context-protocol";
-import { closeShareImageModal, openShareImageModal } from "../store/share-image";
+import { closeShareImageModal, openShareImageModal, saveShareImagePages } from "../store/share-image";
 import { setWorkspace, type MessageTurn } from "../store/workspace-state";
-import { assertEqual, assertTrue } from "./test-harness";
+import { assertDeepEqual, assertEqual, assertTrue } from "./test-harness";
 
 async function waitFor(check: () => boolean, label: string) {
   for (let i = 0; i < 160; i++) {
@@ -139,10 +139,38 @@ export async function runBrowserTest() {
     await waitFor(() => document.body.innerText.includes("share history offline"), "history error");
     assertEqual(save()?.disabled, true);
     assertTrue(!checkbox("middle user"), "failed load exposed a partial history");
+
+    const blob = new Blob(["test"], { type: "image/png" });
+    const pages = Array.from({ length: 33 }, () => ({ blob }));
+    const batches: Array<Parameters<typeof hoxiAPI.saveImages>[0]> = [];
+    let cancelLastBatch = false;
+    hoxiAPI.saveImages = async (request) => {
+      batches.push(request);
+      assertTrue(request.images.length <= 32, "desktop rejects more than 32 images per request");
+      if (cancelLastBatch && request.images.length === 1) return { supported: true, canceled: true };
+      const directory = request.images.length === 1 ? "/second-folder" : "/first-folder";
+      return { supported: true, saved: true, paths: request.images.map(({ filename }) => `${directory}/${filename}`), directory };
+    };
+    const result = await saveShareImagePages(pages, "Long session", {
+      batchDialogTitle: (first, last) => `${first}–${last}`,
+    });
+    assertDeepEqual(batches.map((request) => [request.images.length, request.title]), [[32, "1–32"], [1, "33–33"]]);
+    assertEqual(batches[1].defaultDir, "/first-folder");
+    assertEqual(batches[1].images[0].filename, "Long-session-33.png");
+    if (result.status !== "saved" || result.mode !== "native") throw new Error("33-page native save did not finish");
+    assertEqual(result.paths.length, 33);
+    assertEqual(result.paths[32], "/second-folder/Long-session-33.png");
+    assertEqual(result.directory, "");
+    cancelLastBatch = true;
+    assertDeepEqual(await saveShareImagePages(pages, "Long session"), {
+      status: "partial", savedCount: 32, total: 33, error: undefined,
+    });
+    assertEqual(downloads, 0, "canceling a later batch must not restart the export as browser downloads");
     return [
       "Share selection uses full history and structures quoted context",
       "Native save shows path with reveal action and falls back cleanly in browser mode",
       "Export follows the latest successful render",
+      "33-page exports save in bounded batches and report a later cancellation accurately",
     ];
   } finally {
     closeShareImageModal();
