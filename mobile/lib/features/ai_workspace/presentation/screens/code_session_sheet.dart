@@ -128,7 +128,8 @@ class _CodeSessionSheetState extends ConsumerState<CodeSessionSheet> {
       model: effectiveModel,
       explicitExecutorId: explicitExecutorId ?? defaultModel?.executorId,
       executors: available,
-      fallbackRuntime: selectedExec?.id ?? 'opencode',
+      fallbackRuntime:
+          selectedExec?.id ?? CodeModelCatalog.preferredCoreRuntime(available),
     );
     final executor = available.cast<CodeExecutor?>().firstWhere(
           (item) => item?.id == resolvedExecutorId,
@@ -394,7 +395,11 @@ class _CodeSessionSheetState extends ConsumerState<CodeSessionSheet> {
                         model: selection.model,
                         explicitExecutorId: selection.executorId,
                         executors: availableExecutors,
-                        fallbackRuntime: selectedExecutor?.id ?? 'opencode',
+                        fallbackRuntime:
+                            selectedExecutor?.id ??
+                            CodeModelCatalog.preferredCoreRuntime(
+                              availableExecutors,
+                            ),
                       );
                       if (nextExecId.isNotEmpty &&
                           availableExecutors.any((e) => e.id == nextExecId)) {

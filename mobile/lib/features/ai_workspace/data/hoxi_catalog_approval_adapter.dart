@@ -18,11 +18,15 @@ class HoxiCatalogApprovalAdapter {
   final ApiClient _apiClient;
   final int Function(String raw) _stableId;
   List<CodeExecutor> _cachedExecutors = const [];
+  String _defaultCoreRuntime = 'opencode';
+  bool _openCodeDaemonReady = false;
   final Map<String, String> _attachmentDataUrls = {};
 
   HoxiCatalogApprovalAdapter(this._apiClient, this._stableId);
 
   List<CodeExecutor> get cachedExecutors => _cachedExecutors;
+  String get defaultCoreRuntime => _defaultCoreRuntime;
+  bool get openCodeDaemonReady => _openCodeDaemonReady;
 
   static final Options _uploadOptions = Options(
     sendTimeout: const Duration(seconds: 60),
@@ -348,8 +352,8 @@ class HoxiCatalogApprovalAdapter {
     final sysFuture = _apiClient
         .get<Map<String, dynamic>>('/api/hoxi/system-info')
         .timeout(const Duration(milliseconds: 5000))
-        .then((sys) => (sys.data?['openCodeVersion'] ?? '').toString())
-        .catchError((_) => '');
+        .then((sys) => sys.data)
+        .catchError((_) => null);
 
     final provFuture = _apiClient
         .get<dynamic>('/api/hoxi/provider/models')
@@ -420,7 +424,14 @@ class HoxiCatalogApprovalAdapter {
       ...runnerFutures,
     ]);
 
-    final openCodeVer = results[0] as String;
+    final sysMap = results[0] as Map<String, dynamic>?;
+    final openCodeVer = (sysMap?['openCodeVersion'] ?? '').toString().trim();
+    final appVersion = (sysMap?['appVersion'] ?? '').toString().trim();
+    final nativeEngineReady = sysMap?['nativeEngineReady'] == true;
+    final openCodeReady = sysMap?['openCodeReady'] == true;
+    final coreRuntimeId = nativeEngineReady ? 'native' : 'opencode';
+    _defaultCoreRuntime = coreRuntimeId;
+    _openCodeDaemonReady = nativeEngineReady ? openCodeReady : true;
     final provData = results[1];
     final builtInOpenCodeModels = <CodeExecutorOption>[];
     if (provData is Map) {
@@ -482,12 +493,12 @@ class HoxiCatalogApprovalAdapter {
         if (r is CodeExecutor) r,
     ];
 
-    final openCodeExecutor = CodeExecutor(
-      id: 'opencode',
-      name: 'OpenCode',
-      description: 'Hoxi 核心 Agent 引擎',
+    final coreExecutor = CodeExecutor(
+      id: coreRuntimeId,
+      name: nativeEngineReady ? 'Hoxi Native' : 'OpenCode',
+      description: nativeEngineReady ? 'Hoxi 原生 Agent 引擎' : 'Hoxi 核心 Agent 引擎',
       available: openCodeModels.isNotEmpty || runnerExecutors.isEmpty,
-      version: openCodeVer,
+      version: nativeEngineReady ? appVersion : openCodeVer,
       reason: '',
       nativeTerminal: false,
       capabilities: const [
@@ -503,9 +514,9 @@ class HoxiCatalogApprovalAdapter {
     );
 
     final executors = <CodeExecutor>[
-      if (hasConfiguredOpenCodeProvider) openCodeExecutor,
+      if (hasConfiguredOpenCodeProvider) coreExecutor,
       ...runnerExecutors,
-      if (!hasConfiguredOpenCodeProvider) openCodeExecutor,
+      if (!hasConfiguredOpenCodeProvider) coreExecutor,
     ];
     _cachedExecutors = executors;
     return executors;

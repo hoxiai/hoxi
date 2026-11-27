@@ -2354,6 +2354,16 @@ abstract class AppLocalizations {
   /// **'Deploy to {environment}?'**
   String codeFlowConfirmTitle(String environment);
 
+  /// No description provided for @codeFlowConfirmPreview.
+  ///
+  /// In en, this message translates to:
+  /// **'Deploy v{version} to {environment} ({website}). A health check runs before switching, and the previous version is kept if it fails.'**
+  String codeFlowConfirmPreview(
+    String version,
+    String environment,
+    String website,
+  );
+
   /// No description provided for @codeFlowConfirmProduction.
   ///
   /// In en, this message translates to:

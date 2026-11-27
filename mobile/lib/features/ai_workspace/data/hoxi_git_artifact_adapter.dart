@@ -21,7 +21,7 @@ class HoxiSessionTarget {
     required this.projectDir,
     required this.branch,
     this.sandboxMode = 'local',
-    this.runtime = 'opencode',
+    this.runtime = 'native',
   });
 
   bool get isIsolatedWorktree =>

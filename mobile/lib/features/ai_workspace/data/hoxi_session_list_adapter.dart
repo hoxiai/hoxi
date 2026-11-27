@@ -93,7 +93,10 @@ extension HoxiSessionListAdapter on HoxiWorkspaceAdapter {
         workDir,
         workDir,
       );
-      final runtime = (map['runtime'] ?? 'opencode').toString().trim();
+      final rawRuntime = (map['runtime'] ?? '').toString().trim();
+      final runtime = rawRuntime.isNotEmpty
+          ? rawRuntime
+          : (hoxiId.startsWith('ses_nat_') ? 'native' : '');
       final sandboxMode = HoxiSessionDiffScope.resolveSandboxMode(
         map,
         workDir,
@@ -129,9 +132,9 @@ extension HoxiSessionListAdapter on HoxiWorkspaceAdapter {
               (prev.hasLocalModelOverride || modelId.isEmpty))
           ? prev.modelId
           : modelId;
-      final resolvedRuntime = runtime.isEmpty
-          ? (prev?.runtime ?? 'opencode')
-          : runtime;
+      final resolvedRuntime = runtime.isNotEmpty
+          ? runtime
+          : (prev?.runtime ?? _catalogAdapter.defaultCoreRuntime);
       final approvalPolicy = prev?.approvalPolicy ?? 'safe_auto';
       final hasPendingApproval = (pendingApprovalCounts[hoxiId] ?? 0) > 0;
       final stage = hasPendingApproval

@@ -511,6 +511,7 @@ const Set<String> _placeholderSessionTitlesLower = <String>{
   'new session', 'new thread', 'untitled', 'new dialogue', 'image prompt',
   'claude code session', 'antigravity session', 'gemini cli session',
   'codebuddy session', 'qoder session', 'opencode session', 'codex session',
+  'hoxi native session', 'opencode cli session', 'codex cli session',
   '新会话', '新建会话', '新对话', '未命名', '未命名会话',
 };
 

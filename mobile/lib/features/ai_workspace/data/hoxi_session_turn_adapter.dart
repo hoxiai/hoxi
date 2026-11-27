@@ -138,7 +138,7 @@ extension _HoxiSessionTurnParsing on HoxiWorkspaceAdapter {
       return {'providerID': trimmed.substring(0, slashIdx), 'modelID': trimmed.substring(slashIdx + 1)};
     }
     final cleanRuntime = runtime.trim();
-    return {'providerID': cleanRuntime.isEmpty || cleanRuntime == 'opencode' ? '' : cleanRuntime, 'modelID': trimmed};
+    return {'providerID': cleanRuntime.isEmpty || CodeModelCatalog.isCoreEngine(cleanRuntime) ? '' : cleanRuntime, 'modelID': trimmed};
   }
 
   void _storeBoundedParsedRuns(_HoxiParsedSessionTurns parsed) {
@@ -413,10 +413,10 @@ extension _HoxiSessionTurnParsing on HoxiWorkspaceAdapter {
       }
       if (latestTurnModelId.isNotEmpty && !ref.hasLocalModelOverride) {
         final isRunner = CodeModelCatalog.isRunnerExecutor(latestTurnProviderId);
-        final candidateModel = isRunner ? latestTurnModelId : composeSessionModelId('opencode', latestTurnProviderId, latestTurnModelId);
+        final candidateModel = isRunner ? latestTurnModelId : composeSessionModelId(ref.runtime, latestTurnProviderId, latestTurnModelId);
         final turnRuntime = CodeModelCatalog.resolveRuntimeForModel(
-          model: candidateModel, explicitExecutorId: isRunner ? latestTurnProviderId : null,
-          executors: _catalogAdapter.cachedExecutors, fallbackRuntime: ref.runtime,
+          model: candidateModel, explicitExecutorId: isRunner ? latestTurnProviderId : (CodeModelCatalog.isCoreEngine(ref.runtime) ? ref.runtime : null),
+          executors: _catalogAdapter.cachedExecutors, fallbackRuntime: ref.runtime, openCodeDaemonReady: _catalogAdapter.openCodeDaemonReady,
         );
         final turnModel = composeSessionModelId(turnRuntime, latestTurnProviderId, latestTurnModelId);
         ref = ref.copyWith(
@@ -696,7 +696,8 @@ extension _HoxiSessionTurnParsing on HoxiWorkspaceAdapter {
       final workDir = entry.workDir, createdAt = entry.createdAt, updatedAt = entry.updatedAt;
       final effectiveDir = workDir.isNotEmpty ? workDir : proj.workDir;
       final sourceDir = _HoxiSessionTurnParsing.resolveSourceWorkDir(map, workDir, proj.workDir);
-      final runtime = (map['runtime'] ?? 'opencode').toString().trim();
+      final rawRt = (map['runtime'] ?? '').toString().trim();
+      final runtime = rawRt.isNotEmpty ? rawRt : (hoxiId.startsWith('ses_nat_') ? 'native' : _catalogAdapter.defaultCoreRuntime);
       final sandboxMode = HoxiSessionDiffScope.resolveSandboxMode(map, workDir);
       final branch = (map['branch'] ?? '').toString(), title = (map['title'] ?? 'New Session').toString();
       final modelId = extractSessionModelFromMap(map, runtime: runtime);
@@ -716,8 +717,8 @@ extension _HoxiSessionTurnParsing on HoxiWorkspaceAdapter {
       final resolvedRuntime = keepModel && prev.runtime.isNotEmpty
           ? prev.runtime
           : CodeModelCatalog.resolveRuntimeForModel(
-              model: resolvedModelId, explicitExecutorId: runtime,
-              executors: _catalogAdapter.cachedExecutors, fallbackRuntime: runtime.isEmpty ? (prev?.runtime ?? 'opencode') : runtime,
+              model: resolvedModelId, explicitExecutorId: runtime, executors: _catalogAdapter.cachedExecutors,
+              fallbackRuntime: runtime.isEmpty ? (prev?.runtime ?? _catalogAdapter.defaultCoreRuntime) : runtime, openCodeDaemonReady: _catalogAdapter.openCodeDaemonReady,
             );
       final reasoningEffort = keepEffort ? prev.reasoningEffort : (rawEffort.isNotEmpty ? rawEffort : (prev?.reasoningEffort ?? ''));
       final approvalPolicy = prev?.approvalPolicy ?? 'safe_auto';

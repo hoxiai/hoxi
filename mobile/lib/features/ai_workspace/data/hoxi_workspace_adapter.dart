@@ -187,10 +187,12 @@ class HoxiWorkspaceAdapter {
         (_projectsById.values.isNotEmpty ? _projectsById.values.first : null);
     final workDir = proj?.workDir ?? '';
     var trimmedModel = model.trim();
-    var runtime = executorId.trim().isEmpty ? 'opencode' : executorId.trim();
     final execs = _catalogAdapter.cachedExecutors.isNotEmpty
         ? _catalogAdapter.cachedExecutors
         : await getExecutors().catchError((_) => const <CodeExecutor>[]);
+    var runtime = executorId.trim().isEmpty
+        ? CodeModelCatalog.preferredCoreRuntime(execs, fallback: _catalogAdapter.defaultCoreRuntime)
+        : executorId.trim();
     if (trimmedModel.isEmpty && execs.isNotEmpty) {
       final defModel = CodeModelCatalog.resolvePreferredModelForExecutors(
         execs, executorIdHint: runtime,
@@ -201,8 +203,8 @@ class HoxiWorkspaceAdapter {
       }
     } else if (trimmedModel.isNotEmpty) {
       runtime = CodeModelCatalog.resolveRuntimeForModel(
-        model: trimmedModel, explicitExecutorId: executorId,
-        executors: execs, fallbackRuntime: runtime,
+        model: trimmedModel, explicitExecutorId: executorId, executors: execs,
+        fallbackRuntime: runtime, openCodeDaemonReady: _catalogAdapter.openCodeDaemonReady,
       );
       unawaited(
         CodeModelCatalog.saveLastSelection(
@@ -229,6 +231,8 @@ class HoxiWorkspaceAdapter {
       },
     );
     final data = res.data ?? const <String, dynamic>{};
+    final serverRuntime = (data['runtime'] ?? '').toString().trim();
+    if (serverRuntime.isNotEmpty) runtime = serverRuntime;
     final hoxiId = (data['id'] ?? '').toString().trim();
     final intId = stablePositiveIntId(hoxiId.isEmpty ? DateTime.now().toIso8601String() : hoxiId);
     final sessionDir = (data['directory'] ?? data['worktreePath'] ?? workDir).toString();
@@ -407,10 +411,13 @@ class HoxiWorkspaceAdapter {
     final ref = await _resolveSessionRef(sessionId);
     final nextModel = model != null ? model.trim() : ref.modelId;
     final hasExecArg = executorId != null && executorId.trim().isNotEmpty;
+    final needExecs = _catalogAdapter.cachedExecutors.isEmpty && (model != null || hasExecArg) &&
+        ((hasExecArg && executorId.trim() == 'opencode') || (!CodeModelCatalog.isCoreEngine(ref.runtime) && nextModel.contains('/')));
+    final execs = needExecs ? await getExecutors().catchError((_) => const <CodeExecutor>[]) : _catalogAdapter.cachedExecutors;
     final nextRuntime = (model != null || hasExecArg)
         ? CodeModelCatalog.resolveRuntimeForModel(
-            model: nextModel, explicitExecutorId: executorId,
-            executors: _catalogAdapter.cachedExecutors, fallbackRuntime: ref.runtime,
+            model: nextModel, explicitExecutorId: executorId, executors: execs,
+            fallbackRuntime: ref.runtime, openCodeDaemonReady: _catalogAdapter.openCodeDaemonReady,
           )
         : ref.runtime;
     final updated = ref.copyWith(
@@ -421,12 +428,7 @@ class HoxiWorkspaceAdapter {
     );
     _sessionsById[sessionId] = updated;
     if ((model != null || hasExecArg) && nextModel.isNotEmpty) {
-      unawaited(
-        CodeModelCatalog.saveLastSelection(
-          model: nextModel,
-          executorId: nextRuntime,
-        ),
-      );
+      unawaited(CodeModelCatalog.saveLastSelection(model: nextModel, executorId: nextRuntime));
     }
     if (nextRuntime != ref.runtime || (model != null && nextModel != ref.modelId)) {
       await _syncSessionRuntime(ref.hoxiId, ref.directory, nextRuntime, nextModel);
@@ -537,7 +539,7 @@ class HoxiWorkspaceAdapter {
   }) async {
     _stoppedUntilBySessionId.remove(sessionId);
     var ref = await _resolveSessionRef(sessionId);
-    if (ref.runtime == 'opencode' && ref.modelId.trim().isEmpty) {
+    if (CodeModelCatalog.isCoreEngine(ref.runtime) && ref.modelId.trim().isEmpty) {
       final execs = _catalogAdapter.cachedExecutors.isNotEmpty
           ? _catalogAdapter.cachedExecutors
           : await getExecutors().catchError((_) => const <CodeExecutor>[]);
@@ -551,9 +553,12 @@ class HoxiWorkspaceAdapter {
         _sessionsById[sessionId] = ref;
       }
     } else if (ref.modelId.trim().isNotEmpty) {
+      final execs = _catalogAdapter.cachedExecutors.isEmpty && ref.runtime == 'opencode'
+          ? await getExecutors().catchError((_) => const <CodeExecutor>[])
+          : _catalogAdapter.cachedExecutors;
       final targetRuntime = CodeModelCatalog.resolveRuntimeForModel(
-        model: ref.modelId, explicitExecutorId: ref.runtime,
-        executors: _catalogAdapter.cachedExecutors, fallbackRuntime: ref.runtime,
+        model: ref.modelId, explicitExecutorId: ref.runtime, executors: execs,
+        fallbackRuntime: ref.runtime, openCodeDaemonReady: _catalogAdapter.openCodeDaemonReady,
       );
       if (targetRuntime != ref.runtime) {
         await _syncSessionRuntime(ref.hoxiId, ref.directory, targetRuntime, ref.modelId);

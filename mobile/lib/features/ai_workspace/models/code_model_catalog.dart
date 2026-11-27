@@ -291,7 +291,7 @@ class CodeModelCatalog {
 
     if (orderedExecutors.isEmpty) {
       final fallbackId = executorIdHint.trim().isEmpty
-          ? 'opencode'
+          ? 'native'
           : executorIdHint.trim();
       final options = effectiveModelOptions(
         null,
@@ -485,20 +485,41 @@ class CodeModelCatalog {
     return false;
   }
 
+  static bool isCoreEngine(String executorId) {
+    final normalized = executorId.trim().toLowerCase();
+    return normalized == 'native' || normalized == 'opencode';
+  }
+
+  static String preferredCoreRuntime(
+    List<CodeExecutor> executors, {
+    String fallback = 'opencode',
+  }) {
+    if (executors.any((e) => e.id == 'native')) return 'native';
+    if (executors.any((e) => e.id == 'opencode')) return 'opencode';
+    final clean = fallback.trim().toLowerCase();
+    return isCoreEngine(clean) ? clean : 'opencode';
+  }
+
   /// 根据所选模型与当前可用执行器推导目标运行时（对齐桌面端 resolveRunnerRuntimeForProvider）。
   static String resolveRuntimeForModel({
     required String model,
     String? explicitExecutorId,
     List<CodeExecutor> executors = const [],
     String fallbackRuntime = 'opencode',
+    bool openCodeDaemonReady = false,
   }) {
     final trimmedModel = model.trim();
     final explicit = (explicitExecutorId ?? '').trim();
     final cleanFallback = fallbackRuntime.trim().isEmpty
-        ? 'opencode'
+        ? preferredCoreRuntime(executors)
         : fallbackRuntime.trim();
 
     if (trimmedModel.isNotEmpty) {
+      final slashIdx = trimmedModel.indexOf('/');
+      final hasSlash = slashIdx > 0 && slashIdx < trimmedModel.length - 1;
+      final slashPrefix = hasSlash
+          ? trimmedModel.substring(0, slashIdx).trim().toLowerCase()
+          : '';
       if (explicit.isNotEmpty) {
         final explicitMatch = executors.any(
           (e) =>
@@ -508,13 +529,23 @@ class CodeModelCatalog {
               ),
         );
         if (explicitMatch) return _canonicalRunnerId(explicit);
-        if (explicit != 'opencode' &&
+        if (!isCoreEngine(explicit) &&
             _isRunnerExecutor(explicit) &&
             !trimmedModel.contains('/')) {
           return _canonicalRunnerId(explicit);
         }
-        if (explicit == 'opencode' && trimmedModel.contains('/')) {
-          return 'opencode';
+        if (isCoreEngine(explicit) && hasSlash && !_isRunnerExecutor(slashPrefix)) {
+          final canonicalExplicit = _canonicalRunnerId(explicit);
+          final hasExplicitExec = executors.any((e) => e.id == canonicalExplicit);
+          final hasOtherCoreExec = executors.any(
+            (e) => isCoreEngine(e.id) && e.id != canonicalExplicit,
+          );
+          if (canonicalExplicit == 'native' ||
+              hasExplicitExec ||
+              !hasOtherCoreExec ||
+              (canonicalExplicit == 'opencode' && openCodeDaemonReady)) {
+            return canonicalExplicit;
+          }
         }
       }
       final fallbackMatch = executors.any(
@@ -529,24 +560,30 @@ class CodeModelCatalog {
         }
       }
 
-      final slashIdx = trimmedModel.indexOf('/');
-      if (slashIdx > 0 && slashIdx < trimmedModel.length - 1) {
-        final prefix = trimmedModel.substring(0, slashIdx).trim().toLowerCase();
-        if (_isRunnerExecutor(prefix)) {
-          final inOpenCode = executors.any(
+      if (hasSlash) {
+        if (_isRunnerExecutor(slashPrefix)) {
+          final inCore = executors.any(
             (e) =>
-                e.id == 'opencode' &&
+                isCoreEngine(e.id) &&
                 e.modelOptions.any((o) => o.value.trim() == trimmedModel),
           );
-          if (!inOpenCode) return _canonicalRunnerId(prefix);
+          if (!inCore) return _canonicalRunnerId(slashPrefix);
         }
-        return 'opencode';
+        final fallbackCore = isCoreEngine(explicit)
+            ? explicit
+            : (isCoreEngine(cleanFallback) ? cleanFallback : 'opencode');
+        return preferredCoreRuntime(executors, fallback: fallbackCore);
       }
 
-      if (explicit.isNotEmpty && explicit != 'opencode') {
+      if (trimmedModel.toLowerCase() == 'auto') {
+        if (explicit.isNotEmpty) return _canonicalRunnerId(explicit);
+        return _canonicalRunnerId(cleanFallback);
+      }
+      if (explicit.isNotEmpty &&
+          (!isCoreEngine(explicit) || explicit == 'native')) {
         return _canonicalRunnerId(explicit);
       }
-      if (cleanFallback != 'opencode' && _isRunnerExecutor(cleanFallback)) {
+      if (!isCoreEngine(cleanFallback) && _isRunnerExecutor(cleanFallback)) {
         return _canonicalRunnerId(cleanFallback);
       }
       for (final runnerId in const [
@@ -557,6 +594,10 @@ class CodeModelCatalog {
         'codebuddy',
         'codex',
       ]) {
+        if (executors.isNotEmpty &&
+            !executors.any((e) => e.id == runnerId && e.available)) {
+          continue;
+        }
         if (fallbackOptionsForExecutor(
           runnerId,
         ).any((o) => o.value.trim() == trimmedModel)) {
@@ -571,6 +612,8 @@ class CodeModelCatalog {
 
   static String _canonicalRunnerId(String raw) {
     return switch (raw.trim().toLowerCase()) {
+      'native' => 'native',
+      'opencode' => 'opencode',
       'claude' || 'claude-code' => 'claude-code',
       'agy' || 'antigravity' => 'antigravity',
       'gemini' || 'gemini-cli' => 'gemini-cli',
@@ -714,6 +757,7 @@ class CodeModelCatalog {
 
   static String _defaultExecutorName(String executorId) {
     return switch (executorId.trim().toLowerCase()) {
+      'native' => 'Hoxi Native',
       'opencode' => 'OpenCode',
       'claude-code' || 'claude' => 'Claude Code',
       'antigravity' || 'agy' => 'Antigravity',

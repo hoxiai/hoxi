@@ -205,7 +205,7 @@ class _CodeHubScreenState extends ConsumerState<CodeHubScreen> {
       taskId: task?.id ?? (session.lastTaskId > 0 ? session.lastTaskId : session.id),
       sessionId: session.id,
       projectId: resolvedProjectId,
-      agentName: session.agentName.isNotEmpty ? session.agentName : (task?.agentName ?? 'opencode'),
+      agentName: session.agentName.isNotEmpty ? session.agentName : (task?.agentName ?? 'native'),
       providerModel: session.providerModel.isNotEmpty ? session.providerModel : (task?.providerModel ?? ''),
       projectName: projectName,
       sourceWorkDir: session.sourceWorkDir,
