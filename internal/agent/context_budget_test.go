@@ -640,7 +640,7 @@ func TestCrossTurnContextTrackerWarmInPlaceCompactionAndRejections(t *testing.T)
 		ModelID:         "gpt-5",
 		History:         history,
 		UserPrompt:      "Turn 1 prompt",
-		onFinalMessages: func(m []Message) { turn1Final = append([]Message(nil), m...) },
+		OnFinalMessages: func(m []Message) { turn1Final = append([]Message(nil), m...) },
 	}); err != nil {
 		t.Fatalf("Turn 1 failed: %v", err)
 	}
@@ -694,11 +694,12 @@ func TestCrossTurnContextTrackerWarmInPlaceCompactionAndRejections(t *testing.T)
 		ProviderID:      "openai",
 		ModelID:         "gpt-5",
 		UserPrompt:      "hello",
-		onFinalMessages: func(m []Message) { dropTurn1 = append([]Message(nil), m...) },
+		OnFinalMessages: func(m []Message) { dropTurn1 = append([]Message(nil), m...) },
 	}); err != nil {
 		t.Fatalf("drop Turn 1 failed: %v", err)
 	}
 	now = now.Add(20 * time.Second)
+	var reportedDrop *llm.PromptCacheDrop
 	if err := dropEng.RunTurn(context.Background(), TurnRequest{
 		SessionID:   sessDrop,
 		WorktreeDir: ws,
@@ -707,12 +708,20 @@ func TestCrossTurnContextTrackerWarmInPlaceCompactionAndRejections(t *testing.T)
 		ModelID:     "gpt-5",
 		History:     dropTurn1,
 		UserPrompt:  "follow up",
+		Sink: EventSinkFunc(func(evt EngineEvent) {
+			if evt.Kind == EngineTurnUsage && evt.Usage != nil {
+				reportedDrop = evt.Usage.CacheDrop
+			}
+		}),
 	}); err != nil {
 		t.Fatalf("drop Turn 2 failed: %v", err)
 	}
+	if reportedDrop == nil || *reportedDrop != (llm.PromptCacheDrop{Cause: "local_prefix_unchanged", Before: 10000, After: 0}) {
+		t.Fatalf("turn usage lost cross-turn cache telemetry: %+v", reportedDrop)
+	}
 	foundDropDiag := false
 	for _, entry := range recordedDiags {
-		if entry.SessionID == sessDrop && entry.Kind == "cache" && strings.Contains(entry.Message, "upstream_evicted_prefix_unchanged") {
+		if entry.SessionID == sessDrop && entry.Kind == "cache" && strings.Contains(entry.Message, "local_prefix_unchanged") {
 			foundDropDiag = true
 			break
 		}
@@ -729,8 +738,8 @@ func TestCrossTurnContextTrackerWarmInPlaceCompactionAndRejections(t *testing.T)
 
 	baseTracker := newContextTokenTracker()
 	baseTracker.nowFn = func() time.Time { return now }
-	baseTracker.ObserveStep(m1, "sys", specs, TokenUsage{Input: 500, CacheRead: 9500})
-	baseTracker.ObservePrefixCacheStability("ses_rej", llm.StreamTarget{ProviderID: "openai", ModelID: "gpt-5"}, "ses_rej", "sys", specs, m1, TokenUsage{Input: 500, CacheRead: 9500})
+	baseTracker.ObserveStep(m1, "sys", specs, TokenUsage{Input: 500, CacheRead: 9500, ReportedCacheInput: 10000})
+	baseTracker.ObservePrefixCacheStability("ses_rej", llm.StreamTarget{ProviderID: "openai", ModelID: "gpt-5"}, "ses_rej", "sys", specs, m1, TokenUsage{Input: 500, CacheRead: 9500, ReportedCacheInput: 10000})
 	snap, ok := baseTracker.Snapshot()
 	if !ok {
 		t.Fatal("expected valid snapshot")

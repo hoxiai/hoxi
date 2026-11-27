@@ -676,7 +676,7 @@ func classifyPrefixCacheChange(prev, cur prefixFingerprint) (cause string, share
 		reasons = append(reasons, fmt.Sprintf("history_mutated_at=%d/%d", sharedMsgs, len(prev.msgHashes)))
 	}
 	if len(reasons) == 0 {
-		return "upstream_evicted_prefix_unchanged", sharedMsgs
+		return "local_prefix_unchanged", sharedMsgs
 	}
 	return strings.Join(reasons, "+"), sharedMsgs
 }
@@ -685,7 +685,7 @@ func classifyPrefixCacheChange(prev, cur prefixFingerprint) (cause string, share
 // prompt prefix against the previous step without retaining any raw prompt or
 // message bodies. When a previously warm prompt cache drops by >50%, it logs
 // a metadata-only diagnostic pinpointing whether Hoxi mutated the prefix or
-// the upstream cache evicted an unchanged prefix.
+// Hoxi observed a stable prefix while the reported cache reads dropped.
 func (t *contextTokenTracker) ObservePrefixCacheStability(
 	sessionID string,
 	target llm.StreamTarget,
@@ -693,15 +693,20 @@ func (t *contextTokenTracker) ObservePrefixCacheStability(
 	toolSpecs []ToolSpec,
 	sentMsgs []Message,
 	u TokenUsage,
-) {
+) *llm.PromptCacheDrop {
 	if t == nil {
-		return
+		return nil
 	}
 	cur := computePrefixFingerprint(cacheKey, fullSystem, toolSpecs, sentMsgs, u.CacheRead)
 	prev := t.lastFingerprint
 	t.lastFingerprint = cur
+	if u.ReportedCacheInput == 0 {
+		// History replay and token calibration still need this fingerprint.
+		t.lastFingerprint.cacheRead = 0
+		return nil
+	}
 	if !prev.valid || prev.cacheRead < minCacheDropBaselineTokens || cur.cacheRead >= prev.cacheRead/2 {
-		return
+		return nil
 	}
 	cause, shared := classifyPrefixCacheChange(prev, cur)
 	recordCacheDiagnostic(diagnostics.Entry{
@@ -713,4 +718,5 @@ func (t *contextTokenTracker) ObservePrefixCacheStability(
 		ModelID:    target.ModelID,
 		Message:    fmt.Sprintf("prompt cache drop: %s (cacheRead %d -> %d, sharedMsgs %d/%d)", cause, prev.cacheRead, cur.cacheRead, shared, len(prev.msgHashes)),
 	})
+	return &llm.PromptCacheDrop{Cause: cause, Before: prev.cacheRead, After: cur.cacheRead}
 }

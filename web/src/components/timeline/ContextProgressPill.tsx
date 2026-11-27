@@ -21,6 +21,18 @@ function formatTokenValue(n: number): string {
   return n > 0 ? formatCompactNumber(n, { maxDecimals: 1 }) : "—";
 }
 
+function cacheDropDescription(cause: string): string {
+  const reasons = cause.split("+");
+  const labels: string[] = [];
+  if (reasons.includes("cache_key_changed")) labels.push(t("timeline.cacheKeyChanged"));
+  if (reasons.includes("system_changed")) labels.push(t("timeline.cacheSystemChanged"));
+  if (reasons.includes("tools_changed")) labels.push(t("timeline.cacheToolsChanged"));
+  if (reasons.includes("media_pruned")) labels.push(t("timeline.cacheMediaPruned"));
+  else if (reasons.some((r) => r.startsWith("history_mutated_at="))) labels.push(t("timeline.cacheHistoryChanged"));
+  if (reasons.includes("local_prefix_unchanged")) labels.push(t("timeline.cacheStablePrefix"));
+  return labels.join(" · ");
+}
+
 function contributorLabel(part: MessagePart, role: "user" | "assistant"): string {
   switch (part.type) {
     case "text":
@@ -273,7 +285,17 @@ export default function ContextProgressPill() {
                       {formatTokenValue(s().cacheRead)}
                     </dd>
                   </div>
+                  <div class="flex items-baseline justify-between gap-2">
+                    <dt class="text-[var(--text-muted)]">{t("timeline.cacheInputShare")}</dt>
+                    <dd class="font-mono tabular-nums">{s().cacheHitPercent === null ? t("timeline.cacheUnreported") : `${s().cacheHitPercent}%`}</dd>
+                  </div>
                 </dl>
+                <Show when={s().lastCacheDrop}>
+                  {(drop) => <p class="mt-2 text-[var(--text-muted)]">
+                    {t("timeline.cacheDrop", { before: formatCompactNumber(drop().before), after: formatCompactNumber(drop().after) })}
+                    {" · "}{cacheDropDescription(drop().cause)}
+                  </p>}
+                </Show>
               </div>
 
               <Show when={topContributors().length > 0}>

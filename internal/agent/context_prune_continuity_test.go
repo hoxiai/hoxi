@@ -69,8 +69,8 @@ func TestSeedFromPriorTurnWithPruneRestoresWarmPrunedPrefix(t *testing.T) {
 		t.Fatal("live pruning must invalidate only historical reasoning after the first changed tool result")
 	}
 	t1Tracker.RebaseAfterPrune(unprunedTurn1, prunedTurn1, fullSystem, specs)
-	t1Tracker.ObserveStep(prunedTurn1, fullSystem, specs, TokenUsage{Input: 500, CacheRead: 5500})
-	t1Tracker.ObservePrefixCacheStability("ses_prune_cont", target, "ses_prune_cont", fullSystem, specs, prunedTurn1, TokenUsage{Input: 500, CacheRead: 5500})
+	t1Tracker.ObserveStep(prunedTurn1, fullSystem, specs, TokenUsage{Input: 500, CacheRead: 5500, ReportedCacheInput: 6000})
+	t1Tracker.ObservePrefixCacheStability("ses_prune_cont", target, "ses_prune_cont", fullSystem, specs, prunedTurn1, TokenUsage{Input: 500, CacheRead: 5500, ReportedCacheInput: 6000})
 	snap, ok := t1Tracker.Snapshot()
 	if !ok || !snap.prunedInTurn || snap.prePrunePrompt <= thresholds.triggerTokens {
 		t.Fatalf("expected snapshot to record prunedInTurn and prePrunePrompt > trigger, got %+v", snap)
@@ -96,6 +96,17 @@ func TestSeedFromPriorTurnWithPruneRestoresWarmPrunedPrefix(t *testing.T) {
 		if !messageBlocksIdentical(prunedTurn1[i], adopted[i]) {
 			t.Fatalf("adopted Turn 2 message[%d] diverged from Turn 1 pruned prefix", i)
 		}
+	}
+
+	// A provider may report total input while omitting the cache-read breakdown.
+	unreported := TokenUsage{Input: 6000}
+	t1Tracker.ObserveStep(prunedTurn1, fullSystem, specs, unreported)
+	t1Tracker.ObservePrefixCacheStability("ses_prune_cont", target, "ses_prune_cont", fullSystem, specs, prunedTurn1, unreported)
+	unreportedSnap, ok := t1Tracker.Snapshot()
+	next := newContextTokenTracker()
+	replayed := next.SeedFromPriorTurnWithPrune(unreportedSnap, now.Add(30*time.Second), "ses_prune_cont", fullSystem, "", specs, thresholds, turn2Unpruned)
+	if !ok || !next.anchored || !messagesSliceMutated(turn2Unpruned, replayed) {
+		t.Fatal("missing cache telemetry prevented replay of a verified pruned prefix")
 	}
 
 	// Rejection: if Turn 2 history actually mutated earlier text, SeedFromPriorTurnWithPrune MUST NOT prune or mark warm.

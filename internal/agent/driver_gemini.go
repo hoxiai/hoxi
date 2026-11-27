@@ -163,6 +163,8 @@ func (d *geminiDriver) ParseSSE(ctx context.Context, body io.Reader, emit func(S
 			input := max(0, intFromAny(um["promptTokenCount"])) + max(0, intFromAny(um["toolUsePromptTokenCount"]))
 			usage.CacheRead = min(input, max(0, intFromAny(um["cachedContentTokenCount"])))
 			usage.Input = input - usage.CacheRead
+			usage.ReportedCacheInput = 0
+			recordCacheCoverage(&usage, um["cachedContentTokenCount"])
 			usage.Output = max(0, intFromAny(um["candidatesTokenCount"]))
 			usage.Reasoning = max(0, intFromAny(um["thoughtsTokenCount"]))
 		}

@@ -208,13 +208,15 @@ type MessageTime struct {
 }
 
 type MessageTokens struct {
-	Summary   *llm.TokenUsage `json:"summary,omitempty"` // Already included in the cumulative billing buckets.
-	Total     int             `json:"total"`
-	Context   int             `json:"context,omitempty"`
-	Input     int             `json:"input"`
-	Output    int             `json:"output"`
-	Reasoning int             `json:"reasoning"`
-	Cache     struct {
+	ReportedCacheInput int                  `json:"reportedCacheInput,omitempty"`
+	CacheDrop          *llm.PromptCacheDrop `json:"cacheDrop,omitempty"`
+	Summary            *llm.TokenUsage      `json:"summary,omitempty"` // Already included in the cumulative billing buckets.
+	Total              int                  `json:"total"`
+	Context            int                  `json:"context,omitempty"`
+	Input              int                  `json:"input"`
+	Output             int                  `json:"output"`
+	Reasoning          int                  `json:"reasoning"`
+	Cache              struct {
 		Write int `json:"write"`
 		Read  int `json:"read"`
 	} `json:"cache"`

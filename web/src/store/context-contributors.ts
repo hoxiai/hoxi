@@ -1,5 +1,5 @@
 import { createMemo, mapArray, type Accessor } from "solid-js";
-import type { MessagePart } from "../services/sse-types";
+import type { MessagePart, MessageTokens } from "../services/sse-types";
 import type { MessageTurn } from "./workspace-state";
 
 export interface ContextContributor {
@@ -20,6 +20,8 @@ export interface SessionContextWatermarkStats {
   cacheRead: number;
   cacheWrite: number;
   totalCost: number;
+  cacheHitPercent: number | null;
+  lastCacheDrop?: MessageTokens["cacheDrop"];
 }
 
 /**
@@ -40,12 +42,15 @@ export function computeSessionContextWatermark(
   let latestContext = 0;
   let latestReasoningPartCount = 0;
   let totalCost = 0;
+  let cacheHitPercent: number | null = null;
+  let lastCacheDrop: MessageTokens["cacheDrop"];
 
   for (const turn of turns) {
     if (typeof turn.info.cost === "number") {
       totalCost += turn.info.cost;
     }
     const t = turn.info.tokens;
+    if (t?.cacheDrop) lastCacheDrop = t.cacheDrop;
     if (
       t &&
       ((t.context ?? 0) > 0 ||
@@ -59,6 +64,9 @@ export function computeSessionContextWatermark(
       latestReasoning = t.reasoning || 0;
       latestCacheRead = t.cache?.read || 0;
       latestCacheWrite = t.cache?.write || 0;
+      const inputPool = latestInput + latestCacheRead + latestCacheWrite;
+      cacheHitPercent = inputPool > 0 && t.reportedCacheInput === inputPool
+        ? Math.round(100 * latestCacheRead / inputPool) : null;
       latestTotal = t.total || 0;
       latestContext = t.context || 0;
       latestReasoningPartCount = turn.parts.filter((p) => p.type === "reasoning").length;
@@ -102,6 +110,8 @@ export function computeSessionContextWatermark(
     cacheRead: latestCacheRead,
     cacheWrite: latestCacheWrite,
     totalCost,
+    cacheHitPercent,
+    lastCacheDrop,
   };
 }
 

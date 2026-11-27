@@ -63,9 +63,10 @@ type TurnRequest struct {
 	AskQuestion             QuestionAsker
 	MCPConfig               MCPConfigSource
 	projectConfig           map[string]any
-	onFinalMessages         func([]Message)
-	HostInvoke              HostInvokeHook
-	Sink                    EventSink
+	// OnFinalMessages receives the canonical history for a subsequent turn.
+	OnFinalMessages func([]Message)
+	HostInvoke      HostInvokeHook
+	Sink            EventSink
 }
 
 // Engine runs an in-process agentic loop using injected factories and hooks.
@@ -300,8 +301,8 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 		Role:    RoleUser,
 		Content: userContent,
 	})
-	if req.onFinalMessages != nil {
-		defer func() { req.onFinalMessages(msgs) }()
+	if req.OnFinalMessages != nil {
+		defer func() { req.OnFinalMessages(msgs) }()
 	}
 	effectiveCacheKey := strings.TrimSpace(req.CacheKey)
 	if effectiveCacheKey == "" {
@@ -560,7 +561,12 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 			}
 
 			var parseErr error
-			streamed, parseErr = collectStepStream(stepStreamCtx, cancelStepStream, drv, resp.Body, target, step, nextPartID, emit)
+			streamed, parseErr = collectStepStream(stepStreamCtx, cancelStepStream, drv, resp.Body, target, step, nextPartID, func(evt EngineEvent) {
+				if evt.Kind == EngineTurnUsage && evt.Usage != nil {
+					evt.Usage.CacheDrop = tokenTracker.ObservePrefixCacheStability(req.SessionID, target, effectiveCacheKey, fullSystem, toolSpecs, msgs, *evt.Usage)
+				}
+				emit(evt)
+			})
 			_ = resp.Body.Close()
 			cancelStepStream()
 			if parseErr == nil {
@@ -642,11 +648,6 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 
 		if streamed.usage != nil {
 			tokenTracker.ObserveStep(msgs, fullSystem, toolSpecs, *streamed.usage)
-			cacheKey := strings.TrimSpace(req.CacheKey)
-			if cacheKey == "" {
-				cacheKey = strings.TrimSpace(req.SessionID)
-			}
-			tokenTracker.ObservePrefixCacheStability(req.SessionID, target, cacheKey, fullSystem, toolSpecs, msgs, *streamed.usage)
 		}
 
 		if len(streamed.toolCalls) > 0 {

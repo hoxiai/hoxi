@@ -80,15 +80,25 @@ func (p ModelPricing) ComputeUSD(inTokens, outTokens, reasoningTokens, cacheRead
 	return total
 }
 
+// PromptCacheDrop records observable changes to Hoxi's request prefix.
+type PromptCacheDrop struct {
+	Cause  string `json:"cause"`
+	Before int    `json:"before"`
+	After  int    `json:"after"`
+}
+
 // TokenUsage contains disjoint billing buckets for one request or a sum of requests.
 type TokenUsage struct {
-	Input       int     `json:"input"`
-	Output      int     `json:"output"`
-	Reasoning   int     `json:"reasoning"`
-	CacheRead   int     `json:"cacheRead"`
-	CacheWrite  int     `json:"cacheWrite"`
-	CostUSD     float64 `json:"costUSD"`
-	ServiceTier string  `json:"serviceTier,omitempty"`
+	Input      int `json:"input"`
+	Output     int `json:"output"`
+	Reasoning  int `json:"reasoning"`
+	CacheRead  int `json:"cacheRead"`
+	CacheWrite int `json:"cacheWrite"`
+	// ReportedCacheInput counts input tokens in requests with explicit cache-read telemetry.
+	ReportedCacheInput int              `json:"reportedCacheInput,omitempty"`
+	CacheDrop          *PromptCacheDrop `json:"cacheDrop,omitempty"`
+	CostUSD            float64          `json:"costUSD"`
+	ServiceTier        string           `json:"serviceTier,omitempty"`
 }
 
 func (u *TokenUsage) Add(v TokenUsage) {
@@ -97,6 +107,7 @@ func (u *TokenUsage) Add(v TokenUsage) {
 	u.Reasoning += v.Reasoning
 	u.CacheRead += v.CacheRead
 	u.CacheWrite += v.CacheWrite
+	u.ReportedCacheInput += v.ReportedCacheInput
 	u.CostUSD += v.CostUSD
 }
 

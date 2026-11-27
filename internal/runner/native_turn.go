@@ -607,6 +607,9 @@ func (s *Service) launchNativeTurn(
 					if evt.Kind == NativeEventSummaryUsage {
 						summaryUsage.Add(*evt.Usage)
 					}
+					if evt.Kind == NativeEventTurnUsage && evt.Usage.CacheDrop != nil {
+						totalUsage.CacheDrop = evt.Usage.CacheDrop
+					}
 					if evt.Usage.ServiceTier != "" {
 						totalUsage.ServiceTier = evt.Usage.ServiceTier
 						tr.MsgInfo.ServiceTier = evt.Usage.ServiceTier
@@ -780,6 +783,8 @@ func buildNativeMessageTokens(total, latestParent, summary NativeTokenUsage) *Me
 	if summary != (NativeTokenUsage{}) {
 		tok.Summary = &summary
 	}
+	tok.ReportedCacheInput = total.ReportedCacheInput
+	tok.CacheDrop = total.CacheDrop
 	tok.Cache.Read = total.CacheRead
 	tok.Cache.Write = total.CacheWrite
 	return tok

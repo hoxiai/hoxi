@@ -1,31 +1,32 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/agent"
 	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
-const maxVerifyOutputBytes = 64 * 1024
-
 // Task defines one self-contained, real-toolchain coding benchmark task.
 type Task struct {
-	ID          string
-	Language    string
-	Category    string
-	Description string
-	Prompt      string
-	RequireTool string
-	Files       map[string]string
-	VerifyCmd   []string
+	ID              string
+	Language        string
+	Category        string
+	Description     string
+	Prompt          string
+	FollowUps       []string
+	FirstTurnCheck  []string
+	InitialHistory  []agent.Message
+	RequireTool     string
+	Files           map[string]string
+	AcceptanceTests map[string]string
+	VerifyCmd       []string
 }
 
 // BuiltinTasks returns the curated cross-language coding evaluation suite.
@@ -37,6 +38,8 @@ func BuiltinTasks() []Task {
 		taskJSSemverSort(),
 		taskJSONConfigRepair(),
 		taskPyRateLimiter(),
+		taskKeyMigration(),
+		taskReportReplay(),
 	}
 }
 
@@ -105,6 +108,8 @@ func ParseRetryAfter(header string, now time.Time) (time.Duration, bool) {
 	return 0, false
 }
 `,
+		},
+		AcceptanceTests: map[string]string{
 			"retry_test.go": `package evalretry
 
 import (
@@ -247,6 +252,8 @@ func (c *Cache) Len() int {
 	return c.ll.Len()
 }
 `,
+		},
+		AcceptanceTests: map[string]string{
 			"lru_test.go": `package evallru
 
 import (
@@ -364,6 +371,8 @@ func (s *Service) Load(r io.Reader) (string, error) {
 	return s.cfg.Prefix + string(data), nil
 }
 `,
+		},
+		AcceptanceTests: map[string]string{
 			"service_test.go": `package evallimit
 
 import (
@@ -407,7 +416,7 @@ func taskJSSemverSort() Task {
 		Category:    "bugfix",
 		Description: "Fix numeric segment comparison and prerelease precedence in ESM semver helper",
 		RequireTool: "node",
-		VerifyCmd:   []string{"node", "--test"},
+		VerifyCmd:   []string{"node", "--test", "semver.test.mjs"},
 		Prompt: `Fix the bugs in compare.mjs (and filter.mjs if needed) so that 'node --test' passes completely.
 Follow standard SemVer 2.0.0 precedence: numeric major/minor/patch comparison, prerelease versions sort before their corresponding release (e.g. 1.0.0-alpha.1 < 1.0.0), and numeric prerelease identifiers compare numerically (alpha.2 < alpha.10). Do not edit semver.test.mjs.`,
 		Files: map[string]string{
@@ -429,6 +438,8 @@ export function latestStable(versions) {
   return sortVersions(stable)[stable.length - 1];
 }
 `,
+		},
+		AcceptanceTests: map[string]string{
 			"semver.test.mjs": `import test from "node:test";
 import assert from "node:assert/strict";
 import { compareSemver } from "./compare.mjs";
@@ -466,7 +477,7 @@ func taskJSONConfigRepair() Task {
 		Category:    "bugfix",
 		Description: "Repair malformed JSON config and fix deep default merging without mutating defaults",
 		RequireTool: "node",
-		VerifyCmd:   []string{"node", "--test"},
+		VerifyCmd:   []string{"node", "--test", "loader.test.mjs"},
 		Prompt: `Fix the syntax error in config.json and the default-merging bugs in loader.mjs so 'node --test' passes.
 Ensure loading config.json works, partial nested retry overrides preserve unspecified defaults (e.g. maxAttempts), and DEFAULTS is never mutated across calls. Do not modify loader.test.mjs.`,
 		Files: map[string]string{
@@ -497,6 +508,8 @@ export function loadConfig(filePath) {
   return mergeConfig(parsed);
 }
 `,
+		},
+		AcceptanceTests: map[string]string{
 			"loader.test.mjs": `import test from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULTS, loadConfig, mergeConfig } from "./loader.mjs";
@@ -527,7 +540,7 @@ func taskPyRateLimiter() Task {
 		Category:    "bugfix",
 		Description: "Fix sliding-window expiry boundary and idle key pruning in Python rate limiter",
 		RequireTool: "python3",
-		VerifyCmd:   []string{"python3", "-m", "unittest", "discover", "-v"},
+		VerifyCmd:   []string{"python3", "-m", "unittest", "-v", "test_limiter"},
 		Prompt: `Fix the bugs in limiter.py so that 'python3 -m unittest discover -v' passes.
 An event recorded at timestamp t must be considered expired when now - t >= window_seconds, and prune(now) must remove keys that have no remaining active timestamps so idle keys do not leak memory. Do not weaken test_limiter.py.`,
 		Files: map[string]string{
@@ -558,6 +571,8 @@ An event recorded at timestamp t must be considered expired when now - t >= wind
     def tracked_keys(self) -> int:
         return len(self._events)
 `,
+		},
+		AcceptanceTests: map[string]string{
 			"test_limiter.py": `import unittest
 from limiter import SlidingWindowLimiter
 
@@ -591,7 +606,18 @@ if __name__ == "__main__":
 
 // Materialize writes a task's initial repository files into dir.
 func Materialize(task Task, dir string) error {
-	for rel, content := range task.Files {
+	if err := writeFixtureFiles(dir, task.Files); err != nil {
+		return err
+	}
+	if err := writeFixtureFiles(dir, task.AcceptanceTests); err != nil {
+		return err
+	}
+	initGitBaseline(dir)
+	return nil
+}
+
+func writeFixtureFiles(dir string, files map[string]string) error {
+	for rel, content := range files {
 		target := filepath.Join(dir, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return fmt.Errorf("mkdir %s: %w", rel, err)
@@ -600,7 +626,6 @@ func Materialize(task Task, dir string) error {
 			return fmt.Errorf("write %s: %w", rel, err)
 		}
 	}
-	initGitBaseline(dir)
 	return nil
 }
 
@@ -625,40 +650,6 @@ func initGitBaseline(dir string) {
 		return
 	}
 	_ = runGit("commit", "-q", "-m", "initial fixture")
-}
-
-// VerifyTask executes the task's real compiler/test verification command.
-func VerifyTask(ctx context.Context, task Task, dir string) (bool, string, error) {
-	if len(task.VerifyCmd) == 0 {
-		return false, "", fmt.Errorf("task %s has no verify command", task.ID)
-	}
-	cmd := subproc.CommandContext(ctx, task.VerifyCmd[0], task.VerifyCmd[1:]...)
-	cmd.Dir = dir
-	cmd.Env = sanitizedEvalEnv()
-	var buf bytes.Buffer
-	pr, pw := io.Pipe()
-	cmd.Stdout = pw
-	cmd.Stderr = pw
-	if err := cmd.Start(); err != nil {
-		_ = pw.Close()
-		_ = pr.Close()
-		return false, "", err
-	}
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_, _ = io.Copy(&buf, io.LimitReader(pr, maxVerifyOutputBytes))
-		_, _ = io.Copy(io.Discard, pr)
-	}()
-	waitErr := cmd.Wait()
-	_ = pw.Close()
-	<-done
-	_ = pr.Close()
-	out := strings.TrimSpace(buf.String())
-	if waitErr != nil {
-		return false, out, nil
-	}
-	return true, out, nil
 }
 
 func sanitizedEvalEnv() []string {

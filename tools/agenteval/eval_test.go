@@ -76,8 +76,8 @@ func TestSmokeEvalEndToEndWithDiagnosticsSelfHeal(t *testing.T) {
 		t.Fatalf("expected post-edit diagnostics to trigger >=2 and catch >=1 error, got triggered=%d caught=%d",
 			r.DiagnosticsTriggered, r.DiagnosticErrorsCaught)
 	}
-	if r.CacheHitRate <= 0 {
-		t.Fatalf("expected positive prompt cache hit rate, got %f", r.CacheHitRate)
+	if r.CacheHitRate == nil || *r.CacheHitRate <= 0 {
+		t.Fatalf("expected positive prompt cache hit rate, got %s", formatCacheRate(r.CacheHitRate))
 	}
 
 	table := FormatTable(rep)
@@ -140,7 +140,7 @@ func TestCodingEvalCountsCompactionUsage(t *testing.T) {
 
 func TestFilterTasksValidation(t *testing.T) {
 	all := BuiltinTasks()
-	if got, err := filterTasks(all, "", true); err != nil || len(got) != 1 || got[0].ID != "go_retry_backoff" {
+	if got, err := filterTasks(all, "", true); err != nil || len(got) != 3 || got[0].ID != "go_retry_backoff" {
 		t.Fatalf("smoke default filter mismatch: got=%v err=%v", got, err)
 	}
 	if got, err := filterTasks(all, "go_lru_cache,py_rate_limiter", false); err != nil || len(got) != 2 {
@@ -148,5 +148,55 @@ func TestFilterTasksValidation(t *testing.T) {
 	}
 	if _, err := filterTasks(all, "does_not_exist", false); err == nil {
 		t.Fatal("expected unknown task ID to fail")
+	}
+}
+
+func TestCheckerTimeoutIsNotACodeError(t *testing.T) {
+	if isDiagnosticFailure("Timed out: static check did not finish. [tsc --noEmit --project tsconfig.json]") {
+		t.Fatal("a checker timeout was counted as a source-code error")
+	}
+}
+
+func TestIncompleteMetricsAndMismatchedBaselines(t *testing.T) {
+	if isDiagnosticFailure("[go vet]\nCheck exited with code 1 and no diagnostic output.") {
+		t.Fatal("a checker exit without findings was counted as a code error")
+	}
+	base := Report{Mode: "smoke", MetricsVersion: evalMetricsVersion, Results: []TaskResult{{TaskID: "one"}}}
+	if got := formatCacheRate(computeCacheHitRate(50, 50, 0, 50)); got != "n/a" {
+		t.Fatal("partial cache coverage", got)
+	}
+	if got := formatCacheRate(computeCacheHitRate(100, 0, 0, 100)); got != "0.0%" {
+		t.Fatal("explicit miss", got)
+	}
+	if got := evalCost(Summary{TotalCostUSD: 1, CostIncomplete: true}); got != "unavailable" {
+		t.Fatal("partially priced comparison", got)
+	}
+	for _, other := range []Report{
+		{Mode: "live", MetricsVersion: evalMetricsVersion, Results: base.Results},
+		{Mode: "smoke", MetricsVersion: evalMetricsVersion, Results: []TaskResult{{TaskID: "two"}}},
+		{Mode: "smoke", Results: base.Results},
+	} {
+		if !strings.Contains(FormatComparison(base, other), "Comparison unavailable") {
+			t.Fatal("incompatible comparison", other)
+		}
+	}
+}
+
+// Offline baseline for the two scripted workloads. Model quality and provider
+// cache rates are intentionally outside this deterministic pass/fail contract.
+func TestMultiTurnSmokeBaseline(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node required")
+	}
+	tasks := []Task{taskKeyMigration(), taskReportReplay()}
+	rep := RunSuite(context.Background(), tasks, RunOptions{Smoke: true, ProviderID: "smoke", ModelID: "scripted-native"})
+	for _, r := range rep.Results {
+		if !r.Passed || r.Steps != 6 || r.ToolCalls != 4 || r.EditPatchCalls != 2 || r.EditPatchErrors != 0 || r.ToolErrors != 0 || r.DiagnosticTimeouts != 0 {
+			t.Errorf("offline regression: %+v", r)
+		}
+	}
+	budget := RunSuite(context.Background(), tasks[:1], RunOptions{Smoke: true, MaxSteps: 3})
+	if budget.Results[0].Passed || !strings.Contains(budget.Results[0].Error, "step budget") {
+		t.Fatal("follow-up ignored the task-wide step budget", budget.Results[0])
 	}
 }

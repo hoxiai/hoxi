@@ -335,7 +335,7 @@ func (e *Engine) runSubtask(
 		SymbolInspect:  parent.SymbolInspect,
 		ImpactInspect:  parent.ImpactInspect,
 		MCPConfig:      parent.MCPConfig,
-		onFinalMessages: func(final []Message) {
+		OnFinalMessages: func(final []Message) {
 			mu.Lock()
 			capturedMsgs = cloneMessagesForSubtask(final)
 			mu.Unlock()

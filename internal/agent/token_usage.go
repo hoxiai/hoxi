@@ -1,12 +1,25 @@
 package agent
 
-import "github.com/hoxiai/hoxi/internal/llm"
+import (
+	"math"
+
+	"github.com/hoxiai/hoxi/internal/llm"
+)
 
 func pricedUsage(target llm.StreamTarget, u TokenUsage) TokenUsage {
 	if u.CostUSD <= 0 {
 		u.CostUSD = target.Cost.ComputeUSD(u.Input, u.Output, u.Reasoning, u.CacheRead, u.CacheWrite) * fastModeCostMultiplier(u.ServiceTier)
 	}
 	return u
+}
+
+// Provider event JSON is decoded into float64. Missing, null and malformed
+// cache fields must not be interpreted as a measured zero.
+func recordCacheCoverage(u *TokenUsage, value any) {
+	total := u.Input + u.CacheRead + u.CacheWrite
+	if n, ok := value.(float64); ok && n >= 0 && math.Trunc(n) == n && n == float64(u.CacheRead) && n <= float64(total) {
+		u.ReportedCacheInput = total
+	}
 }
 
 // OpenAI and compatible gateways (including OpenRouter) include cache reads

@@ -34,9 +34,36 @@ func TestDriverUsageUsesDisjointTokenBuckets(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
+			tc.want.ReportedCacheInput = tc.want.Input + tc.want.CacheRead + tc.want.CacheWrite
 			if got != tc.want {
 				t.Fatalf("usage = %+v, want %+v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestMissingCacheReadIsNotAReportedDrop(t *testing.T) {
+	tracker := newContextTokenTracker()
+	warm := TokenUsage{CacheRead: 4000, ReportedCacheInput: 4000}
+	target := llm.StreamTarget{}
+	tracker.ObservePrefixCacheStability("s", target, "s", "system", nil, nil, warm)
+	u := TokenUsage{Input: 4200}
+	recordCacheCoverage(&u, nil)
+	if drop := tracker.ObservePrefixCacheStability("s", target, "s", "system", nil, nil, u); drop != nil {
+		t.Fatal(drop)
+	}
+	if !tracker.lastFingerprint.valid || tracker.lastFingerprint.cacheRead != 0 {
+		t.Fatal("missing telemetry must preserve the history fingerprint for the next turn")
+	}
+	for _, raw := range []any{nil, "0", -1.0, 0.5, 5000.0} {
+		recordCacheCoverage(&u, raw)
+		if u.ReportedCacheInput != 0 {
+			t.Fatalf("invalid cache telemetry %v counted as reported", raw)
+		}
+	}
+	tracker.ObservePrefixCacheStability("s", target, "s", "system", nil, nil, warm)
+	recordCacheCoverage(&u, float64(0))
+	if drop := tracker.ObservePrefixCacheStability("s", target, "s", "system", nil, nil, u); drop == nil || drop.Cause != "local_prefix_unchanged" || drop.Before != 4000 || drop.After != 0 {
+		t.Fatal(drop)
 	}
 }

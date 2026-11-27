@@ -104,3 +104,20 @@ describe("Session context watermark calculation", () => {
     assertEqual(stats.overLimit, false);
   });
 });
+
+describe("cache feedback on the latest metered turn", () => {
+  it("uses disjoint input buckets, distinguishes zero from unavailable, and retains the last observed drop", () => {
+    const drop = { cause: "local_prefix_unchanged", before: 3000, after: 0 };
+    const measured = { input: 100, output: 800, reasoning: 10, cache: { read: 200, write: 100 }, reportedCacheInput: 400 };
+    const turn = makeAssistantTurn("first", { ...measured, cacheDrop: drop });
+    assertEqual(computeSessionContextWatermark([turn], 8000).cacheHitPercent, 50);
+    const cold = makeAssistantTurn("next", { ...measured, cache: { read: 0, write: 0 }, reportedCacheInput: 100 });
+    const next = computeSessionContextWatermark([turn, cold], 8000);
+    assertEqual(next.cacheHitPercent, 0);
+    assertEqual(next.lastCacheDrop?.cause, drop.cause);
+    for (const reportedCacheInput of [undefined, 200]) {
+      const unknown = makeAssistantTurn("partial", { ...measured, reportedCacheInput });
+      assertEqual(computeSessionContextWatermark([unknown], 8000).cacheHitPercent, null);
+    }
+  });
+});

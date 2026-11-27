@@ -2,6 +2,8 @@ package runner
 
 import (
 	"context"
+
+	"github.com/hoxiai/hoxi/internal/llm"
 	"path/filepath"
 	"testing"
 	"time"
@@ -11,10 +13,10 @@ type usageNativeEngine struct{}
 
 func (*usageNativeEngine) RunTurn(_ context.Context, req NativeTurnRequest) error {
 	req.Emit(NativeEvent{Kind: NativeEventTurnUsage, Usage: &NativeTokenUsage{
-		Input: 12, Output: 3, Reasoning: 5, CacheRead: 20, CacheWrite: 7,
+		Input: 12, Output: 3, Reasoning: 5, CacheRead: 20, CacheWrite: 7, ReportedCacheInput: 39, CacheDrop: &llm.PromptCacheDrop{Cause: "local_prefix_unchanged", Before: 4000, After: 20},
 	}})
 	req.Emit(NativeEvent{Kind: NativeEventTurnUsage, ParentCallID: "child", Usage: &NativeTokenUsage{
-		Input: 2, Output: 1, Reasoning: 1, CacheRead: 3,
+		Input: 2, Output: 1, Reasoning: 1, CacheRead: 3, ReportedCacheInput: 5, CacheDrop: &llm.PromptCacheDrop{Cause: "tools_changed"},
 	}})
 	req.Emit(NativeEvent{Kind: NativeEventSummaryUsage, Usage: &NativeTokenUsage{Input: 7, Output: 3, CostUSD: 0.05}})
 	req.Emit(NativeEvent{Kind: NativeEventSummaryUsage, ParentCallID: "child", Usage: &NativeTokenUsage{Input: 2, Output: 1, CostUSD: 0.01}})
@@ -55,7 +57,7 @@ func TestNativeTurnTotalIncludesCacheAndChildUsageOnce(t *testing.T) {
 				u := turn.Info.Tokens
 				// Billing buckets accumulate parent, child and summary once;
 				// Total & Context reflect the parent's single-step window occupancy (12+3+5+20+7 = 47).
-				if u == nil || u.Summary == nil || u.Summary.Input != 9 || u.Summary.Output != 4 || u.Input != 23 || u.Output != 8 || u.Reasoning != 6 || u.Cache.Read != 23 || u.Cache.Write != 7 || u.Total != 47 || u.Context != 47 {
+				if u == nil || u.ReportedCacheInput != 44 || u.CacheDrop == nil || u.CacheDrop.Cause != "local_prefix_unchanged" || u.Summary == nil || u.Summary.Input != 9 || u.Summary.Output != 4 || u.Input != 23 || u.Output != 8 || u.Reasoning != 6 || u.Cache.Read != 23 || u.Cache.Write != 7 || u.Total != 47 || u.Context != 47 {
 					t.Fatalf("incorrect native usage: %+v", u)
 				}
 				return

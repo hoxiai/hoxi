@@ -66,6 +66,7 @@ func RunSuite(ctx context.Context, tasks []Task, opts RunOptions) Report {
 		results = append(results, res)
 	}
 	rep := Report{
+		MetricsVersion:   evalMetricsVersion,
 		CreatedAt:        nowRFC3339(),
 		Mode:             mode,
 		ProviderID:       opts.ProviderID,
@@ -114,7 +115,15 @@ func runSingleTask(ctx context.Context, task Task, opts RunOptions) TaskResult {
 
 	streamClient := opts.StreamClient
 	if streamClient == nil && opts.Smoke {
-		streamClient = newSmokeStreamClient()
+		switch task.ID {
+		case "go_retry_backoff":
+			streamClient = newSmokeStreamClient()
+		case "js_key_migration", "js_report_replay":
+			streamClient = &conversationSmokeClient{taskID: task.ID}
+		default:
+			res.Error = "no offline script for " + task.ID
+			return res
+		}
 	}
 	if streamClient == nil {
 		res.Error = "no stream client configured"
@@ -122,7 +131,8 @@ func runSingleTask(ctx context.Context, task Task, opts RunOptions) TaskResult {
 	}
 
 	engine := agent.NewDefaultEngine(streamClient)
-	runnerSvc := runner.NewService(workDir, nil, nil, "")
+	runnerSvc := runner.NewService(workDir, nil, nil, filepath.Join(indexDir, "sessions.json"))
+	defer runnerSvc.CloseAll()
 	idxSvc := codeindex.NewService(indexDir)
 	sessID := "ses_eval_" + task.ID
 
@@ -130,14 +140,21 @@ func runSingleTask(ctx context.Context, task Task, opts RunOptions) TaskResult {
 	defer cancel()
 
 	var mu sync.Mutex
+	turnSteps := 0
+	seenTools := make(map[string]bool)
 	sink := agent.EventSinkFunc(func(evt agent.EngineEvent) {
 		mu.Lock()
 		defer mu.Unlock()
-		if evt.Step > res.Steps {
-			res.Steps = evt.Step
+		if evt.ParentCallID == "" {
+			turnSteps = max(turnSteps, evt.Step)
 		}
 		switch evt.Kind {
 		case agent.EngineToolRunning:
+			key := evt.ParentCallID + "/" + evt.PartID
+			if seenTools[key] {
+				return
+			}
+			seenTools[key] = true
 			res.ToolCalls++
 			if isEditOrPatchTool(evt.ToolName) {
 				res.EditPatchCalls++
@@ -153,13 +170,6 @@ func runSingleTask(ctx context.Context, task Task, opts RunOptions) TaskResult {
 			if opts.Verbose {
 				fmt.Fprintf(opts.LogWriter, "[%s] step=%d tool=%s ERROR=%s\n", task.ID, evt.Step, evt.ToolName, truncateLine(evt.ErrorText, 140))
 			}
-		case agent.EngineToolCompleted:
-			if diag, ok := extractDiagnosticsBlock(evt.Text); ok {
-				res.DiagnosticsTriggered++
-				if isDiagnosticFailure(diag) {
-					res.DiagnosticErrorsCaught++
-				}
-			}
 		case agent.EngineTurnUsage, agent.EngineSummaryUsage:
 			if evt.Usage != nil {
 				res.InputTokens += evt.Usage.Input
@@ -167,7 +177,11 @@ func runSingleTask(ctx context.Context, task Task, opts RunOptions) TaskResult {
 				res.ReasoningTokens += evt.Usage.Reasoning
 				res.CacheReadTokens += evt.Usage.CacheRead
 				res.CacheWriteTokens += evt.Usage.CacheWrite
+				res.ReportedCacheInput += evt.Usage.ReportedCacheInput
 				res.CostUSD += evt.Usage.CostUSD
+				if evt.Usage.CostUSD <= 0 && (evt.Usage.Input+evt.Usage.CacheRead+evt.Usage.CacheWrite+evt.Usage.Output+evt.Usage.Reasoning) > 0 {
+					res.CostIncomplete = true
+				}
 			}
 		}
 	})
@@ -183,21 +197,33 @@ func runSingleTask(ctx context.Context, task Task, opts RunOptions) TaskResult {
 
 	searchHook, inspectHook, impactHook, repoMapHook := buildEvalCodeIndexHooks(idxSvc)
 	start := time.Now()
-	turnErr := engine.RunTurn(taskCtx, agent.TurnRequest{
-		SessionID:    sessID,
-		WorktreeDir:  workDir,
-		Mode:         "build",
-		ProviderID:   opts.ProviderID,
-		ModelID:      opts.ModelID,
-		Effort:       opts.Effort,
-		Orchestrator: orch,
-		UserPrompt:   task.Prompt,
-		MaxSteps:     opts.MaxSteps,
+	req := agent.TurnRequest{
+		SessionID:     sessID,
+		WorktreeDir:   workDir,
+		Mode:          "build",
+		ProviderID:    opts.ProviderID,
+		ModelID:       opts.ModelID,
+		Effort:        opts.Effort,
+		Orchestrator:  orch,
+		History:       task.InitialHistory,
+		FileRevisions: agent.NewFileRevisionTracker(),
+		MaxSteps:      opts.MaxSteps,
 		CommandRunner: func(c context.Context, dir, command string) (string, int, error) {
 			return runEvalShellCommand(c, workDir, dir, command)
 		},
 		Diagnostics: func(c context.Context, dir, filePath string) string {
-			return runnerSvc.RunNativeDiagnostics(c, sessID, dir, filePath)
+			diag := runnerSvc.RunNativeDiagnostics(c, sessID, dir, filePath)
+			mu.Lock()
+			if diag != "" {
+				res.DiagnosticsTriggered++
+				if strings.HasPrefix(diag, "Timed out:") {
+					res.DiagnosticTimeouts++
+				} else if isDiagnosticFailure(diag) {
+					res.DiagnosticErrorsCaught++
+				}
+			}
+			mu.Unlock()
+			return diag
 		},
 		RecordFileEdit: func(_ []string) {
 			idxSvc.MarkDirty(workDir)
@@ -207,17 +233,50 @@ func runSingleTask(ctx context.Context, task Task, opts RunOptions) TaskResult {
 		ImpactInspect: impactHook,
 		RepoMap:       repoMapHook,
 		Sink:          sink,
-	})
-	res.DurationMs = time.Since(start).Milliseconds()
-	res.CacheHitRate = computeCacheHitRate(res.InputTokens, res.CacheReadTokens, res.CacheWriteTokens)
+	}
+	var turnErr error
+	var history []agent.Message
+	req.OnFinalMessages = func(final []agent.Message) { history = final }
+	for i, prompt := range append([]string{task.Prompt}, task.FollowUps...) {
+		req.UserPrompt = prompt
+		req.MaxSteps = opts.MaxSteps - res.Steps
+		if req.MaxSteps <= 0 {
+			turnErr = fmt.Errorf("task exhausted its %d-step budget before the next turn", opts.MaxSteps)
+			break
+		}
+		turnSteps = 0
+		clear(seenTools)
+		turnErr = engine.RunTurn(taskCtx, req)
+		res.Steps += turnSteps
+		if turnErr != nil {
+			break
+		}
+		if i == 0 && len(task.FirstTurnCheck) > 0 {
+			check := task
+			check.VerifyCmd = task.FirstTurnCheck
+			passed, output, err := VerifyTask(taskCtx, check, workDir)
+			if err != nil {
+				turnErr = fmt.Errorf("first-turn verification: %w", err)
+				break
+			}
+			if !passed {
+				turnErr = fmt.Errorf("first-turn verification failed: %s", truncateLine(output, 600))
+				break
+			}
+		}
+		req.History = history
+	}
+	res.CacheHitRate = computeCacheHitRate(res.InputTokens, res.CacheReadTokens, res.CacheWriteTokens, res.ReportedCacheInput)
 	if turnErr != nil {
+		res.DurationMs = time.Since(start).Milliseconds()
 		res.Error = turnErr.Error()
 		return res
 	}
 
-	verifyCtx, verifyCancel := context.WithTimeout(ctx, 45*time.Second)
+	verifyCtx, verifyCancel := context.WithTimeout(taskCtx, 45*time.Second)
 	defer verifyCancel()
 	passed, verifyOut, verifyErr := VerifyTask(verifyCtx, task, workDir)
+	res.DurationMs = time.Since(start).Milliseconds()
 	res.Passed = passed
 	if verifyErr != nil {
 		res.Error = fmt.Sprintf("verify error: %v", verifyErr)
@@ -236,21 +295,16 @@ func isEditOrPatchTool(name string) bool {
 	}
 }
 
-func extractDiagnosticsBlock(output string) (string, bool) {
-	const marker = "\n\nDiagnostics:\n"
-	idx := strings.Index(output, marker)
-	if idx < 0 {
-		return "", false
-	}
-	return strings.TrimSpace(output[idx+len(marker):]), true
-}
-
 func isDiagnosticFailure(diag string) bool {
 	trimmed := strings.TrimSpace(diag)
 	if trimmed == "" {
 		return false
 	}
-	for _, benign := range []string{"Passed:", "Not run:", "Not completed:"} {
+	// Scoped checkers put the command label on a line before the diagnostic.
+	if label, detail, ok := strings.Cut(trimmed, "\n"); ok && strings.HasPrefix(label, "[") && strings.HasSuffix(label, "]") {
+		trimmed = strings.TrimSpace(detail)
+	}
+	for _, benign := range []string{"Passed:", "Not run:", "Not completed:", "Timed out:", "Check failed:", "Check exited with code "} {
 		if strings.HasPrefix(trimmed, benign) {
 			return false
 		}

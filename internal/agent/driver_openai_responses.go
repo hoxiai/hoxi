@@ -457,6 +457,9 @@ func parseOpenAIResponsesSSE(ctx context.Context, body io.Reader, emit func(Stre
 						tu.Reasoning = intFromAny(outDet["reasoning_tokens"])
 					}
 					normalizeInclusiveUsage(tu)
+					if details, ok := u["input_tokens_details"].(map[string]any); ok {
+						recordCacheCoverage(tu, details["cached_tokens"])
+					}
 					emit(StreamEvent{Kind: EventUsage, Usage: tu})
 				}
 			}

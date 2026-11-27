@@ -65,6 +65,8 @@ export interface MessageError {
 }
 
 export interface MessageTokens {
+  reportedCacheInput?: number;
+  cacheDrop?: { cause: string; before: number; after: number };
   /** Subtotal included in the billing buckets below. */
   summary?: {
     input: number;

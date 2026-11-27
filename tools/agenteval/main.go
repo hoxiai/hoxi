@@ -113,7 +113,7 @@ func filterTasks(all []Task, filter string, smoke bool) ([]Task, error) {
 	trimmed := strings.TrimSpace(filter)
 	if trimmed == "" {
 		if smoke {
-			return all[:1], nil
+			return filterTasks(all, "go_retry_backoff,js_key_migration,js_report_replay", true)
 		}
 		return all, nil
 	}

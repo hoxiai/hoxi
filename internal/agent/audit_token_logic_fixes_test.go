@@ -51,7 +51,7 @@ func TestSubdirRulesDeduplicatedAcrossTurnsFromHistory(t *testing.T) {
 			ModelID:     "gpt-5",
 			History:     history,
 			UserPrompt:  "Read " + file,
-			onFinalMessages: func(msgs []Message) {
+			OnFinalMessages: func(msgs []Message) {
 				finalMsgs = append([]Message(nil), msgs...)
 			},
 			Sink: EventSinkFunc(func(evt EngineEvent) {

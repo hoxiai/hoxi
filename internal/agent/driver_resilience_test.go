@@ -473,8 +473,8 @@ func TestClassifyPrefixCacheChangePinpointsExactDivergence(t *testing.T) {
 
 	fp1 := computePrefixFingerprint("k1", "sys1", specs, m1, 10000)
 	fpSame := computePrefixFingerprint("k1", "sys1", specs, m2, 500)
-	if cause, shared := classifyPrefixCacheChange(fp1, fpSame); cause != "upstream_evicted_prefix_unchanged" || shared != 1 {
-		t.Fatalf("expected upstream eviction with unchanged prefix, got cause=%q shared=%d", cause, shared)
+	if cause, shared := classifyPrefixCacheChange(fp1, fpSame); cause != "local_prefix_unchanged" || shared != 1 {
+		t.Fatalf("expected unchanged local prefix, got cause=%q shared=%d", cause, shared)
 	}
 
 	fpSys := computePrefixFingerprint("k1", "sys2", specs, m2, 500)
