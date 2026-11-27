@@ -441,17 +441,26 @@ func TestSessionPathScopeSymlinkedWorkspaceParentPrefixAndSanitizedGitEnv(t *tes
 		t.Fatal("expected write through symlink in read-only path to be denied even with symlinked parent prefix")
 	}
 
-	// Verify git status env strips interactive askpass/editor variables.
+	// Parsed Git diagnostics need a stable locale as well as a non-interactive environment.
 	t.Setenv("GIT_ASKPASS", "/bin/evil-askpass")
 	t.Setenv("SSH_ASKPASS", "/bin/evil-ssh")
 	t.Setenv("GIT_EDITOR", "vim")
-	env := sanitizedGitStatusEnv()
-	for _, kv := range env {
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	localeOverrides := 0
+	for _, kv := range sanitizedGitStatusEnv() {
 		name, _, _ := strings.Cut(kv, "=")
 		switch strings.ToUpper(name) {
 		case "GIT_ASKPASS", "SSH_ASKPASS", "GIT_EDITOR":
 			t.Fatalf("sanitizedGitStatusEnv leaked %s", kv)
+		case "LC_ALL":
+			if kv != "LC_ALL=C" {
+				t.Fatalf("git status must use the C locale, got %s", kv)
+			}
+			localeOverrides++
 		}
+	}
+	if localeOverrides != 1 {
+		t.Fatalf("expected exactly one Git locale override, got %d", localeOverrides)
 	}
 }
 
@@ -617,8 +626,9 @@ func TestSessionPathScopeHardenedShellWorktreeAndReconcile(t *testing.T) {
 		t.Fatalf("unexpected deny for docs/README.md: %s", reason)
 	}
 
-	// 6. VerifySessionPathScope gracefully skips non-git directories ONLY in local mode,
-	//    while still failing closed for isolated worktree sessions.
+	// 6. Local non-Git folders are accepted even under a localized parent environment.
+	//    A missing folder or invalid isolated worktree must still fail closed.
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
 	nonGitDir := t.TempDir()
 	localNonGit := SessionRecord{
 		ID:            "ses_local_nongit",
@@ -642,5 +652,14 @@ func TestSessionPathScopeHardenedShellWorktreeAndReconcile(t *testing.T) {
 	}
 	if _, err := svc.VerifySessionPathScope(wtNonGit.ID); err == nil {
 		t.Fatal("expected worktree VerifySessionPathScope on non-git directory to fail closed")
+	}
+	missingLocal := localNonGit
+	missingLocal.ID = "ses_local_missing"
+	missingLocal.WorktreePath = filepath.Join(nonGitDir, "missing")
+	if err := svc.store.Put(missingLocal); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.VerifySessionPathScope(missingLocal.ID); err == nil {
+		t.Fatal("expected local VerifySessionPathScope on a missing directory to fail closed")
 	}
 }

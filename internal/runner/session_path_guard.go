@@ -338,7 +338,7 @@ func lexicalRelUnderRealBase(realBase, absTarget string) (string, bool) {
 
 func sanitizedGitStatusEnv() []string {
 	base := os.Environ()
-	filtered := make([]string, 0, len(base)+2)
+	filtered := make([]string, 0, len(base)+3)
 	for _, kv := range base {
 		name, _, ok := strings.Cut(kv, "=")
 		if !ok {
@@ -347,6 +347,7 @@ func sanitizedGitStatusEnv() []string {
 		switch strings.ToUpper(name) {
 		case "GIT_TERMINAL_PROMPT",
 			"GCM_INTERACTIVE",
+			"LC_ALL",
 			"GIT_ASKPASS",
 			"SSH_ASKPASS",
 			"SUDO_ASKPASS",
@@ -360,7 +361,8 @@ func sanitizedGitStatusEnv() []string {
 		}
 		filtered = append(filtered, kv)
 	}
-	return append(filtered, "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never")
+	// VerifySessionPathScope distinguishes repository discovery failures by Git's diagnostic.
+	return append(filtered, "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never", "LC_ALL=C")
 }
 
 // sessionWriteTargetViolation reports whether writing/mutating absTarget violates
