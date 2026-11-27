@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -174,9 +175,38 @@ func resolveHostProxy(call ToolCall) (ToolCall, bool) {
 		Name string
 		Args json.RawMessage
 	}
-	if json.Unmarshal(call.Input, &in) != nil || !slices.Contains(deferredHostTools, in.Name) || len(in.Args) == 0 || in.Args[0] != '{' {
+	if json.Unmarshal(call.Input, &in) != nil || !slices.Contains(deferredHostTools, in.Name) {
 		return call, false
 	}
-	call.Name, call.Input = in.Name, in.Args
+	trimmed := bytes.TrimSpace(in.Args)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return call, false
+	}
+	call.Name, call.Input = in.Name, trimmed
 	return call, true
+}
+
+// callHostProxyTool handles unexpanded call_host_tool invocations (invalid
+// arguments or plan mode) so the model receives actionable validation errors
+// rather than an "unknown tool" failure. Its schema is emitted dynamically by
+// hostToolCatalog.specs right next to load_host_tool.
+type callHostProxyTool struct{}
+
+func (*callHostProxyTool) Name() string     { return "call_host_tool" }
+func (*callHostProxyTool) IsReadOnly() bool { return false }
+func (*callHostProxyTool) Description() string {
+	return "Invoke a host tool using the args documented by load_host_tool."
+}
+func (*callHostProxyTool) Parameters() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"name": map[string]any{"type": "string", "enum": deferredHostTools},
+			"args": map[string]any{"type": "object"},
+		},
+		"required": []string{"name", "args"},
+	}
+}
+func (*callHostProxyTool) Execute(_ context.Context, _ ToolContext, _ json.RawMessage) (ToolOutput, error) {
+	return ToolOutput{}, fmt.Errorf("invalid call_host_tool arguments: pass a valid host tool name (%s) and a JSON object args (call load_host_tool first to inspect parameters)", strings.Join(deferredHostTools, ", "))
 }

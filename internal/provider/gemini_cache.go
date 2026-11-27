@@ -24,11 +24,13 @@ const maxGeminiCaches = 128
 var cachedContentName = regexp.MustCompile(`^cachedContents/[A-Za-z0-9_-]+$`)
 
 type geminiCacheEntry struct {
-	name    string
-	count   int
-	digest  [32]byte
-	expires time.Time
-	busy    bool
+	name          string
+	count         int
+	digest        [32]byte
+	pendingCount  int
+	pendingDigest [32]byte
+	expires       time.Time
+	busy          bool
 }
 
 type geminiContextCache struct {
@@ -86,22 +88,56 @@ func (c *geminiContextCache) prepare(ctx context.Context, key string, req llm.St
 	c.mu.Unlock()
 	// Hashing a large prompt must not stall unrelated sessions.
 	n := len(contents) - 1
+	rebuild := false
+	var digest [32]byte
+	var eligible bool
 	if exists {
-		n = entry.count
-	}
-	if n >= len(contents) {
-		return req.Body, ""
-	}
-	digest, eligible := geminiPrefix(fields, contents[:n])
-	if !eligible || (exists && digest != entry.digest) {
-		return req.Body, ""
+		matchedExisting := false
+		if entry.count < len(contents) {
+			digest, eligible = geminiPrefix(fields, contents[:entry.count])
+			matchedExisting = eligible && digest == entry.digest
+		}
+		if matchedExisting {
+			n = entry.count
+		} else {
+			// Prefix diverged (e.g. after pruning or /compact). Confirm stability
+			// across two consecutive requests on the new prefix before replacing
+			// the live cache so one-off variations neither thrash nor evict it.
+			confirmed := false
+			if entry.pendingDigest != ([32]byte{}) && entry.pendingCount < len(contents) {
+				pd, ok := geminiPrefix(fields, contents[:entry.pendingCount])
+				confirmed = ok && pd == entry.pendingDigest
+			}
+			newDigest, newEligible := geminiPrefix(fields, contents[:n])
+			if !newEligible {
+				return req.Body, ""
+			}
+			if !confirmed {
+				c.mu.Lock()
+				if cur, present := c.entries[key]; present && cur == entry {
+					cur.pendingCount = n
+					cur.pendingDigest = newDigest
+					c.entries[key] = cur
+				}
+				c.mu.Unlock()
+				return req.Body, ""
+			}
+			digest = newDigest
+			eligible = true
+			rebuild = true
+		}
+	} else {
+		digest, eligible = geminiPrefix(fields, contents[:n])
+		if !eligible {
+			return req.Body, ""
+		}
 	}
 	c.mu.Lock()
 	if current, present := c.entries[key]; present != exists || current != entry {
 		c.mu.Unlock()
 		return req.Body, ""
 	}
-	if !exists || entry.expires.Sub(now) < 2*time.Minute {
+	if !exists || rebuild || entry.expires.Sub(now) < 2*time.Minute {
 		if c.entries == nil {
 			c.entries = make(map[string]geminiCacheEntry)
 		}
@@ -123,7 +159,8 @@ func (c *geminiContextCache) prepare(ctx context.Context, key string, req llm.St
 		// or credentials are retained in the local cache.
 		method, path := http.MethodPost, "cachedContents"
 		body := map[string]any{"ttl": geminiCacheTTL}
-		if exists {
+		renewing := exists && !rebuild
+		if renewing {
 			method, path = http.MethodPatch, entry.name+"?updateMask=ttl"
 		} else {
 			body["model"] = "models/" + strings.TrimPrefix(req.Target.ModelID, "models/")
@@ -151,7 +188,7 @@ func (c *geminiContextCache) prepare(ctx context.Context, key string, req llm.St
 		}
 		cancel()
 		c.mu.Lock()
-		if err == nil && cachedContentName.MatchString(resource.Name) && resource.ExpireTime.After(now) && (!exists || resource.Name == entry.name) {
+		if err == nil && cachedContentName.MatchString(resource.Name) && resource.ExpireTime.After(now) && (!renewing || resource.Name == entry.name) {
 			entry = geminiCacheEntry{name: resource.Name, count: n, digest: digest, expires: resource.ExpireTime}
 		} else {
 			entry = geminiCacheEntry{expires: now.Add(2 * time.Minute)}

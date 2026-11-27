@@ -161,3 +161,63 @@ func TestGeminiCacheParallelRequestsShareOneCreation(t *testing.T) {
 		t.Fatal("lost original error")
 	}
 }
+
+func TestGeminiCacheRebuildsAfterPruneOrCompaction(t *testing.T) {
+	var cache geminiContextCache
+	req := geminiCacheTestRequest()
+	now := time.Now()
+	creates := 0
+	send := func(_ context.Context, method, path string, _ []byte) (*http.Response, error) {
+		if method != http.MethodPost || path != "cachedContents" {
+			t.Fatalf("unexpected cache call: %s %s", method, path)
+		}
+		creates++
+		body := fmt.Sprintf(`{"name":"cachedContents/ref_%d","expireTime":%q}`, creates, now.Add(12*time.Minute).Format(time.RFC3339Nano))
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
+	}
+	key := geminiCacheIdentity(req, req.Target.BaseURL, "key", nil)
+	if _, name := cache.prepare(context.Background(), key, req, now, send); name != "cachedContents/ref_1" {
+		t.Fatalf("initial cache = %q, want cachedContents/ref_1", name)
+	}
+
+	// Simulate /compact shrinking contents from 3 to 2 messages with a new checkpoint prefix.
+	makeCompacted := func(contents []any) llm.StreamHTTPRequest {
+		body, _ := json.Marshal(map[string]any{
+			"systemInstruction": map[string]any{"parts": []any{map[string]string{"text": strings.Repeat("stable definition ", 8500)}}},
+			"tools":             []any{map[string]any{"functionDeclarations": []any{map[string]string{"name": "read"}}}},
+			"contents":          contents,
+			"generationConfig":  map[string]int{"maxOutputTokens": 4096},
+		})
+		r := req
+		r.Body = body
+		return r
+	}
+	step1 := makeCompacted([]any{
+		map[string]any{"role": "user", "parts": []any{map[string]string{"text": "<context_checkpoint>summary</context_checkpoint>"}}},
+		map[string]any{"role": "user", "parts": []any{map[string]string{"text": "continue after compact"}}},
+	})
+	if out, name := cache.prepare(context.Background(), key, step1, now.Add(time.Minute), send); name != "" || string(out) != string(step1.Body) {
+		t.Fatalf("first diverged request should observe before rebuilding: name=%q", name)
+	}
+
+	// Second step extends the compacted history: pending prefix is confirmed, so cache rebuilds.
+	step2 := makeCompacted([]any{
+		map[string]any{"role": "user", "parts": []any{map[string]string{"text": "<context_checkpoint>summary</context_checkpoint>"}}},
+		map[string]any{"role": "model", "parts": []any{map[string]string{"text": "working on it"}}},
+		map[string]any{"role": "user", "parts": []any{map[string]string{"text": "next step"}}},
+	})
+	if _, name := cache.prepare(context.Background(), key, step2, now.Add(2*time.Minute), send); name != "cachedContents/ref_2" {
+		t.Fatalf("rebuilt cache = %q, want cachedContents/ref_2", name)
+	}
+
+	// Third step reuses the rebuilt cache without another POST.
+	step3 := makeCompacted([]any{
+		map[string]any{"role": "user", "parts": []any{map[string]string{"text": "<context_checkpoint>summary</context_checkpoint>"}}},
+		map[string]any{"role": "model", "parts": []any{map[string]string{"text": "working on it"}}},
+		map[string]any{"role": "user", "parts": []any{map[string]string{"text": "next step"}}},
+		map[string]any{"role": "model", "parts": []any{map[string]string{"text": "done"}}},
+	})
+	if _, name := cache.prepare(context.Background(), key, step3, now.Add(3*time.Minute), send); name != "cachedContents/ref_2" || creates != 2 {
+		t.Fatalf("post-rebuild hit = %q, creates=%d", name, creates)
+	}
+}

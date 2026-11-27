@@ -78,11 +78,11 @@ func isStrictNonOpenAIChatHost(target llm.StreamTarget) bool {
 	return false
 }
 
-var extendedRetentionModel = regexp.MustCompile(`^(gpt-5(\.5(-pro)?|\.4|\.2|\.1(-codex(-max|-mini)?|-chat-latest)?|-codex)?|gpt-4\.1)(-\d{4}-\d\d-\d\d)?$`)
+var extendedRetentionModel = regexp.MustCompile(`(?i)^(gpt-5(\.5(-pro)?|\.4(-pro|-mini)?|\.3|\.2(-pro|-codex)?|\.1(-codex(-max|-mini)?|-chat-latest)?|-codex)?|gpt-4\.1)(-\d{4}-\d\d-\d\d)?$`)
 
 func supportsResponsesExtendedRetention(t llm.StreamTarget) bool {
 	u, err := url.Parse(t.BaseURL)
-	return err == nil && u.Scheme == "https" && strings.EqualFold(u.Host, "api.openai.com") && extendedRetentionModel.MatchString(t.ModelID)
+	return err == nil && u.Scheme == "https" && strings.EqualFold(u.Host, "api.openai.com") && extendedRetentionModel.MatchString(strings.TrimSpace(t.ModelID))
 }
 
 func isOpenAIChatModel(modelID string) bool {

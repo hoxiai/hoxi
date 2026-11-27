@@ -61,12 +61,24 @@ func TestHostProxyScopeAndCacheOptions(t *testing.T) {
 			t.Fatal("accepted invalid host proxy", input)
 		}
 	}
+	if resolved, ok := resolveHostProxy(ToolCall{Name: "call_host_tool", Input: json.RawMessage("{\"name\":\"hoxi_browser\",\"args\": \n  {\"action\":\"snapshot\"}}")}); !ok || resolved.Name != "hoxi_browser" || string(resolved.Input) != `{"action":"snapshot"}` {
+		t.Fatalf("whitespace args not resolved: ok=%v call=%+v", ok, resolved)
+	}
+	reg := newToolRegistry()
+	if _, err := reg.Execute(context.Background(), ToolContext{Mode: "plan"}, ToolCall{Name: "call_host_tool", Input: json.RawMessage(`{"name":"hoxi_browser","args":{"action":"snapshot"}}`)}, nil); err == nil || !strings.Contains(err.Error(), "disabled in plan") {
+		t.Fatalf("plan mode error = %v", err)
+	}
+	if _, err := reg.Execute(context.Background(), ToolContext{Mode: "build"}, ToolCall{Name: "call_host_tool", Input: json.RawMessage(`{"name":"bash","args":{}}`)}, nil); err == nil || !strings.Contains(err.Error(), "invalid call_host_tool arguments") {
+		t.Fatalf("invalid proxy error = %v", err)
+	}
 	for _, tc := range []struct {
 		host, model             string
 		responses, compat, want bool
 	}{
-		{"https://api.openai.com/v1", "gpt-5.2", true, false, true}, {"https://gateway.example/v1", "gpt-5.2", true, false, false},
-		{"https://api.openai.com/v1", "gpt-5.6", true, false, false}, {"https://api.openai.com/v1", "gpt-4o", true, false, false},
+		{"https://api.openai.com/v1", "gpt-5.2", true, false, true}, {"https://api.openai.com/v1", "GPT-5.3", true, false, true},
+		{"https://api.openai.com/v1", "gpt-5.4-mini", true, false, true}, {"https://api.openai.com/v1", "gpt-5.4-pro", true, false, true},
+		{"https://gateway.example/v1", "gpt-5.2", true, false, false}, {"https://api.openai.com/v1", "gpt-5.6", true, false, false},
+		{"https://api.openai.com/v1", "gpt-4o", true, false, false},
 		{"https://gateway.example", "claude-sonnet-4", false, true, true}, {"https://gateway.example", "claude-sonnet-4", false, false, false},
 		{"https://gateway.example", "gpt-5", false, true, false},
 	} {
