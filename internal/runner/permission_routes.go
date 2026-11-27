@@ -541,15 +541,14 @@ func (s *Service) listUnifiedPermissions(ctx context.Context, directory string) 
 				go s.rejectStaleOpenCodePermission(pid, itemDir)
 				continue
 			}
-			if itemDir != "" || isChild {
+			s.stampApprovalSessionScope(item, sessionID, itemDir, true)
+			if isChild {
+				meta, _ := item["metadata"].(map[string]interface{})
 				if meta == nil {
 					meta = make(map[string]interface{})
 					item["metadata"] = meta
 				}
-				if itemDir != "" && firstString(meta["directory"]) == "" {
-					meta["directory"] = itemDir
-				}
-				if isChild && firstString(meta["subagentSessionID"]) == "" {
+				if firstString(meta["subagentSessionID"]) == "" {
 					meta["subagentSessionID"] = rawSid
 				}
 			}
@@ -694,6 +693,53 @@ func (s *Service) rejectOpenCodeSessionPermissions(ctx context.Context, rec Sess
 				}
 				s.broadcast(rec.ID, rejectedEvt)
 			}
+		}
+	}
+}
+
+func (s *Service) stampApprovalSessionScope(req map[string]interface{}, sessionID, fallbackDir string, includeMetaDir bool) {
+	if req == nil {
+		return
+	}
+	meta, _ := req["metadata"].(map[string]interface{})
+	var (
+		rec SessionRecord
+		ok  bool
+	)
+	if s != nil && s.store != nil {
+		rec, ok = s.store.Meta(strings.TrimSpace(sessionID))
+	}
+	dir := firstNonEmptyStr(
+		firstString(req["directory"]),
+		firstString(meta["directory"]),
+		rec.WorktreePath,
+		rec.ProjectDir,
+		firstString(meta["cwd"]),
+		fallbackDir,
+	)
+	if dir != "" {
+		if firstString(req["directory"]) == "" {
+			req["directory"] = dir
+		}
+		if includeMetaDir {
+			if meta == nil {
+				meta = make(map[string]interface{})
+				req["metadata"] = meta
+			}
+			if firstString(meta["directory"]) == "" {
+				meta["directory"] = dir
+			}
+		}
+	}
+	if firstString(req["surface"]) == "" {
+		rawSurface := ""
+		surfaceDir := dir
+		if ok {
+			rawSurface = rec.Surface
+			surfaceDir = firstNonEmptyStr(rec.ProjectDir, rec.WorktreePath, dir)
+		}
+		if rawSurface != "" || surfaceDir != "" {
+			req["surface"] = NormalizeSessionSurface(rawSurface, surfaceDir)
 		}
 	}
 }

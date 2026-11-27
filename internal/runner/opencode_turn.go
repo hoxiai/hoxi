@@ -507,25 +507,21 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 	}
 	s.noteOpenCodeActivity(rec.ID, evt)
 	if evt.Type == "question.asked" || evt.Type == "question.v2.asked" {
-		if evt.Properties != nil && rec.WorktreePath != "" && firstString(evt.Properties["directory"]) == "" {
-			evt.Properties["directory"] = rec.WorktreePath
-		}
+		s.stampApprovalSessionScope(evt.Properties, rec.ID, firstNonEmptyStr(rec.WorktreePath, rec.ProjectDir), false)
 	}
 	if evt.Type == "permission.asked" {
 		sanitizeOpenCodePermissionItem(evt.Properties)
-		if evt.Properties != nil && (rec.WorktreePath != "" || rec.ExternalID != "") {
+		s.stampApprovalSessionScope(evt.Properties, rec.ID, firstNonEmptyStr(rec.WorktreePath, rec.ProjectDir), true)
+		if evt.Properties != nil && rec.ExternalID != "" {
 			meta, _ := evt.Properties["metadata"].(map[string]interface{})
 			if meta == nil {
 				meta = make(map[string]interface{})
 				evt.Properties["metadata"] = meta
 			}
-			if rec.WorktreePath != "" && firstString(meta["directory"]) == "" {
-				meta["directory"] = rec.WorktreePath
-			}
 			// The permission's sessionID is rewritten to the Hoxi id above.
 			// Keep the runtime id too, so a read of this session's own
 			// ~/.hoxi/sessions/<id>/ record can match either one.
-			if rec.ExternalID != "" && firstString(meta["externalID"]) == "" {
+			if firstString(meta["externalID"]) == "" {
 				meta["externalID"] = rec.ExternalID
 			}
 		}

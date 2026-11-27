@@ -106,7 +106,8 @@ func (s *Service) gateQuestion(r *http.Request, cred hookCredential, rec Session
 	req := map[string]interface{}{
 		"id":        id,
 		"sessionID": cred.sessionID,
-		"directory": rec.WorktreePath,
+		"directory": firstNonEmptyStr(rec.WorktreePath, rec.ProjectDir),
+		"surface":   NormalizeSessionSurface(rec.Surface, firstNonEmptyStr(rec.ProjectDir, rec.WorktreePath)),
 		"questions": questions,
 		"createdAt": nowMs,
 		"tool": map[string]interface{}{

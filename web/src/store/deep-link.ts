@@ -6,8 +6,13 @@
 import { createEffect, createRoot, createSignal, onCleanup, untrack } from "solid-js";
 import { hoxiAPI, type DesktopIntent } from "../services/api";
 import { fillDesktopComposer, onDesktopIntent } from "../services/desktop-events";
-import { saveLayoutPrefs, setLeftNavOpen, surfaceMode } from "./layout";
-import { isActionableApprovalSession } from "./approval-mode";
+import { saveLayoutPrefs, setLeftNavOpen, surfaceMode, type SurfaceMode } from "./layout";
+import {
+  approvalRequestDirectory,
+  isActionableApprovalSession,
+  resolveApprovalRequestSurface,
+} from "./approval-mode";
+import { indexedSession } from "./session-index";
 import { isSessionArchived, isSessionBusy, sessionDirectory } from "./session-query";
 import { startNewThreadDraft } from "./session-sandbox";
 import {
@@ -25,8 +30,17 @@ import {
   setCompanionMinimized,
 } from "./companion";
 import { setWorkspace, workspace } from "./workspace-state";
-import { findWorkspaceProfileByDir, normalizeFolderPath, workspacePrimaryFolder } from "./workspace-folders";
 import {
+  findWorkspaceProfileByDir,
+  getActiveWorkWorkspaceDir,
+  getRememberedCodeSurface,
+  isWorkSurfacePath,
+  normalizeFolderPath,
+  resolveDefaultProjectDir,
+  workspacePrimaryFolder,
+} from "./workspace-folders";
+import {
+  activateSurfaceMode,
   selectInitialProjectSession,
   setSidebarProjectMode,
   switchWorkspace,
@@ -51,6 +65,7 @@ export interface SessionDeepLink {
   sessionID: string;
   messageID?: string;
   directory?: string;
+  surface?: SurfaceMode;
 }
 
 interface PendingDeepLink {
@@ -59,6 +74,8 @@ interface PendingDeepLink {
   rootDir: string;
   /** Project root targeted by the link's directory, if any. */
   targetRoot: string;
+  /** Target surface when the link crosses between Code and Work. */
+  targetSurface?: SurfaceMode;
   switching: boolean;
   expiresAt: number;
 }
@@ -105,6 +122,88 @@ function projectRootForDirectory(directory?: string): string {
   return normalizeFolderPath(profile ? workspacePrimaryFolder(profile) : base) || base;
 }
 
+function explicitDirForSession(sid?: string | null): string | undefined {
+  if (!sid) return undefined;
+  return (
+    normalizeFolderPath(
+      workspace.worktreeBySession[sid]?.directory ||
+        workspace.sessions.find((s) => s.id === sid)?.directory ||
+        workspace.sessionIndex[sid]?.directory
+    ) || undefined
+  );
+}
+
+function findPendingApprovalForSession(sessionID: string) {
+  const rootID = resolveRootSessionID(sessionID) || sessionID;
+  const matches = (sid?: string, subID?: string) => {
+    const clean = sid?.trim();
+    if (!clean) return false;
+    if (clean === sessionID || clean === rootID) return true;
+    if (subID && (subID === sessionID || subID === rootID)) return true;
+    return (resolveRootSessionID(clean) || clean) === rootID;
+  };
+  const perm = workspace.pendingPermissions.find((p) =>
+    matches(p?.sessionID, p?.subagentSessionID || p?.metadata?.subagentSessionID)
+  );
+  if (perm) return perm;
+  return workspace.pendingQuestions.find((q) => matches(q?.sessionID, q?.subagentSessionID));
+}
+
+function resolveDeepLinkScope(link: SessionDeepLink): {
+  directory?: string;
+  targetRoot: string;
+  targetSurface?: SurfaceMode;
+} {
+  const sid = link.sessionID.trim();
+  const rootID = resolveRootSessionID(sid) || sid;
+  const pendingReq = findPendingApprovalForSession(sid);
+  const liveSession = workspace.sessions.find((s) => s.id === sid || s.id === rootID);
+  const indexed = indexedSession(sid) || indexedSession(rootID);
+
+  const explicitDir =
+    normalizeFolderPath(link.directory) ||
+    explicitDirForSession(sid) ||
+    explicitDirForSession(rootID) ||
+    approvalRequestDirectory(pendingReq) ||
+    undefined;
+
+  let targetSurface: SurfaceMode | undefined =
+    link.surface === "work" || link.surface === "code" ? link.surface : undefined;
+  if (!targetSurface && (liveSession?.surface === "work" || liveSession?.surface === "code")) {
+    targetSurface = liveSession.surface;
+  }
+  if (!targetSurface && (indexed?.surface === "work" || indexed?.surface === "code")) {
+    targetSurface = indexed.surface;
+  }
+  if (!targetSurface && pendingReq) {
+    const pendingExplicit =
+      pendingReq.surface === "work" || pendingReq.surface === "code"
+        ? pendingReq.surface
+        : "metadata" in pendingReq &&
+            (pendingReq.metadata?.surface === "work" || pendingReq.metadata?.surface === "code")
+          ? (pendingReq.metadata.surface as SurfaceMode)
+          : undefined;
+    if (pendingExplicit) {
+      targetSurface = pendingExplicit;
+    } else if (approvalRequestDirectory(pendingReq)) {
+      targetSurface = resolveApprovalRequestSurface(pendingReq);
+    }
+  }
+  if (!targetSurface && explicitDir) {
+    targetSurface = isWorkSurfacePath(explicitDir) ? "work" : "code";
+  }
+
+  let targetRoot = projectRootForDirectory(explicitDir);
+  if (!targetRoot && targetSurface === "work") {
+    targetRoot = normalizeFolderPath(getActiveWorkWorkspaceDir());
+  } else if (!targetRoot && targetSurface === "code" && surfaceMode() === "work") {
+    targetRoot = normalizeFolderPath(
+      getRememberedCodeSurface().rootDir || resolveDefaultProjectDir("")
+    );
+  }
+  return { directory: explicitDir, targetRoot, targetSurface };
+}
+
 function focusSessionLink(link: SessionDeepLink) {
   clearFocusTimer();
   const generation = focusGeneration;
@@ -147,10 +246,17 @@ export function openSessionDeepLink(
   if (!link || !sessionID) return;
   clearPendingDeepLink();
   const ttlMs = options.ttlMs ?? DEEP_LINK_TTL_MS;
+  const scope = resolveDeepLinkScope({ ...link, sessionID });
   const entry: PendingDeepLink = {
-    link: { ...link, sessionID },
+    link: {
+      ...link,
+      sessionID,
+      directory: scope.directory ?? link.directory,
+      surface: scope.targetSurface ?? link.surface,
+    },
     rootDir: normalizeFolderPath(workspace.rootDir),
-    targetRoot: projectRootForDirectory(link.directory),
+    targetRoot: scope.targetRoot,
+    targetSurface: scope.targetSurface,
     switching: false,
     expiresAt: Date.now() + ttlMs,
   };
@@ -173,8 +279,9 @@ export function resolvePendingDeepLink(): void {
   const bootstrapping = workspace.bootstrappingSessions;
   const root = normalizeFolderPath(workspace.rootDir);
   const loaded = workspace.sessions.some((session) => session.id === entry.link.sessionID);
+  const needsSurfaceSwitch = Boolean(entry.targetSurface && entry.targetSurface !== surfaceMode());
   if (bootstrapping) return;
-  if (loaded) {
+  if (loaded && !needsSurfaceSwitch) {
     clearPendingDeepLink();
     focusSessionLink(entry.link);
     return;
@@ -182,19 +289,29 @@ export function resolvePendingDeepLink(): void {
   // The startup restore picks the first root; the link adopts it once.
   if (!entry.rootDir) entry.rootDir = root;
   if (root !== entry.rootDir) {
-    if (!(entry.switching && root === entry.targetRoot)) {
+    if (!(entry.switching && (!entry.targetRoot || root === entry.targetRoot))) {
       clearPendingDeepLink();
       return;
     }
     entry.rootDir = root;
   }
-  if (entry.switching || !entry.targetRoot || entry.targetRoot === root) return;
+  if (entry.switching) return;
+  if (!needsSurfaceSwitch && (!entry.targetRoot || entry.targetRoot === root)) return;
   entry.switching = true;
-  entry.rootDir = entry.targetRoot;
   const targetRoot = entry.targetRoot;
-  void switchWorkspace(targetRoot, { targetSessionID: entry.link.sessionID }).finally(() => {
+  if (targetRoot) entry.rootDir = targetRoot;
+  const switchTask =
+    needsSurfaceSwitch && entry.targetSurface
+      ? activateSurfaceMode(entry.targetSurface, {
+          targetDir: targetRoot || undefined,
+          targetSessionID: entry.link.sessionID,
+        })
+      : switchWorkspace(targetRoot, { targetSessionID: entry.link.sessionID });
+  void switchTask.finally(() => {
     if (pending() !== entry) return;
     entry.switching = false;
+    const landedRoot = normalizeFolderPath(workspace.rootDir);
+    if (landedRoot) entry.rootDir = landedRoot;
     if (workspace.sessions.some((session) => session.id === entry.link.sessionID)) {
       resolvePendingDeepLink();
       return;
@@ -203,11 +320,11 @@ export function resolvePendingDeepLink(): void {
     // back to the normal initial selection instead of a dangling active ID.
     clearPendingDeepLink();
     if (
-      normalizeFolderPath(workspace.rootDir) === targetRoot &&
+      (!targetRoot || landedRoot === targetRoot) &&
       workspace.activeSessionID === entry.link.sessionID
     ) {
       setWorkspace("activeSessionID", null);
-      void selectInitialProjectSession(workspace.sessions, targetRoot);
+      void selectInitialProjectSession(workspace.sessions, landedRoot || targetRoot);
     }
   });
 }
@@ -229,7 +346,11 @@ export async function consumeDesktopIntent(): Promise<DesktopIntent | null> {
  * and focuses the next session awaiting approval, interactive question input,
  * or user attention.
  */
-export function focusFirstAttentionSession(targetSessionID?: string, directory?: string): void {
+export function focusFirstAttentionSession(
+  targetSessionID?: string,
+  directory?: string,
+  options?: { surface?: SurfaceMode }
+): void {
   setLeftNavOpen(true);
   saveLayoutPrefs();
 
@@ -238,48 +359,57 @@ export function focusFirstAttentionSession(targetSessionID?: string, directory?:
     const rootID = resolveRootSessionID(explicitID) || explicitID;
     openSessionDeepLink({
       sessionID: rootID,
-      directory: directory || sessionDirectory(rootID) || sessionDirectory(explicitID),
+      directory:
+        normalizeFolderPath(directory) ||
+        explicitDirForSession(rootID) ||
+        explicitDirForSession(explicitID) ||
+        approvalRequestDirectory(findPendingApprovalForSession(explicitID)),
+      surface: options?.surface,
     });
     return;
   }
 
+  const filterSurface = options?.surface;
   const targets: SessionDeepLink[] = [];
   const seen = new Set<string>();
-  const explicitDirFor = (sid: string): string | undefined =>
-    normalizeFolderPath(
-      workspace.worktreeBySession[sid]?.directory ||
-        workspace.sessions.find((s) => s.id === sid)?.directory ||
-        workspace.sessionIndex[sid]?.directory
-    ) || undefined;
-  const pushTarget = (rawSessionID?: string, fallbackDir?: string) => {
+  const pushTarget = (
+    rawSessionID?: string,
+    fallbackDir?: string,
+    targetSurface?: SurfaceMode
+  ) => {
     const sid = rawSessionID?.trim();
     if (!sid || !isActionableApprovalSession(sid)) return;
+    if (filterSurface && targetSurface && targetSurface !== filterSurface) return;
     const rootID = resolveRootSessionID(sid) || sid;
     if (seen.has(rootID)) return;
     seen.add(rootID);
     const metaDir = normalizeFolderPath(fallbackDir) || undefined;
+    const fallbackSessionDir =
+      normalizeFolderPath(sessionDirectory(rootID) || sessionDirectory(sid)) || undefined;
+    const safeFallbackDir =
+      fallbackSessionDir &&
+      (!targetSurface ||
+        (isWorkSurfacePath(fallbackSessionDir) ? "work" : "code") === targetSurface)
+        ? fallbackSessionDir
+        : undefined;
     targets.push({
       sessionID: rootID,
       directory:
-        explicitDirFor(rootID) ||
-        explicitDirFor(sid) ||
+        explicitDirForSession(rootID) ||
+        explicitDirForSession(sid) ||
         metaDir ||
-        sessionDirectory(rootID) ||
-        sessionDirectory(sid),
+        safeFallbackDir,
+      surface: targetSurface,
     });
   };
 
   for (const perm of workspace.pendingPermissions) {
-    const permDir =
-      typeof perm?.metadata?.directory === "string"
-        ? perm.metadata.directory
-        : typeof perm?.metadata?.cwd === "string"
-          ? perm.metadata.cwd
-          : undefined;
-    pushTarget(perm?.sessionID, permDir);
+    const permSurface = resolveApprovalRequestSurface(perm);
+    pushTarget(perm?.sessionID, approvalRequestDirectory(perm), permSurface);
   }
   for (const question of workspace.pendingQuestions) {
-    pushTarget(question?.sessionID);
+    const questionSurface = resolveApprovalRequestSurface(question);
+    pushTarget(question?.sessionID, approvalRequestDirectory(question), questionSurface);
   }
 
   if (targets.length > 0) {
@@ -298,6 +428,7 @@ export function focusFirstAttentionSession(targetSessionID?: string, directory?:
     (s) =>
       !s.parentID &&
       !isSessionArchived(s) &&
+      (!filterSurface || (s.surface || (isWorkSurfacePath(s.directory) ? "work" : "code")) === filterSurface) &&
       Boolean(
         workspace.unreadCompletedBySession[s.id] ||
           workspace.interruptedBySession[s.id] === "paused"
@@ -307,6 +438,7 @@ export function focusFirstAttentionSession(targetSessionID?: string, directory?:
     openSessionDeepLink({
       sessionID: candidate.id,
       directory: sessionDirectory(candidate.id),
+      surface: filterSurface,
     });
   }
 }
@@ -473,6 +605,7 @@ export function startDeepLinkNavigation(openApp?: OpenAppIntent): () => void {
     // (selectSession / switchWorkspace) run untracked.
     createEffect(() => {
       if (!pending()) return;
+      void surfaceMode();
       void workspace.bootstrappingSessions;
       void workspace.rootDir;
       for (const session of workspace.sessions) void session.id;

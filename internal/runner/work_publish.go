@@ -23,7 +23,7 @@ func (s *Service) RequestWorkPublishApproval(ctx context.Context, sessionID, dir
 	}
 	id := runnerPermissionID + randomHex(12)
 	request := map[string]interface{}{
-		"id": id, "sessionID": sessionID, "directory": directory,
+		"id": id, "sessionID": sessionID, "directory": directory, "surface": "work",
 		"permission": "hoxi_work_publish", "patterns": []string{"Publish draft to external target " + storeID}, "always": []string{},
 		"metadata": map[string]interface{}{"tool": "hoxi_work_publish", "storeId": storeID,
 			"args": string(raw), "destructive": true, "desktopOnly": true,

@@ -167,10 +167,10 @@ export default function LeftNav() {
     { equals: (a, b) => a.length === b.length && a.every((v, i) => v === b[i]) }
   );
 
-  const pendingSessions = createMemo(() => collectPendingSessionIDs(), new Set<string>(), {
+  const pendingSessions = createMemo(() => collectPendingSessionIDs("code"), new Set<string>(), {
     equals: sameStringSet,
   });
-  const pendingApprovalRoots = createMemo(() => collectPendingApprovalRoots(), new Set<string>(), {
+  const pendingApprovalRoots = createMemo(() => collectPendingApprovalRoots("code"), new Set<string>(), {
     equals: sameStringSet,
   });
   const pendingApprovalCount = createMemo(() => pendingApprovalRoots().size);
@@ -527,7 +527,7 @@ export default function LeftNav() {
           <button
             type="button"
             onClick={() => {
-              focusFirstAttentionSession();
+              focusFirstAttentionSession(undefined, undefined, { surface: "code" });
               const root = normalizeFolderPath(workspace.rootDir);
               if (root && !isInvalidProjectPath(root) && !isDefaultWorkspacePath(root)) {
                 setExpandedProjects((prev) => (prev.has(root) ? prev : new Set([...prev, root])));

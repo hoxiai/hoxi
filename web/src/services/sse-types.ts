@@ -211,6 +211,8 @@ export interface PermissionRequest {
   id: string;
   sessionID: string;
   subagentSessionID?: string;
+  directory?: string;
+  surface?: "code" | "work";
   permission: string;
   patterns: string[];
   metadata: Record<string, any>;
@@ -297,6 +299,7 @@ export interface QuestionRequest {
   sessionID: string;
   subagentSessionID?: string;
   directory?: string;
+  surface?: "code" | "work";
   kind?: string;
   plan?: PlanConsentPreview;
   questions: QuestionInfo[];

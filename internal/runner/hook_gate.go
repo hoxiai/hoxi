@@ -534,6 +534,7 @@ func pendingCallKey(sessionID string, req map[string]interface{}) string {
 // awaitReply publishes a permission request and blocks until the user
 // answers, the hook call is interrupted, or the wait limit passes.
 func (s *Service) awaitReply(r *http.Request, cred hookCredential, id string, req map[string]interface{}) approvalReply {
+	s.stampApprovalSessionScope(req, cred.sessionID, "", true)
 	callKey := pendingCallKey(cred.sessionID, req)
 	s.gate.mu.Lock()
 	if callKey != "" {

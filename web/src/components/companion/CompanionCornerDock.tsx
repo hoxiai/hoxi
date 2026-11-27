@@ -10,7 +10,6 @@ import {
   focusFirstAttentionSession,
   POKE_BUBBLE_WINDOW_MS,
   pokeCompanion,
-  selectSession,
   setCompanionMinimized,
   syncCompanionToDesktopHost,
   workspace,
@@ -221,11 +220,7 @@ export default function CompanionCornerDock(props: { hiddenByStage?: boolean }) 
   const onAvatarActivate = () => {
     if (isUrgentGate()) {
       const target = snap().targetSessionID;
-      if (target) {
-        void selectSession(target);
-      } else {
-        focusFirstAttentionSession();
-      }
+      focusFirstAttentionSession(target || undefined);
       return;
     }
     pokeCompanion();

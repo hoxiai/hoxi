@@ -10,6 +10,7 @@ import {
   isWorkSurfacePath,
   normalizeFolderPath,
   normalizeWorkspaceIdentityColor,
+  resolveApprovalRequestSurface,
   resolveRootSessionID,
   shortenPath,
   stripWorktreePath,
@@ -139,37 +140,49 @@ export function resolveActiveRootSessionID(): string | null {
   return resolveRootSessionID(activeID) || activeID;
 }
 
-export function collectPendingSessionIDs(): Set<string> {
+export function collectPendingSessionIDs(surface?: "code" | "work"): Set<string> {
   if (workspace.pendingPermissions.length === 0 && workspace.pendingQuestions.length === 0) {
     return EMPTY_PENDING_SET;
   }
   const set = new Set<string>();
   for (const p of workspace.pendingPermissions) {
     if (!isActionableApprovalSession(p?.sessionID)) continue;
+    if (surface && resolveApprovalRequestSurface(p) !== surface) continue;
     set.add(p.sessionID);
+    const subID =
+      (typeof p.subagentSessionID === "string" && p.subagentSessionID.trim()) ||
+      (typeof p.metadata?.subagentSessionID === "string" && p.metadata.subagentSessionID.trim()) ||
+      "";
+    if (subID) set.add(subID);
     const root = resolveRootSessionID(p.sessionID);
     if (root) set.add(root);
   }
   for (const q of workspace.pendingQuestions) {
     if (!isActionableApprovalSession(q?.sessionID)) continue;
+    if (surface && resolveApprovalRequestSurface(q) !== surface) continue;
     set.add(q.sessionID);
+    if (typeof q.subagentSessionID === "string" && q.subagentSessionID.trim()) {
+      set.add(q.subagentSessionID.trim());
+    }
     const root = resolveRootSessionID(q.sessionID);
     if (root) set.add(root);
   }
   return set.size > 0 ? set : EMPTY_PENDING_SET;
 }
 
-export function collectPendingApprovalRoots(): Set<string> {
+export function collectPendingApprovalRoots(surface?: "code" | "work"): Set<string> {
   if (workspace.pendingPermissions.length === 0 && workspace.pendingQuestions.length === 0) {
     return EMPTY_PENDING_SET;
   }
   const roots = new Set<string>();
   for (const p of workspace.pendingPermissions) {
     if (!isActionableApprovalSession(p?.sessionID)) continue;
+    if (surface && resolveApprovalRequestSurface(p) !== surface) continue;
     roots.add(resolveRootSessionID(p.sessionID) || p.sessionID);
   }
   for (const q of workspace.pendingQuestions) {
     if (!isActionableApprovalSession(q?.sessionID)) continue;
+    if (surface && resolveApprovalRequestSurface(q) !== surface) continue;
     roots.add(resolveRootSessionID(q.sessionID) || q.sessionID);
   }
   return roots.size > 0 ? roots : EMPTY_PENDING_SET;

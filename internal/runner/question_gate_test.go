@@ -335,3 +335,67 @@ func TestReviewEventConnectFailureCleansCreatedEngineSession(t *testing.T) {
 		t.Fatalf("startup rollback left created engine session: managed=%v deletes=%d restored OpenCodeIDs=%v", managed, deletes, got.OpenCodeIDs)
 	}
 }
+
+func TestApprovalAndQuestionStampSessionDirectoryAndSurface(t *testing.T) {
+	t.Parallel()
+	f := newGateFixture(t)
+	// Mark the seeded session as a Work session living in a custom (non-default) directory
+	// so surface attribution cannot rely on the ~/.hoxi/workspaces/default path convention.
+	rec, ok := f.svc.store.Get("ses_agy_gate")
+	if !ok {
+		t.Fatal("missing seeded session")
+	}
+	rec.Surface = "work"
+	if err := f.svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	events, unsub := f.svc.Subscribe("ses_agy_gate")
+	defer unsub()
+
+	// 1. Runner command approval stamps directory, metadata.directory, and surface="work".
+	cmdResult := asyncInMemoryHook(t, f, f.payload("rm -rf build", "", "conv-1"))
+	askedPerm := waitForEvent(t, events, "permission.asked")
+	if got := firstString(askedPerm.Properties["surface"]); got != "work" {
+		t.Fatalf("permission.asked surface = %q, want work", got)
+	}
+	if got := firstString(askedPerm.Properties["directory"]); got != f.dir {
+		t.Fatalf("permission.asked directory = %q, want %q", got, f.dir)
+	}
+	if meta, _ := askedPerm.Properties["metadata"].(map[string]interface{}); firstString(meta["directory"]) != f.dir {
+		t.Fatalf("permission.asked metadata.directory = %q, want %q", firstString(meta["directory"]), f.dir)
+	}
+	listedPerms := f.svc.listPendingApprovals(f.dir)
+	if len(listedPerms) != 1 || firstString(listedPerms[0]["surface"]) != "work" || firstString(listedPerms[0]["directory"]) != f.dir {
+		t.Fatalf("unexpected listed pending approvals: %+v", listedPerms)
+	}
+	permID, _ := askedPerm.Properties["id"].(string)
+	replyRec := httptest.NewRecorder()
+	f.srv.Config.Handler.ServeHTTP(replyRec, httptest.NewRequest(http.MethodPost, "/api/hoxi/permission/"+permID+"/reply", strings.NewReader(`{"reply":"reject"}`)))
+	if replyRec.Code != http.StatusOK {
+		t.Fatalf("reject permission failed: %d %s", replyRec.Code, replyRec.Body.String())
+	}
+	<-cmdResult
+
+	// 2. Runner question gate stamps directory and surface="work".
+	qPayload := []byte(`{"conversationId":"conv-1","stepIdx":9,"toolCall":{"name":"ask_question","args":{"questions":[{"question":"Ship report?","options":["Yes","No"]}]}}}`)
+	qResult := asyncInMemoryHook(t, f, qPayload)
+	askedQ := waitForEvent(t, events, "question.asked")
+	if got := firstString(askedQ.Properties["surface"]); got != "work" {
+		t.Fatalf("question.asked surface = %q, want work", got)
+	}
+	if got := firstString(askedQ.Properties["directory"]); got != f.dir {
+		t.Fatalf("question.asked directory = %q, want %q", got, f.dir)
+	}
+	listedQs := f.svc.listPendingQuestions(f.dir)
+	if len(listedQs) != 1 || firstString(listedQs[0]["surface"]) != "work" || firstString(listedQs[0]["directory"]) != f.dir {
+		t.Fatalf("unexpected listed pending questions: %+v", listedQs)
+	}
+	qid, _ := askedQ.Properties["id"].(string)
+	qRejectRec := httptest.NewRecorder()
+	f.srv.Config.Handler.ServeHTTP(qRejectRec, httptest.NewRequest(http.MethodPost, "/api/hoxi/question/"+qid+"/reject", strings.NewReader(`{}`)))
+	if qRejectRec.Code != http.StatusOK {
+		t.Fatalf("reject question failed: %d %s", qRejectRec.Code, qRejectRec.Body.String())
+	}
+	<-qResult
+}

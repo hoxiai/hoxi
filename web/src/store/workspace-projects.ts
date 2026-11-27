@@ -43,13 +43,20 @@ let appliedProjectSessionRevision = 0;
 let projectResolutionRevision = 0;
 const lastBootstrappedAtByDir = new Map<string, number>();
 
-export async function activateSurfaceMode(nextMode: SurfaceMode): Promise<void> {
+export async function activateSurfaceMode(
+  nextMode: SurfaceMode,
+  options?: { targetDir?: string; targetSessionID?: string }
+): Promise<void> {
   const prevMode = surfaceMode();
   const currentRoot = normalizeFolderPath(workspace.rootDir);
   const currentSessionID = workspace.activeSessionID;
+  const explicitDir = normalizeFolderPath(options?.targetDir);
+  const explicitSessionID = options?.targetSessionID?.trim() || undefined;
 
   if (
     prevMode === nextMode &&
+    !explicitDir &&
+    !explicitSessionID &&
     ((nextMode === "work" && currentRoot && isWorkSurfacePath(currentRoot)) ||
       (nextMode === "code" && currentRoot && !isWorkSurfacePath(currentRoot)))
   ) {
@@ -67,7 +74,7 @@ export async function activateSurfaceMode(nextMode: SurfaceMode): Promise<void> 
   }
 
   if (nextMode === "work") {
-    let workDir = getActiveWorkWorkspaceDir();
+    let workDir = explicitDir || getActiveWorkWorkspaceDir();
     if (!workDir) {
       try {
         const boot = await hoxiAPI.getBootstrap();
@@ -81,17 +88,21 @@ export async function activateSurfaceMode(nextMode: SurfaceMode): Promise<void> 
     }
     if (workDir) {
       const remWork = getRememberedWorkSurface();
+      const cached =
+        remWork.rootDir === workDir && remWork.cachedSessions
+          ? remWork.cachedSessions
+          : getCachedProjectSessions(workDir);
+      const targetSessionID =
+        explicitSessionID ?? (remWork.rootDir === workDir ? remWork.sessionID ?? undefined : undefined);
+      const fastSwitch = !explicitSessionID || Boolean(cached?.some((s) => s.id === explicitSessionID));
       let switchPromise: Promise<void> | undefined;
       batch(() => {
         setSurfaceMode("work");
         switchPromise = switchWorkspace(workDir, {
-          targetSessionID: remWork.rootDir === workDir ? remWork.sessionID ?? undefined : undefined,
+          targetSessionID,
           selectInitial: false,
-          fastSurfaceSwitch: true,
-          cachedSessions:
-            remWork.rootDir === workDir && remWork.cachedSessions
-              ? remWork.cachedSessions
-              : getCachedProjectSessions(workDir),
+          fastSurfaceSwitch: fastSwitch,
+          cachedSessions: cached,
         });
       });
       await switchPromise;
@@ -107,8 +118,14 @@ export async function activateSurfaceMode(nextMode: SurfaceMode): Promise<void> 
       void Promise.all([loadSavedWorkspaces(), loadProjects()]);
     }
     const remCode = getRememberedCodeSurface();
-    const codeDir = normalizeFolderPath(remCode.rootDir || resolveDefaultProjectDir(""));
+    const codeDir = explicitDir || normalizeFolderPath(remCode.rootDir || resolveDefaultProjectDir(""));
     if (codeDir && !isWorkSurfacePath(codeDir)) {
+      const cached =
+        remCode.rootDir === codeDir && remCode.cachedSessions
+          ? remCode.cachedSessions
+          : getCachedProjectSessions(codeDir);
+      const targetSessionID = explicitSessionID ?? remCode.sessionID ?? undefined;
+      const fastSwitch = !explicitSessionID || Boolean(cached?.some((s) => s.id === explicitSessionID));
       let switchPromise: Promise<void> | undefined;
       batch(() => {
         if (workspace.sidebarProjectMode === "attention" || workspace.sidebarProjectMode === "running") {
@@ -117,13 +134,10 @@ export async function activateSurfaceMode(nextMode: SurfaceMode): Promise<void> 
         setSurfaceMode("code");
         setWorkspace("activeBrowserScopeID", null);
         switchPromise = switchWorkspace(codeDir, {
-          targetSessionID: remCode.sessionID ?? undefined,
-          selectInitial: !remCode.sessionID,
-          fastSurfaceSwitch: true,
-          cachedSessions:
-            remCode.rootDir === codeDir && remCode.cachedSessions
-              ? remCode.cachedSessions
-              : getCachedProjectSessions(codeDir),
+          targetSessionID,
+          selectInitial: !targetSessionID,
+          fastSurfaceSwitch: fastSwitch,
+          cachedSessions: cached,
         });
       });
       await switchPromise;

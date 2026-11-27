@@ -93,15 +93,13 @@ func (s *Service) filterAndMergeQuestions(questions []map[string]interface{}, di
 			go s.rejectStaleOpenCodeQuestion(qid, qDir)
 			continue
 		}
-		if qDir != "" && firstString(item["directory"]) == "" {
-			item["directory"] = qDir
-		}
 		if rawSid != "" && hoxiID != "" && rawSid != hoxiID && s.isManagedOpenCodeChild(rawSid) {
 			item["subagentSessionID"] = rawSid
 		}
 		if hoxiID != "" {
 			item["sessionID"] = hoxiID
 		}
+		s.stampApprovalSessionScope(item, firstNonEmptyStr(hoxiID, rawSid), qDir, false)
 		kept = append(kept, item)
 	}
 	for _, rq := range s.listPendingQuestions(directory) {

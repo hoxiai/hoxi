@@ -36,7 +36,6 @@ import {
   rightWidth,
   saveLayoutPrefs,
   scheduleModalOpen,
-  selectSession,
   setLeftNavOpen,
   setLeftWidth,
   setRightWidth,
@@ -180,7 +179,7 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
     };
     const onNotificationClick = (event: Event) => {
       const sessionID = (event as CustomEvent<{ sessionID?: string }>).detail?.sessionID;
-      if (sessionID) void selectSession(sessionID);
+      if (sessionID) openSessionDeepLink({ sessionID });
     };
     const onWindowResize = () => setWindowWidth(window.innerWidth);
     onWindowResize();

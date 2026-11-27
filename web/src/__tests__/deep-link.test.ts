@@ -1,5 +1,10 @@
 import { reconcile, unwrap } from "solid-js/store";
+import { hoxiAPI } from "../services/api";
 import { DESKTOP_INTENT_EVENT, onDesktopIntent } from "../services/desktop-events";
+import {
+  collectPendingApprovalRoots,
+  collectPendingSessionIDs,
+} from "../components/layout/left-nav-helpers";
 import {
   appSettings,
   appLinkConfirmation,
@@ -13,11 +18,14 @@ import {
   pendingDeepLink,
   resolvePendingDeepLink,
   resolveAppLinkConfirmation,
+  setDefaultWorkspaceDir,
   setLeftNavOpen,
+  setSurfaceMode,
   setWorkspace,
+  surfaceMode,
   workspace,
 } from "../store/workspace";
-import { assertEqual, describe, it } from "./test-harness";
+import { assertDeepEqual, assertEqual, describe, it } from "./test-harness";
 
 describe("session deep links", () => {
   it("drops a pending deep link when the project changes or TTL expires", () => {
@@ -189,6 +197,136 @@ describe("session deep links", () => {
       } else {
         g.window = prevWindow;
       }
+    }
+  });
+
+  it("isolates Work pending approvals from Code sidebar counts and switches surface on cross-surface deep links", async () => {
+    const saved = structuredClone(unwrap(workspace));
+    const savedNav = leftNavOpen();
+    const prevSurface = surfaceMode();
+    const origAPI = { ...hoxiAPI };
+    try {
+      setDefaultWorkspaceDir("/Users/test/.hoxi/workspaces/default");
+      setSurfaceMode("code");
+      setWorkspace({
+        rootDir: "/repo-code",
+        activeProjectID: "ws_code",
+        bootstrappingSessions: false,
+        activeSessionID: "ses_code_active",
+        sessions: [
+          {
+            id: "ses_code_active",
+            title: "Code Active",
+            directory: "/repo-code",
+            surface: "code",
+            time: { created: 1, updated: 1 },
+          },
+        ],
+        sessionIndex: {
+          ses_code_active: { directory: "/repo-code", surface: "code", updated: 1 },
+        },
+        pendingPermissions: [
+          {
+            id: "per_work_1",
+            sessionID: "ses_work_pending",
+            directory: "/Users/test/.hoxi/workspaces/default",
+            surface: "work",
+            permission: "hoxi_work_publish",
+            patterns: ["Publish draft"],
+            metadata: {},
+            always: [],
+          },
+        ],
+        pendingQuestions: [
+          {
+            id: "que_work_1",
+            sessionID: "ses_work_q",
+            directory: "/Users/test/.hoxi/workspaces/default",
+            surface: "work",
+            questions: [],
+          },
+        ],
+      });
+
+      // Code sidebar helpers must exclude Work approvals/questions so Code never shows a ghost badge.
+      assertEqual(collectPendingApprovalRoots("code").size, 0);
+      assertEqual(collectPendingSessionIDs("code").size, 0);
+      assertEqual(collectPendingApprovalRoots("work").size, 2);
+      assertDeepEqual(Array.from(collectPendingApprovalRoots("work")).sort(), [
+        "ses_work_pending",
+        "ses_work_q",
+      ]);
+
+      // Code-scoped banner click must not navigate to Work approvals.
+      focusFirstAttentionSession(undefined, undefined, { surface: "code" });
+      assertEqual(pendingDeepLink(), null);
+      assertEqual(surfaceMode(), "code");
+      assertEqual(workspace.rootDir, "/repo-code");
+
+      // Global attention intent (e.g. macOS status bar) targeting a Work approval switches surface atomically.
+      hoxiAPI.listSessions = async (dir) =>
+        dir === "/Users/test/.hoxi/workspaces/default"
+          ? [
+              {
+                id: "ses_work_pending",
+                title: "Work Approval",
+                directory: "/Users/test/.hoxi/workspaces/default",
+                surface: "work",
+                time: { created: 2, updated: 2 },
+              },
+            ]
+          : [];
+      hoxiAPI.resolveProject = async (dir) => ({ projectID: dir, directory: dir, roots: [dir] });
+      hoxiAPI.getMessages = async () => [];
+      hoxiAPI.listPermissions = async () => [];
+      hoxiAPI.listQuestions = async () => [];
+      hoxiAPI.getSessionStatuses = async () => ({});
+      hoxiAPI.listAgents = async () => [];
+      hoxiAPI.getSessionDiff = async () => [];
+
+      applyDesktopIntent({ action: "attention" });
+      await new Promise((r) => setTimeout(r, 30));
+
+      assertEqual(surfaceMode(), "work");
+      assertEqual(workspace.rootDir, "/Users/test/.hoxi/workspaces/default");
+      assertEqual(workspace.activeSessionID, "ses_work_pending");
+
+      // Navigating to a Code question from Work switches back to Code using question.directory.
+      setWorkspace("pendingPermissions", []);
+      setWorkspace("pendingQuestions", [
+        {
+          id: "que_code_1",
+          sessionID: "ses_code_q",
+          directory: "/repo-code",
+          surface: "code",
+          questions: [],
+        },
+      ]);
+      hoxiAPI.listSessions = async (dir) =>
+        dir === "/repo-code"
+          ? [
+              {
+                id: "ses_code_q",
+                title: "Code Question",
+                directory: "/repo-code",
+                surface: "code",
+                time: { created: 3, updated: 3 },
+              },
+            ]
+          : [];
+
+      focusFirstAttentionSession();
+      await new Promise((r) => setTimeout(r, 30));
+
+      assertEqual(surfaceMode(), "code");
+      assertEqual(workspace.rootDir, "/repo-code");
+      assertEqual(workspace.activeSessionID, "ses_code_q");
+    } finally {
+      clearPendingDeepLink();
+      Object.assign(hoxiAPI, origAPI);
+      setSurfaceMode(prevSurface);
+      setLeftNavOpen(savedNav);
+      setWorkspace(reconcile(saved));
     }
   });
 });

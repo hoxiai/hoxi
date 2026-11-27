@@ -25,9 +25,10 @@ import {
   type ApprovalMode,
 } from "./settings";
 import { setWorkspace, workspace } from "./workspace-state";
+import { indexedSession, resolveSessionSurface } from "./session-index";
 import { isSessionArchived, isSessionDeleted, sessionDirectory } from "./session-query";
 import { resolveParentSessionID, resolveRootSessionID } from "./subagent-sessions";
-import { normalizeFolderPath } from "./workspace-folders";
+import { isWorkSurfacePath, normalizeFolderPath } from "./workspace-folders";
 import { fetchGlobalConfig, updateGlobalPermissions } from "./global-config";
 import {
   approvalAuditEntries,
@@ -387,19 +388,78 @@ export function explicitSessionDirectory(sessionID?: string | null): string | un
   return normalizeFolderPath(direct) || undefined;
 }
 
-function resolvePermissionDirectory(req: PermissionRequest): string | undefined {
+export interface ApprovalRequestScope {
+  sessionID?: string;
+  subagentSessionID?: string;
+  directory?: string;
+  surface?: "code" | "work";
+  metadata?: Record<string, any>;
+}
+
+/** Explicit directory carried by an approval/question or its indexed session (never falls back to active rootDir). */
+export function approvalRequestDirectory(
+  req: ApprovalRequestScope | null | undefined
+): string | undefined {
+  if (!req) return undefined;
+  const directDir = normalizeFolderPath(
+    typeof req.directory === "string" ? req.directory : undefined
+  );
+  if (directDir) return directDir;
   const cleanMetaDir = normalizeFolderPath(
     typeof req.metadata?.directory === "string" ? req.metadata.directory : undefined
   );
   if (cleanMetaDir) return cleanMetaDir;
-  const rootID = resolveRootSessionID(req.sessionID) || req.sessionID;
+  const sid = req.sessionID?.trim();
+  const subID =
+    (typeof req.subagentSessionID === "string" && req.subagentSessionID.trim()) ||
+    (typeof req.metadata?.subagentSessionID === "string" && req.metadata.subagentSessionID.trim()) ||
+    undefined;
+  const rootID = sid ? resolveRootSessionID(sid) || sid : undefined;
   const knownSessionDir =
-    explicitSessionDirectory(req.sessionID) || explicitSessionDirectory(rootID);
+    explicitSessionDirectory(sid) ||
+    explicitSessionDirectory(subID) ||
+    explicitSessionDirectory(rootID);
   if (knownSessionDir) return knownSessionDir;
   const cleanMetaCwd = normalizeFolderPath(
     typeof req.metadata?.cwd === "string" ? req.metadata.cwd : undefined
   );
-  if (cleanMetaCwd) return cleanMetaCwd;
+  return cleanMetaCwd || undefined;
+}
+
+/** Resolves whether a pending permission or question belongs to the "code" or "work" surface. */
+export function resolveApprovalRequestSurface(
+  req: ApprovalRequestScope | null | undefined
+): "code" | "work" {
+  if (!req) return "code";
+  const explicit =
+    req.surface === "work" || req.surface === "code"
+      ? req.surface
+      : req.metadata?.surface === "work" || req.metadata?.surface === "code"
+        ? (req.metadata.surface as "code" | "work")
+        : undefined;
+  if (explicit) return explicit;
+  const sid = req.sessionID?.trim();
+  const subID =
+    (typeof req.subagentSessionID === "string" && req.subagentSessionID.trim()) ||
+    (typeof req.metadata?.subagentSessionID === "string" && req.metadata.subagentSessionID.trim()) ||
+    undefined;
+  const rootID = sid ? resolveRootSessionID(sid) || sid : undefined;
+  for (const candidateID of [sid, rootID, subID]) {
+    if (!candidateID) continue;
+    const live = workspace.sessions.find((s) => s.id === candidateID);
+    if (live?.surface === "work" || live?.surface === "code") return live.surface;
+    const idx = indexedSession(candidateID);
+    if (idx?.surface === "work" || idx?.surface === "code") return idx.surface;
+  }
+  const dir = approvalRequestDirectory(req);
+  if (dir) return isWorkSurfacePath(dir) ? "work" : "code";
+  return resolveSessionSurface({ id: rootID || sid });
+}
+
+function resolvePermissionDirectory(req: PermissionRequest): string | undefined {
+  const explicit = approvalRequestDirectory(req);
+  if (explicit) return explicit;
+  const rootID = resolveRootSessionID(req.sessionID) || req.sessionID;
   const sessionDir = normalizeFolderPath(sessionDirectory(req.sessionID));
   if (sessionDir) return sessionDir;
   const indexed = workspace.sessionIndex[req.sessionID] || workspace.sessionIndex[rootID];
