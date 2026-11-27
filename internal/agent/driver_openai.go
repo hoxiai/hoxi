@@ -78,6 +78,13 @@ func isStrictNonOpenAIChatHost(target llm.StreamTarget) bool {
 	return false
 }
 
+var extendedRetentionModel = regexp.MustCompile(`^(gpt-5(\.5(-pro)?|\.4|\.2|\.1(-codex(-max|-mini)?|-chat-latest)?|-codex)?|gpt-4\.1)(-\d{4}-\d\d-\d\d)?$`)
+
+func supportsResponsesExtendedRetention(t llm.StreamTarget) bool {
+	u, err := url.Parse(t.BaseURL)
+	return err == nil && u.Scheme == "https" && strings.EqualFold(u.Host, "api.openai.com") && extendedRetentionModel.MatchString(t.ModelID)
+}
+
 func isOpenAIChatModel(modelID string) bool {
 	lower := strings.ToLower(strings.TrimSpace(modelID))
 	if lower == "" || strings.Contains(lower, "gpt-oss") || strings.Contains(lower, "oss-") {
@@ -109,8 +116,8 @@ func isOpenRouterHost(target llm.StreamTarget) bool {
 	return host == "openrouter.ai" || strings.HasSuffix(host, ".openrouter.ai")
 }
 
-func supportsOpenRouterTopLevelCacheControl(target llm.StreamTarget) bool {
-	if !isOpenRouterHost(target) {
+func supportsClaudeChatCacheControl(target llm.StreamTarget) bool {
+	if !isOpenRouterHost(target) && !target.OpenAICompatCacheControl {
 		return false
 	}
 	return strings.Contains(strings.ToLower(strings.TrimSpace(target.ModelID)), "claude")
@@ -265,7 +272,7 @@ func (d *openaiDriver) buildChatCompletionsRequest(req ModelRequest) (llm.Stream
 	if cacheKey != "" && supportsOpenAIChatPromptCacheKey(req.Target) {
 		payload["prompt_cache_key"] = cacheKey
 	}
-	if supportsOpenRouterTopLevelCacheControl(req.Target) {
+	if supportsClaudeChatCacheControl(req.Target) {
 		payload["cache_control"] = map[string]string{"type": "ephemeral"}
 	}
 	if req.MaxTokens > 0 {

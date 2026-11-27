@@ -189,7 +189,12 @@ type ruleCandidate struct {
 // Higher-specificity project rules appear after global rules so model recency
 // favors workspace-local instructions while preserving global defaults.
 func loadProjectRules(worktreeDir string, cfgDoc map[string]any) RulesLoadResult {
-	budget := resolveRulesBudgetBytes(cfgDoc)
+	return loadProjectRulesWithBudget(worktreeDir, cfgDoc, resolveRulesBudgetBytes(cfgDoc))
+}
+
+const readOnlyRulesBudget = 24 * 1024
+
+func loadProjectRulesWithBudget(worktreeDir string, cfgDoc map[string]any, budget int) RulesLoadResult {
 	res := RulesLoadResult{BudgetBytes: budget}
 
 	var candidates []ruleCandidate

@@ -160,6 +160,18 @@ func (s *Service) ResolveStreamTarget(providerID, modelID string) llm.StreamTarg
 		models, _ := cfg["models"].(map[string]any)
 		model, _ := models[mid].(map[string]any)
 		modelCfg = model
+		for _, entry := range []map[string]any{cfg, model} {
+			options, _ := entry["options"].(map[string]any)
+			if v, ok := options["promptCacheRetention"].(string); ok {
+				target.PromptCacheRetention = v
+			}
+			if v, ok := options["openaiCompatCacheControl"].(bool); ok {
+				target.OpenAICompatCacheControl = v
+			}
+			if v, ok := options["geminiExplicitCache"].(bool); ok {
+				target.DisableGeminiExplicitCache = !v
+			}
+		}
 		if limits, ok := model["limit"].(map[string]any); ok {
 			if n := positiveNumber(limits["context"]); n > 0 {
 				target.ContextLimit = n
@@ -239,15 +251,15 @@ func (s *Service) OpenStream(ctx context.Context, req llm.StreamHTTPRequest) (*h
 		stallLimit = s.streamStallTimeout
 	}
 
-	doOpen := func(reqURL string, includeBearerWithQueryKey, forceHTTP1 bool) (*http.Response, error) {
-		reqCtx, cancelReq := context.WithCancel(ctx)
+	send := func(parent context.Context, method, reqURL string, body []byte, management, includeBearerWithQueryKey, forceHTTP1 bool) (*http.Response, error) {
+		reqCtx, cancelReq := context.WithCancel(parent)
 		stalled := &atomic.Bool{}
 		timer := time.AfterFunc(stallLimit, func() {
 			stalled.Store(true)
 			cancelReq()
 		})
 
-		outReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, reqURL, bytes.NewReader(reqBody))
+		outReq, err := http.NewRequestWithContext(reqCtx, method, reqURL, bytes.NewReader(body))
 		if err != nil {
 			timer.Stop()
 			cancelReq()
@@ -330,6 +342,10 @@ func (s *Service) OpenStream(ctx context.Context, req llm.StreamHTTPRequest) (*h
 			}
 		}
 		client := &http.Client{Transport: transport}
+		if management {
+			outReq.Header.Set("Accept", "application/json")
+			client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		}
 		resp, doErr := client.Do(outReq)
 		if doErr != nil {
 			timer.Stop()
@@ -346,12 +362,30 @@ func (s *Service) OpenStream(ctx context.Context, req llm.StreamHTTPRequest) (*h
 		return resp, nil
 	}
 
+	originalBody := reqBody
+	var cacheKey, cacheName string
+	if allowGeminiContextCache(req, baseURL) {
+		identity := geminiCacheIdentity(req, baseURL, apiKey, headers)
+		reqBody, cacheName = s.geminiCache.prepare(ctx, identity, req, time.Now(), func(c context.Context, method, path string, body []byte) (*http.Response, error) {
+			return send(c, method, "https://generativelanguage.googleapis.com/v1beta/"+path, body, true, false, false)
+		})
+		cacheKey = identity
+	}
+	doOpen := func(reqURL string, includeBearerWithQueryKey, forceHTTP1 bool) (*http.Response, error) {
+		return send(ctx, http.MethodPost, reqURL, reqBody, false, includeBearerWithQueryKey, forceHTTP1)
+	}
 	started := time.Now()
 	usedHTTP1 := req.ForceHTTP1
 	resp, err := doOpen(targetURL, false, usedHTTP1)
 	if err != nil && !usedHTTP1 && ctx.Err() == nil && llm.IsHTTP2ProtocolError(err) {
 		usedHTTP1 = true
 		resp, err = doOpen(targetURL, false, true)
+	}
+	if err == nil && cacheName != "" && ctx.Err() == nil && geminiCacheRejected(resp) {
+		resp.Body.Close()
+		s.geminiCache.reject(cacheKey, cacheName, time.Now())
+		reqBody = originalBody
+		resp, err = doOpen(targetURL, false, usedHTTP1)
 	}
 	if err != nil {
 		if s.breaker != nil {

@@ -68,8 +68,8 @@ func TestNativeStreamHonorsConfiguredLimitsAndDisabledReasoning(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	config := `{"provider":{"custom-google":{"npm":"@ai-sdk/google","options":{"baseURL":"https://example.test/v1beta"},"models":{
-		"gemini-3-pro":{"limit":{"context":120000,"output":24000},"reasoning":false,"attachment":true},
+	config := `{"provider":{"custom-google":{"npm":"@ai-sdk/google","options":{"baseURL":"https://example.test/v1beta","geminiExplicitCache":false},"models":{
+		"gemini-3-pro":{"options":{"geminiExplicitCache":true},"limit":{"context":120000,"output":24000},"reasoning":false,"attachment":true},
 		"gemini-3-flash":{"variants":{"high":{"thinkingConfig":{"thinkingLevel":"low","includeThoughts":true}}}},
 		"gemini-2.5-flash":{"reasoning":false,"attachment":true,"capabilities":{"reasoning":true}}
 	}}}}`
@@ -78,6 +78,9 @@ func TestNativeStreamHonorsConfiguredLimitsAndDisabledReasoning(t *testing.T) {
 	}
 	svc := NewService(0, "", workspace, nil)
 	target := svc.ResolveStreamTarget("custom-google", "gemini-3-pro")
+	if target.DisableGeminiExplicitCache || !svc.ResolveStreamTarget("custom-google", "gemini-3-flash").DisableGeminiExplicitCache {
+		t.Fatal("provider and model cache preferences not respected")
+	}
 	if target.ContextLimit != 120000 || target.OutputLimit != 24000 || len(target.Variants) != 0 {
 		t.Fatalf("ignored model configuration: %+v", target)
 	}

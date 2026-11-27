@@ -255,7 +255,7 @@ export const models = {
     "Session titles, summaries and lightweight tasks",
   compactionModelTitle: "Context Compaction Model",
   compactionModelDesc:
-    "Model used when compacting session context and memory",
+    "Automatic compaction first tries the current model’s cache. A separate summary goes to the model selected here. If unset, Hoxi uses the small model or an economy model from the current provider. It can retry with the current session model.",
   mediaRolesSectionTitle: "Media & Voice Default Models",
   mediaRolesSectionDesc:
     "Active models with native capability are checked first; otherwise these defaults (or auto-best) are used",

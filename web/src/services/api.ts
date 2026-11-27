@@ -492,6 +492,7 @@ export const hoxiAPI = {
       runtime?: SessionRuntime;
       skillSelection?: import("./skills-types").SkillSelection;
       imageOptions?: import("./api-types").PromptImageOptions;
+      goalActive?: boolean;
       continueTask?: boolean;
       clientRequestId?: string;
     }
@@ -519,6 +520,7 @@ export const hoxiAPI = {
           ...(options?.fastMode ? { fastMode: true } : {}),
           ...(options?.system ? { system: options.system } : {}),
           ...(options?.skillSelection ? { skillSelection: options.skillSelection } : {}),
+          ...(options?.goalActive ? { goalActive: true } : {}),
           ...(options?.continueTask ? { continueTask: true } : {}),
           parts,
         }),

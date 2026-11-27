@@ -272,7 +272,15 @@ func parsePruneReadSpan(raw json.RawMessage, resultText string, norm *prunePathN
 	start := max(1, args.Offset)
 	limit := args.Limit
 	if limit <= 0 {
-		limit = 2000
+		// The default page size has changed over time. Use the delivered lines
+		// so replay cannot mistake a 480-line page for an older 2000-line page.
+		for line := range strings.Lines(resultText) {
+			num, _, ok := strings.Cut(line, ": ")
+			if !ok || num != strconv.Itoa(start+limit) {
+				break
+			}
+			limit++
+		}
 	}
 	return pruneReadSpan{
 		pathKey:     key,
@@ -336,21 +344,25 @@ func extractPatchMutatedKeys(raw json.RawMessage, norm *prunePathNormalizer) map
 // 12-message chunk [0, chunkEnd) so earlier chunks stay 100% byte-identical
 // across future turns and stride advances (preserving upstream KV-cache hits).
 func classifySupersededRead(exchanges []pruneToolExchange, idx, cutoff int) supersededReadKind {
+	chunkEnd := min(cutoff, ((exchanges[idx].msgIdx/compactChunkStride)+1)*compactChunkStride)
+	return classifyReadBefore(exchanges, idx, chunkEnd)
+}
+
+func classifyReadBefore(exchanges []pruneToolExchange, idx, end int) supersededReadKind {
 	cur := exchanges[idx]
 	if cur.readSpan.pathKey == "" {
 		return readNotSuperseded
 	}
-	chunkEnd := min(cutoff, ((cur.msgIdx/compactChunkStride)+1)*compactChunkStride)
 	sawCoveringRead := false
 	for k := idx + 1; k < len(exchanges); k++ {
 		later := exchanges[k]
-		if later.msgIdx >= chunkEnd {
+		if later.msgIdx >= end {
 			break
 		}
 		if later.mutatedKeys[cur.readSpan.pathKey] {
 			return readSupersededByEdit
 		}
-		if later.readSpan.pathKey == cur.readSpan.pathKey &&
+		if cur.readSpan.endLine >= cur.readSpan.startLine && later.readSpan.pathKey == cur.readSpan.pathKey &&
 			!later.readSpan.truncated &&
 			later.readSpan.startLine <= cur.readSpan.startLine &&
 			later.readSpan.endLine >= cur.readSpan.endLine {
@@ -445,7 +457,7 @@ func pruneToolOutputsBeforeWithNorm(msgs []Message, cutoff, minToolLen int, rich
 				if blocks[j].Type != ContentToolUse || len(blocks[j].Input) <= minToolLen {
 					continue
 				}
-				if compacted, ok := compactOldToolUseInput(blocks[j].Name, blocks[j].Input); ok {
+				if compacted, ok := compactOldToolUseInput(blocks[j].Name, blocks[j].Input, 0); ok {
 					blocks[j].Input = compacted
 					changed = true
 				}
@@ -519,7 +531,7 @@ func pruneToolOutputsBeforeWithNorm(msgs []Message, cutoff, minToolLen int, rich
 	return out
 }
 
-func compactOldToolUseInput(toolName string, raw json.RawMessage) (json.RawMessage, bool) {
+func compactOldToolUseInput(toolName string, raw json.RawMessage, previewBytes int) (json.RawMessage, bool) {
 	if len(raw) == 0 || strings.Contains(string(raw), `"_prunedInput"`) {
 		return nil, false
 	}
@@ -570,6 +582,14 @@ func compactOldToolUseInput(toolName string, raw json.RawMessage) (json.RawMessa
 				cmd = utf8Prefix(cmd, 160) + "..."
 			}
 			summary["command"] = cmd
+		}
+	}
+	if previewBytes > 0 {
+		for _, key := range []string{"content", "patch", "diff"} {
+			if value, ok := obj[key].(string); ok && value != "" {
+				summary["preview"] = truncateToolOutput(value, previewBytes)
+				break
+			}
 		}
 	}
 	marshaled, err := json.Marshal(summary)

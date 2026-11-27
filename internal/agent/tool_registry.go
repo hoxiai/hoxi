@@ -42,7 +42,7 @@ func newToolRegistry() *BuiltinToolRegistry {
 	r.Register(&multiEditTool{})
 	r.Register(&applyPatchTool{})
 	r.Register(&bashTool{})
-	r.Register(&loadHostTool{})
+	r.Register(&loadHostTool{registry: r})
 	r.Register(&hoxiBrowserTool{})
 	r.Register(&hoxiComputerTool{})
 	r.Register(&hoxiImageTool{})
@@ -105,7 +105,7 @@ func (r *BuiltinToolRegistry) SpecsForTurn(mode string, subtaskDepth int) []Tool
 	for name, t := range r.tools {
 		// Omit legacy single-purpose code-index aliases from the per-step tool schema
 		// (hoxi_code_index supersedes them) while keeping them executable for compatibility.
-		if name == "code_search" || name == "symbol_inspect" || name == "impact_analysis" {
+		if name == "multiedit" || name == "code_search" || name == "symbol_inspect" || name == "impact_analysis" {
 			continue
 		}
 		if planMode && !isAllowedInPlanMode(t) {

@@ -226,9 +226,10 @@ func isContextOverflowError(err error) bool {
 }
 
 type compactionCheckpointInfo struct {
-	Summary      string
-	Scope        string
-	KeepFromStep int
+	ProviderID, ModelID string
+	Summary             string
+	Scope               string
+	KeepFromStep        int
 }
 
 // compactContextOverflow performs a single-shot emergency context compaction
@@ -242,7 +243,7 @@ func (e *Engine) compactContextOverflow(
 	currentStep int,
 	emit func(EngineEvent),
 ) ([]Message, *compactionCheckpointInfo, bool) {
-	return e.compactContextOverflowWithInPlace(ctx, providerID, modelID, msgs, historyLen, currentStep, nil, emit)
+	return e.compactContextOverflowWithInPlace(ctx, providerID, modelID, msgs, historyLen, currentStep, nil, emit, "")
 }
 
 func (e *Engine) compactContextOverflowWithInPlace(
@@ -252,7 +253,7 @@ func (e *Engine) compactContextOverflowWithInPlace(
 	historyLen int,
 	currentStep int,
 	inPlace *inPlaceCompactionContext,
-	emit func(EngineEvent),
+	emit func(EngineEvent), worktreeDir string,
 ) ([]Message, *compactionCheckpointInfo, bool) {
 	if len(msgs) == 0 {
 		return nil, nil, false
@@ -279,10 +280,17 @@ func (e *Engine) compactContextOverflowWithInPlace(
 			}
 		}
 		if trimmedSummary == "" {
-			transcript := renderOverflowTranscript(msgs[:tailStart])
+			transcript := renderOverflowTranscript(prepareSummaryMessages(msgs[:tailStart], worktreeDir))
+			p, m := e.overflowSummaryModel(providerID, modelID)
 			if transcript != "" {
-				if summary, err := e.SummarizeWithUsage(ctx, providerID, modelID, transcript, record); err == nil && strings.TrimSpace(summary) != "" {
+				summary, err := e.SummarizeWithUsage(ctx, p, m, transcript, record)
+				if err != nil && ctx.Err() == nil && (p != providerID || m != modelID) {
+					p, m = providerID, modelID
+					summary, err = e.SummarizeWithUsage(ctx, p, m, transcript, record)
+				}
+				if err == nil {
 					trimmedSummary = strings.TrimSpace(summary)
+					providerID, modelID = p, m
 				}
 			}
 		}
@@ -304,6 +312,7 @@ func (e *Engine) compactContextOverflowWithInPlace(
 			}
 			out = append(out, msgs[tailStart:]...)
 			info := &compactionCheckpointInfo{
+				ProviderID: providerID, ModelID: modelID,
 				Summary:      trimmedSummary,
 				Scope:        "before_current_user",
 				KeepFromStep: 1,

@@ -157,7 +157,7 @@ func TestNativeTurnDirectiveReplaysByteIdenticalOnNextTurn(t *testing.T) {
 	rawModelText := "\n<inline_skill>\nbody\n</inline_skill>\n\nuser text\n"
 	parts := []MessagePart{{ID: "p_ws", Type: "text", Text: "user text"}}
 	attachNativeModelText(parts, rawModelText)
-	projected := svc.projectCanonicalNativeHistory([]MessageTurn{{
+	projected := svc.projectCanonicalNativeHistory(svc.rootDir, []MessageTurn{{
 		Info:  MessageInfo{ID: "msg_ws", SessionID: rec.ID, Role: "user"},
 		Parts: parts,
 	}}, "openai", "gpt-5")

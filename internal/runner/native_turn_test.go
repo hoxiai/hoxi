@@ -111,7 +111,7 @@ func TestStartNativeTurnWiresHooksAndMultimodal(t *testing.T) {
 	if u := ckpt.Info.Tokens; u == nil || u.Context == 0 || u.Output != 0 || u.Summary != nil {
 		t.Fatalf("unmetered checkpoint should estimate context only: %+v", u)
 	}
-	projected := svc.projectCanonicalNativeHistory(after.Turns, "openai", "gpt-5")
+	projected := svc.projectCanonicalNativeHistory(svc.rootDir, after.Turns, "openai", "gpt-5")
 	if len(projected) != 2 || !strings.Contains(projected[0].Content[0].Text, "<context_checkpoint>") {
 		t.Fatalf("expected canonical history to project from after_turn checkpoint, got: %+v", projected)
 	}

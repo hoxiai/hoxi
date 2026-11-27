@@ -192,12 +192,13 @@ func resolveTurnContextThresholds(target llm.StreamTarget) turnContextThresholds
 // token usage from the latest completed main model step, adding calibrated
 // estimates only for messages appended after that step.
 type prefixFingerprint struct {
-	valid        bool
-	systemHash   [32]byte
-	toolsHash    [32]byte
-	cacheKeyHash [32]byte
-	msgHashes    [][32]byte
-	cacheRead    int
+	valid          bool
+	systemHash     [32]byte
+	toolsHash      [32]byte
+	cacheKeyHash   [32]byte
+	mediaOmissions []int
+	msgHashes      [][32]byte
+	cacheRead      int
 }
 
 type turnContextSnapshot struct {
@@ -325,31 +326,25 @@ func (t *contextTokenTracker) SeedFromPriorTurnWithPrune(
 	if t == nil || t.anchored || !snap.prunedInTurn || !snap.lastFingerprint.valid || len(msgs) < len(snap.lastFingerprint.msgHashes) {
 		return msgs
 	}
-	baseEst := t.EstimateTotalTokens(msgs, fullSystem, toolSpecs)
-	baseTotal := max(baseEst, snap.prePrunePrompt)
-	baseHeuristic := estimateTokens(msgs, fullSystem)
-	scale := t.Scale()
-	measure := func(cand []Message) int {
-		if len(cand) == len(msgs) && len(cand) > 0 && &cand[0] == &msgs[0] {
-			return baseTotal
-		}
-		delta := baseHeuristic - estimateTokens(cand, fullSystem)
-		if delta == 0 {
-			return baseTotal
-		}
-		return max(0, baseTotal-scaleTokenCount(delta, scale))
-	}
-	cand := pruneOldToolResultsCore(msgs, fullSystem, worktreeDir, thresholds.contextLimit, thresholds.triggerTokens, thresholds.hardCapTokens, measure)
-	if !messagesSliceMutated(msgs, cand) {
+	prev := snap.lastFingerprint
+	prefixLen := len(prev.msgHashes)
+	if prefixLen == 0 {
 		return msgs
 	}
-	prev := snap.lastFingerprint
+	prefix := msgs[:prefixLen]
+	baseTotal := max(t.EstimateTotalTokens(prefix, fullSystem, toolSpecs), snap.prePrunePrompt)
+	cand, changed := pruneMeasuredToolResults(prefix, fullSystem, worktreeDir, thresholds, baseTotal, t.Scale())
+	if !changed {
+		return msgs
+	}
 	candFP := computePrefixFingerprint(cacheKey, fullSystem, toolSpecs, cand, 0)
 	if candFP.cacheKeyHash != prev.cacheKeyHash || candFP.systemHash != prev.systemHash || candFP.toolsHash != prev.toolsHash || !prefixHashesMatch(prev.msgHashes, candFP.msgHashes) {
 		return msgs
 	}
-	t.SeedFromPriorTurn(snap, now, cacheKey, fullSystem, toolSpecs, cand)
-	return cand
+	restored := append([]Message(nil), msgs...)
+	copy(restored, cand)
+	t.SeedFromPriorTurn(snap, now, cacheKey, fullSystem, toolSpecs, restored)
+	return restored
 }
 
 // Snapshot returns a zero-body summary of the latest observed provider step
@@ -524,8 +519,12 @@ func pruneOldToolResultsWithBudget(
 		return msgs, false
 	}
 	baseTotal := tracker.EstimateTotalTokens(msgs, fullSystem, toolSpecs)
+	return pruneMeasuredToolResults(msgs, fullSystem, worktreeDir, thresholds, baseTotal, tracker.Scale())
+}
+
+// Apply the same pruning and signature invalidation to live and replayed prefixes.
+func pruneMeasuredToolResults(msgs []Message, fullSystem, worktreeDir string, thresholds turnContextThresholds, baseTotal int, scale float64) ([]Message, bool) {
 	baseHeuristic := estimateTokens(msgs, fullSystem)
-	scale := tracker.Scale()
 	measure := func(cand []Message) int {
 		if len(cand) == len(msgs) && len(cand) > 0 && &cand[0] == &msgs[0] {
 			return baseTotal
@@ -546,8 +545,8 @@ func pruneOldToolResultsWithBudget(
 		thresholds.hardCapTokens,
 		measure,
 	)
-	changed := messagesSliceMutated(msgs, pruned)
-	return pruned, changed
+	out := stripPrefixInvalidatedHistoricalThinking(msgs, pruned)
+	return out, messagesSliceMutated(msgs, out)
 }
 
 func messagesSliceMutated(before, after []Message) bool {
@@ -604,11 +603,12 @@ var recordCacheDiagnostic = diagnostics.Record
 
 func computePrefixFingerprint(cacheKey, fullSystem string, toolSpecs []ToolSpec, msgs []Message, cacheRead int) prefixFingerprint {
 	fp := prefixFingerprint{
-		valid:        true,
-		systemHash:   sha256.Sum256([]byte(fullSystem)),
-		cacheKeyHash: sha256.Sum256([]byte(cacheKey)),
-		msgHashes:    make([][32]byte, len(msgs)),
-		cacheRead:    cacheRead,
+		valid:          true,
+		systemHash:     sha256.Sum256([]byte(fullSystem)),
+		cacheKeyHash:   sha256.Sum256([]byte(cacheKey)),
+		msgHashes:      make([][32]byte, len(msgs)),
+		mediaOmissions: make([]int, len(msgs)),
+		cacheRead:      cacheRead,
 	}
 	th := sha256.New()
 	var lenBuf [8]byte
@@ -624,6 +624,9 @@ func computePrefixFingerprint(cacheKey, fullSystem string, toolSpecs []ToolSpec,
 		mh.Write([]byte(m.Role))
 		mh.Write([]byte{0})
 		for _, b := range m.Content {
+			if b.Type == ContentText && (strings.HasPrefix(b.Text, "[omitted earlier screenshot:") || strings.HasPrefix(b.Text, "[omitted earlier generated image:")) {
+				fp.mediaOmissions[i]++
+			}
 			mh.Write([]byte(b.Type))
 			mh.Write([]byte{0})
 			for _, part := range []string{b.ID, b.Name, b.ToolUseID, b.Text, b.Signature, b.MimeType, b.Filename} {
@@ -664,6 +667,12 @@ func classifyPrefixCacheChange(prev, cur prefixFingerprint) (cause string, share
 		reasons = append(reasons, "tools_changed")
 	}
 	if sharedMsgs < len(prev.msgHashes) {
+		for i := sharedMsgs; i < min(len(prev.mediaOmissions), len(cur.mediaOmissions)); i++ {
+			if cur.mediaOmissions[i] > prev.mediaOmissions[i] {
+				reasons = append(reasons, "media_pruned")
+				break
+			}
+		}
 		reasons = append(reasons, fmt.Sprintf("history_mutated_at=%d/%d", sharedMsgs, len(prev.msgHashes)))
 	}
 	if len(reasons) == 0 {

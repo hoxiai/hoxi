@@ -177,7 +177,7 @@ func TestOrchestratorToolsetDelegationStickyResumeAndReceipt(t *testing.T) {
 		Effort:      "xhigh",
 		Orchestrator: &OrchestratorConfig{
 			ExecutorProviderID: "google",
-			ExecutorModelID:    "exec-flash",
+			ExecutorModelID:    "gpt-5-exec",
 			ExecutorEffort:     "medium",
 		},
 		CommandRunner: func(_ context.Context, _ string, command string) (string, int, error) {
@@ -229,8 +229,8 @@ func TestOrchestratorToolsetDelegationStickyResumeAndReceipt(t *testing.T) {
 	}
 
 	// 2. Executor uses configured ExecutorModel & independent ExecutorEffort, and has write/bash.
-	if calls[1].Model != "exec-flash" || calls[1].Effort != "medium" {
-		t.Fatalf("expected Executor model=exec-flash effort=medium, got model=%q effort=%q", calls[1].Model, calls[1].Effort)
+	if calls[1].Model != "gpt-5-exec" || calls[1].Effort != "medium" {
+		t.Fatalf("expected Executor model=gpt-5-exec effort=medium, got model=%q effort=%q", calls[1].Model, calls[1].Effort)
 	}
 	execTools := map[string]bool{}
 	for _, n := range calls[1].ToolNames {
@@ -244,8 +244,13 @@ func TestOrchestratorToolsetDelegationStickyResumeAndReceipt(t *testing.T) {
 	if calls[5].MessageCount <= calls[1].MessageCount {
 		t.Fatalf("expected sticky Executor resume to preserve prior messages: first=%d second=%d", calls[1].MessageCount, calls[5].MessageCount)
 	}
-	if calls[5].PromptCacheKey != calls[1].PromptCacheKey {
+	if calls[5].PromptCacheKey == "" || calls[5].PromptCacheKey != calls[1].PromptCacheKey {
 		t.Fatalf("expected sticky Executor calls to share cache key: %q vs %q", calls[1].PromptCacheKey, calls[5].PromptCacheKey)
+	}
+
+	if calls[5].System != calls[1].System || !strings.Contains(calls[1].LastUserText, "Create hello.txt and run check") ||
+		!strings.Contains(calls[5].LastUserText, "Update hello.txt to v2") {
+		t.Fatal("resumed executor must receive the new task description in user input and preserve its system prefix")
 	}
 
 	// 4. Factual <executor_receipt> includes modified files, command status, and thread state.

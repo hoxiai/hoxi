@@ -486,12 +486,16 @@ func (s *Service) saveNativeToolMediaAttachments(rec SessionRecord, media []Nati
 		if err != nil || saved.ID == "" {
 			continue
 		}
-		refs = append(refs, map[string]interface{}{
+		ref := map[string]interface{}{
 			"id":       saved.ID,
 			"url":      saved.URL,
 			"mime":     saved.Mime,
 			"filename": saved.Filename,
-		})
+		}
+		if mb.ScreenshotTrigger != 0 {
+			ref["screenshotTrigger"] = mb.ScreenshotTrigger
+		}
+		refs = append(refs, ref)
 	}
 	return refs
 }

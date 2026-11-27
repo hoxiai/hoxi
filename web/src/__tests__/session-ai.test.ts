@@ -474,6 +474,23 @@ describe("session AI configuration", () => {
     });
   });
 
+  it("adds the media directive once when a busy session drains its queue", async () => {
+    await withAIFixture(async (id) => {
+      initializeSessionAI(id, configA);
+      setWorkspace("statusBySession", id, { type: "busy" });
+      const calls: Parameters<typeof hoxiAPI.sendPromptAsync>[] = [];
+      hoxiAPI.sendPromptAsync = async (...args) => { calls.push(args); };
+      await submitSessionPrompt("\u5e2e\u6211\u751f\u6210\u4e00\u5f20\u5546\u54c1\u767d\u5e95\u56fe", id, { system: "Use brand colors" });
+      assertEqual(workspace.queuedPromptsBySession[id][0].system, "Use brand colors");
+      setWorkspace("statusBySession", id, { type: "idle" });
+      await drainNextQueuedPrompt(id);
+      assertEqual(calls.length, 1);
+      const system = calls[0][2]?.system || "";
+      assertEqual(system.split("<hoxi_turn_directive>").length - 1, 1);
+      assertEqual(system.split("Use brand colors").length - 1, 1);
+    });
+  });
+
   it("snapshots the target configuration at enqueue and preserves it for manual and automatic dispatch", async () => {
     await withAIFixture(async (a, b) => {
       initializeSessionAI(a, configA);

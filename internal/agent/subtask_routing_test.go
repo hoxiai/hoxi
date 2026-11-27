@@ -282,8 +282,9 @@ func TestSubtaskIsolatesCacheKeyPreservesStaticPrefixAndInheritsBuildEffort(t *t
 	sc := &responsesSubtaskCaptureStream{
 		onRequest: func(idx int, req llm.StreamHTTPRequest) string {
 			var body struct {
-				PromptCacheKey string `json:"prompt_cache_key"`
-				Instructions   string `json:"instructions"`
+				PromptCacheKey string          `json:"prompt_cache_key"`
+				Instructions   string          `json:"instructions"`
+				Input          json.RawMessage `json:"input"`
 				Reasoning      struct {
 					Effort string `json:"effort"`
 				} `json:"reasoning"`
@@ -319,7 +320,7 @@ func TestSubtaskIsolatesCacheKeyPreservesStaticPrefixAndInheritsBuildEffort(t *t
 					`data: {"type":"response.completed","response":{"status":"completed"}}`,
 				}, "\n") + "\n"
 			}
-			if strings.Contains(body.Instructions, "Subagent role: general (implement export module).") {
+			if strings.Contains(string(body.Input), "Subtask: implement export module") {
 				if idx == 1 {
 					wArgs, _ := json.Marshal(map[string]any{"filePath": "export.txt", "content": "ok\n"})
 					return strings.Join([]string{
@@ -331,7 +332,7 @@ func TestSubtaskIsolatesCacheKeyPreservesStaticPrefixAndInheritsBuildEffort(t *t
 				}
 				return "data: {\"type\":\"response.output_text.delta\",\"delta\":\"export done\"}\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n"
 			}
-			if strings.Contains(body.Instructions, "Subagent role: general (implement import module).") {
+			if strings.Contains(string(body.Input), "Subtask: implement import module") {
 				return "data: {\"type\":\"response.output_text.delta\",\"delta\":\"import done\"}\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n"
 			}
 			return "data: {\"type\":\"response.output_text.delta\",\"delta\":\"all done\"}\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n"
@@ -416,19 +417,9 @@ func TestSubtaskIsolatesCacheKeyPreservesStaticPrefixAndInheritsBuildEffort(t *t
 		t.Fatalf("expected EngineSubtaskStart effort metadata=[xhigh xhigh], got %v", startEfforts)
 	}
 
-	// 5. Dynamic role description sits at the very end so both general subagents share a 100% byte-identical static prefix.
-	const role1 = "Subagent role: general (implement export module)."
-	const role2 = "Subagent role: general (implement import module)."
-	if !strings.HasSuffix(sub1Step1.Instructions, role1) || !strings.HasSuffix(sub2Step1.Instructions, role2) {
-		t.Fatalf("expected dynamic role line at tail of instructions:\nsub1=%q\nsub2=%q", sub1Step1.Instructions, sub2Step1.Instructions)
-	}
-	prefix1 := strings.TrimSuffix(sub1Step1.Instructions, role1)
-	prefix2 := strings.TrimSuffix(sub2Step1.Instructions, role2)
-	if prefix1 != prefix2 {
-		t.Fatalf("expected identical static instruction prefix across sibling general subagents")
-	}
-	if !strings.Contains(prefix1, "<native_agent_guidelines>") || !strings.Contains(prefix1, "<environment>") {
-		t.Fatalf("expected shared static prefix to contain guidelines and environment blocks")
+	if sub1Step1.Instructions != sub2Step1.Instructions || sub1Step2.Instructions != sub1Step1.Instructions ||
+		!strings.HasSuffix(sub1Step1.Instructions, "Subagent role: general.") {
+		t.Fatal("expected identical system instructions across same-role siblings and tool steps")
 	}
 
 	// 6. Built-in general subagent step cap raised to 36 to avoid premature 24-step cutoffs.

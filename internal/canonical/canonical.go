@@ -43,6 +43,9 @@ type ContentBlock struct {
 	Input     json.RawMessage `json:"input,omitempty"`
 	ToolUseID string          `json:"tool_use_id,omitempty"`
 	IsError   bool            `json:"is_error,omitempty"`
+
+	// ScreenshotTrigger remembers the producing step's cache-pruning window for replay.
+	ScreenshotTrigger int `json:"screenshotTrigger,omitempty"`
 }
 
 // Message is one chronological user or assistant exchange in canonical history.

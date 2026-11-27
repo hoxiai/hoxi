@@ -17,6 +17,7 @@ import (
 )
 
 type Service struct {
+	geminiCache          geminiContextCache
 	openCode             *ocapi.Client
 	rootDir              string
 	proxy                http.Handler

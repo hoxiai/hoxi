@@ -27,43 +27,45 @@ var defaultStepRetryDelays = []time.Duration{
 
 // TurnRequest configures a single agentic turn (potentially multi-step tool loop).
 type TurnRequest struct {
-	commandLogs         *turnCommandLogs
-	SessionID           string
-	CacheKey            string
-	WorktreeDir         string
-	Mode                string
-	ProviderID          string
-	ModelID             string
-	Effort              string
-	FastMode            bool
-	Orchestrator        *OrchestratorConfig
-	yieldOnParentSteer  SteerSource
-	System              string
-	SystemSuffix        string
-	History             []Message
-	UserPrompt          string
-	UserBlocks          []ContentBlock
-	MaxSteps            int
-	SubtaskDepth        int
-	FileRevisions       *FileRevisionTracker
-	CoordinateFileEdit  FileEditCoordinatorHook
-	RecordFileEdit      FileEditRecordedHook
-	Steer               SteerSource
-	PermissionHook      PermissionHook
-	CommandRunner       CommandRunner
-	StreamCommandRunner StreamingCommandRunner
-	BackgroundCommands  BackgroundCommandManager
-	Diagnostics         DiagnosticHook
-	RepoMap             RepoMapHook
-	CodeSearch          CodeSearchHook
-	SymbolInspect       SymbolInspectHook
-	ImpactInspect       ImpactInspectHook
-	AskQuestion         QuestionAsker
-	MCPConfig           MCPConfigSource
-	projectConfig       map[string]any
-	onFinalMessages     func([]Message)
-	HostInvoke          HostInvokeHook
-	Sink                EventSink
+	relaxedScreenshotBudget bool
+	commandLogs             *turnCommandLogs
+	SessionID               string
+	CacheKey                string
+	WorktreeDir             string
+	Mode                    string
+	ProviderID              string
+	ModelID                 string
+	Effort                  string
+	GoalActive              bool
+	FastMode                bool
+	Orchestrator            *OrchestratorConfig
+	yieldOnParentSteer      SteerSource
+	System                  string
+	SystemSuffix            string
+	History                 []Message
+	UserPrompt              string
+	UserBlocks              []ContentBlock
+	MaxSteps                int
+	SubtaskDepth            int
+	FileRevisions           *FileRevisionTracker
+	CoordinateFileEdit      FileEditCoordinatorHook
+	RecordFileEdit          FileEditRecordedHook
+	Steer                   SteerSource
+	PermissionHook          PermissionHook
+	CommandRunner           CommandRunner
+	StreamCommandRunner     StreamingCommandRunner
+	BackgroundCommands      BackgroundCommandManager
+	Diagnostics             DiagnosticHook
+	RepoMap                 RepoMapHook
+	CodeSearch              CodeSearchHook
+	SymbolInspect           SymbolInspectHook
+	ImpactInspect           ImpactInspectHook
+	AskQuestion             QuestionAsker
+	MCPConfig               MCPConfigSource
+	projectConfig           map[string]any
+	onFinalMessages         func([]Message)
+	HostInvoke              HostInvokeHook
+	Sink                    EventSink
 }
 
 // Engine runs an in-process agentic loop using injected factories and hooks.
@@ -270,9 +272,11 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 	systemSuffix := strings.TrimSpace(req.SystemSuffix)
 	rulesTracker := NewSubdirRuleTracker(rulesLoad.LoadedFiles, DefaultSubdirRuleBudgetBytes)
 	rulesTracker.SeedFromHistory(req.WorktreeDir, req.History)
-	catalog := newHostToolCatalog(cfgDoc, req.History)
+	catalog := newHostToolCatalog(cfgDoc)
 	catalog.configureMCP(req.WorktreeDir, cfgDoc, req.MCPConfig, req.History)
 	catalog.configureAppScope(callerSystem)
+	catalog.omitGoal = !req.GoalActive
+	catalog.omitSkill = !strings.Contains(callerSystem, "<available_skills>") && !strings.Contains(callerSystem, nativeOnDemandSkillsCue)
 	catalog.configureTaskPolicy(origMode, agentMap, cfgDoc)
 	if isOrchestratorActive(req) {
 		catalog.configureOrchestrator(true, effectiveMode)
@@ -418,7 +422,7 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 				CacheWarm:      inPlaceCacheWarm,
 				MeasuredTokens: inPlaceTokens,
 			}
-			if compacted, cpInfo, ok := e.compactContextOverflowWithInPlace(ctx, req.ProviderID, req.ModelID, msgs, historyLen, step, inPlace, emit); ok {
+			if compacted, cpInfo, ok := e.compactContextOverflowWithInPlace(ctx, target.ProviderID, target.ModelID, msgs, historyLen, step, inPlace, emit, req.WorktreeDir); ok {
 				overflowCompactions++
 				historyLen = 0
 				tokenTracker.InvalidateAnchor(true)
@@ -426,18 +430,7 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 				if autoScaledSteps {
 					maxSteps += compactionRecoveryStepBonus(step)
 				}
-				if req.SubtaskDepth == 0 && cpInfo != nil && cpInfo.Summary != "" {
-					emit(EngineEvent{
-						Kind: EngineContextCompacted,
-						Step: step,
-						Text: cpInfo.Summary,
-						Metadata: map[string]any{
-							"scope":        cpInfo.Scope,
-							"keepFromStep": cpInfo.KeepFromStep,
-							"proactive":    true,
-						},
-					})
-				}
+				cpInfo.report(step, req.SubtaskDepth, true, emit)
 				msgs = compacted
 			} else if ctx.Err() == nil {
 				proactiveCompactionFailures++
@@ -532,7 +525,7 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 					continue
 				}
 				if overflowCompactions < maxReactiveOverflowCompactions && ctx.Err() == nil && isContextOverflowError(openErr) {
-					if compacted, cpInfo, ok := e.compactContextOverflow(ctx, req.ProviderID, req.ModelID, msgs, historyLen, step, emit); ok {
+					if compacted, cpInfo, ok := e.compactContextOverflowWithInPlace(ctx, target.ProviderID, target.ModelID, msgs, historyLen, step, nil, emit, req.WorktreeDir); ok {
 						overflowCompactions++
 						historyLen = 0
 						tokenTracker.InvalidateAnchor(true)
@@ -540,17 +533,7 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 						if autoScaledSteps {
 							maxSteps += compactionRecoveryStepBonus(step)
 						}
-						if req.SubtaskDepth == 0 && cpInfo != nil && cpInfo.Summary != "" {
-							emit(EngineEvent{
-								Kind: EngineContextCompacted,
-								Step: step,
-								Text: cpInfo.Summary,
-								Metadata: map[string]any{
-									"scope":        cpInfo.Scope,
-									"keepFromStep": cpInfo.KeepFromStep,
-								},
-							})
-						}
+						cpInfo.report(step, req.SubtaskDepth, false, emit)
 						msgs = compacted
 						httpReq, err = buildStepReq()
 						if err != nil {
@@ -614,7 +597,7 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 				continue
 			}
 			if !streamed.emittedVisible && overflowCompactions < maxReactiveOverflowCompactions && ctx.Err() == nil && isContextOverflowError(parseErr) {
-				if compacted, cpInfo, ok := e.compactContextOverflow(ctx, req.ProviderID, req.ModelID, msgs, historyLen, step, emit); ok {
+				if compacted, cpInfo, ok := e.compactContextOverflowWithInPlace(ctx, target.ProviderID, target.ModelID, msgs, historyLen, step, nil, emit, req.WorktreeDir); ok {
 					overflowCompactions++
 					historyLen = 0
 					tokenTracker.InvalidateAnchor(true)
@@ -622,17 +605,7 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 					if autoScaledSteps {
 						maxSteps += compactionRecoveryStepBonus(step)
 					}
-					if req.SubtaskDepth == 0 && cpInfo != nil && cpInfo.Summary != "" {
-						emit(EngineEvent{
-							Kind: EngineContextCompacted,
-							Step: step,
-							Text: cpInfo.Summary,
-							Metadata: map[string]any{
-								"scope":        cpInfo.Scope,
-								"keepFromStep": cpInfo.KeepFromStep,
-							},
-						})
-					}
+					cpInfo.report(step, req.SubtaskDepth, false, emit)
 					msgs = compacted
 					httpReq, err = buildStepReq()
 					if err != nil {
@@ -725,6 +698,13 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 			return nil
 		}
 
+		for _, wire := range streamed.toolCalls {
+			call, _ := resolveHostProxy(wire)
+			if isEphemeralScreenshotTool(call.Name) {
+				execReq.relaxedScreenshotBudget = tokenTracker.EstimateTotalTokens(msgs, fullSystem, toolSpecs) < min(contextThresholds.contextLimit/2, contextThresholds.triggerTokens)
+				break
+			}
+		}
 		results := e.executeToolCalls(ctx, execReq, origMode, agentMap, cfgDoc, rulesTracker, msgs, step, streamed.toolCalls, loopGuard, nextPartID, emit)
 		maybeAppendStepBudgetNotice(step, maxSteps, results)
 		resultBlocks := make([]ContentBlock, 0, len(results))
@@ -750,7 +730,6 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 			}
 		}
 		msgs = append(msgs, Message{Role: RoleUser, Content: resultBlocks})
-		loadedTools := catalog.record(streamed.toolCalls, results)
 		if promoteToBuild {
 			prevMode := effectiveMode
 			effectiveMode = "build"
@@ -779,7 +758,7 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 				},
 			})
 		}
-		if promoteToBuild || loadedTools {
+		if promoteToBuild {
 			toolSpecs = catalog.specs(e.registry, effectiveMode, req.SubtaskDepth)
 			compactLimit = effectiveCompactContextLimit(target.ContextLimit, toolSpecs)
 			tokenTracker.InvalidateAnchor(true)

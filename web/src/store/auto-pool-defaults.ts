@@ -1,5 +1,6 @@
 // web/src/store/auto-pool-defaults.ts
 import { createSignal } from "solid-js";
+import { parseHoxiContextPrompt } from "./context-protocol";
 import { leaderboardAPI } from "../services/api";
 import { preferredAgentEngine, workspace } from "./workspace-state";
 
@@ -502,12 +503,45 @@ export function evaluatePromptModalityIntent(promptText: string, opts?: PromptIn
   };
 }
 
+// Match requested actions within a clause so a negation or a reference to an API
+// cannot select a costly media route for a separate coding request.
+const NEGATED_MEDIA_ACTION = /(?:\u4e0d\u8981|\u4e0d\u9700\u8981|\u65e0\u9700|\u4e0d\u7528|(?:^|[^\u7279\u5206\u8bc6])\u522b(?=\u518d|\u5e2e|\u7ed9|\u505a|\u753b|\u751f\u6210|\u5236\u4f5c|\u5408\u6210|\u6e32\u67d3|\u5f55\u5236|\u5ba1\u56fe)|\u4e0d(?=\u751f\u6210|\u5236\u4f5c|\u5408\u6210|\u6e32\u67d3|\u5f55\u5236)|\u7981\u6b62|\u907f\u514d)|\b(?:do\s+not|don['\u2019]t|never|avoid|without|skip)\b/i;
+const MEDIA_DEBUG_ACTION = /(?:\u4fee\u590d|\u6392\u67e5|\u8c03\u8bd5|\u91cd\u6784|\u8bca\u65ad|\u5b9a\u4f4d)|\b(?:fix|debug|troubleshoot|refactor|diagnose)\b/i;
+const MEDIA_CODE_OBJECT = /^\s*(?:\u7684?\s*(?:\u63a5\u53e3|\u6a21\u5757|\u51fd\u6570|\u7ec4\u4ef6|\u6309\u94ae|\u529f\u80fd|\u7ba1\u7ebf)|(?:api|endpoint|function|method|button|cache|pipeline)\b)/i;
+
+function requestsMedia(clauses: string[], action: RegExp, selection: RegExp, explicitMeta: string): boolean {
+  let declined = false;
+  for (const clause of clauses) {
+    const match = action.exec(clause);
+    if (!match) {
+      if (NEGATED_MEDIA_ACTION.test(clause) && selection.test(clause)) declined = true;
+      continue;
+    }
+    const politePrefix = /^(?:\s|\u5e2e\u6211|\u8bf7\u7ed9|\u8bf7)*/.exec(match[0]);
+    const actionStart = match.index + (politePrefix?.[0].length ?? 0);
+    const negation = NEGATED_MEDIA_ACTION.exec(clause);
+    if (negation && negation.index <= actionStart) {
+      declined = true;
+      continue;
+    }
+    const debugging = MEDIA_DEBUG_ACTION.exec(clause);
+    if (debugging && debugging.index <= actionStart) continue;
+    if (!MEDIA_CODE_OBJECT.test(clause.slice(match.index + match[0].length))) return true;
+  }
+  return !declined && (selection.test(explicitMeta) || action.test(explicitMeta));
+}
+
 function evaluatePromptModalityIntentUntagged(promptText: string, opts?: PromptIntentOptions): PromptIntentEvaluation {
-  const raw = (promptText || "").trim();
+  const raw = parseHoxiContextPrompt(promptText || "").bodyText.trim();
+  const clauses = raw
+    .replace(/```[\s\S]*?(?:```|$)|`[^`\n]*`/g, " ")
+    .replace(/"[^"\n]*"|\u201c[^\u201d\n]*\u201d|\u2018[^\u2019\n]*\u2019|\u300c[^\u300d\n]*\u300d/g, " ")
+    .replace(/(^|[\s(])'[^'\n]+'(?=$|[\s.,;!?)])/g, "$1 ")
+    .split(/[,;.!?\uff0c\u3002\uff1b\uff01\uff1f\n]|\u7136\u540e|\u540e\u518d|\u800c\u662f|\b(?:and then|but)\b/i);
   const explicitMeta = `${opts?.skillName || ""} ${opts?.categoryId || ""} ${opts?.chipId || ""}`.trim();
   const combined = explicitMeta ? `${raw} ${explicitMeta}` : raw;
 
-  if (VIDEO_INTENT_RE.test(combined) || (explicitMeta !== "" && VIDEO_SKILL_OR_CHIP_RE.test(explicitMeta))) {
+  if (requestsMedia(clauses, VIDEO_INTENT_RE, VIDEO_SKILL_OR_CHIP_RE, explicitMeta)) {
     const hasLocalVideo = hasConfiguredVideoGenerationModel();
     return {
       kind: "video_gen",
@@ -522,7 +556,7 @@ function evaluatePromptModalityIntentUntagged(promptText: string, opts?: PromptI
     };
   }
 
-  if (VISUAL_REVIEW_INTENT_RE.test(combined) || (explicitMeta !== "" && VISUAL_REVIEW_SKILL_OR_CHIP_RE.test(explicitMeta))) {
+  if (requestsMedia(clauses, VISUAL_REVIEW_INTENT_RE, VISUAL_REVIEW_SKILL_OR_CHIP_RE, explicitMeta)) {
     return {
       kind: "visual_review",
       requiresVisionBrain: true,
@@ -535,7 +569,7 @@ function evaluatePromptModalityIntentUntagged(promptText: string, opts?: PromptI
     };
   }
 
-  if (IMAGE_INTENT_RE.test(combined) || (explicitMeta !== "" && IMAGE_SKILL_OR_CHIP_RE.test(explicitMeta))) {
+  if (requestsMedia(clauses, IMAGE_INTENT_RE, IMAGE_SKILL_OR_CHIP_RE, explicitMeta)) {
     const isVertical = VERTICAL_ASPECT_RE.test(combined);
     const ratio = isVertical ? "3:4" : "1:1";
     const hasLocalImage = hasConfiguredImageGenerationModel();
@@ -552,7 +586,7 @@ function evaluatePromptModalityIntentUntagged(promptText: string, opts?: PromptI
     };
   }
 
-  if (AUDIO_INTENT_RE.test(combined) || (explicitMeta !== "" && AUDIO_SKILL_OR_CHIP_RE.test(explicitMeta))) {
+  if (requestsMedia(clauses, AUDIO_INTENT_RE, AUDIO_SKILL_OR_CHIP_RE, explicitMeta)) {
     const hasLocalSpeech = hasConfiguredSpeechModel();
     return {
       kind: "audio_tts",

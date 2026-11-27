@@ -33,6 +33,25 @@ func TestProjectConfigNeverPollutesGlobalOrOtherWorkspace(t *testing.T) {
 	if err := svc.UpdateHoxiConfigDoc(func(doc map[string]interface{}) error { doc["small_model"] = "test/small"; return nil }); err != nil {
 		t.Fatal(err)
 	}
+	// The workspace cannot redirect automatic summaries, even via its local models file.
+	if err := os.MkdirAll(filepath.Join(root, ".hoxi"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".hoxi", "models.json"), []byte(`{"agent":{"compaction":{"model":"workspace/other"}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := svc.ConfiguredCompactionModel(); got != "test/small" {
+		t.Fatal("unexpected summary destination", got)
+	}
+	if err := svc.UpdateHoxiConfigDoc(func(doc map[string]any) error {
+		doc["agent"] = map[string]any{"compaction": map[string]any{"model": "personal/summary"}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := svc.ConfiguredCompactionModel(); got != "personal/summary" {
+		t.Fatal("unexpected summary destination", got)
+	}
 	if readJSONMapFile(userHoxiModelsPath())["mcp"] != nil {
 		t.Fatal("shared project persisted globally")
 	}

@@ -38,6 +38,16 @@ func TestSeedFromPriorTurnWithPruneRestoresWarmPrunedPrefix(t *testing.T) {
 	for i := 0; i < 6; i++ {
 		unprunedTurn1 = append(unprunedTurn1, makeStep(fmt.Sprintf("c%d", i), verbose)...)
 	}
+	signedMessage := func(signature string) Message {
+		return Message{Role: RoleAssistant, Content: []ContentBlock{
+			{Type: ContentThinking, Text: "reasoning", Signature: signature},
+			{Type: ContentText, Text: "summary"},
+		}}
+	}
+	historical := len(unprunedTurn1)
+	unprunedTurn1 = append(unprunedTurn1, signedMessage("historical"),
+		Message{Role: RoleUser, Content: []ContentBlock{{Type: ContentText, Text: "continue"}}})
+	unprunedTurn1 = append(unprunedTurn1, signedMessage("active"))
 	for i := 6; i < 10; i++ {
 		unprunedTurn1 = append(unprunedTurn1, makeStep(fmt.Sprintf("c%d", i), "short ok")...)
 	}
@@ -50,9 +60,13 @@ func TestSeedFromPriorTurnWithPruneRestoresWarmPrunedPrefix(t *testing.T) {
 	if preTotal <= thresholds.triggerTokens {
 		t.Fatalf("expected preTotal (%d) > trigger (%d)", preTotal, thresholds.triggerTokens)
 	}
-	prunedTurn1, changed := pruneOldToolResultsWithBudget(unprunedTurn1, fullSystem, "", specs, thresholds, t1Tracker)
+	engine := &Engine{defaultCompact: true}
+	prunedTurn1, changed := engine.applyCompactWithBudget(unprunedTurn1, fullSystem, "", specs, 12000, thresholds, t1Tracker)
 	if !changed {
 		t.Fatal("expected Turn 1 pruning to mutate Chunk 0")
+	}
+	if prunedTurn1[historical].Content[0].Type != ContentText || prunedTurn1[historical+2].Content[0].Signature != "active" {
+		t.Fatal("live pruning must invalidate only historical reasoning after the first changed tool result")
 	}
 	t1Tracker.RebaseAfterPrune(unprunedTurn1, prunedTurn1, fullSystem, specs)
 	t1Tracker.ObserveStep(prunedTurn1, fullSystem, specs, TokenUsage{Input: 500, CacheRead: 5500})

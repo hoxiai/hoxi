@@ -391,11 +391,6 @@ func scanGrepFileWithContext(
 
 	// Emit matches + surrounding context windows in order, deduplicating overlapping lines.
 	lastEmittedLine := -1
-	emittedInFile := false
-	matchLocByIdx := make(map[int][]int, len(matches))
-	for _, m := range matches {
-		matchLocByIdx[m.idx] = m.loc
-	}
 
 	for mPos, m := range matches {
 		if *seen < offset {
@@ -404,13 +399,16 @@ func scanGrepFileWithContext(
 		}
 		winStart := max(0, m.idx-ctxLines)
 		winEnd := min(len(rawLines)-1, m.idx+ctxLines)
-		// Do not extend context past a subsequent un-emitted match if we hit the page cap.
-		if mPos+1 < len(matches) && matches[mPos+1].idx <= winEnd {
-			winEnd = matches[mPos+1].idx - 1
+		// On a resumed page, the previous match belongs to the preceding page.
+		if mPos > 0 {
+			winStart = max(winStart, matches[mPos-1].idx+1)
+		}
+		if mPos+1 < len(matches) {
+			winEnd = min(winEnd, matches[mPos+1].idx-1)
 		}
 
 		var chunk strings.Builder
-		if emittedInFile && lastEmittedLine >= 0 && winStart > lastEmittedLine+1 {
+		if lastEmittedLine >= 0 && winStart > lastEmittedLine+1 {
 			chunk.WriteString("--\n")
 		}
 		from := winStart
@@ -420,8 +418,6 @@ func scanGrepFileWithContext(
 		for ln := from; ln <= winEnd; ln++ {
 			if ln == m.idx {
 				fmt.Fprintf(&chunk, "%s:%d: %s\n", rel, ln+1, formatGrepMatchSnippet(rawLines[ln], m.loc[0], m.loc[1], maxGrepSnippetBytes))
-			} else if _, isLaterMatch := matchLocByIdx[ln]; isLaterMatch {
-				break
 			} else {
 				fmt.Fprintf(&chunk, "%s-%d- %s\n", rel, ln+1, formatGrepMatchSnippet(rawLines[ln], 0, 0, maxGrepSnippetBytes))
 			}
@@ -432,10 +428,7 @@ func scanGrepFileWithContext(
 			return nil
 		}
 		out.WriteString(row)
-		if winEnd > lastEmittedLine {
-			lastEmittedLine = winEnd
-		}
-		emittedInFile = true
+		lastEmittedLine = winEnd
 		*shown++
 	}
 	return nil

@@ -235,6 +235,7 @@ type MessageError struct {
 }
 
 type MessageInfo struct {
+	GoalActive   bool           `json:"goalActive,omitempty"`
 	ID           string         `json:"id"`
 	SessionID    string         `json:"sessionID"`
 	Role         string         `json:"role"`

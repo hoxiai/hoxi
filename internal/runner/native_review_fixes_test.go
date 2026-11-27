@@ -437,7 +437,7 @@ func TestCanonicalHistoryPreservesStepOrderToolMediaAndCompactionCheckpoint(t *t
 	}
 
 	// Project history for Turn N+1!
-	projected := svc.projectCanonicalNativeHistory(stored.Turns, "anthropic", "claude-sonnet-4-6")
+	projected := svc.projectCanonicalNativeHistory(svc.rootDir, stored.Turns, "anthropic", "claude-sonnet-4-6")
 	// Expected sequence:
 	// [0] user: <context_checkpoint>...
 	// [1] assistant: Understood. Continuing from the compacted checkpoint.

@@ -494,6 +494,18 @@ describe("Gemini custom endpoint & session image generation support", () => {
         evaluatePromptModalityIntent("\u68c0\u67e5 hero-card.svg \u6e32\u67d3\u4ee3\u7801").mediaRoutingDirective,
         undefined
       );
+      for (const prompt of [
+        "\u4e0d\u8981\u751f\u6210\u56fe\u7247\uff0c\u53ea\u5206\u6790\u65e5\u5fd7", "\u8bf7\u4fee\u590d\u751f\u6210\u56fe\u7247\u63a5\u53e3\u7684\u8d85\u65f6\u95ee\u9898", "fix render image cache invalidation",
+        "\u7ed9\u201c\u751f\u6210\u56fe\u7247\u201d\u6309\u94ae\u6dfb\u52a0\u5355\u5143\u6d4b\u8bd5", "Explain the phrase \"generate a video\"",
+        "do not generate a video", "\u4e0d\u8981\u5e2e\u6211\u5408\u6210\u914d\u97f3", "explain the `generate an image` command",
+      ]) {
+        assertEqual(evaluatePromptModalityIntent(prompt).mediaRoutingDirective, undefined, prompt);
+      }
+      assertEqual(evaluatePromptModalityIntent("\u4e0d\u8981\u751f\u6210\u89c6\u9891\uff0c\u5e2e\u6211\u751f\u6210\u4e00\u5f20\u5c01\u9762").kind, "image_gen");
+      assertEqual(evaluatePromptModalityIntent("\u5e2e\u6211\u751f\u6210\u4e00\u5f20\u7279\u522b\u7684\u6d77\u62a5").kind, "image_gen");
+      assertEqual(evaluatePromptModalityIntent("\u5e2e\u6211\u5236\u4f5c\u4e00\u5f20\u6545\u969c\u8bca\u65ad\u6d77\u62a5").kind, "image_gen");
+      assertEqual(evaluatePromptModalityIntent("generate an image without text").kind, "image_gen");
+      assertEqual(evaluatePromptModalityIntent("\u4e0d\u8981\u751f\u6210\u56fe\u7247", { chipId: "hero-card.svg" }).kind, "chat");
       assertEqual(evaluatePromptModalityIntent("We are tackling this performance regression").mediaRoutingDirective, undefined);
       assertEqual(evaluatePromptModalityIntent("Inspect the watts calculation in power.ts").mediaRoutingDirective, undefined);
       assertEqual(

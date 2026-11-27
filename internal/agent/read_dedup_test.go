@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,6 +71,47 @@ func TestReadLongLine2KBGuardAndWriteSafety(t *testing.T) {
 	}, editIn)
 	if eErr != nil || eOut.IsError {
 		t.Fatalf("expected targeted edit on untruncated line 3 to succeed, got err=%v out=%+v", eErr, eOut)
+	}
+}
+
+func TestFullWriteAfterReadingEveryByteLimitedPage(t *testing.T) {
+	ws := t.TempDir()
+	path := filepath.Join(ws, "module.ts")
+	var src strings.Builder
+	for i := 0; i < 700; i++ {
+		fmt.Fprintf(&src, "export const value%d = %q;\n", i, strings.Repeat("a", 42))
+	}
+	if err := os.WriteFile(path, []byte(src.String()), 0600); err != nil {
+		t.Fatal(err)
+	}
+	tc := ToolContext{WorktreeDir: ws, FileRevisions: NewFileRevisionTracker()}
+	registry := newToolRegistry()
+	run := func(tool string, args map[string]any) (ToolOutput, error) {
+		input, err := json.Marshal(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return registry.Execute(context.Background(), tc, ToolCall{Name: tool, Input: input}, nil)
+	}
+	first, err := run("read", map[string]any{"filePath": "module.ts"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, hint, ok := strings.Cut(first.Output, "pass offset=")
+	var next int
+	if _, err := fmt.Sscanf(hint, "%d", &next); !ok || err != nil || next <= 1 {
+		t.Fatalf("missing next page: %v", err)
+	}
+	write := map[string]any{"filePath": "module.ts", "content": "export const updated = true;\n"}
+	if _, err := run("write", write); err == nil {
+		t.Fatal("overwrite allowed after only one page")
+	}
+	second, err := run("read", map[string]any{"filePath": "module.ts", "offset": next, "limit": math.MaxInt})
+	if err != nil || !strings.Contains(second.Output, "700: export const value699") {
+		t.Fatal("missing final lines", err)
+	}
+	if _, err := run("write", write); err != nil {
+		t.Fatal(err)
 	}
 }
 

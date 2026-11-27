@@ -26,22 +26,30 @@ func isEagerHostToolLoading(cfg map[string]any) bool {
 	return strings.TrimSpace(mode) == "eager"
 }
 
-type loadHostTool struct{}
+type loadHostTool struct{ registry ToolRegistry }
 
 func (*loadHostTool) Name() string     { return "load_host_tool" }
 func (*loadHostTool) IsReadOnly() bool { return true }
 func (*loadHostTool) Description() string {
-	return "Load a browser, desktop-control, data-profile, scheduled-task, tools-gateway, image, speech, or video tool's full parameters for the next step. Then call the named tool."
+	return "Load a browser, desktop-control, data-profile, scheduled-task, tools-gateway, image, speech, or video tool's full parameters and safety instructions. Then use call_host_tool."
 }
 func (*loadHostTool) Parameters() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{"name": map[string]any{"type": "string", "enum": deferredHostTools}}, "required": []string{"name"}}
 }
-func (*loadHostTool) Execute(_ context.Context, tc ToolContext, input json.RawMessage) (ToolOutput, error) {
+func (t *loadHostTool) Execute(_ context.Context, tc ToolContext, input json.RawMessage) (ToolOutput, error) {
 	name := requestedHostTool(input)
 	if name == "" || strings.EqualFold(tc.Mode, "plan") {
 		return ToolOutput{}, fmt.Errorf("choose an available host tool in Build mode")
 	}
-	out := name + " parameters loaded."
+	tool, ok := t.registry.Get(name)
+	if !ok || (tc.SubtaskDepth > 0 && name == "hoxi_schedule") {
+		return ToolOutput{}, fmt.Errorf("unavailable host tool %q", name)
+	}
+	params, err := json.Marshal(tool.Parameters())
+	if err != nil {
+		return ToolOutput{}, err
+	}
+	out := tool.Description() + "\ncall_host_tool name=" + name + ", args schema: " + string(params)
 	switch name {
 	case "hoxi_browser":
 		out += "\n\n<hoxi_tool_safety>\n" + hoxiBrowserSafetyRule + "\n</hoxi_tool_safety>"
@@ -65,38 +73,11 @@ type hostToolCatalog struct {
 	omitInteractiveQuestions bool
 	omitTask                 bool
 	omitDirectExecution      bool
-	loaded                   map[string]bool
+	omitGoal, omitSkill      bool
 }
 
-// The visible transcript is already scoped to one session and includes restored turns.
-func newHostToolCatalog(cfg map[string]any, history []Message) hostToolCatalog {
-	mode, _ := cfg["hostToolLoading"].(string)
-	mode = strings.TrimSpace(mode)
-	onDemand := mode != "eager"
-	c := hostToolCatalog{onDemand: onDemand}
-	if !c.onDemand {
-		return c
-	}
-	c.loaded = make(map[string]bool)
-	pending := make(map[string]string)
-	for _, m := range history {
-		for _, b := range m.Content {
-			switch b.Type {
-			case ContentToolUse:
-				if b.Name == "load_host_tool" {
-					pending[b.ID] = requestedHostTool(b.Input)
-				} else if slices.Contains(deferredHostTools, b.Name) {
-					c.loaded[b.Name] = true
-				}
-			case ContentToolResult:
-				if name := pending[b.ToolUseID]; name != "" && !b.IsError {
-					c.loaded[name] = true
-				}
-				delete(pending, b.ToolUseID)
-			}
-		}
-	}
-	return c
+func newHostToolCatalog(cfg map[string]any) hostToolCatalog {
+	return hostToolCatalog{onDemand: !isEagerHostToolLoading(cfg)}
 }
 
 func (c hostToolCatalog) specs(reg ToolRegistry, mode string, depth int) []ToolSpec {
@@ -111,7 +92,7 @@ func (c hostToolCatalog) specs(reg ToolRegistry, mode string, depth int) []ToolS
 		if spec.Name == "load_host_tool" && (!c.onDemand || strings.EqualFold(mode, "plan")) {
 			continue
 		}
-		if c.onDemand && slices.Contains(deferredHostTools, spec.Name) && !c.loaded[spec.Name] {
+		if c.onDemand && slices.Contains(deferredHostTools, spec.Name) {
 			continue
 		}
 		if c.omitMCP && (spec.Name == "mcp_list_tools" || spec.Name == "mcp_call_tool") {
@@ -129,7 +110,15 @@ func (c hostToolCatalog) specs(reg ToolRegistry, mode string, depth int) []ToolS
 		if c.omitDirectExecution && isOrchestratorDirectExecutionTool(spec.Name) {
 			continue
 		}
+		if (spec.Name == "goal_report" && c.omitGoal) || (spec.Name == "skill" && c.omitSkill) {
+			continue
+		}
 		out = append(out, spec)
+		if spec.Name == "load_host_tool" {
+			out = append(out, ToolSpec{Name: "call_host_tool", Description: "Invoke a host tool using the args documented by load_host_tool.", Parameters: map[string]any{
+				"type": "object", "properties": map[string]any{"name": map[string]any{"type": "string", "enum": deferredHostTools}, "args": map[string]any{"type": "object"}}, "required": []string{"name", "args"},
+			}})
+		}
 	}
 	return out
 }
@@ -176,20 +165,18 @@ func historyUsesMCPTools(history []Message) bool {
 	return false
 }
 
-func (c hostToolCatalog) record(calls []ToolCall, results []ToolOutput) bool {
-	if !c.onDemand {
-		return false
+// The wire call stays in history. Scheduling, permissions and recovery see the concrete tool.
+func resolveHostProxy(call ToolCall) (ToolCall, bool) {
+	if call.Name != "call_host_tool" {
+		return call, false
 	}
-	changed := false
-	for i, res := range results {
-		if calls[i].Name != "load_host_tool" || res.IsError {
-			continue
-		}
-		name, _ := res.Metadata["loadedHostTool"].(string)
-		if slices.Contains(deferredHostTools, name) && !c.loaded[name] {
-			c.loaded[name] = true
-			changed = true
-		}
+	var in struct {
+		Name string
+		Args json.RawMessage
 	}
-	return changed
+	if json.Unmarshal(call.Input, &in) != nil || !slices.Contains(deferredHostTools, in.Name) || len(in.Args) == 0 || in.Args[0] != '{' {
+		return call, false
+	}
+	call.Name, call.Input = in.Name, in.Args
+	return call, true
 }

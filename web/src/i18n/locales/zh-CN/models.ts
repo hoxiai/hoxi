@@ -251,7 +251,7 @@ export const models: ModelsI18n = {
     "会话标题、摘要与轻量任务",
   compactionModelTitle: "上下文压缩模型",
   compactionModelDesc:
-    "压缩会话上下文与整理记忆时使用的模型",
+    "自动压缩优先复用当前模型的缓存。另起摘要请求时会发送给这里选择的模型，留空时优先使用轻量模型，其次尝试当前服务商的经济模型。摘要失败时可回到当前会话模型",
   mediaRolesSectionTitle: "多模态生成与语音默认模型",
   mediaRolesSectionDesc:
     "任务优先自检当前对话模型的原生能力；若不支持则优先使用此处指定的模型（未指定时自动择优）",

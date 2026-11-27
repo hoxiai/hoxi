@@ -2,12 +2,16 @@ package main
 
 import (
 	"context"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/llm"
 )
 
 func TestAllTasksMaterializeAndFailBaseline(t *testing.T) {
@@ -104,6 +108,33 @@ func TestSmokeEvalEndToEndWithDiagnosticsSelfHeal(t *testing.T) {
 
 	if _, err := os.Stat(reportPath); err != nil {
 		t.Fatalf("expected report file to exist: %v", err)
+	}
+}
+
+// Interrupt the scripted coding task after its first edit, then return a metered
+// summary. The remaining steps still have to fix the code and pass the real tests.
+type overflowEvalStream struct {
+	*smokeStreamClient
+	requests int
+}
+
+func (s *overflowEvalStream) OpenStream(ctx context.Context, req llm.StreamHTTPRequest) (*http.Response, error) {
+	s.requests++
+	switch s.requests {
+	case 3:
+		return nil, &llm.StreamHTTPError{StatusCode: 400, Message: "prompt is too long for the context window"}
+	case 4:
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(buildAnthropicTextSSE(77, 11, 19, 3, "Continue fixing retry.go.")))}, nil
+	}
+	return s.smokeStreamClient.OpenStream(ctx, req)
+}
+
+func TestCodingEvalCountsCompactionUsage(t *testing.T) {
+	rep := RunSuite(context.Background(), BuiltinTasks()[:1], RunOptions{
+		ProviderID: "smoke", ModelID: "scripted-native", StreamClient: &overflowEvalStream{smokeStreamClient: newSmokeStreamClient()},
+	})
+	if rep.Summary.PassedTasks != 1 || rep.Summary.TotalTokens != 12460+77+11+19+3 {
+		t.Fatalf("expected all five coding steps and the compaction call in usage: %+v", rep)
 	}
 }
 

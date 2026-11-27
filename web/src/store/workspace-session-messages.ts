@@ -239,7 +239,7 @@ export async function dispatchSessionPrompt(
       fastMode: requestedFastMode || undefined,
       attachments,
       skillSelection: effectiveSkill,
-      system: explicitSystem,
+      system: baseExplicitSystem,
     };
     if (editingQueued) commitEditingQueuedPromptToQueue(id, { text: promptText, ...queueOpts });
     else enqueueSessionPrompt(id, promptText, queueOpts);

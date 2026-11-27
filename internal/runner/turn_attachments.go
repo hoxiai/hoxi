@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -190,6 +191,7 @@ func (s *Service) prepareTurnAttachmentsForModel(
 	var storedFiles []MessagePart
 	var deliveryFiles []MessagePart
 	var docBlocks []string
+	pdfExtractFiles := make(map[int]int)
 	var cliMediaNotes []string
 
 	for index, part := range fileParts {
@@ -312,6 +314,10 @@ func (s *Service) prepareTurnAttachmentsForModel(
 				}
 				header += ">"
 				if extracted != "" {
+					if rec.Runtime == string(RuntimeNative) && meta.Kind == attachment.KindPDF {
+						pdfExtractFiles[len(docBlocks)] = len(storedFiles) - 1
+						storedFiles[len(storedFiles)-1].Metadata = map[string]interface{}{"pdfExtractBytes": len(extracted)}
+					}
 					docBlocks = append(docBlocks, header+"\n"+extracted+"\n</attached_file>")
 				} else {
 					docBlocks = append(docBlocks, header+"\n</attached_file>")
@@ -362,25 +368,18 @@ func (s *Service) prepareTurnAttachmentsForModel(
 			}
 
 			nativeInlined := false
-			const maxStagedNativeInlineBytes = 20 << 20
 			if !isImageTurn && localPath != "" && (kind == attachment.KindImage || s.runtimeSupportsNativeAttachment(rec, targetProviderID, targetModelID, kind)) {
-				if fi, statErr := os.Stat(localPath); statErr == nil && !fi.IsDir() && fi.Size() > 0 && fi.Size() <= maxStagedNativeInlineBytes {
-					if rawBytes, rErr := os.ReadFile(localPath); rErr == nil && len(rawBytes) > 0 {
-						inlineMime := mimeType
-						if inlineMime == "" {
-							inlineMime = attachment.DetectFileMimeType(localPath, rawBytes)
-						}
-						deliveryFiles = append(deliveryFiles, MessagePart{
-							ID:        partID,
-							SessionID: rec.ID,
-							MessageID: userMsgID,
-							Type:      "file",
-							Mime:      inlineMime,
-							Filename:  fname,
-							URL:       "data:" + inlineMime + ";base64," + base64.StdEncoding.EncodeToString(rawBytes),
-						})
-						nativeInlined = true
+				if raw := readStagedMedia(rec.WorktreePath, localPath, maxStagedNativeInlineBytes); len(raw) > 0 {
+					if mimeType == "" {
+						mimeType = attachment.DetectFileMimeType(localPath, raw)
 					}
+					file := MessagePart{ID: partID, SessionID: rec.ID, MessageID: userMsgID, Type: "file", Mime: mimeType, Filename: fname}
+					file.URL = "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(raw)
+					if rec.Runtime == string(RuntimeNative) {
+						storedFiles[len(storedFiles)-1], file = s.snapshotStagedMedia(rec, file, raw)
+					}
+					deliveryFiles = append(deliveryFiles, file)
+					nativeInlined = true
 				}
 			}
 
@@ -388,19 +387,17 @@ func (s *Service) prepareTurnAttachmentsForModel(
 			var transcribedBy string
 			if !nativeInlined && kind == attachment.KindAudio && localPath != "" && s.audioClient != nil && s.audioClient.HasAudioTranscriber() {
 				const maxStagedAudioTranscribeBytes = 25 << 20
-				if fi, statErr := os.Stat(localPath); statErr == nil && !fi.IsDir() && fi.Size() > 0 && fi.Size() <= maxStagedAudioTranscribeBytes {
-					if rawAudio, rErr := os.ReadFile(localPath); rErr == nil && len(rawAudio) > 0 {
-						tCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-						tRes, tErr := s.audioClient.TranscribeAudio(tCtx, llm.AudioTranscribeRequest{
-							Filename: fname,
-							Mime:     mimeType,
-							Data:     rawAudio,
-						})
-						cancel()
-						if tErr == nil && strings.TrimSpace(tRes.Text) != "" {
-							transcript = strings.TrimSpace(tRes.Text)
-							transcribedBy = strings.Trim(tRes.ProviderID+"/"+tRes.ModelID, "/")
-						}
+				if rawAudio := readStagedMedia(rec.WorktreePath, localPath, maxStagedAudioTranscribeBytes); len(rawAudio) > 0 {
+					tCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+					tRes, tErr := s.audioClient.TranscribeAudio(tCtx, llm.AudioTranscribeRequest{
+						Filename: fname,
+						Mime:     mimeType,
+						Data:     rawAudio,
+					})
+					cancel()
+					if tErr == nil && strings.TrimSpace(tRes.Text) != "" {
+						transcript = strings.TrimSpace(tRes.Text)
+						transcribedBy = strings.Trim(tRes.ProviderID+"/"+tRes.ModelID, "/")
 					}
 				}
 			}
@@ -460,6 +457,18 @@ func (s *Service) prepareTurnAttachmentsForModel(
 		}
 	}
 
+	// Directive and skill expansion prepend text. Distances from the end remain
+	// valid after expansion and when earlier PDF extracts are removed in file order.
+	if len(pdfExtractFiles) > 0 {
+		trailing := len(cliPrompt) - len(effectiveText)
+		for i := len(docBlocks) - 1; i >= 0; i-- {
+			if fileIdx, ok := pdfExtractFiles[i]; ok {
+				storedFiles[fileIdx].Metadata["pdfExtractTrailingBytes"] = trailing + len("\n</attached_file>")
+			}
+			trailing += len(docBlocks[i]) + len("\n\n")
+		}
+	}
+
 	if promptText != "" || len(storedFiles) == 0 {
 		storedParts = append(storedParts, MessagePart{
 			ID:        textPartID,
@@ -483,6 +492,59 @@ func (s *Service) prepareTurnAttachmentsForModel(
 	deliveryParts = append(deliveryParts, deliveryFiles...)
 
 	return storedParts, deliveryParts, cliPrompt
+}
+
+const maxStagedNativeInlineBytes = 20 << 20
+
+// Use the same immutable bytes on the live request and on all later turns. The
+// inline URL is also a usable snapshot when the attachment store is unavailable.
+func (s *Service) snapshotStagedMedia(rec SessionRecord, file MessagePart, raw []byte) (stored, delivery MessagePart) {
+	if s.attachments == nil {
+		return file, file
+	}
+	meta, err := s.attachments.Save(attachment.SaveRequest{
+		SessionID: rec.ID, Directory: rec.WorktreePath, Filename: file.Filename, Mime: file.Mime, Data: raw, MaxBytes: maxStagedNativeInlineBytes,
+	})
+	if err != nil {
+		return file, file
+	}
+	if meta.Mime != file.Mime {
+		_, normalized, err := s.attachments.ReadAsDataURL(meta.ID)
+		if err != nil {
+			return file, file
+		}
+		file.URL, file.Mime, file.Filename = normalized, meta.Mime, meta.Filename
+	}
+	stored = file
+	stored.URL = meta.URL
+	return stored, file
+}
+
+// Read through a rooted handle so symlinks cannot escape the session workspace.
+func readStagedMedia(worktreeDir, localPath string, limit int64) []byte {
+	rel, err := filepath.Rel(worktreeDir, localPath)
+	if err != nil {
+		return nil
+	}
+	root, err := os.OpenRoot(worktreeDir)
+	if err != nil {
+		return nil
+	}
+	defer root.Close()
+	info, err := root.Stat(rel)
+	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > limit {
+		return nil
+	}
+	file, err := root.Open(rel)
+	if err != nil {
+		return nil
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, limit+1))
+	if err != nil || int64(len(data)) > limit {
+		return nil
+	}
+	return data
 }
 
 func attachmentExtForMime(mimeType string) string {

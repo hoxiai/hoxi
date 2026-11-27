@@ -13,6 +13,73 @@ import (
 	"time"
 )
 
+func TestLongFileListingsResumeAfterLastVisibleEntry(t *testing.T) {
+	dir := t.TempDir()
+	want := make(map[string]bool)
+	for i := range 215 {
+		name := fmt.Sprintf("%03d-%s.go", i, strings.Repeat("a", 170))
+		if err := os.WriteFile(filepath.Join(dir, name), nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+		want[name] = true
+	}
+	for _, tool := range []string{"read", "glob"} {
+		t.Run(tool, func(t *testing.T) {
+			registry := newToolRegistry()
+			offset := 0
+			if tool == "read" {
+				offset = 1
+			}
+			seen := make(map[string]bool)
+			for {
+				args := map[string]any{"offset": offset}
+				if tool == "read" {
+					args["filePath"] = "."
+				} else {
+					args["pattern"] = "*.go"
+				}
+				input, _ := json.Marshal(args)
+				out, err := registry.Execute(context.Background(), ToolContext{WorktreeDir: dir}, ToolCall{Name: tool, Input: input}, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				rows, _, _ := strings.Cut(out.Output, "\n(")
+				names := strings.Split(rows, "\n")
+				for _, name := range names {
+					if !want[name] || seen[name] {
+						t.Fatalf("partial or repeated entry on page starting at %d: %.55q", offset, name)
+					}
+					seen[name] = true
+				}
+				next, more := out.Metadata["nextOffset"].(int)
+				if !more {
+					break
+				}
+				if next != offset+len(names) || !strings.Contains(out.Output, fmt.Sprintf("offset=%d", next)) {
+					t.Fatalf("cursor %d does not follow %d visible names at %d", next, len(names), offset)
+				}
+				offset = next
+			}
+			if len(seen) != len(want) {
+				t.Fatalf("received %d of %d filenames", len(seen), len(want))
+			}
+		})
+	}
+}
+
+func TestReadDirectoryEntryLimit(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"a", "b", "c"} {
+		if err := os.Mkdir(filepath.Join(dir, name), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := (&readTool{}).Execute(context.Background(), ToolContext{WorktreeDir: dir}, json.RawMessage(`{"filePath":".","offset":2,"limit":1}`))
+	if err != nil || !strings.HasPrefix(out.Output, "b/\n(") || out.Metadata["nextOffset"] != 3 {
+		t.Fatalf("unexpected directory page: %q %v %v", out.Output, out.Metadata, err)
+	}
+}
+
 func TestGlobDoublestarBracesAndGitignore(t *testing.T) {
 	if !matchGlob("internal/**/*.ts", "internal/index.ts") {
 		t.Fatal("expected internal/**/*.ts to match zero-depth internal/index.ts")

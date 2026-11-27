@@ -25,6 +25,7 @@ type NativeEngine interface {
 
 // NativeTurnRequest configures one native in-process agent turn.
 type NativeTurnRequest struct {
+	GoalActive          bool
 	SessionID           string
 	WorktreeDir         string
 	Mode                string
@@ -226,7 +227,7 @@ func (s *Service) launchNativeTurn(
 	}
 	go s.watchStall(ap)
 
-	history := s.projectCanonicalNativeHistory(rec.Turns, rec.ProviderID, modelID)
+	history := s.projectCanonicalNativeHistory(rec.WorktreePath, rec.Turns, rec.ProviderID, modelID)
 	userBlocks := buildNativeUserBlocks(promptText, deliveryParts)
 	projectMemory, handoffMemory := memstore.NativeMemoryBlocks(rec, resumeFromHistory)
 	if projectMemory != "" && !strings.Contains(systemPrompt, "<project_memory>") {
@@ -643,6 +644,7 @@ func (s *Service) launchNativeTurn(
 			Effort:          effort,
 			FastMode:        userInfo.ServiceTier == "fast",
 			Orchestrator:    orchestrator,
+			GoalActive:      userInfo.GoalActive,
 			System:          systemPrompt,
 			History:         history,
 			InitialTodos:    extractLatestSessionTodos(rec.Turns),
@@ -753,7 +755,7 @@ func (s *Service) nativeQuestionAsker(rec SessionRecord, asstMsgID string) func(
 }
 
 func (s *Service) buildNativeHistory(turns []MessageTurn) []NativeMessage {
-	return s.projectCanonicalNativeHistory(turns, "", "")
+	return s.projectCanonicalNativeHistory(s.rootDir, turns, "", "")
 }
 
 func nativeStepContextTokens(u NativeTokenUsage) int {

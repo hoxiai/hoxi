@@ -254,7 +254,7 @@ func TestGeneralSubagentInheritsProjectInstructionsAndParentConstraints(t *testi
 
 	var generalSys string
 	for _, c := range calls {
-		if strings.Contains(c.System, "Subagent role: general (apply change)") {
+		if strings.Contains(c.System, "Subagent role: general.") {
 			generalSys = c.System
 		}
 	}

@@ -42,6 +42,9 @@ type ContentBlock struct {
 	Input     json.RawMessage `json:"input,omitempty"`
 	ToolUseID string          `json:"tool_use_id,omitempty"`
 	IsError   bool            `json:"is_error,omitempty"`
+
+	// ScreenshotTrigger remembers the producing step's cache-pruning window for replay.
+	ScreenshotTrigger int `json:"screenshotTrigger,omitempty"`
 }
 
 // Message is one canonical conversation message.
@@ -155,34 +158,35 @@ func (f EventSinkFunc) Emit(evt EngineEvent) { f(evt) }
 
 // ToolContext provides execution context and injected host capabilities to tools.
 type ToolContext struct {
-	commandLogs        *turnCommandLogs
-	SessionID          string
-	CallID             string
-	WorktreeDir        string
-	Mode               string
-	SubtaskDepth       int
-	OrchestratorOnly   bool
-	PermissionVetted   bool
-	VisibleMessages    []Message
-	Steer              SteerSource
-	RulesTracker       *SubdirRuleTracker
-	FileRevisions      *FileRevisionTracker
-	CoordinateFileEdit FileEditCoordinatorHook
-	RecordFileEdit     FileEditRecordedHook
-	RunCommand         CommandRunner
-	StreamRunCommand   StreamingCommandRunner
-	BackgroundCommands BackgroundCommandManager
-	OnToolOutput       func(partialOutput string)
-	Diagnostics        DiagnosticHook
-	RepoMap            RepoMapHook
-	CodeSearch         CodeSearchHook
-	SymbolInspect      SymbolInspectHook
-	ImpactInspect      ImpactInspectHook
-	AskQuestion        QuestionAsker
-	MCPConfig          MCPConfigSource
-	projectConfig      map[string]any
-	RunSubtask         SubtaskRunner
-	HostInvoke         HostInvokeHook
+	relaxedScreenshotBudget bool
+	commandLogs             *turnCommandLogs
+	SessionID               string
+	CallID                  string
+	WorktreeDir             string
+	Mode                    string
+	SubtaskDepth            int
+	OrchestratorOnly        bool
+	PermissionVetted        bool
+	VisibleMessages         []Message
+	Steer                   SteerSource
+	RulesTracker            *SubdirRuleTracker
+	FileRevisions           *FileRevisionTracker
+	CoordinateFileEdit      FileEditCoordinatorHook
+	RecordFileEdit          FileEditRecordedHook
+	RunCommand              CommandRunner
+	StreamRunCommand        StreamingCommandRunner
+	BackgroundCommands      BackgroundCommandManager
+	OnToolOutput            func(partialOutput string)
+	Diagnostics             DiagnosticHook
+	RepoMap                 RepoMapHook
+	CodeSearch              CodeSearchHook
+	SymbolInspect           SymbolInspectHook
+	ImpactInspect           ImpactInspectHook
+	AskQuestion             QuestionAsker
+	MCPConfig               MCPConfigSource
+	projectConfig           map[string]any
+	RunSubtask              SubtaskRunner
+	HostInvoke              HostInvokeHook
 }
 
 // FileEditCoordination reports cross-session lease and peer-modification state for a file mutation.

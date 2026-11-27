@@ -25,6 +25,19 @@ func (s *Service) LoadNativeConfigDoc(directory string) map[string]any {
 	return doc
 }
 
+// ConfiguredCompactionModel selects the destination for a background request.
+// A repository's settings must not redirect the transcript to another provider.
+func (s *Service) ConfiguredCompactionModel() string {
+	cfg := s.LoadNativeConfigDoc("")
+	agents, _ := cfg["agent"].(map[string]any)
+	compaction, _ := agents["compaction"].(map[string]any)
+	model, _ := compaction["model"].(string)
+	if strings.TrimSpace(model) == "" {
+		model, _ = cfg["small_model"].(string)
+	}
+	return strings.TrimSpace(model)
+}
+
 // LoadProjectConfigDoc is the effective, read-only project view. Consumers must
 // not feed this document to PersistHoxiConfigDoc or UpdateHoxiConfigDoc.
 func (s *Service) LoadProjectConfigDoc(directory string) (map[string]any, error) {

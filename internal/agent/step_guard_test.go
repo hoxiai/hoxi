@@ -283,10 +283,10 @@ func verifyChildChangeResetsGuard(t *testing.T, failAfterEdit bool) {
 	childEdited := false
 	sc := &inspectableStreamClient{
 		responder: func(_ int, call recordedLLMCall) string {
-			if strings.Contains(call.System, "Subagent role: explore (check cfg).") {
+			if strings.Contains(call.System, "Subagent role: explore.") {
 				return "data: {\"choices\":[{\"delta\":{\"content\":\"read-only explore ok\"}}]}\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\ndata: [DONE]\n"
 			}
-			if strings.Contains(call.System, "Subagent role: general (update port).") {
+			if strings.Contains(call.System, "Subagent role: general.") {
 				if !childEdited {
 					childEdited = true
 					return "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"sub_ed\",\"function\":{\"name\":\"edit\",\"arguments\":" + mustJSONString(string(editArgs)) + "}}]}}]}\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\ndata: [DONE]\n"

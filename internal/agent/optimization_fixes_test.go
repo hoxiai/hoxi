@@ -249,7 +249,7 @@ func TestPlanToBuildPrefixAndSlimSubagentPromptAndCatalog(t *testing.T) {
 
 	// On-demand host tool loading defers hoxi_data and hoxi_tools, omits MCP when unconfigured,
 	// and delivers browser/computer safety notices when loaded via load_host_tool.
-	cat := newHostToolCatalog(nil, nil)
+	cat := newHostToolCatalog(nil)
 	cat.configureMCP(ws, nil, nil, nil)
 	defaultBuild := cat.specs(reg, "build", 0)
 	for _, deferred := range []string{"hoxi_browser", "hoxi_computer", "hoxi_data", "hoxi_tools", "hoxi_image", "hoxi_video", "hoxi_speech", "mcp_list_tools", "mcp_call_tool"} {
@@ -257,7 +257,7 @@ func TestPlanToBuildPrefixAndSlimSubagentPromptAndCatalog(t *testing.T) {
 			t.Fatalf("expected %s to be omitted/deferred from default build catalog", deferred)
 		}
 	}
-	catWithMCP := newHostToolCatalog(nil, nil)
+	catWithMCP := newHostToolCatalog(nil)
 	catWithMCP.configureMCP(ws, nil, func() map[string]any {
 		return map[string]any{"mcp": map[string]any{"docs": map[string]any{"type": "remote", "url": "https://mcp.example.com"}}}
 	}, nil)
@@ -265,7 +265,7 @@ func TestPlanToBuildPrefixAndSlimSubagentPromptAndCatalog(t *testing.T) {
 		t.Fatal("expected mcp_list_tools to be exposed when MCP server is configured")
 	}
 
-	loadTool := &loadHostTool{}
+	loadTool := &loadHostTool{registry: reg}
 	for _, name := range []string{"hoxi_browser", "hoxi_computer"} {
 		out, err := loadTool.Execute(context.Background(), ToolContext{Mode: "build"}, json.RawMessage(`{"name":"`+name+`"}`))
 		if err != nil || !strings.Contains(out.Output, "<hoxi_tool_safety>") {

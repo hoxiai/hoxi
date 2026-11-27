@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -52,7 +53,7 @@ func TestNativeErrorToolMediaSurvivesHistoryReplay(t *testing.T) {
 			}
 		}
 	}
-	for _, msg := range svc.projectCanonicalNativeHistory(stored.Turns, rec.ProviderID, rec.ModelID) {
+	for _, msg := range svc.projectCanonicalNativeHistory(svc.rootDir, stored.Turns, rec.ProviderID, rec.ModelID) {
 		for _, block := range msg.Content {
 			if block.Type == "media" && block.Data == "iVBORw0KGgo=" {
 				foundMedia = true
@@ -64,6 +65,30 @@ func TestNativeErrorToolMediaSurvivesHistoryReplay(t *testing.T) {
 	}
 	if !foundMedia || !foundError || !foundMetadata {
 		t.Fatalf("tool replay lost result: media=%t error=%t metadata=%t", foundMedia, foundError, foundMetadata)
+	}
+}
+
+func TestNativeGeneratedMediaPreviewsStayOutOfModelHistory(t *testing.T) {
+	for _, tc := range []struct{ name, mime, collection string }{
+		{"hoxi_image", "image/png", "images"}, {"hoxi_video", "video/mp4", "videos"}, {"hoxi_speech", "audio/wav", "audios"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &Service{}
+			preview := map[string]any{"type": "file", "url": "data:" + tc.mime + ";base64,YWJj", "filename": "artifact", "mime": tc.mime}
+			meta := map[string]any{"mediaAttachments": []any{preview}, tc.collection: []any{preview}}
+			turns := []MessageTurn{{Info: MessageInfo{Role: "assistant"}, Parts: []MessagePart{{ID: "p", CallID: "c", Type: "tool", Tool: tc.name, State: &ToolState{Status: "completed", Output: "Saved artifact", Metadata: meta}}}}}
+			history := svc.projectCanonicalNativeHistory("", turns, "openai", "gpt-5")
+			if len(history) != 2 || len(history[1].Content) != 1 || history[1].Content[0].Text != "Saved artifact" {
+				t.Fatalf("text-only tool result acquired extra blocks on replay: %+v", history)
+			}
+			preview["previewOnly"] = true
+			live := map[string]any{"id": "att_live", "url": "data:" + tc.mime + ";base64,bGl2ZQ==", "mime": tc.mime}
+			meta["mediaAttachments"] = []any{preview, live}
+			history = svc.projectCanonicalNativeHistory("", turns, "openai", "gpt-5")
+			if len(history[1].Content) != 2 || history[1].Content[1].Data != "bGl2ZQ==" || len(meta["mediaAttachments"].([]any)) != 2 {
+				t.Fatal("expected only live model media on replay and both attachments in the timeline")
+			}
+		})
 	}
 }
 
@@ -108,7 +133,7 @@ func TestNativeChildToolMediaAndMetadataSurviveReplay(t *testing.T) {
 					}
 				}
 			}
-			for _, msg := range svc.projectCanonicalNativeHistory(rec.Turns, parent.ProviderID, parent.ModelID) {
+			for _, msg := range svc.projectCanonicalNativeHistory(svc.rootDir, rec.Turns, parent.ProviderID, parent.ModelID) {
 				for _, block := range msg.Content {
 					foundMedia = foundMedia || (block.Type == "media" && block.Data == "iVBORw0KGgo=")
 					foundResult = foundResult || (block.Type == "tool_result" && block.IsError == (kind == NativeEventToolError))
@@ -316,8 +341,8 @@ func TestNativeHistoryCapsEphemeralScreenshotsWhilePreservingOtherMedia(t *testi
 			},
 		},
 	}
-	for i := 1; i <= 5; i++ {
-		validData := []string{"U0hPVF8x", "U0hPVF8y", "U0hPVF8z", "U0hPVF80", "U0hPVF81"}[i-1]
+	for i := 1; i <= 6; i++ {
+		validData := []string{"U0hPVF8x", "U0hPVF8y", "U0hPVF8z", "U0hPVF80", "U0hPVF81", "U0hPVF82"}[i-1]
 		turns[1].Parts = append(turns[1].Parts, MessagePart{
 			ID:     "prt_shot_" + string(rune('0'+i)),
 			Type:   "tool",
@@ -337,7 +362,7 @@ func TestNativeHistoryCapsEphemeralScreenshotsWhilePreservingOtherMedia(t *testi
 		})
 	}
 
-	projected := svc.projectCanonicalNativeHistory(turns, "openai", "gpt-5")
+	projected := svc.projectCanonicalNativeHistory(svc.rootDir, turns, "openai", "gpt-5")
 	var liveShots []string
 	var omittedShots int
 	var hasUserImg, hasMCPImg bool
@@ -361,8 +386,8 @@ func TestNativeHistoryCapsEphemeralScreenshotsWhilePreservingOtherMedia(t *testi
 	if !hasUserImg || !hasMCPImg {
 		t.Fatalf("expected user and MCP media preserved, got user=%v mcp=%v", hasUserImg, hasMCPImg)
 	}
-	if omittedShots != 3 || len(liveShots) != 2 {
-		t.Fatalf("expected 3 omitted and 2 live hoxi_computer screenshots, got omitted=%d live=%v", omittedShots, liveShots)
+	if omittedShots != 3 || strings.Join(liveShots, ",") != "U0hPVF80,U0hPVF81,U0hPVF82" {
+		t.Fatalf("expected the sixth screenshot to extend the retained fourth and fifth screenshots, got omitted=%d live=%v", omittedShots, liveShots)
 	}
 }
 
@@ -404,7 +429,7 @@ func TestCanonicalHistoryOrdersMultiToolMediaAfterResultsAndBoundsHoxiImage(t *t
 			},
 		},
 	}
-	multiProj := svc.projectCanonicalNativeHistory(multiTurns, "openai", "gpt-5")
+	multiProj := svc.projectCanonicalNativeHistory(svc.rootDir, multiTurns, "openai", "gpt-5")
 	if len(multiProj) != 3 {
 		t.Fatalf("expected 3 messages, got %d", len(multiProj))
 	}
@@ -442,7 +467,7 @@ func TestCanonicalHistoryOrdersMultiToolMediaAfterResultsAndBoundsHoxiImage(t *t
 			},
 		})
 	}
-	imgProj := svc.projectCanonicalNativeHistory(imgTurns, "openai", "gpt-5")
+	imgProj := svc.projectCanonicalNativeHistory(svc.rootDir, imgTurns, "openai", "gpt-5")
 	var liveGen []string
 	var omittedGen int
 	for _, m := range imgProj {
@@ -464,7 +489,7 @@ func TestCanonicalHistoryOrdersMultiToolMediaAfterResultsAndBoundsHoxiImage(t *t
 		imgTurns[0],
 		{Info: imgTurns[1].Info, Parts: imgTurns[1].Parts[:4]},
 	}
-	fourProj := svc.projectCanonicalNativeHistory(fourImgTurns, "openai", "gpt-5")
+	fourProj := svc.projectCanonicalNativeHistory(svc.rootDir, fourImgTurns, "openai", "gpt-5")
 	var liveFour []string
 	for _, m := range fourProj {
 		for _, b := range m.Content {
@@ -520,7 +545,7 @@ func TestCanonicalHistoryOrdersMultiToolMediaAfterResultsAndBoundsHoxiImage(t *t
 			},
 		},
 	}
-	batchProj := svc.projectCanonicalNativeHistory(batchTurns, "openai", "gpt-5")
+	batchProj := svc.projectCanonicalNativeHistory(svc.rootDir, batchTurns, "openai", "gpt-5")
 	var liveBatch []string
 	var omittedBatch int
 	for _, m := range batchProj {
@@ -535,5 +560,44 @@ func TestCanonicalHistoryOrdersMultiToolMediaAfterResultsAndBoundsHoxiImage(t *t
 	}
 	if omittedBatch != 4 || strings.Join(liveBatch, ",") != "b5.png,b6.png" {
 		t.Fatalf("expected 4 omitted and latest 2 [b5.png,b6.png] kept across multi-image calls, got omitted=%d live=%v", omittedBatch, liveBatch)
+	}
+}
+
+func TestHostProxyHistoryReplaysWireInputAndScreenshotBudget(t *testing.T) {
+	root := t.TempDir()
+	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions"))
+	defer svc.CloseAll()
+	rec := SessionRecord{ID: "ses_proxy_media", WorktreePath: root, ProjectDir: root}
+	const wire = `{"name":"hoxi_browser","args":{"action":"screenshot"}}`
+	turns := []MessageTurn{{Info: MessageInfo{Role: "user"}, Parts: []MessagePart{{Type: "text", Text: "inspect"}}}, {Info: MessageInfo{Role: "assistant"}}}
+	for i, want := range []int{1, 2, 3, 4, 5, 6, 2, 3, 4, 2} {
+		trigger := 4
+		if i < 7 {
+			trigger = 6
+		}
+		refs := svc.saveNativeToolMediaAttachments(rec, []NativeContentBlock{{Type: "media", MimeType: "image/png", Filename: "snapshot.png", Data: "iVBORw0KGgo=", ScreenshotTrigger: trigger}})
+		if len(refs) != 1 {
+			t.Fatal("screenshot was not persisted")
+		}
+		id := fmt.Sprintf("call_%d", i)
+		turns[1].Parts = append(turns[1].Parts, MessagePart{ID: id, CallID: id, Type: "tool", Tool: "hoxi_browser", State: &ToolState{Status: "completed", Input: map[string]any{"action": "screenshot"}, Metadata: map[string]any{"step": i + 1, "hostProxyInput": wire, "mediaAttachments": refs}}})
+		history := svc.projectCanonicalNativeHistory(root, turns, "openai", "gpt-5")
+		media, calls := 0, 0
+		for _, m := range history {
+			for _, b := range m.Content {
+				switch b.Type {
+				case "media":
+					media++
+				case "tool_use":
+					calls++
+					if b.Name != "call_host_tool" || string(b.Input) != wire {
+						t.Fatalf("restored wrong call %s %s", b.Name, b.Input)
+					}
+				}
+			}
+		}
+		if media != want || calls != i+1 {
+			t.Fatalf("step %d: got %d live frames and %d calls, want %d and %d", i+1, media, calls, want, i+1)
+		}
 	}
 }

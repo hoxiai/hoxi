@@ -160,7 +160,7 @@ func runSingleTask(ctx context.Context, task Task, opts RunOptions) TaskResult {
 					res.DiagnosticErrorsCaught++
 				}
 			}
-		case agent.EngineTurnUsage:
+		case agent.EngineTurnUsage, agent.EngineSummaryUsage:
 			if evt.Usage != nil {
 				res.InputTokens += evt.Usage.Input
 				res.OutputTokens += evt.Usage.Output

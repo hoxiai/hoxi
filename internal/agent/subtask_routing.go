@@ -265,7 +265,10 @@ func (e *Engine) runSubtask(
 	if isOrchExecutor && (!hasSpec || strings.TrimSpace(spec.Prompt) == "") && !childReadOnly {
 		childSystem = buildSubtaskSystemPrompt(llm.AgentSpec{Prompt: orchestratorExecutorPrompt}, false, parent.System)
 	}
-	childSystemSuffix := formatSubtaskRoleSuffix(subType, req.Description)
+	childPrompt := req.Prompt
+	if desc := strings.TrimSpace(req.Description); desc != "" {
+		childPrompt = "Subtask: " + desc + "\n\n" + childPrompt
+	}
 	childCacheKey := buildSubtaskCacheKey(parent, req, subType)
 	var receipt *executorReceiptTracker
 	if isOrchExecutor {
@@ -320,9 +323,9 @@ func (e *Engine) runSubtask(
 		ModelID:        childModel,
 		Effort:         childEffort,
 		System:         childSystem,
-		SystemSuffix:   childSystemSuffix,
+		SystemSuffix:   "Subagent role: " + subType + ".",
 		History:        childHistory,
-		UserPrompt:     req.Prompt,
+		UserPrompt:     childPrompt,
 		MaxSteps:       childMaxSteps,
 		SubtaskDepth:   parent.SubtaskDepth + 1,
 		FileRevisions:  childRevisions,
@@ -573,14 +576,6 @@ func buildSubtaskCacheKey(parent TurnRequest, _ SubtaskRequest, subType string) 
 	}
 	sum := sha256.Sum256([]byte(candidate))
 	return "hoxi_sub_" + hex.EncodeToString(sum[:24])
-}
-
-func formatSubtaskRoleSuffix(subType, description string) string {
-	desc := strings.TrimSpace(description)
-	if desc == "" {
-		return ""
-	}
-	return fmt.Sprintf("Subagent role: %s (%s).", subType, desc)
 }
 
 func buildSubtaskSystemPrompt(spec llm.AgentSpec, readOnly bool, parentSystem string) string {

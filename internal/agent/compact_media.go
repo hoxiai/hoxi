@@ -12,8 +12,9 @@ const (
 	// keepLiveToolScreenshots. The hysteresis (4 -> 2) preserves upstream
 	// KV-cache prefixes across consecutive steps while preventing multimodal
 	// payload and vision-token explosion during long desktop/browser loops.
-	maxLiveToolScreenshots  = 4
-	keepLiveToolScreenshots = 2
+	maxLiveToolScreenshots     = 4
+	relaxedLiveToolScreenshots = 6
+	keepLiveToolScreenshots    = 2
 	// maxLiveGeneratedImages applies the same hysteresis to hoxi_image outputs
 	// so multi-image generation loops never resend unbounded base64 payloads.
 	maxLiveGeneratedImages  = 4
@@ -58,6 +59,7 @@ func pruneStaleToolScreenshots(msgs []Message) []Message {
 		return msgs
 	}
 	toolNameByID := make(map[string]string)
+	screenshotTrigger := maxLiveToolScreenshots
 	var screenshotPositions [][2]int
 	var generatedImagePositions [][2]int
 
@@ -66,7 +68,8 @@ func pruneStaleToolScreenshots(msgs []Message) []Message {
 		case RoleAssistant:
 			for _, b := range m.Content {
 				if b.Type == ContentToolUse && b.ID != "" {
-					toolNameByID[b.ID] = strings.ToLower(strings.TrimSpace(b.Name))
+					call, _ := resolveHostProxy(ToolCall{Name: b.Name, Input: b.Input})
+					toolNameByID[b.ID] = strings.ToLower(strings.TrimSpace(call.Name))
 				}
 			}
 		case RoleUser:
@@ -96,7 +99,11 @@ func pruneStaleToolScreenshots(msgs []Message) []Message {
 				if b.Type != ContentMedia || b.Data == "" {
 					continue
 				}
-				if isEphemeralScreenshotFilename(b.Filename) || (allScreenshotTools && strings.TrimSpace(b.Filename) == "") {
+				if b.ScreenshotTrigger != 0 || isEphemeralScreenshotFilename(b.Filename) || (allScreenshotTools && strings.TrimSpace(b.Filename) == "") {
+					screenshotTrigger = maxLiveToolScreenshots
+					if b.ScreenshotTrigger == relaxedLiveToolScreenshots {
+						screenshotTrigger = relaxedLiveToolScreenshots
+					}
 					screenshotPositions = append(screenshotPositions, [2]int{mIdx, bIdx})
 				} else if hasGeneratedImageTool && !hasOtherMedia && strings.HasPrefix(strings.ToLower(strings.TrimSpace(b.MimeType)), "image/") {
 					generatedImagePositions = append(generatedImagePositions, [2]int{mIdx, bIdx})
@@ -105,7 +112,7 @@ func pruneStaleToolScreenshots(msgs []Message) []Message {
 		}
 	}
 	dropLabel := make(map[[2]int]string)
-	if len(screenshotPositions) > maxLiveToolScreenshots {
+	if len(screenshotPositions) > screenshotTrigger {
 		for _, pos := range screenshotPositions[:len(screenshotPositions)-keepLiveToolScreenshots] {
 			dropLabel[pos] = "screenshot"
 		}

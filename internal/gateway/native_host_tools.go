@@ -540,10 +540,11 @@ func (g *Gateway) invokeNativeImageTool(ctx context.Context, tc agent.ToolContex
 		lines = append(lines, fmt.Sprintf("- File: %s (attachment URL: %s)", disp, uStr))
 		if strings.TrimSpace(uStr) != "" {
 			mediaAtts = append(mediaAtts, map[string]any{
-				"type":     "file",
-				"mime":     mimeStr,
-				"filename": fStr,
-				"url":      uStr,
+				"previewOnly": true,
+				"type":        "file",
+				"mime":        mimeStr,
+				"filename":    fStr,
+				"url":         uStr,
 			})
 		}
 	}
@@ -636,10 +637,11 @@ func (g *Gateway) invokeNativeVideoTool(ctx context.Context, tc agent.ToolContex
 		lines = append(lines, fmt.Sprintf("- File: %s (attachment URL: %s)", disp, uStr))
 		if strings.TrimSpace(uStr) != "" {
 			mediaAtts = append(mediaAtts, map[string]any{
-				"type":     "file",
-				"mime":     mimeStr,
-				"filename": fStr,
-				"url":      uStr,
+				"previewOnly": true,
+				"type":        "file",
+				"mime":        mimeStr,
+				"filename":    fStr,
+				"url":         uStr,
 			})
 		}
 	}
@@ -723,10 +725,11 @@ func (g *Gateway) invokeNativeSpeechTool(ctx context.Context, tc agent.ToolConte
 		lines = append(lines, fmt.Sprintf("- File: %s (attachment URL: %s)", disp, uStr))
 		if strings.TrimSpace(uStr) != "" {
 			mediaAtts = append(mediaAtts, map[string]any{
-				"type":     "file",
-				"mime":     mimeStr,
-				"filename": fStr,
-				"url":      uStr,
+				"previewOnly": true,
+				"type":        "file",
+				"mime":        mimeStr,
+				"filename":    fStr,
+				"url":         uStr,
 			})
 		}
 	}

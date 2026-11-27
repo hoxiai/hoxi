@@ -56,6 +56,7 @@ type InflightTurnEntry struct {
 	ProviderID      string            `json:"providerID,omitempty"`
 	ModelID         string            `json:"modelID,omitempty"`
 	Effort          string            `json:"effort,omitempty"`
+	GoalActive      bool              `json:"goalActive,omitempty"`
 	FastMode        bool              `json:"fastMode,omitempty"`
 	Orchestrator    *OrchestratorSpec `json:"orchestrator,omitempty"`
 	CallerSystem    string            `json:"callerSystem,omitempty"`

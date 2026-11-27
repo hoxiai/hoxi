@@ -2,12 +2,19 @@ package runner
 
 import (
 	"context"
+	"io"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/hoxiai/hoxi/internal/attachment"
 	"github.com/hoxiai/hoxi/internal/llm"
+	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
 )
 
 type stubProtocolStreamClient struct {
@@ -225,13 +232,15 @@ func TestNativeAudioAttachmentTightensToGoogleProtocolAndASRTranscriptReplay(t *
 			t.Fatalf("%s/%s: missing [Audio Transcript] in cliPrompt: %q", tc.prov, tc.model, cliPrompt)
 		}
 
+		attachNativeModelText(stored, cliPrompt)
+
 		// 3. Multi-turn canonical history replay keeps the transcript for OpenAI/Anthropic,
 		// and replays raw media if the user later switches to native Google protocol.
 		turns := []MessageTurn{{
 			Info:  MessageInfo{ID: "msg_u_ng", SessionID: natRec.ID, Role: "user"},
 			Parts: stored,
 		}}
-		openAIHist := svc.projectCanonicalNativeHistory(turns, tc.prov, tc.model)
+		openAIHist := svc.projectCanonicalNativeHistory(svc.rootDir, turns, tc.prov, tc.model)
 		foundHistTranscript := false
 		for _, m := range openAIHist {
 			for _, b := range m.Content {
@@ -246,12 +255,15 @@ func TestNativeAudioAttachmentTightensToGoogleProtocolAndASRTranscriptReplay(t *
 		if !foundHistTranscript {
 			t.Fatalf("%s/%s: expected persisted ASR transcript replayed in canonical history, got %+v", tc.prov, tc.model, openAIHist)
 		}
-		googleHist := svc.projectCanonicalNativeHistory(turns, "google", "gemini-2.5-pro")
+		googleHist := svc.projectCanonicalNativeHistory(svc.rootDir, turns, "google", "gemini-2.5-pro")
 		foundGoogleMedia := false
 		for _, m := range googleHist {
 			for _, b := range m.Content {
 				if b.Type == "media" && b.MimeType == "audio/wav" {
 					foundGoogleMedia = true
+				}
+				if b.Type == "text" && strings.Contains(b.Text, asrStub.transcript) {
+					t.Fatal("native audio replay included both the recording and its transcript")
 				}
 			}
 		}
@@ -317,7 +329,7 @@ func TestNativeHistorySkipsUnsupportedBinaryMediaWhenNativeModelTextPresent(t *t
 	turns := []MessageTurn{{Info: MessageInfo{ID: "msg_u_cap", SessionID: rec.ID, Role: "user"}, Parts: stored}}
 
 	// Replay on DeepSeek must keep ONLY image/png media (no unsupported video/audio/pdf binary blocks).
-	dsHist := svc.projectCanonicalNativeHistory(turns, "deepseek", "deepseek-chat")
+	dsHist := svc.projectCanonicalNativeHistory(svc.rootDir, turns, "deepseek", "deepseek-chat")
 	var dsMimes []string
 	for _, b := range dsHist[0].Content {
 		if b.Type == "media" {
@@ -329,7 +341,7 @@ func TestNativeHistorySkipsUnsupportedBinaryMediaWhenNativeModelTextPresent(t *t
 	}
 
 	// Replay on OpenAI GPT-5 keeps image/png + application/pdf, still skipping unsupported video/audio.
-	oaHist := svc.projectCanonicalNativeHistory(turns, "openai", "gpt-5")
+	oaHist := svc.projectCanonicalNativeHistory(svc.rootDir, turns, "openai", "gpt-5")
 	var oaMimes []string
 	for _, b := range oaHist[0].Content {
 		if b.Type == "media" {
@@ -341,7 +353,7 @@ func TestNativeHistorySkipsUnsupportedBinaryMediaWhenNativeModelTextPresent(t *t
 	}
 
 	// Switching to Google Gemini unlocks raw video/audio/pdf/image media replay.
-	gemHist := svc.projectCanonicalNativeHistory(turns, "google", "gemini-2.5-pro")
+	gemHist := svc.projectCanonicalNativeHistory(svc.rootDir, turns, "google", "gemini-2.5-pro")
 	var gemMimes []string
 	for _, b := range gemHist[0].Content {
 		if b.Type == "media" {
@@ -350,5 +362,155 @@ func TestNativeHistorySkipsUnsupportedBinaryMediaWhenNativeModelTextPresent(t *t
 	}
 	if len(gemMimes) != 4 {
 		t.Fatalf("expected Gemini replay to keep all 4 media blocks, got %v", gemMimes)
+	}
+}
+
+func TestNativeStagedImageReplaysOriginalBytes(t *testing.T) {
+	dir := t.TempDir()
+	svc := &Service{attachments: attachment.NewStore(t.TempDir())}
+	rec := SessionRecord{ID: "ses_staged", Runtime: "native", WorktreePath: dir}
+	path := filepath.Join(dir, "screen.png")
+	if err := os.WriteFile(path, []byte("original screenshot"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	part := MessagePart{Type: "file", Mime: "image/png", Filename: "screen.png", URL: "/api/hoxi/file/content?raw=1&path=screen.png"}
+	stored, delivery, prompt := svc.prepareTurnAttachmentsForModel(rec, "openai", "gpt-5", false, 1, 1, "msg_u", "Review", []MessagePart{part})
+	attachNativeModelText(stored, prompt)
+	live := buildNativeUserBlocks(prompt, delivery)
+	if len(live) != 2 || live[1].Type != "media" || attachment.ResolveRefID(stored[1].URL) == "" {
+		t.Fatal("expected an inlined image and an immutable stored reference")
+	}
+	if err := os.WriteFile(path, []byte("updated screenshot"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	history := svc.projectCanonicalNativeHistory(rec.WorktreePath, []MessageTurn{{Info: MessageInfo{Role: "user"}, Parts: stored}}, "openai", "gpt-5")
+	if len(history) != 1 || !reflect.DeepEqual(history[0].Content, live) {
+		t.Fatal("replay changed the original model input after a workspace edit")
+	}
+}
+
+func TestStagedMediaOutsideWorkspaceDoesNotInlineOrTranscribe(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(t.TempDir(), "outside.wav")
+	if err := os.WriteFile(path, []byte("RIFF-audio"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(path, filepath.Join(dir, "alias.wav")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	transcriber := &stubTurnAudioClient{}
+	svc := &Service{attachments: attachment.NewStore(t.TempDir()), audioClient: transcriber}
+	rec := SessionRecord{ID: "ses_staged", Runtime: "native", WorktreePath: dir}
+	part := MessagePart{Type: "file", Mime: "audio/wav", Filename: "alias.wav", URL: "/api/hoxi/file/content?path=alias.wav"}
+	_, delivery, prompt := svc.prepareTurnAttachmentsForModel(rec, "google", "gemini-2.5-pro", false, 1, 1, "msg_u", "", []MessagePart{part})
+	if transcriber.calls != 0 || strings.Contains(prompt, "native_multimodal") || len(buildNativeUserBlocks(prompt, delivery)) != 1 {
+		t.Fatal("out-of-workspace attachment must remain a path reference")
+	}
+}
+
+func TestNativePDFReplayReplacesOnlyExtractsOnModelSwitch(t *testing.T) {
+	dir := t.TempDir()
+	store := attachment.NewStore(t.TempDir())
+	svc := &Service{attachments: store}
+	rec := SessionRecord{ID: "ses_pdf", Runtime: "native", WorktreePath: dir}
+	const user = "Keep my words: unique PDF phrase"
+	files := []MessagePart{}
+	for _, name := range []string{"one.pdf", "two.pdf"} {
+		path := filepath.Join(dir, name)
+		if err := attachment.WritePDFFile(path, name, "unique PDF phrase"); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		meta, err := store.Save(attachment.SaveRequest{SessionID: rec.ID, Filename: name, Mime: "application/pdf", Data: raw})
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, MessagePart{Type: "file", Mime: meta.Mime, Filename: name, URL: meta.URL})
+	}
+	stored, _, prompt := svc.prepareTurnAttachmentsForModel(rec, "deepseek", "deepseek-chat", false, 1, 1, "msg_u", user, files)
+	prompt = withTurnDirective("keep this directive", prompt)
+	attachNativeModelText(stored, prompt)
+	turns := []MessageTurn{{Info: MessageInfo{Role: "user"}, Parts: stored}}
+	for _, legacy := range []bool{false, true} {
+		if legacy {
+			for i := range stored {
+				if stored[i].Type == "file" {
+					stored[i].Metadata = nil
+				}
+			}
+		}
+		textOnly := svc.projectCanonicalNativeHistory(rec.WorktreePath, turns, "deepseek", "deepseek-chat")[0].Content
+		if len(textOnly) != 1 || textOnly[0].Text != prompt || strings.Count(prompt, "unique PDF phrase") != 3 {
+			t.Fatalf("legacy=%v: text-only history lost an extract", legacy)
+		}
+		pdf := svc.projectCanonicalNativeHistory(rec.WorktreePath, turns, "openai", "gpt-5")[0].Content
+		if len(pdf) != 3 || pdf[1].MimeType != "application/pdf" || pdf[2].MimeType != "application/pdf" ||
+			strings.Count(pdf[0].Text, "unique PDF phrase") != 1 || !strings.Contains(pdf[0].Text, user) || !strings.Contains(pdf[0].Text, "keep this directive") {
+			t.Fatalf("legacy=%v: expected both PDFs, the directive and just the original user text", legacy)
+		}
+	}
+
+	// Reverse the switch: the native-file turn contained only path annotations.
+	nativeParts, delivery, nativePrompt := svc.prepareTurnAttachmentsForModel(rec, "openai", "gpt-5", false, 2, 2, "msg_native", user, files)
+	attachNativeModelText(nativeParts, nativePrompt)
+	nativeTurns := []MessageTurn{{Info: MessageInfo{Role: "user"}, Parts: nativeParts}}
+	nativeReplay := svc.projectCanonicalNativeHistory(dir, nativeTurns, "openai", "gpt-5")[0].Content
+	if !reflect.DeepEqual(nativeReplay, buildNativeUserBlocks(nativePrompt, delivery)) {
+		t.Fatal("native PDF history diverged before switching models")
+	}
+	textReplay := svc.projectCanonicalNativeHistory(dir, nativeTurns, "deepseek", "deepseek-chat")[0].Content
+	var body strings.Builder
+	for _, b := range textReplay {
+		if b.Type != "text" {
+			t.Fatalf("unsupported binary block sent to a text model: %s", b.Type)
+		}
+		body.WriteString(b.Text)
+	}
+	if strings.Count(body.String(), "unique PDF phrase") != 3 {
+		t.Fatal("switching to a text model lost the PDF evidence")
+	}
+
+}
+
+func TestHistoryRespectsTextOnlyModelOnGoogleProtocol(t *testing.T) {
+	svc := &Service{}
+	svc.SetStreamClient(&stubProtocolStreamClient{protocols: map[string]llm.StreamProtocol{"custom": llm.ProtocolGoogle}})
+	turns := []MessageTurn{{Info: MessageInfo{Role: "user"}, Parts: []MessagePart{
+		{Type: "text", Text: "review"},
+		{Type: "file", Mime: "audio/wav", URL: "data:audio/wav;base64,YWJj", Metadata: map[string]interface{}{"transcript": "spoken requirement"}},
+		{Type: "file", Mime: "video/mp4", URL: "data:video/mp4;base64,YWJj"},
+	}}}
+	blocks := svc.projectCanonicalNativeHistory("", turns, "custom", "text-only")[0].Content
+	if len(blocks) != 2 || blocks[1].Type != "text" || !strings.Contains(blocks[1].Text, "spoken requirement") {
+		t.Fatalf("text-only model received unexpected attachment blocks: %+v", blocks)
+	}
+}
+
+func TestHistoryResolvesPDFCapabilityOnceInSessionWorktree(t *testing.T) {
+	dir := t.TempDir()
+	var requests atomic.Int32
+	catalog := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/config/providers" || r.URL.Query().Get("directory") != dir {
+			t.Errorf("unexpected capability request %s", r.URL)
+			http.NotFound(w, r)
+			return
+		}
+		requests.Add(1)
+		_, _ = io.WriteString(w, `{"providers":[{"id":"custom","models":{"reader":{"modalities":{"input":["pdf"]}}}}]}`)
+	}))
+	defer catalog.Close()
+	svc := &Service{rootDir: t.TempDir()}
+	svc.openCode = ocapi.New(catalog.URL, "test")
+	turns := []MessageTurn{{Info: MessageInfo{Role: "user"}, Parts: []MessagePart{
+		{Type: "text", Text: "Review", Metadata: map[string]interface{}{nativeModelTextMetaKey: "Review PDFs"}},
+		{Type: "file", Mime: "application/pdf", URL: "data:application/pdf;base64,JVBERg=="},
+		{Type: "file", Mime: "application/pdf", URL: "data:application/pdf;base64,JVBERg=="},
+	}}}
+	history := svc.projectCanonicalNativeHistory(dir, turns, "custom", "reader")
+	if len(history) != 1 || len(history[0].Content) != 3 || requests.Load() != 1 {
+		t.Fatal("expected both PDFs to use a single session-scoped capability lookup")
 	}
 }

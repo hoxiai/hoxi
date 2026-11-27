@@ -136,13 +136,13 @@ func TestSubtaskExploreReadOnlyVsGeneralAndCustomAgent(t *testing.T) {
 					`data: [DONE]`,
 				}, "\n") + "\n"
 			}
-			if strings.Contains(call.System, "Subagent role: explore (locate handlers)") {
+			if strings.Contains(call.System, "Subagent role: explore.") {
 				return "data: {\"choices\":[{\"delta\":{\"content\":\"explore report ok\"}}]}\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\ndata: [DONE]\n"
 			}
 			if strings.Contains(call.System, "CUSTOM_SEC_AUDITOR_PROMPT") {
 				return "data: {\"choices\":[{\"delta\":{\"content\":\"sec-auditor report ok\"}}]}\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\ndata: [DONE]\n"
 			}
-			if strings.Contains(call.System, "Subagent role: general (create note)") {
+			if strings.Contains(call.System, "Subagent role: general.") {
 				if _, err := os.Stat(filepath.Join(wsDir, "subagent_done.txt")); os.IsNotExist(err) {
 					wArgs, _ := json.Marshal(map[string]any{
 						"filePath": "subagent_done.txt",
@@ -194,7 +194,7 @@ func TestSubtaskExploreReadOnlyVsGeneralAndCustomAgent(t *testing.T) {
 	var sawExplore, sawSec, sawGeneral bool
 	for _, c := range calls {
 		switch {
-		case strings.Contains(c.System, "Subagent role: explore (locate handlers)"):
+		case strings.Contains(c.System, "Subagent role: explore."):
 			sawExplore = true
 			if hasToolNamed(c.ToolNames, "write") || hasToolNamed(c.ToolNames, "bash") || hasToolNamed(c.ToolNames, "task") {
 				t.Fatalf("explore subagent must be strictly read-only without nested task, got tools: %v", c.ToolNames)
@@ -207,7 +207,7 @@ func TestSubtaskExploreReadOnlyVsGeneralAndCustomAgent(t *testing.T) {
 			if hasToolNamed(c.ToolNames, "edit") || hasToolNamed(c.ToolNames, "write") {
 				t.Fatalf("sec-auditor with permission.edit=deny must not receive mutating tools: %v", c.ToolNames)
 			}
-		case strings.Contains(c.System, "Subagent role: general (create note)"):
+		case strings.Contains(c.System, "Subagent role: general."):
 			sawGeneral = true
 			if !hasToolNamed(c.ToolNames, "write") || !hasToolNamed(c.ToolNames, "bash") || hasToolNamed(c.ToolNames, "task") {
 				t.Fatalf("general subagent must have write/bash but no nested task, got tools: %v", c.ToolNames)

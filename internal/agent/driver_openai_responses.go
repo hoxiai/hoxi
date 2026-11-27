@@ -111,6 +111,9 @@ func (d *openaiDriver) buildResponsesRequest(req ModelRequest) (llm.StreamHTTPRe
 	payload := map[string]any{
 		"model": req.Target.ModelID, "input": inputItems, "stream": true, "store": false,
 	}
+	if req.Target.PromptCacheRetention == "24h" && supportsResponsesExtendedRetention(req.Target) {
+		payload["prompt_cache_retention"] = "24h"
+	}
 	cacheKey := effectiveModelCacheKey(req)
 	if cacheKey != "" {
 		payload["prompt_cache_key"] = cacheKey
@@ -134,9 +137,11 @@ func (d *openaiDriver) buildResponsesRequest(req ModelRequest) (llm.StreamHTTPRe
 	if len(req.Tools) > 0 {
 		tools := make([]map[string]any, 0, len(req.Tools))
 		for _, t := range req.Tools {
-			tools = append(tools, map[string]any{
-				"type": "function", "name": t.Name, "description": t.Description, "parameters": t.Parameters,
-			})
+			fn := map[string]any{"type": "function", "name": t.Name, "description": t.Description, "parameters": t.Parameters}
+			if t.Name == "call_host_tool" {
+				fn["strict"] = false
+			}
+			tools = append(tools, fn)
 		}
 		payload["tools"] = tools
 	}

@@ -14,6 +14,7 @@ import (
 func TestOnDemandHostToolsPreserveScopeAndApproval(t *testing.T) {
 	ws := t.TempDir()
 	step := 0
+	var firstTools string
 	browserAsked := false
 	stream := &fakeStreamClient{
 		target: llm.StreamTarget{ProviderID: "offline", ModelID: "offline", Protocol: llm.ProtocolOpenAI, HasEndpoint: true, ContextLimit: 128000, OutputLimit: 4096},
@@ -25,11 +26,20 @@ func TestOnDemandHostToolsPreserveScopeAndApproval(t *testing.T) {
 			if err := json.Unmarshal(req.Body, &body); err != nil {
 				return "", err
 			}
+			var raw struct{ Tools json.RawMessage }
+			if err := json.Unmarshal(req.Body, &raw); err != nil {
+				t.Fatal(err)
+			}
+			if step == 1 {
+				firstTools = string(raw.Tools)
+			} else if firstTools != string(raw.Tools) {
+				t.Fatal("host load changed serialized tool prefix")
+			}
 			names := map[string]bool{}
 			for _, t := range body.Tools {
 				names[t.Function.Name] = true
 			}
-			if !names["read"] || !names["load_host_tool"] || names["hoxi_video"] || names["hoxi_browser"] != (step > 1) {
+			if !names["read"] || !names["load_host_tool"] || names["hoxi_video"] || names["hoxi_browser"] || !names["call_host_tool"] {
 				t.Fatalf("step %d catalog: %v", step, names)
 			}
 			var name, args string
@@ -37,7 +47,10 @@ func TestOnDemandHostToolsPreserveScopeAndApproval(t *testing.T) {
 			case 1:
 				name, args = "load_host_tool", `{"name":"hoxi_browser"}`
 			case 2:
-				name, args = "hoxi_browser", `{"action":"snapshot"}`
+				if !strings.Contains(string(req.Body), "hoxi_tool_safety") || !strings.Contains(string(req.Body), "call_host_tool name=hoxi_browser, args schema:") {
+					t.Fatal("missing host schema or safety rules")
+				}
+				name, args = "call_host_tool", `{"name":"hoxi_browser","args":{"action":"snapshot"}}`
 			case 3:
 				if !strings.Contains(string(req.Body), "browser approval declined") {
 					t.Fatal("missing approval decision in transcript")
@@ -70,7 +83,7 @@ func TestOnDemandHostToolsPreserveScopeAndApproval(t *testing.T) {
 	}
 }
 
-func TestHostToolCatalogRestoresSuccessfulLoadsOnly(t *testing.T) {
+func TestHostToolCatalogBuildPlanAndSubagentModes(t *testing.T) {
 	reg := newToolRegistry()
 	if isSubtaskToolMutating("load_host_tool", nil) || isWorkspaceMutatingTool(ToolCall{Name: "load_host_tool"}) {
 		t.Fatal("schema discovery must preserve read and edit tracking")
@@ -83,27 +96,18 @@ func TestHostToolCatalogRestoresSuccessfulLoadsOnly(t *testing.T) {
 		}
 		return false
 	}
-	eager := newHostToolCatalog(map[string]any{"hostToolLoading": "eager"}, nil)
+	eager := newHostToolCatalog(map[string]any{"hostToolLoading": "eager"})
 	if !has(eager, "build", "hoxi_browser") || has(eager, "build", "load_host_tool") {
 		t.Fatal("unexpected eager catalog")
 	}
-	history := []Message{
-		{Role: RoleAssistant, Content: []ContentBlock{
-			{Type: ContentToolUse, ID: "ok", Name: "load_host_tool", Input: json.RawMessage(`{"name":"hoxi_browser"}`)},
-			{Type: ContentToolUse, ID: "denied", Name: "load_host_tool", Input: json.RawMessage(`{"name":"hoxi_image"}`)},
-		}},
-		{Role: RoleUser, Content: []ContentBlock{
-			{Type: ContentToolResult, ToolUseID: "ok"}, {Type: ContentToolResult, ToolUseID: "denied", IsError: true},
-		}},
-	}
-	cat := newHostToolCatalog(map[string]any{"hostToolLoading": "on-demand"}, history)
-	if !has(cat, "build", "hoxi_browser") || has(cat, "build", "hoxi_image") || has(cat, "plan", "hoxi_browser") || has(cat, "plan", "load_host_tool") {
-		t.Fatal("restored catalog violates history or plan scope")
+	cat := newHostToolCatalog(map[string]any{"hostToolLoading": "on-demand"})
+	if !has(cat, "build", "call_host_tool") || has(cat, "build", "hoxi_browser") || has(cat, "build", "hoxi_image") || has(cat, "plan", "hoxi_browser") || has(cat, "plan", "load_host_tool") {
+		t.Fatal("unexpected on-demand or plan tool catalog")
 	}
 
 	// Subagents default to on-demand host tool loading to avoid repeating 5 heavy
 	// schemas on every subagent step, unless project config explicitly forces eager.
-	subDefault := newHostToolCatalog(nil, nil)
+	subDefault := newHostToolCatalog(nil)
 	subHas := func(c hostToolCatalog, name string) bool {
 		for _, spec := range c.specs(reg, "build", 1) {
 			if spec.Name == name {
@@ -125,7 +129,7 @@ func TestDefaultCatalogWireSizeAndSmallWindowBudget(t *testing.T) {
 	reg := newToolRegistry()
 	var sizes []int
 	for _, mode := range []string{"eager", ""} {
-		specs := newHostToolCatalog(map[string]any{"hostToolLoading": mode}, nil).specs(reg, "build", 0)
+		specs := newHostToolCatalog(map[string]any{"hostToolLoading": mode}).specs(reg, "build", 0)
 		req, err := (&openaiDriver{}).BuildRequest(ModelRequest{Target: llm.StreamTarget{ModelID: "offline"}, Tools: specs})
 		if err != nil {
 			t.Fatal(err)

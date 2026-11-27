@@ -88,32 +88,58 @@ func (e *Engine) executeToolCalls(
 	nextPartID func(string) string,
 	emit func(EngineEvent),
 ) []ToolOutput {
+	var wireInput map[string]string
+	for i, original := range calls {
+		if real, ok := resolveHostProxy(original); ok && !strings.EqualFold(req.Mode, "plan") {
+			if wireInput == nil {
+				calls = append([]ToolCall(nil), calls...)
+				wireInput = make(map[string]string)
+			}
+			calls[i] = real
+			wireInput[real.ID] = string(original.Input)
+		}
+	}
+	if len(wireInput) > 0 {
+		sink := emit
+		emit = func(evt EngineEvent) {
+			if raw, ok := wireInput[evt.CallID]; ok {
+				meta := make(map[string]any, len(evt.Metadata)+1)
+				for k, v := range evt.Metadata {
+					meta[k] = v
+				}
+				meta["hostProxyInput"] = raw
+				evt.Metadata = meta
+			}
+			sink(evt)
+		}
+	}
 	results := make([]ToolOutput, len(calls))
 	partIDs := make([]string, len(calls))
 	tc := ToolContext{
-		commandLogs:        req.commandLogs,
-		SessionID:          req.SessionID,
-		WorktreeDir:        req.WorktreeDir,
-		Mode:               req.Mode,
-		SubtaskDepth:       req.SubtaskDepth,
-		OrchestratorOnly:   isOrchestratorActive(req) && !strings.EqualFold(strings.TrimSpace(req.Mode), "plan"),
-		VisibleMessages:    visibleMsgs,
-		RulesTracker:       rulesTracker,
-		FileRevisions:      req.FileRevisions,
-		CoordinateFileEdit: req.CoordinateFileEdit,
-		RecordFileEdit:     req.RecordFileEdit,
-		RunCommand:         req.CommandRunner,
-		StreamRunCommand:   req.StreamCommandRunner,
-		BackgroundCommands: req.BackgroundCommands,
-		Diagnostics:        req.Diagnostics,
-		RepoMap:            req.RepoMap,
-		CodeSearch:         req.CodeSearch,
-		SymbolInspect:      req.SymbolInspect,
-		ImpactInspect:      req.ImpactInspect,
-		AskQuestion:        req.AskQuestion,
-		MCPConfig:          req.MCPConfig,
-		projectConfig:      req.projectConfig,
-		HostInvoke:         req.HostInvoke,
+		relaxedScreenshotBudget: req.relaxedScreenshotBudget,
+		commandLogs:             req.commandLogs,
+		SessionID:               req.SessionID,
+		WorktreeDir:             req.WorktreeDir,
+		Mode:                    req.Mode,
+		SubtaskDepth:            req.SubtaskDepth,
+		OrchestratorOnly:        isOrchestratorActive(req) && !strings.EqualFold(strings.TrimSpace(req.Mode), "plan"),
+		VisibleMessages:         visibleMsgs,
+		RulesTracker:            rulesTracker,
+		FileRevisions:           req.FileRevisions,
+		CoordinateFileEdit:      req.CoordinateFileEdit,
+		RecordFileEdit:          req.RecordFileEdit,
+		RunCommand:              req.CommandRunner,
+		StreamRunCommand:        req.StreamCommandRunner,
+		BackgroundCommands:      req.BackgroundCommands,
+		Diagnostics:             req.Diagnostics,
+		RepoMap:                 req.RepoMap,
+		CodeSearch:              req.CodeSearch,
+		SymbolInspect:           req.SymbolInspect,
+		ImpactInspect:           req.ImpactInspect,
+		AskQuestion:             req.AskQuestion,
+		MCPConfig:               req.MCPConfig,
+		projectConfig:           req.projectConfig,
+		HostInvoke:              req.HostInvoke,
 	}
 	if req.SubtaskDepth == 0 {
 		tc.Steer = req.Steer
@@ -243,6 +269,17 @@ func (e *Engine) runSingleTool(
 		return ToolOutput{Title: call.Name, Output: blockMsg, IsError: true}
 	}
 	out, err := e.registry.Execute(ctx, callTC, call, permHook)
+	if isEphemeralScreenshotTool(call.Name) {
+		trigger := maxLiveToolScreenshots
+		if tc.relaxedScreenshotBudget {
+			trigger = relaxedLiveToolScreenshots
+		}
+		for i := range out.Media {
+			if strings.HasPrefix(out.Media[i].MimeType, "image/") {
+				out.Media[i].ScreenshotTrigger = trigger
+			}
+		}
+	}
 	mergedMeta := out.Metadata
 	if call.Signature != "" {
 		mergedMeta = make(map[string]any, len(out.Metadata)+1)

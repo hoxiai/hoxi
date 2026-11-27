@@ -37,7 +37,19 @@
 - 原生轮次在开始时读取；工具共享本轮配置快照，下一轮重新加载。子任务继承宿主门控并重新验证项目配置。Skills 列表与详情重新检查文件，防止缓存保留已禁用技能。
 - 隔离 worktree 使用 worktree 自己的 `hoxi.json` 和相对路径；不会偷偷执行主工作区未提交的脚本。应先提交配置和脚本，让新 worktree 获得它们。
 
-原生 Build 主会话与子 Agent 默认按需加载浏览器、电脑控制、图片、语音和视频工具。首次使用时先用 `load_host_tool` 选择工具，下一步即可按完整参数调用。项目可设置 `"hostToolLoading": "eager"` 从第一步起提供全部宿主工具参数。已经在当前可见历史中加载的工具会继续提供。这个设置只影响工具描述的加载时机，实际执行仍通过原工具的审批。
+原生 Build 模式默认按需加载宿主工具。模型用 `load_host_tool` 取得参数和操作约束，再用固定入口 `call_host_tool(name, args)` 调用。加载说明只追加到历史消息末尾，审批与审计使用实际工具名。项目可设置 `"hostToolLoading": "eager"`，从第一步起提供独立工具名和完整参数。
+
+### 服务商缓存与自动摘要
+
+个人模型配置 `~/.hoxi/models.json` 的 `provider.<提供商>.options` 支持以下选项，同名的 `models.<模型>.options` 优先。默认生成请求继续使用各服务商现有的缓存策略。
+
+| 选项 | 适用范围与效果 |
+| --- | --- |
+| `"promptCacheRetention": "24h"` | 官方 OpenAI Responses 支持长保留期的模型会收到 `prompt_cache_retention` |
+| `"openaiCompatCacheControl": true` | 通过 OpenAI Chat Completions 转发 Claude 且支持顶层 `cache_control` 的兼容网关。OpenRouter 转发 Claude 已默认携带该字段 |
+| `"geminiExplicitCache": false` | 关闭 Gemini 显式缓存。默认情况下，官方 Gemini 2.5、3 系列生成接口的稳定前缀估算达到 32K token 时创建缓存，保留 12 分钟，活跃时续期。Google 对缓存存储按时长收费 |
+
+自动溢出摘要优先复用主模型的热缓存。需要另起摘要请求时，优先使用已配置的 `agent.compaction.model` 或 `small_model`，缺省时尝试当前提供商的经济模型，必要时回到本轮主模型。
 
 ## 配置分工与优先级
 

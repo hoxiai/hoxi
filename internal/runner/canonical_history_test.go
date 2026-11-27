@@ -91,7 +91,7 @@ func TestCanonicalHistoryAffinityAndOrphanToolRepair(t *testing.T) {
 	}
 
 	// Case A: Same provider + model -> replays private thinking + signature, repairs orphan tools!
-	sameMsgs := svc.projectCanonicalNativeHistory(turns, "anthropic", "claude-sonnet-4-5")
+	sameMsgs := svc.projectCanonicalNativeHistory(svc.rootDir, turns, "anthropic", "claude-sonnet-4-5")
 	if len(sameMsgs) != 3 {
 		t.Fatalf("expected 3 projected messages (user, assistant, user tool_results), got %d", len(sameMsgs))
 	}
@@ -114,7 +114,7 @@ func TestCanonicalHistoryAffinityAndOrphanToolRepair(t *testing.T) {
 	}
 
 	// Case B: Switched model mid-session (e.g. anthropic -> openai/gpt-5) -> strips private thinking & signatures!
-	switchedMsgs := svc.projectCanonicalNativeHistory(turns, "openai", "gpt-5")
+	switchedMsgs := svc.projectCanonicalNativeHistory(svc.rootDir, turns, "openai", "gpt-5")
 	for _, b := range switchedMsgs[1].Content {
 		if b.Type == "thinking" {
 			t.Fatalf("expected private thinking block to be stripped on cross-model switch, got: %+v", b)

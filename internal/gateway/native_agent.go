@@ -135,17 +135,18 @@ func mapNativeBlocksToAgent(src []runner.NativeContentBlock) []agent.ContentBloc
 	blocks := make([]agent.ContentBlock, 0, len(src))
 	for _, b := range src {
 		blocks = append(blocks, agent.ContentBlock{
-			Type:      agent.ContentType(b.Type),
-			Text:      b.Text,
-			MimeType:  b.MimeType,
-			Data:      b.Data,
-			Filename:  b.Filename,
-			Signature: b.Signature,
-			ID:        b.ID,
-			Name:      b.Name,
-			Input:     b.Input,
-			ToolUseID: b.ToolUseID,
-			IsError:   b.IsError,
+			Type:              agent.ContentType(b.Type),
+			Text:              b.Text,
+			MimeType:          b.MimeType,
+			Data:              b.Data,
+			Filename:          b.Filename,
+			ScreenshotTrigger: b.ScreenshotTrigger,
+			Signature:         b.Signature,
+			ID:                b.ID,
+			Name:              b.Name,
+			Input:             b.Input,
+			ToolUseID:         b.ToolUseID,
+			IsError:           b.IsError,
 		})
 	}
 	return blocks
@@ -158,17 +159,18 @@ func mapAgentBlocksToNative(src []agent.ContentBlock) []runner.NativeContentBloc
 	blocks := make([]runner.NativeContentBlock, 0, len(src))
 	for _, b := range src {
 		blocks = append(blocks, runner.NativeContentBlock{
-			Type:      string(b.Type),
-			Text:      b.Text,
-			MimeType:  b.MimeType,
-			Data:      b.Data,
-			Filename:  b.Filename,
-			Signature: b.Signature,
-			ID:        b.ID,
-			Name:      b.Name,
-			Input:     b.Input,
-			ToolUseID: b.ToolUseID,
-			IsError:   b.IsError,
+			Type:              string(b.Type),
+			Text:              b.Text,
+			MimeType:          b.MimeType,
+			Data:              b.Data,
+			Filename:          b.Filename,
+			ScreenshotTrigger: b.ScreenshotTrigger,
+			Signature:         b.Signature,
+			ID:                b.ID,
+			Name:              b.Name,
+			Input:             b.Input,
+			ToolUseID:         b.ToolUseID,
+			IsError:           b.IsError,
 		})
 	}
 	return blocks
@@ -382,6 +384,7 @@ func (g *gatewayNativeAgent) RunTurn(ctx context.Context, req runner.NativeTurnR
 		Effort:             req.Effort,
 		FastMode:           req.FastMode,
 		Orchestrator:       orchCfg,
+		GoalActive:         req.GoalActive,
 		System:             sysPrompt,
 		History:            history,
 		UserPrompt:         req.UserPrompt,

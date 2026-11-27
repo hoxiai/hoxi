@@ -296,6 +296,7 @@ func (s *Service) resumeNativeTurnFromLedger(_ context.Context, rec SessionRecor
 		Role:        "user",
 		Time:        MessageTime{Created: firstPositiveInt64(entry.StartedAt, nowMs)},
 		Agent:       mode,
+		GoalActive:  entry.GoalActive,
 		ServiceTier: fastServiceTierValue(entry.FastMode && !rec.Subagent && s.ApprovalPolicy().Mode != ApprovalModeUnattended),
 		ModelID:     modelID,
 		ProviderID:  rec.ProviderID,

@@ -4,6 +4,7 @@ import { createSignal } from "solid-js";
 import { hoxiAPI } from "../services/api";
 import { createClientRequestID, recoverPromptRequest, RequestOutcomeUnknownError } from "../services/request-ledger";
 import { t } from "../i18n";
+import { sessionGoal } from "./session-goal-state";
 
 const KEY = "hoxi.pending-prompts:v1";
 const MAX_PENDING = 128;
@@ -195,7 +196,7 @@ export async function sendRecoverablePrompt(
   active.set(sessionID, flight);
   try {
     writePending([...rows, pending]);
-    await hoxiAPI.sendPromptAsync(sessionID, text, { ...options, clientRequestId: pending.clientRequestId });
+    await hoxiAPI.sendPromptAsync(sessionID, text, { ...options, goalActive: sessionGoal(sessionID)?.status === "active", clientRequestId: pending.clientRequestId });
   } catch (err) {
     if (err instanceof RequestOutcomeUnknownError) {
       rememberLastError(sessionID, err.message);

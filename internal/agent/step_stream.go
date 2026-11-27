@@ -358,10 +358,7 @@ func (e *Engine) applyCompactWithBudget(
 	}
 	var compacted []Message
 	if e.defaultCompact {
-		var changed bool
-		compacted, changed = pruneOldToolResultsWithBudget(msgs, fullSystem, worktreeDir, toolSpecs, thresholds, tracker)
-		out := stripPrefixInvalidatedHistoricalThinking(msgs, compacted)
-		return out, changed || messagesSliceMutated(compacted, out)
+		return pruneOldToolResultsWithBudget(msgs, fullSystem, worktreeDir, toolSpecs, thresholds, tracker)
 	}
 	if e.compact != nil {
 		compacted = e.compact(msgs, fullSystem, compactLimit)

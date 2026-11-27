@@ -14,7 +14,7 @@ func TestPackagedAppSessionGuidanceAndToolFiltering(t *testing.T) {
 	if !strings.Contains(codePrompt, "Prefer hoxi_code_index") {
 		t.Fatalf("expected standard coding session to retain hoxi_code_index guidance")
 	}
-	codeCatalog := newHostToolCatalog(nil, nil)
+	codeCatalog := newHostToolCatalog(nil)
 	codeCatalog.configureAppScope("")
 	if !hasToolSpec(codeCatalog.specs(reg, "build", 0), "hoxi_code_index") {
 		t.Fatalf("expected standard coding session to expose hoxi_code_index")
@@ -35,7 +35,7 @@ func TestPackagedAppSessionGuidanceAndToolFiltering(t *testing.T) {
 		}
 	}
 
-	appCatalog := newHostToolCatalog(nil, nil)
+	appCatalog := newHostToolCatalog(nil)
 	appCatalog.configureAppScope(packagedAppSystem)
 	specs := appCatalog.specs(reg, "build", 0)
 	if hasToolSpec(specs, "hoxi_code_index") {
@@ -59,7 +59,7 @@ func TestPackagedAppSessionGuidanceAndToolFiltering(t *testing.T) {
 	if strings.Contains(devPrompt, "Do NOT browse, glob, grep, or read the app package's internal source files") {
 		t.Fatalf("app-dev session must not inject packaged-app no-source-diving guidance")
 	}
-	devCatalog := newHostToolCatalog(nil, nil)
+	devCatalog := newHostToolCatalog(nil)
 	devCatalog.configureAppScope(appDevSystem)
 	if !hasToolSpec(devCatalog.specs(reg, "app-dev", 0), "hoxi_code_index") {
 		t.Fatalf("expected app-dev session to expose hoxi_code_index")

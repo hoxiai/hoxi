@@ -355,7 +355,7 @@ func TestInPlaceCompactionFallsBackOnToolCallTruncationAndColdCache(t *testing.T
 				CacheWarm:      tc.cacheWarm,
 				MeasuredTokens: 40_000,
 			}
-			out, info, ok := eng.compactContextOverflowWithInPlace(context.Background(), "openai", "gpt-5", msgs, 2, 2, inPlace, nil)
+			out, info, ok := eng.compactContextOverflowWithInPlace(context.Background(), "openai", "gpt-5", msgs, 2, 2, inPlace, nil, "")
 			if !ok || info == nil || len(out) == 0 {
 				t.Fatalf("expected successful compaction via fallback, ok=%v info=%+v", ok, info)
 			}

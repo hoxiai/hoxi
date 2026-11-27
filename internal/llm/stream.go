@@ -118,7 +118,10 @@ type StreamTarget struct {
 	// FallbackOpenAI marks a promoted target on an OpenAI-compatible gateway
 	// (Claude -> /v1/messages or OpenAI/Codex -> /v1/responses) so unsupported
 	// endpoint errors (404/405/501) fall back cleanly to /v1/chat/completions.
-	FallbackOpenAI bool
+	FallbackOpenAI             bool
+	PromptCacheRetention       string
+	OpenAICompatCacheControl   bool
+	DisableGeminiExplicitCache bool
 }
 
 // StreamHTTPRequest carries a protocol-formatted JSON payload to OpenStream.
@@ -149,6 +152,11 @@ type StreamClient interface {
 // terminal frame and penalize mid-stream SSE, EOF, or stall failures.
 type StreamOutcomeReporter interface {
 	RecordStreamOutcome(providerID, modelID string, latencyMs int64, streamErr error)
+}
+
+// CompactionModelSource returns the user's local background-summary model preference.
+type CompactionModelSource interface {
+	ConfiguredCompactionModel() string
 }
 
 // SubagentEconomyResolver optionally resolves a fast, low-cost tool-capable

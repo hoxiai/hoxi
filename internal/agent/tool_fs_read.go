@@ -23,16 +23,16 @@ type readTool struct{}
 
 func (t *readTool) Name() string { return "read" }
 func (t *readTool) Description() string {
-	return "Read a file from the workspace with line numbers (supports offset/limit for text, and inline multimodal inspection for PNG/JPEG/WebP/GIF images and PDF documents)."
+	return "Read numbered text lines or list directory entries with offset/limit. Inspect PNG/JPEG/WebP/GIF images and PDFs inline."
 }
 func (t *readTool) IsReadOnly() bool { return true }
 func (t *readTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"filePath": map[string]any{"type": "string", "description": "Path to the file to read"},
-			"offset":   map[string]any{"type": "integer", "description": "1-based starting line number"},
-			"limit":    map[string]any{"type": "integer", "description": "Maximum number of lines to read"},
+			"filePath": map[string]any{"type": "string", "description": "File or directory path"},
+			"offset":   map[string]any{"type": "integer", "description": "1-based starting line or directory entry"},
+			"limit":    map[string]any{"type": "integer", "description": "Maximum lines or entries; text defaults to 480 lines"},
 		},
 		"required": []string{"filePath"},
 	}
@@ -94,15 +94,30 @@ func (t *readTool) Execute(_ context.Context, tc ToolContext, input json.RawMess
 		if err != nil {
 			return ToolOutput{Title: p, IsError: true}, err
 		}
-		var lines []string
-		for _, e := range entries {
-			suffix := ""
-			if e.IsDir() {
-				suffix = "/"
+		start := max(1, args.Offset) - 1
+		end := len(entries)
+		var listing string
+		var meta map[string]any
+		if start > 0 && start >= end {
+			listing = fmt.Sprintf("(directory has %d entries; offset %d is past the end)", end, args.Offset)
+		} else {
+			if args.Limit > 0 {
+				end = start + min(args.Limit, end-start)
 			}
-			lines = append(lines, e.Name()+suffix)
+			var next int
+			listing, next = fileListPage(start, end, func(i int) string {
+				name := entries[i].Name()
+				if entries[i].IsDir() {
+					name += "/"
+				}
+				return name
+			})
+			if next < len(entries) {
+				meta = map[string]any{"nextOffset": next + 1}
+				listing += fmt.Sprintf("\n(showing entries %d-%d of %d; pass offset=%d to continue)", start+1, next, len(entries), next+1)
+			}
 		}
-		return ToolOutput{Title: p, Output: appendSubdirectoryRules(tc, realTarget, strings.Join(lines, "\n"))}, nil
+		return ToolOutput{Title: p, Output: appendSubdirectoryRules(tc, realTarget, listing), Metadata: meta}, nil
 	}
 	if mimeType := readMediaMimeType(target); mimeType != "" {
 		if info.Size() > maxReadMediaBytes {
@@ -143,13 +158,13 @@ func (t *readTool) Execute(_ context.Context, tc ToolContext, input json.RawMess
 	start := max(1, args.Offset)
 	limit := args.Limit
 	if limit <= 0 {
-		limit = 2000
+		limit = 480
 	}
 	if start > len(allLines) {
 		tc.FileRevisions.RecordPartialRead(realTarget, raw)
 		return ToolOutput{Title: p, Output: fmt.Sprintf("(file has %d lines; offset %d is past EOF)", len(allLines), start)}, nil
 	}
-	end := min(len(allLines), start+limit-1)
+	end := start - 1 + min(limit, len(allLines)-start+1)
 	var b strings.Builder
 	anyLineTruncated := false
 	stoppedByBytes := false
@@ -173,9 +188,9 @@ func (t *readTool) Execute(_ context.Context, tc ToolContext, input json.RawMess
 			for i := actualEnd + 1; i <= end; i++ {
 				remainingBytes += len(allLines[i-1]) + 1
 			}
-			fmt.Fprintf(&b, "\n(showing lines %d-%d of %d; %d bytes truncated at line boundary — pass offset=%d to continue)", start, actualEnd, len(allLines), remainingBytes, actualEnd+1)
+			fmt.Fprintf(&b, "\n(showing lines %d-%d of %d; %d bytes truncated at line boundary — pass offset=%d to continue, or inspect a symbol with hoxi_code_index)", start, actualEnd, len(allLines), remainingBytes, actualEnd+1)
 		} else {
-			fmt.Fprintf(&b, "\n(showing lines %d-%d of %d; pass offset=%d to continue)", start, actualEnd, len(allLines), actualEnd+1)
+			fmt.Fprintf(&b, "\n(showing lines %d-%d of %d; pass offset=%d to continue, or inspect a symbol with hoxi_code_index)", start, actualEnd, len(allLines), actualEnd+1)
 		}
 	}
 	body := b.String()
@@ -183,7 +198,8 @@ func (t *readTool) Execute(_ context.Context, tc ToolContext, input json.RawMess
 		body = notice
 	}
 	outText := appendSubdirectoryRules(tc, realTarget, body)
-	deliveredComplete := !anyLineTruncated && !stoppedByBytes && len(ensureValidUTF8(body)) <= maxToolOutputBytes
+	// The byte cap stops before the next line. All lines through actualEnd were delivered.
+	deliveredComplete := !anyLineTruncated && len(ensureValidUTF8(body)) <= maxToolOutputBytes
 	tc.FileRevisions.RecordReadLines(realTarget, raw, start, actualEnd, len(allLines), deliveredComplete)
 	return ToolOutput{Title: p, Output: outText}, nil
 }
@@ -313,22 +329,35 @@ func (t *globTool) Execute(ctx context.Context, tc ToolContext, input json.RawMe
 	if args.Offset >= len(matches) {
 		return ToolOutput{Title: pat, Output: "(no more matching files at this offset)"}, nil
 	}
-	pageEnd := min(len(matches), args.Offset+maxMatches)
-	page := make([]string, 0, pageEnd-args.Offset)
-	for _, m := range matches[args.Offset:pageEnd] {
-		page = append(page, m.path)
-	}
-	out := strings.Join(page, "\n")
+	out, pageEnd := fileListPage(args.Offset, min(len(matches), args.Offset+maxMatches), func(i int) string {
+		return matches[i].path
+	})
 	meta := map[string]any{}
 	if pageEnd < len(matches) || cappedCollect {
 		if pageEnd < len(matches) {
 			meta["nextOffset"] = pageEnd
-			out += fmt.Sprintf("\n(truncated at %d matches of %d; repeat glob with offset=%d)", maxMatches, len(matches), pageEnd)
+			out += fmt.Sprintf("\n(showing matches %d-%d of %d; repeat glob with offset=%d)", args.Offset+1, pageEnd, len(matches), pageEnd)
 		} else {
 			out += fmt.Sprintf("\n(truncated at %d matches)", len(matches))
 		}
 	}
 	return ToolOutput{Title: pat, Output: out, Metadata: meta}, nil
+}
+
+// Stop before the registry's output cap so the cursor follows a complete path.
+func fileListPage(start, end int, nameAt func(int) string) (string, int) {
+	var out strings.Builder
+	for i := start; i < end; i++ {
+		name := ensureValidUTF8(nameAt(i))
+		if i > start {
+			if out.Len()+1+len(name) > maxReadOutputBytes {
+				return out.String(), i
+			}
+			out.WriteByte('\n')
+		}
+		out.WriteString(name)
+	}
+	return out.String(), end
 }
 
 func shouldSkipSearchDir(name string) bool {

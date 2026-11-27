@@ -122,7 +122,7 @@ func TestReadWithLargeSubdirRulesNotTruncatedByGenericOutputCap(t *testing.T) {
 	out, err := reg.Execute(context.Background(), tc, ToolCall{
 		ID:    "read_big",
 		Name:  "read",
-		Input: json.RawMessage(`{"filePath":"packages/big/source.go"}`),
+		Input: json.RawMessage(`{"filePath":"packages/big/source.go","limit":600}`),
 	}, nil)
 	if err != nil {
 		t.Fatalf("read failed: %v", err)
@@ -156,7 +156,7 @@ func TestGracefulFinalizeStepPreservesSubtaskResumableID(t *testing.T) {
 	stream := &stubRulesStreamClient{
 		handler: func(_ int, req llm.StreamHTTPRequest) string {
 			body := string(req.Body)
-			if strings.Contains(body, "Subagent role: tiny (quick scan).") {
+			if strings.Contains(body, "Subagent role: tiny.") {
 				childStep++
 				if childStep == 1 {
 					return "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"g1\",\"type\":\"function\",\"function\":{\"name\":\"glob\",\"arguments\":\"{\\\"pattern\\\":\\\"*.go\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n"

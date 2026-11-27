@@ -22,6 +22,7 @@ type PromptImageOptions struct {
 }
 
 type PromptRequest struct {
+	GoalActive      bool                `json:"goalActive,omitempty"`
 	Text            string              `json:"text"`
 	Runtime         string              `json:"runtime,omitempty"`
 	Agent           string              `json:"agent"`
@@ -591,6 +592,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		ModelID:      modelID,
 		ProviderID:   rec.ProviderID,
 		ContinueTask: body.ContinueTask,
+		GoalActive:   body.GoalActive,
 	}
 	storedParts, deliveryParts, cliPrompt := s.prepareTurnAttachmentsForModel(rec, rec.ProviderID, modelID, isImageTurn, now, seq, userMsgID, llmPromptText, fileParts)
 	if llmPromptText != promptText {
@@ -695,6 +697,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		ProviderID:      rec.ProviderID,
 		ModelID:         modelID,
 		Effort:          effort,
+		GoalActive:      body.GoalActive,
 		FastMode:        userInfo.ServiceTier == "fast",
 		Orchestrator:    toLedgerOrchestrator(orchSpec),
 		CallerSystem:    callerSystem,
@@ -722,6 +725,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		if resumedUserInfo != nil {
 			resumed := *resumedUserInfo
 			resumed.ServiceTier = userInfo.ServiceTier
+			resumed.GoalActive = userInfo.GoalActive
 			err = s.launchNativeTurn(rec, mode, modelID, effort, nativeSystem, restartContinuationPrompt, resumed, nil, asstMsgID, true, toNativeOrchestrator(orchSpec))
 		} else {
 			promptInput := withTurnDirective(turnDirective, cliPrompt)

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/hoxiai/hoxi/internal/attachment"
+
 	"github.com/hoxiai/hoxi/internal/llm"
 )
 
@@ -186,31 +187,41 @@ func isGeneratedImageHistoryTool(toolName string) bool {
 	return strings.ToLower(strings.TrimSpace(toolName)) == "hoxi_image"
 }
 
-func extractMediaAttachmentMaps(meta map[string]interface{}) []map[string]interface{} {
-	if meta == nil {
-		return nil
-	}
-	raw := meta["mediaAttachments"]
-	if raw == nil {
-		return nil
-	}
-	switch list := raw.(type) {
+// The timeline also stores downloadable artifacts in mediaAttachments. Only the
+// media that the tool returned to the live model belongs in replay and pruning.
+func modelToolMediaAttachments(tool string, meta map[string]interface{}) []map[string]interface{} {
+	var entries []map[string]interface{}
+	switch list := meta["mediaAttachments"].(type) {
 	case []map[string]interface{}:
-		return list
+		entries = list
 	case []interface{}:
-		out := make([]map[string]interface{}, 0, len(list))
-		for _, rawItem := range list {
-			if m, ok := rawItem.(map[string]interface{}); ok {
-				out = append(out, m)
+		for _, item := range list {
+			if entry, ok := item.(map[string]interface{}); ok {
+				entries = append(entries, entry)
 			}
 		}
-		return out
-	default:
-		return nil
 	}
+	var media []map[string]interface{}
+	for _, entry := range entries {
+		previewOnly, _ := entry["previewOnly"].(bool)
+		if previewOnly {
+			continue
+		}
+		// Legacy generators emitted UI file parts without a blob ID. Runner-saved
+		// live model media has an ID and remains replayable, including from the same tool.
+		switch tool {
+		case "hoxi_image", "hoxi_video", "hoxi_speech":
+			if stringMetaField(entry, "type") == "file" && stringMetaField(entry, "id") == "" {
+				continue
+			}
+		}
+		media = append(media, entry)
+	}
+	return media
 }
 
 func (s *Service) appendToolMediaBlocks(
+	tool string,
 	meta map[string]interface{},
 	dst []NativeContentBlock,
 	turnIdx, partIdx int,
@@ -220,7 +231,7 @@ func (s *Service) appendToolMediaBlocks(
 	if s == nil || meta == nil {
 		return dst
 	}
-	items := extractMediaAttachmentMaps(meta)
+	items := modelToolMediaAttachments(tool, meta)
 	if len(items) == 0 {
 		return dst
 	}
@@ -259,6 +270,7 @@ func (s *Service) appendToolMediaBlocks(
 			Mime:     mime,
 			Filename: filename,
 		}); ok {
+			mb.ScreenshotTrigger = intMetaField(entry, "screenshotTrigger")
 			dst = append(dst, mb)
 		}
 	}
@@ -267,38 +279,55 @@ func (s *Service) appendToolMediaBlocks(
 
 func collectKeptHistoryToolMediaEntries(turns []MessageTurn, startIdx, firstTurnMinStep, triggerCount, keepCount int, matchTool func(string) bool) map[[3]int]bool {
 	var positions [][3]int
+	pruned := false
+	currentTrigger := triggerCount
+	finishStep := func() {
+		if len(positions) > currentTrigger {
+			positions = positions[len(positions)-keepCount:]
+			pruned = true
+		}
+	}
 	for idx := startIdx; idx < len(turns); idx++ {
 		t := turns[idx]
 		if !strings.EqualFold(strings.TrimSpace(t.Info.Role), "assistant") {
 			continue
 		}
-		minStep := 0
-		if idx == startIdx && firstTurnMinStep > 0 {
-			minStep = firstTurnMinStep
-		}
+		step := 0
 		for pIdx, p := range t.Parts {
-			if p.Type != "tool" || p.State == nil || !matchTool(p.Tool) {
-				continue
-			}
 			ps := partStep(p)
-			if minStep > 0 && ps > 0 && ps < minStep {
+			if p.Type == "compaction" || (idx == startIdx && ps > 0 && ps < firstTurnMinStep) {
 				continue
 			}
-			for eIdx, entry := range extractMediaAttachmentMaps(p.State.Metadata) {
-				if entry == nil {
-					continue
+			if ps > 0 {
+				if step > 0 && step != ps {
+					finishStep()
 				}
+				step = ps
+			} else if p.Type == "reasoning" || p.Type == "text" {
+				finishStep()
+			}
+			if p.Type != "tool" || p.State == nil || !matchTool(p.Tool) || firstNonEmptyStr(p.CallID, p.ID) == "" ||
+				p.State.Status == "pending" || stringMetaField(p.State.Metadata, "outcome") == ToolOutcomeCancelled ||
+				p.State.Status == "running" {
+				continue
+			}
+			for eIdx, entry := range modelToolMediaAttachments(p.Tool, p.State.Metadata) {
 				if strings.HasPrefix(strings.ToLower(stringMetaField(entry, "mime")), "image/") {
+					currentTrigger = triggerCount
+					if intMetaField(entry, "screenshotTrigger") == 6 && isEphemeralScreenshotHistoryTool(p.Tool) {
+						currentTrigger = 6
+					}
 					positions = append(positions, [3]int{idx, pIdx, eIdx})
 				}
 			}
 		}
+		finishStep()
 	}
-	if len(positions) <= triggerCount {
+	if !pruned {
 		return nil
 	}
-	kept := make(map[[3]int]bool, keepCount)
-	for _, pos := range positions[len(positions)-keepCount:] {
+	kept := make(map[[3]int]bool, len(positions))
+	for _, pos := range positions {
 		kept[pos] = true
 	}
 	return kept
@@ -327,7 +356,7 @@ func sameProducerModel(turnInfo MessageInfo, targetProviderID, targetModelID str
 //  4. Answered tool-call & media repair: pairs every emitted `tool_use` with a
 //     `tool_result` (plus persisted tool media attachments), synthesizing
 //     `[outcome_unknown]` for crashed mutating calls and dropping unstarted orphans.
-func (s *Service) projectCanonicalNativeHistory(turns []MessageTurn, targetProviderID, targetModelID string) []NativeMessage {
+func (s *Service) projectCanonicalNativeHistory(directory string, turns []MessageTurn, targetProviderID, targetModelID string) []NativeMessage {
 	var msgs []NativeMessage
 	startIdx := 0
 	firstTurnMinStep := 0
@@ -362,6 +391,15 @@ func (s *Service) projectCanonicalNativeHistory(turns []MessageTurn, targetProvi
 		}
 	}
 
+	checkedModalities := make(map[attachment.Kind]bool)
+	supportsAttachment := func(kind attachment.Kind) bool {
+		if supported, ok := checkedModalities[kind]; ok {
+			return supported
+		}
+		supported := s.runtimeSupportsNativeAttachment(SessionRecord{Runtime: string(RuntimeNative), WorktreePath: directory}, targetProviderID, targetModelID, kind)
+		checkedModalities[kind] = supported
+		return supported
+	}
 	keptEphemeralScreenshots := collectKeptHistoryToolMediaEntries(turns, startIdx, firstTurnMinStep, replayToolMediaTrigger, replayToolMediaKeep, isEphemeralScreenshotHistoryTool)
 	keptGeneratedImages := collectKeptHistoryToolMediaEntries(turns, startIdx, firstTurnMinStep, replayToolMediaTrigger, replayToolMediaKeep, isGeneratedImageHistoryTool)
 	for idx := startIdx; idx < len(turns); idx++ {
@@ -373,91 +411,7 @@ func (s *Service) projectCanonicalNativeHistory(turns []MessageTurn, targetProvi
 		role := strings.ToLower(strings.TrimSpace(t.Info.Role))
 		switch role {
 		case "user":
-			var blocks []NativeContentBlock
-			var nativeModelText string
-			for _, p := range t.Parts {
-				if p.Metadata == nil {
-					continue
-				}
-				if mt, _ := p.Metadata[nativeModelTextMetaKey].(string); strings.TrimSpace(mt) != "" {
-					nativeModelText = mt
-					break
-				}
-			}
-			if nativeModelText != "" {
-				blocks = append(blocks, NativeContentBlock{Type: "text", Text: nativeModelText})
-			}
-			for _, p := range t.Parts {
-				switch p.Type {
-				case "text":
-					if nativeModelText != "" {
-						continue
-					}
-					if strings.TrimSpace(p.Text) != "" {
-						blocks = append(blocks, NativeContentBlock{Type: "text", Text: p.Text})
-					}
-				case "file":
-					rawURL := strings.TrimSpace(p.URL)
-					if strings.HasPrefix(rawURL, "/api/hoxi/file/content?") {
-						if nativeModelText != "" {
-							continue
-						}
-						localPath, _ := resolveStagedWorkspaceFilePath(rawURL, "")
-						hdr := `<attached_file name="` + p.Filename + `" mime="` + p.Mime + `"`
-						if localPath != "" {
-							hdr += ` path="` + localPath + `"`
-						}
-						if by := stringMetaField(p.Metadata, "transcribedBy"); by != "" {
-							hdr += ` transcribed_by="` + by + `"`
-						}
-						if tr := stringMetaField(p.Metadata, "transcript"); tr != "" {
-							blocks = append(blocks, NativeContentBlock{
-								Type: "text",
-								Text: hdr + ">\n[Audio Transcript]\n" + tr + "\n</attached_file>",
-							})
-						} else {
-							blocks = append(blocks, NativeContentBlock{
-								Type: "text",
-								Text: hdr + "></attached_file>",
-							})
-						}
-						continue
-					}
-					lowerMime := strings.ToLower(strings.TrimSpace(p.Mime))
-					if (strings.HasPrefix(lowerMime, "audio/") || strings.HasPrefix(lowerMime, "video/")) &&
-						!s.isNativeGoogleStreamProtocol(targetProviderID, targetModelID) {
-						if tr := stringMetaField(p.Metadata, "transcript"); tr != "" {
-							if nativeModelText != "" && strings.Contains(nativeModelText, "[Audio Transcript]") {
-								continue
-							}
-							hdr := `<attached_file name="` + p.Filename + `" mime="` + p.Mime + `"`
-							if by := stringMetaField(p.Metadata, "transcribedBy"); by != "" {
-								hdr += ` transcribed_by="` + by + `"`
-							}
-							blocks = append(blocks, NativeContentBlock{
-								Type: "text",
-								Text: hdr + ">\n[Audio Transcript]\n" + tr + "\n</attached_file>",
-							})
-							continue
-						}
-						if nativeModelText != "" {
-							continue
-						}
-					}
-					if nativeModelText != "" && lowerMime == "application/pdf" &&
-						!s.runtimeSupportsNativeAttachment(SessionRecord{Runtime: string(RuntimeNative), WorktreePath: s.rootDir}, targetProviderID, targetModelID, attachment.KindPDF) {
-						continue
-					}
-					if nativeModelText != "" && lowerMime != "" &&
-						!strings.HasPrefix(lowerMime, "image/") && lowerMime != "application/pdf" &&
-						!strings.HasPrefix(lowerMime, "audio/") && !strings.HasPrefix(lowerMime, "video/") {
-						continue
-					}
-					if mb, ok := s.resolveNativeHistoryFileBlock(p); ok {
-						blocks = append(blocks, mb)
-					}
-				}
-			}
+			blocks := s.canonicalUserBlocks(t, targetModelID != "", supportsAttachment)
 			msgs = appendCanonicalMessage(msgs, "user", blocks)
 
 		case "assistant":
@@ -532,6 +486,10 @@ func (s *Service) projectCanonicalNativeHistory(turns []MessageTurn, targetProvi
 					if mErr != nil || len(rawIn) == 0 || string(rawIn) == "null" {
 						rawIn = []byte("{}")
 					}
+					wireName := toolName
+					if raw := stringMetaField(p.State.Metadata, "hostProxyInput"); raw != "" && json.Valid([]byte(raw)) {
+						wireName, rawIn = "call_host_tool", []byte(raw)
+					}
 					var toolSig string
 					if sameModel {
 						toolSig = stringMetaField(p.State.Metadata, "thoughtSignature")
@@ -539,7 +497,7 @@ func (s *Service) projectCanonicalNativeHistory(turns []MessageTurn, targetProvi
 					asstBlocks = append(asstBlocks, NativeContentBlock{
 						Type:      "tool_use",
 						ID:        callID,
-						Name:      toolName,
+						Name:      wireName,
 						Input:     rawIn,
 						Signature: toolSig,
 					})
@@ -560,7 +518,7 @@ func (s *Service) projectCanonicalNativeHistory(turns []MessageTurn, targetProvi
 							Text:      p.State.Output,
 							IsError:   false,
 						})
-						mediaBlocks = s.appendToolMediaBlocks(p.State.Metadata, mediaBlocks, idx, pIdx, keptMedia, omitLabel)
+						mediaBlocks = s.appendToolMediaBlocks(toolName, p.State.Metadata, mediaBlocks, idx, pIdx, keptMedia, omitLabel)
 					case "running":
 						// Unsettled mutating tool from a mid-flight snapshot/crash: warn explicitly.
 						resultBlocks = append(resultBlocks, NativeContentBlock{
@@ -580,7 +538,7 @@ func (s *Service) projectCanonicalNativeHistory(turns []MessageTurn, targetProvi
 							Text:      errOut,
 							IsError:   true,
 						})
-						mediaBlocks = s.appendToolMediaBlocks(p.State.Metadata, mediaBlocks, idx, pIdx, keptMedia, omitLabel)
+						mediaBlocks = s.appendToolMediaBlocks(toolName, p.State.Metadata, mediaBlocks, idx, pIdx, keptMedia, omitLabel)
 					}
 				}
 			}

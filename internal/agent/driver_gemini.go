@@ -117,9 +117,11 @@ func (d *geminiDriver) BuildRequest(req ModelRequest) (llm.StreamHTTPRequest, er
 	if len(req.Tools) > 0 {
 		decls := make([]map[string]any, 0, len(req.Tools))
 		for _, t := range req.Tools {
-			decls = append(decls, map[string]any{
-				"name": t.Name, "description": t.Description, "parameters": t.Parameters,
-			})
+			key := "parameters"
+			if t.Name == "call_host_tool" {
+				key = "parametersJsonSchema"
+			}
+			decls = append(decls, map[string]any{"name": t.Name, "description": t.Description, key: t.Parameters})
 		}
 		payload["tools"] = []map[string]any{{"functionDeclarations": decls}}
 	}
