@@ -261,6 +261,14 @@ func (s *Service) OpenStream(ctx context.Context, req llm.StreamHTTPRequest) (*h
 			} else {
 				outReq.Header.Set("x-session-affinity", sid)
 				outReq.Header.Set("X-Session-Id", sid)
+				if req.Target.Protocol == llm.ProtocolOpenAIResponses {
+					outReq.Header.Set("Session-Id", sid)
+					outReq.Header.Set("session_id", sid)
+					outReq.Header.Set("conversation_id", sid)
+				} else if proto == "openai" && !isOfficialOpenAIHost(reqURL) {
+					outReq.Header.Set("Session-Id", sid)
+					outReq.Header.Set("session_id", sid)
+				}
 				if isXAIHost(reqURL) {
 					outReq.Header.Set("x-grok-conv-id", sid)
 				}

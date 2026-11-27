@@ -14,11 +14,28 @@ const (
 	// payload and vision-token explosion during long desktop/browser loops.
 	maxLiveToolScreenshots  = 4
 	keepLiveToolScreenshots = 2
+	// maxLiveGeneratedImages applies the same hysteresis to hoxi_image outputs
+	// so multi-image generation loops never resend unbounded base64 payloads.
+	maxLiveGeneratedImages  = 4
+	keepLiveGeneratedImages = 2
 )
 
 func isEphemeralScreenshotTool(toolName string) bool {
 	switch strings.ToLower(strings.TrimSpace(toolName)) {
 	case "hoxi_computer", "hoxi_browser":
+		return true
+	default:
+		return false
+	}
+}
+
+func isGeneratedImageTool(toolName string) bool {
+	return strings.ToLower(strings.TrimSpace(toolName)) == "hoxi_image"
+}
+
+func isOtherMediaTool(toolName string) bool {
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "hoxi_computer", "hoxi_browser", "mcp_call_tool", "hoxi_tools":
 		return true
 	default:
 		return false
@@ -33,15 +50,16 @@ func isEphemeralScreenshotFilename(name string) bool {
 
 // pruneStaleToolScreenshots replaces older ephemeral screenshot media blocks
 // produced by hoxi_computer / hoxi_browser once live screenshot count exceeds
-// maxLiveToolScreenshots, leaving the latest keepLiveToolScreenshots intact.
-// Plain user-uploaded images and media from other tools (e.g. hoxi_image, MCP)
-// are never touched by this pass.
+// maxLiveToolScreenshots, and independently bounds hoxi_image tool outputs once
+// count exceeds maxLiveGeneratedImages, leaving the latest 2 of each intact.
+// Plain user-uploaded images and MCP media are never touched by this pass.
 func pruneStaleToolScreenshots(msgs []Message) []Message {
 	if len(msgs) == 0 {
 		return msgs
 	}
 	toolNameByID := make(map[string]string)
-	var positions [][2]int
+	var screenshotPositions [][2]int
+	var generatedImagePositions [][2]int
 
 	for mIdx, m := range msgs {
 		switch m.Role {
@@ -54,13 +72,21 @@ func pruneStaleToolScreenshots(msgs []Message) []Message {
 		case RoleUser:
 			hasToolResult := false
 			allScreenshotTools := true
+			hasGeneratedImageTool := false
+			hasOtherMedia := false
 			for _, b := range m.Content {
 				if b.Type != ContentToolResult {
 					continue
 				}
 				hasToolResult = true
-				if !isEphemeralScreenshotTool(toolNameByID[b.ToolUseID]) {
+				toolName := toolNameByID[b.ToolUseID]
+				if !isEphemeralScreenshotTool(toolName) {
 					allScreenshotTools = false
+				}
+				if isGeneratedImageTool(toolName) {
+					hasGeneratedImageTool = true
+				} else if isOtherMediaTool(toolName) {
+					hasOtherMedia = true
 				}
 			}
 			if !hasToolResult {
@@ -71,19 +97,26 @@ func pruneStaleToolScreenshots(msgs []Message) []Message {
 					continue
 				}
 				if isEphemeralScreenshotFilename(b.Filename) || (allScreenshotTools && strings.TrimSpace(b.Filename) == "") {
-					positions = append(positions, [2]int{mIdx, bIdx})
+					screenshotPositions = append(screenshotPositions, [2]int{mIdx, bIdx})
+				} else if hasGeneratedImageTool && !hasOtherMedia && strings.HasPrefix(strings.ToLower(strings.TrimSpace(b.MimeType)), "image/") {
+					generatedImagePositions = append(generatedImagePositions, [2]int{mIdx, bIdx})
 				}
 			}
 		}
 	}
-	if len(positions) <= maxLiveToolScreenshots {
-		return msgs
+	dropLabel := make(map[[2]int]string)
+	if len(screenshotPositions) > maxLiveToolScreenshots {
+		for _, pos := range screenshotPositions[:len(screenshotPositions)-keepLiveToolScreenshots] {
+			dropLabel[pos] = "screenshot"
+		}
 	}
-
-	dropCount := len(positions) - keepLiveToolScreenshots
-	toDrop := make(map[[2]int]bool, dropCount)
-	for _, pos := range positions[:dropCount] {
-		toDrop[pos] = true
+	if len(generatedImagePositions) > maxLiveGeneratedImages {
+		for _, pos := range generatedImagePositions[:len(generatedImagePositions)-keepLiveGeneratedImages] {
+			dropLabel[pos] = "generated image"
+		}
+	}
+	if len(dropLabel) == 0 {
+		return msgs
 	}
 
 	out := make([]Message, len(msgs))
@@ -91,7 +124,8 @@ func pruneStaleToolScreenshots(msgs []Message) []Message {
 	for mIdx := range out {
 		var blocks []ContentBlock
 		for bIdx, b := range out[mIdx].Content {
-			if !toDrop[[2]int{mIdx, bIdx}] {
+			label, ok := dropLabel[[2]int{mIdx, bIdx}]
+			if !ok {
 				continue
 			}
 			if blocks == nil {
@@ -99,11 +133,11 @@ func pruneStaleToolScreenshots(msgs []Message) []Message {
 			}
 			name := strings.TrimSpace(b.Filename)
 			if name == "" {
-				name = "screenshot"
+				name = label
 			}
 			blocks[bIdx] = ContentBlock{
 				Type: ContentText,
-				Text: fmt.Sprintf("[omitted earlier screenshot: %s (%s)]", name, b.MimeType),
+				Text: fmt.Sprintf("[omitted earlier %s: %s (%s)]", label, name, b.MimeType),
 			}
 		}
 		if blocks != nil {

@@ -58,9 +58,12 @@ func estimateMessageUnits(m Message, inActiveTurn bool) int {
 		switch b.Type {
 		case ContentThinking:
 			// Unsigned prior-turn thinking is stripped on OpenAI chat relays and
-			// not replayed on Anthropic; signed blocks carry encrypted signature cost.
+			// not replayed on Anthropic; signed blocks carry opaque signatures
+			// (e.g. OpenAI Responses encrypted_content is AES/JWE ciphertext, not
+			// billed as raw base64 tokens), whereas b.Data is Anthropic redacted_thinking.
 			if inActiveTurn || b.Signature != "" || b.Data != "" {
-				units += estimateTextUnits(b.Text) + len(b.Signature)*2 + len(b.Data)*2 + 64
+				sigUnits := min(len(b.Signature)/2, 400*tokenUnitsDivisor)
+				units += estimateTextUnits(b.Text) + sigUnits + len(b.Data)*2 + 64
 			}
 		case ContentMedia:
 			units += estimateTextUnits(b.Text) + 64
@@ -201,6 +204,8 @@ type turnContextSnapshot struct {
 	sessionID       string
 	scale           float64
 	lastPrompt      int
+	prePrunePrompt  int
+	prunedInTurn    bool
 	lastUsage       TokenUsage
 	lastObservedAt  time.Time
 	lastFingerprint prefixFingerprint
@@ -215,6 +220,8 @@ type contextTokenTracker struct {
 	anchorToolCount int
 	scale           float64
 	prefixCacheWarm bool
+	prunedInTurn    bool
+	prePrunePrompt  int
 	lastUsage       TokenUsage
 	lastFingerprint prefixFingerprint
 	hasObservation  bool
@@ -296,6 +303,53 @@ func (t *contextTokenTracker) SeedFromPriorTurn(
 		t.prefixCacheWarm = true
 		t.lastUsage = snap.lastUsage
 	}
+	if snap.prunedInTurn {
+		t.prunedInTurn = true
+		t.prePrunePrompt = max(t.prePrunePrompt, snap.prePrunePrompt)
+	}
+}
+
+// SeedFromPriorTurnWithPrune restores cross-turn cache continuity even when
+// Turn 1 pruned older tool outputs in memory while Turn 2 replays unpruned
+// durable history from disk. A dry-run pruned candidate is adopted ONLY when
+// its SHA-256 prefix hashes cryptographically match Turn 1's warm fingerprint.
+func (t *contextTokenTracker) SeedFromPriorTurnWithPrune(
+	snap turnContextSnapshot,
+	now time.Time,
+	cacheKey, fullSystem, worktreeDir string,
+	toolSpecs []ToolSpec,
+	thresholds turnContextThresholds,
+	msgs []Message,
+) []Message {
+	t.SeedFromPriorTurn(snap, now, cacheKey, fullSystem, toolSpecs, msgs)
+	if t == nil || t.anchored || !snap.prunedInTurn || !snap.lastFingerprint.valid || len(msgs) < len(snap.lastFingerprint.msgHashes) {
+		return msgs
+	}
+	baseEst := t.EstimateTotalTokens(msgs, fullSystem, toolSpecs)
+	baseTotal := max(baseEst, snap.prePrunePrompt)
+	baseHeuristic := estimateTokens(msgs, fullSystem)
+	scale := t.Scale()
+	measure := func(cand []Message) int {
+		if len(cand) == len(msgs) && len(cand) > 0 && &cand[0] == &msgs[0] {
+			return baseTotal
+		}
+		delta := baseHeuristic - estimateTokens(cand, fullSystem)
+		if delta == 0 {
+			return baseTotal
+		}
+		return max(0, baseTotal-scaleTokenCount(delta, scale))
+	}
+	cand := pruneOldToolResultsCore(msgs, fullSystem, worktreeDir, thresholds.contextLimit, thresholds.triggerTokens, thresholds.hardCapTokens, measure)
+	if !messagesSliceMutated(msgs, cand) {
+		return msgs
+	}
+	prev := snap.lastFingerprint
+	candFP := computePrefixFingerprint(cacheKey, fullSystem, toolSpecs, cand, 0)
+	if candFP.cacheKeyHash != prev.cacheKeyHash || candFP.systemHash != prev.systemHash || candFP.toolsHash != prev.toolsHash || !prefixHashesMatch(prev.msgHashes, candFP.msgHashes) {
+		return msgs
+	}
+	t.SeedFromPriorTurn(snap, now, cacheKey, fullSystem, toolSpecs, cand)
+	return cand
 }
 
 // Snapshot returns a zero-body summary of the latest observed provider step
@@ -307,6 +361,8 @@ func (t *contextTokenTracker) Snapshot() (turnContextSnapshot, bool) {
 	return turnContextSnapshot{
 		scale:           t.scale,
 		lastPrompt:      t.observedPrompt,
+		prePrunePrompt:  t.prePrunePrompt,
+		prunedInTurn:    t.prunedInTurn,
 		lastUsage:       t.lastUsage,
 		lastObservedAt:  t.observedAt,
 		lastFingerprint: t.lastFingerprint,
@@ -346,6 +402,8 @@ func (t *contextTokenTracker) RebaseAfterPrune(preMsgs, postMsgs []Message, full
 	if t == nil {
 		return
 	}
+	t.prunedInTurn = true
+	t.prePrunePrompt = max(t.prePrunePrompt, t.EstimateTotalTokens(preMsgs, fullSystem, toolSpecs))
 	t.prefixCacheWarm = false
 	if !t.anchored {
 		return

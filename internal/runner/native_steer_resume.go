@@ -49,7 +49,7 @@ func (s *Service) trySteerBusyNativePrompt(
 	ctx context.Context,
 	rec SessionRecord,
 	body PromptRequest,
-	promptText, callerSystem, clientReqID, reqDigest string,
+	promptText, callerSystem, turnDirective, clientReqID, reqDigest string,
 	fileParts []MessagePart,
 	resolvedSkill ResolvedSkill,
 ) (handled bool, httpStatus int, receipt PromptReceipt, err error) {
@@ -134,6 +134,7 @@ func (s *Service) trySteerBusyNativePrompt(
 			}
 		}
 	}
+	steerPrompt = withTurnDirective(turnDirective, steerPrompt)
 	if body.SkillSelection != nil {
 		s.recordUserSkillOverride(steerMsgID, promptText, body.SkillSelection)
 		storedParts, deliveryParts = applySkillSelectionToTurnParts(
@@ -150,6 +151,7 @@ func (s *Service) trySteerBusyNativePrompt(
 		)
 		steerPrompt = formatInlineSkillPrompt(body.SkillSelection.Name, resolvedSkill.Content, "") + "\n\n" + steerPrompt
 	}
+	attachNativeModelText(storedParts, steerPrompt)
 
 	_, _, _ = s.store.Update(rec.ID, func(r *SessionRecord) {
 		r.Mode = mode

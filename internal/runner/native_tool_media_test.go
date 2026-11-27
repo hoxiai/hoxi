@@ -365,3 +365,175 @@ func TestNativeHistoryCapsEphemeralScreenshotsWhilePreservingOtherMedia(t *testi
 		t.Fatalf("expected 3 omitted and 2 live hoxi_computer screenshots, got omitted=%d live=%v", omittedShots, liveShots)
 	}
 }
+
+func TestCanonicalHistoryOrdersMultiToolMediaAfterResultsAndBoundsHoxiImage(t *testing.T) {
+	root := t.TempDir()
+	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions"))
+	defer svc.CloseAll()
+
+	// 1. Multi-tool step: tool 1 has media, tool 2 has no media -> replay must group all tool_result blocks
+	// before all media blocks, matching live engine.go ordering.
+	multiTurns := []MessageTurn{
+		{
+			Info:  MessageInfo{ID: "msg_u1", SessionID: "ses_multi", Role: "user"},
+			Parts: []MessagePart{{ID: "prt_u1", Type: "text", Text: "check"}},
+		},
+		{
+			Info: MessageInfo{ID: "msg_a1", SessionID: "ses_multi", Role: "assistant", ParentID: "msg_u1"},
+			Parts: []MessagePart{
+				{
+					ID: "prt_img_1", Type: "tool", Tool: "hoxi_image", CallID: "c_img_1",
+					State: &ToolState{
+						Status: "completed", Output: `{"path":"a.png"}`,
+						Metadata: map[string]interface{}{
+							"step": 1,
+							"mediaAttachments": []map[string]interface{}{
+								{"url": "data:image/png;base64,SU1HXzE=", "mime": "image/png", "filename": "a.png"},
+							},
+						},
+					},
+				},
+				{
+					ID: "prt_read_1", Type: "tool", Tool: "read", CallID: "c_read_1",
+					State: &ToolState{
+						Status:   "completed",
+						Output:   "file body",
+						Metadata: map[string]interface{}{"step": 1},
+					},
+				},
+			},
+		},
+	}
+	multiProj := svc.projectCanonicalNativeHistory(multiTurns, "openai", "gpt-5")
+	if len(multiProj) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(multiProj))
+	}
+	stepResults := multiProj[2].Content
+	if len(stepResults) != 3 ||
+		stepResults[0].Type != "tool_result" || stepResults[0].ToolUseID != "c_img_1" ||
+		stepResults[1].Type != "tool_result" || stepResults[1].ToolUseID != "c_read_1" ||
+		stepResults[2].Type != "media" || stepResults[2].Filename != "a.png" {
+		t.Fatalf("expected [tool_result, tool_result, media] ordering matching live engine, got %+v", stepResults)
+	}
+
+	// 2. Five hoxi_image outputs in history must be bounded to the latest 2, while 2 or fewer stay untouched.
+	imgTurns := []MessageTurn{
+		{
+			Info:  MessageInfo{ID: "msg_u2", SessionID: "ses_imgs", Role: "user"},
+			Parts: []MessagePart{{ID: "prt_u2", Type: "text", Text: "batch images"}},
+		},
+		{
+			Info: MessageInfo{ID: "msg_a2", SessionID: "ses_imgs", Role: "assistant", ParentID: "msg_u2"},
+		},
+	}
+	for i := 1; i <= 5; i++ {
+		data := []string{"SU1HXzE=", "SU1HXzI=", "SU1HXzM=", "SU1HXzQ=", "SU1HXzU="}[i-1]
+		fname := "gen_" + string(rune('0'+i)) + ".png"
+		imgTurns[1].Parts = append(imgTurns[1].Parts, MessagePart{
+			ID: "prt_gen_" + string(rune('0'+i)), Type: "tool", Tool: "hoxi_image", CallID: "c_gen_" + string(rune('0'+i)),
+			State: &ToolState{
+				Status: "completed", Output: `{"path":"` + fname + `"}`,
+				Metadata: map[string]interface{}{
+					"step": i,
+					"mediaAttachments": []map[string]interface{}{
+						{"url": "data:image/png;base64," + data, "mime": "image/png", "filename": fname},
+					},
+				},
+			},
+		})
+	}
+	imgProj := svc.projectCanonicalNativeHistory(imgTurns, "openai", "gpt-5")
+	var liveGen []string
+	var omittedGen int
+	for _, m := range imgProj {
+		for _, b := range m.Content {
+			if b.Type == "media" {
+				liveGen = append(liveGen, b.Filename)
+			}
+			if b.Type == "text" && strings.Contains(b.Text, "[omitted earlier generated image:") {
+				omittedGen++
+			}
+		}
+	}
+	if omittedGen != 3 || strings.Join(liveGen, ",") != "gen_4.png,gen_5.png" {
+		t.Fatalf("expected 3 omitted and latest 2 [gen_4.png,gen_5.png] live, got omitted=%d live=%v", omittedGen, liveGen)
+	}
+
+	// 3. Up to 4 generated images must stay untouched on replay (matching live hysteresis trigger=4).
+	fourImgTurns := []MessageTurn{
+		imgTurns[0],
+		{Info: imgTurns[1].Info, Parts: imgTurns[1].Parts[:4]},
+	}
+	fourProj := svc.projectCanonicalNativeHistory(fourImgTurns, "openai", "gpt-5")
+	var liveFour []string
+	for _, m := range fourProj {
+		for _, b := range m.Content {
+			if b.Type == "media" {
+				liveFour = append(liveFour, b.Filename)
+			}
+			if b.Type == "text" && strings.Contains(b.Text, "[omitted earlier generated image:") {
+				t.Fatalf("unexpected pruning for <= 4 generated images: %q", b.Text)
+			}
+		}
+	}
+	if len(liveFour) != 4 {
+		t.Fatalf("expected all 4 generated images kept for cache alignment, got %v", liveFour)
+	}
+
+	// 4. Multi-image single tool calls (2 calls x 3 images = 6 images) prune oldest 4 entries, keeping latest 2.
+	batchTurns := []MessageTurn{
+		{
+			Info:  MessageInfo{ID: "msg_u3", SessionID: "ses_batch_imgs", Role: "user"},
+			Parts: []MessagePart{{ID: "prt_u3", Type: "text", Text: "make 6 images"}},
+		},
+		{
+			Info: MessageInfo{ID: "msg_a3", SessionID: "ses_batch_imgs", Role: "assistant", ParentID: "msg_u3"},
+			Parts: []MessagePart{
+				{
+					ID: "prt_b1", Type: "tool", Tool: "hoxi_image", CallID: "c_b1",
+					State: &ToolState{
+						Status: "completed", Output: `{"count":3}`,
+						Metadata: map[string]interface{}{
+							"step": 1,
+							"mediaAttachments": []map[string]interface{}{
+								{"url": "data:image/png;base64,SU1HXzE=", "mime": "image/png", "filename": "b1.png"},
+								{"url": "data:image/png;base64,SU1HXzI=", "mime": "image/png", "filename": "b2.png"},
+								{"url": "data:image/png;base64,SU1HXzM=", "mime": "image/png", "filename": "b3.png"},
+							},
+						},
+					},
+				},
+				{
+					ID: "prt_b2", Type: "tool", Tool: "hoxi_image", CallID: "c_b2",
+					State: &ToolState{
+						Status: "completed", Output: `{"count":3}`,
+						Metadata: map[string]interface{}{
+							"step": 2,
+							"mediaAttachments": []map[string]interface{}{
+								{"url": "data:image/png;base64,SU1HXzQ=", "mime": "image/png", "filename": "b4.png"},
+								{"url": "data:image/png;base64,SU1HXzU=", "mime": "image/png", "filename": "b5.png"},
+								{"url": "data:image/png;base64,SU1HXzY=", "mime": "image/png", "filename": "b6.png"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	batchProj := svc.projectCanonicalNativeHistory(batchTurns, "openai", "gpt-5")
+	var liveBatch []string
+	var omittedBatch int
+	for _, m := range batchProj {
+		for _, b := range m.Content {
+			if b.Type == "media" {
+				liveBatch = append(liveBatch, b.Filename)
+			}
+			if b.Type == "text" && strings.Contains(b.Text, "[omitted earlier generated image:") {
+				omittedBatch++
+			}
+		}
+	}
+	if omittedBatch != 4 || strings.Join(liveBatch, ",") != "b5.png,b6.png" {
+		t.Fatalf("expected 4 omitted and latest 2 [b5.png,b6.png] kept across multi-image calls, got omitted=%d live=%v", omittedBatch, liveBatch)
+	}
+}

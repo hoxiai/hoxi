@@ -539,3 +539,85 @@ func TestOpenStreamSendsGrokConvIDHeaderOnlyForXAIHosts(t *testing.T) {
 		t.Fatalf("expected no x-grok-conv-id on api.openai.com, got %q", got)
 	}
 }
+
+func TestOpenStreamSendsResponsesStickySessionHeadersOnGateway(t *testing.T) {
+	_, workspace := setupIsolatedEnv(t)
+	var gotHeaders http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeaders = r.Header.Clone()
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"))
+	}))
+	defer srv.Close()
+
+	cfgPath := filepath.Join(workspace, ".hoxi", "models.json")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `{"provider":{"subapi":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"` + srv.URL + `/v1","apiKey":"sk-sub"},"models":{
+		"openai-codex-gpt-6.2-sol":{"limit":{"context":1050000,"output":128000}},
+		"gpt-4o":{"limit":{"context":128000,"output":16384}}
+	}}}}`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewService(0, "", workspace, nil)
+	respTarget := svc.ResolveStreamTarget("subapi", "openai-codex-gpt-6.2-sol")
+	if respTarget.Protocol != llm.ProtocolOpenAIResponses {
+		t.Fatalf("expected ProtocolOpenAIResponses, got %+v", respTarget)
+	}
+
+	// Positive: Responses request through gateway sends all Codex/proxy sticky headers.
+	resp, err := svc.OpenStream(context.Background(), llm.StreamHTTPRequest{
+		Target:    respTarget,
+		SessionID: "ses_resp_sticky_99",
+		Body:      []byte(`{"model":"openai-codex-gpt-6.2-sol","input":[]}`),
+	})
+	if err != nil {
+		t.Fatalf("OpenStream responses failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	for _, hdr := range []string{"Session-Id", "session_id", "conversation_id", "X-Session-Id", "x-session-affinity"} {
+		if got := gotHeaders.Get(hdr); got != "ses_resp_sticky_99" {
+			t.Fatalf("expected header %q=ses_resp_sticky_99 on Responses gateway, got %q", hdr, got)
+		}
+	}
+
+	// Rejection 1: Empty SessionID must not emit sticky session headers.
+	resp, err = svc.OpenStream(context.Background(), llm.StreamHTTPRequest{
+		Target: respTarget,
+		Body:   []byte(`{"model":"openai-codex-gpt-6.2-sol","input":[]}`),
+	})
+	if err != nil {
+		t.Fatalf("OpenStream responses empty sid failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	for _, hdr := range []string{"Session-Id", "session_id", "conversation_id", "X-Session-Id", "x-session-affinity"} {
+		if got := gotHeaders.Get(hdr); got != "" {
+			t.Fatalf("expected no %q header when SessionID empty, got %q", hdr, got)
+		}
+	}
+
+	// Non-Responses Chat Completions on a non-official gateway sends Session-Id/session_id
+	// for sticky proxy routing while omitting Responses-only conversation_id.
+	chatTarget := svc.ResolveStreamTarget("subapi", "gpt-4o")
+	resp, err = svc.OpenStream(context.Background(), llm.StreamHTTPRequest{
+		Target:    chatTarget,
+		SessionID: "ses_chat_1",
+		Body:      []byte(`{"model":"gpt-4o","messages":[]}`),
+	})
+	if err != nil {
+		t.Fatalf("OpenStream chat failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	for _, hdr := range []string{"X-Session-Id", "Session-Id", "session_id"} {
+		if got := gotHeaders.Get(hdr); got != "ses_chat_1" {
+			t.Fatalf("expected %q=ses_chat_1 on gateway chat target, got %q", hdr, got)
+		}
+	}
+	if got := gotHeaders.Get("conversation_id"); got != "" {
+		t.Fatalf("expected no Responses-only conversation_id on chat target, got %q", got)
+	}
+}

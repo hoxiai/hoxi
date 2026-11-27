@@ -348,7 +348,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	}
 	isImageTurn := s.IsDedicatedMediaModel(candidateProviderID, candidateModelID)
 	if rec.Runtime == string(RuntimeNative) && !isImageTurn {
-		if handled, st, recpt, sErr := s.trySteerBusyNativePrompt(ctx, rec, body, promptText, callerSystem, clientReqID, reqDigest, fileParts, resolvedSkill); handled {
+		if handled, st, recpt, sErr := s.trySteerBusyNativePrompt(ctx, rec, body, promptText, callerSystem, turnDirective, clientReqID, reqDigest, fileParts, resolvedSkill); handled {
 			return st, recpt, sErr
 		}
 	}
@@ -425,7 +425,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		}
 	}
 	if (rec.Runtime == string(RuntimeNative) || (rec.Runtime == "opencode" && !openCodeDaemonUp)) && !isImageTurn {
-		if handled, st, rcpt, sErr := s.trySteerBusyNativePrompt(ctx, rec, body, promptText, callerSystem, clientReqID, reqDigest, fileParts, resolvedSkill); handled {
+		if handled, st, rcpt, sErr := s.trySteerBusyNativePrompt(ctx, rec, body, promptText, callerSystem, turnDirective, clientReqID, reqDigest, fileParts, resolvedSkill); handled {
 			return st, rcpt, sErr
 		}
 	}
@@ -728,6 +728,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 			if body.SkillSelection != nil {
 				promptInput = formatInlineSkillPrompt(body.SkillSelection.Name, resolvedSkill.Content, "") + "\n\n" + promptInput
 			}
+			attachNativeModelText(storedParts, promptInput)
 			err = s.launchNativeTurn(rec, mode, modelID, effort, nativeSystem, promptInput, userInfo, storedParts, asstMsgID, false, toNativeOrchestrator(orchSpec), deliveryParts...)
 		}
 	} else {

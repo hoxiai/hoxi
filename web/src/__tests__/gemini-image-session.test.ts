@@ -481,6 +481,48 @@ describe("Gemini custom endpoint & session image generation support", () => {
       assertEqual(evaluatePromptModalityIntent("refactor the parser").mediaRoutingDirective, undefined);
       assertEqual(Boolean(withLocalVid.mediaRoutingDirective?.includes("Invoke `hoxi_video`")), true);
 
+      // Modality intent precision: pasted store reports, code reviews, and English substrings must NOT misfire.
+      const auditReportPrompt =
+        "\u5168\u5e97\u5206\u6790\u7ed3\u679c\u6709\u6ca1\u6709\u4ee3\u7801\u95ee\u9898\uff1f\n\n\u767d\u5e95\u56fe\u5360\u6bd4\u504f\u4f4e\uff0c\u5efa\u8bae\u8865\u5145\u573a\u666f\u56fe\u548c\u6d77\u62a5\u56fe";
+      assertEqual(evaluatePromptModalityIntent(auditReportPrompt).kind, "chat");
+      assertEqual(evaluatePromptModalityIntent(auditReportPrompt).mediaRoutingDirective, undefined);
+      assertEqual(
+        evaluatePromptModalityIntent("\u6392\u67e5\u751f\u56fe\u63a5\u53e3\u8fd4\u56de 500 bug").mediaRoutingDirective,
+        undefined
+      );
+      assertEqual(
+        evaluatePromptModalityIntent("\u68c0\u67e5 hero-card.svg \u6e32\u67d3\u4ee3\u7801").mediaRoutingDirective,
+        undefined
+      );
+      assertEqual(evaluatePromptModalityIntent("We are tackling this performance regression").mediaRoutingDirective, undefined);
+      assertEqual(evaluatePromptModalityIntent("Inspect the watts calculation in power.ts").mediaRoutingDirective, undefined);
+      assertEqual(
+        evaluatePromptModalityIntent("\u6392\u67e5 tts \u914d\u97f3\u63a5\u53e3 bug").mediaRoutingDirective,
+        undefined
+      );
+      assertEqual(
+        evaluatePromptModalityIntent("\u68c0\u67e5 sora / veo \u9996\u5c3e\u5e27\u89c6\u9891\u914d\u7f6e\u4ee3\u7801").mediaRoutingDirective,
+        undefined
+      );
+      assertEqual(
+        evaluatePromptModalityIntent("\u4fee\u590d\u5c01\u9762\u8bca\u65ad\u6a21\u5757\u6e32\u67d3\u95ee\u9898").mediaRoutingDirective,
+        undefined
+      );
+
+      // Genuine creation/review requests and explicit chip/skill metadata still route accurately.
+      assertEqual(
+        evaluatePromptModalityIntent("\u5e2e\u6211\u751f\u6210\u4e00\u5f20\u5546\u54c1\u767d\u5e95\u56fe").kind,
+        "image_gen"
+      );
+      assertEqual(evaluatePromptModalityIntent("\u753b\u4e00\u5f20 3:4 \u7ad6\u7248\u5c01\u9762").kind, "image_gen");
+      assertEqual(evaluatePromptModalityIntent("\u505a\u4e00\u5f20\u6d77\u62a5\u56fe").kind, "image_gen");
+      assertEqual(evaluatePromptModalityIntent("generate an illustration of a mountain").kind, "image_gen");
+      assertEqual(evaluatePromptModalityIntent("\u5e2e\u6211\u751f\u56fe").kind, "image_gen");
+      assertEqual(evaluatePromptModalityIntent("continue", { chipId: "hero-card.svg" }).kind, "image_gen");
+      assertEqual(evaluatePromptModalityIntent("\u5e2e\u6211\u751f\u6210\u4e00\u6bb5\u53e3\u64ad\u914d\u97f3").kind, "audio_tts");
+      assertEqual(evaluatePromptModalityIntent("\u5e2e\u6211\u505a\u4e00\u4e2a\u89c6\u89c9\u590d\u76d8").kind, "visual_review");
+      assertEqual(evaluatePromptModalityIntent("continue", { skillName: "sora-storyboard" }).kind, "video_gen");
+
       // Explicitly selected video model in chat must NOT be hijacked to fallbackBrain
       const sid = "ses_vid_direct_test";
       setWorkspace("sessions", [

@@ -306,7 +306,7 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) error {
 	if req.SubtaskDepth == 0 && effectiveCacheKey != "" {
 		if snap, ok := e.loadTurnContextSnapshot(makeTurnContextCacheKey(effectiveCacheKey, target)); ok {
 			initialFullSystem := appendSystemPromptSuffix(systemPrompt, systemSuffix)
-			tokenTracker.SeedFromPriorTurn(snap, e.now(), effectiveCacheKey, initialFullSystem, toolSpecs, msgs)
+			msgs = tokenTracker.SeedFromPriorTurnWithPrune(snap, e.now(), effectiveCacheKey, initialFullSystem, req.WorktreeDir, toolSpecs, contextThresholds, msgs)
 		}
 		defer func() {
 			if snap, ok := tokenTracker.Snapshot(); ok {

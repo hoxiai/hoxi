@@ -260,3 +260,95 @@ func TestNativeAudioAttachmentTightensToGoogleProtocolAndASRTranscriptReplay(t *
 		}
 	}
 }
+
+func TestNativeHistorySkipsUnsupportedBinaryMediaWhenNativeModelTextPresent(t *testing.T) {
+	attDir := t.TempDir()
+	workDir := t.TempDir()
+	store := attachment.NewStore(attDir)
+
+	videoMeta, err := store.Save(attachment.SaveRequest{
+		SessionID: "ses_nat_cap", Directory: workDir, Filename: "clip.mp4", Mime: "video/mp4",
+		Data: []byte("ftypisom-video-bytes"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	audioMeta, err := store.Save(attachment.SaveRequest{
+		SessionID: "ses_nat_cap", Directory: workDir, Filename: "note.wav", Mime: "audio/wav",
+		Data: []byte("RIFF-no-asr-wav-bytes"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pdfMeta, err := store.Save(attachment.SaveRequest{
+		SessionID: "ses_nat_cap", Directory: workDir, Filename: "spec.pdf", Mime: "application/pdf",
+		Data: []byte("%PDF-1.4 spec"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	imgMeta, err := store.Save(attachment.SaveRequest{
+		SessionID: "ses_nat_cap", Directory: workDir, Filename: "shot.png", Mime: "image/png",
+		Data: []byte("\x89PNG\r\n\x1a\nfake"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	svc := &Service{attachments: store, rootDir: workDir}
+	svc.SetStreamClient(&stubProtocolStreamClient{
+		protocols: map[string]llm.StreamProtocol{
+			"google":   llm.ProtocolGoogle,
+			"openai":   llm.ProtocolOpenAIResponses,
+			"deepseek": llm.ProtocolOpenAI,
+		},
+	})
+	rec := SessionRecord{ID: "ses_nat_cap", Runtime: string(RuntimeNative), WorktreePath: workDir}
+	parts := []MessagePart{
+		{Type: "file", Filename: videoMeta.Filename, Mime: videoMeta.Mime, URL: videoMeta.URL},
+		{Type: "file", Filename: audioMeta.Filename, Mime: audioMeta.Mime, URL: audioMeta.URL},
+		{Type: "file", Filename: pdfMeta.Filename, Mime: pdfMeta.Mime, URL: pdfMeta.URL},
+		{Type: "file", Filename: imgMeta.Filename, Mime: imgMeta.Mime, URL: imgMeta.URL},
+	}
+
+	// Simulate live Turn 1 on DeepSeek (non-PDF, non-audio/video, image-only media).
+	stored, _, cliPrompt := svc.prepareTurnAttachmentsForModel(rec, "deepseek", "deepseek-chat", false, 3000, 1, "msg_u_cap", "Review attachments", parts)
+	attachNativeModelText(stored, cliPrompt)
+	turns := []MessageTurn{{Info: MessageInfo{ID: "msg_u_cap", SessionID: rec.ID, Role: "user"}, Parts: stored}}
+
+	// Replay on DeepSeek must keep ONLY image/png media (no unsupported video/audio/pdf binary blocks).
+	dsHist := svc.projectCanonicalNativeHistory(turns, "deepseek", "deepseek-chat")
+	var dsMimes []string
+	for _, b := range dsHist[0].Content {
+		if b.Type == "media" {
+			dsMimes = append(dsMimes, b.MimeType)
+		}
+	}
+	if len(dsMimes) != 1 || dsMimes[0] != "image/png" {
+		t.Fatalf("expected DeepSeek replay to keep only image/png media, got %v", dsMimes)
+	}
+
+	// Replay on OpenAI GPT-5 keeps image/png + application/pdf, still skipping unsupported video/audio.
+	oaHist := svc.projectCanonicalNativeHistory(turns, "openai", "gpt-5")
+	var oaMimes []string
+	for _, b := range oaHist[0].Content {
+		if b.Type == "media" {
+			oaMimes = append(oaMimes, b.MimeType)
+		}
+	}
+	if len(oaMimes) != 2 || oaMimes[0] != "application/pdf" || oaMimes[1] != "image/png" {
+		t.Fatalf("expected GPT-5 replay to keep [application/pdf, image/png], got %v", oaMimes)
+	}
+
+	// Switching to Google Gemini unlocks raw video/audio/pdf/image media replay.
+	gemHist := svc.projectCanonicalNativeHistory(turns, "google", "gemini-2.5-pro")
+	var gemMimes []string
+	for _, b := range gemHist[0].Content {
+		if b.Type == "media" {
+			gemMimes = append(gemMimes, b.MimeType)
+		}
+	}
+	if len(gemMimes) != 4 {
+		t.Fatalf("expected Gemini replay to keep all 4 media blocks, got %v", gemMimes)
+	}
+}

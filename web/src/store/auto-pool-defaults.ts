@@ -463,13 +463,21 @@ export interface PromptIntentEvaluation {
 }
 
 const VIDEO_INTENT_RE =
-  /\b(?:generate|create)\s+video\b|\bstoryboard\b|\u751f\u89c6\u9891|\u751f\u6210\u89c6\u9891|\u77ed\u89c6\u9891\u811a\u672c|\u5206\u955c\u89c6\u9891|\u77ed\u5267|\u9996\u5c3e\u5e27|seedance|kling|\u53ef\u7075|veo|sora|wanx|\u4e07\u76f8/i;
+  /\b(?:generate|create|render|make)\s+(?:a\s+)?(?:video|storyboard|clip)\b|(?:\u751f\u6210|\u5236\u4f5c|\u505a(?:\u4e00?\u4e2a|\u4e00?\u6761|\u4e00?\u6bb5|\u51fa)?|\u6e32\u67d3|\u521b\u4f5c|\u51fa(?:\u4e00?\u4e2a|\u4e00?\u6761|\u4e00?\u6bb5))[\u4e00-\u9fff0-9:：\s]{0,12}(?:\u89c6\u9891|\u77ed\u89c6\u9891|\u5206\u955c\u89c6\u9891|\u77ed\u5267|\u9996\u5c3e\u5e27\u89c6\u9891)|(?:^|[\s\uff0c\u3002\uff01\uff1f,.;:])(?:\u5e2e\u6211|\u8bf7|\u53bb|\u6765)?\u751f\u89c6\u9891(?=$|[\s\uff0c\u3002\uff01\uff1f,.;:\uff1a\u5427\u5417\u4e00\u4e0b])|\u77ed\u89c6\u9891\u811a\u672c/i;
+const VIDEO_SKILL_OR_CHIP_RE =
+  /\b(?:storyboard|seedance|kling|veo|sora|wanx)\b|\u751f\u89c6\u9891|\u751f\u6210\u89c6\u9891|\u77ed\u89c6\u9891\u811a\u672c|\u5206\u955c\u89c6\u9891|\u77ed\u5267|\u9996\u5c3e\u5e27|\u53ef\u7075|\u4e07\u76f8/i;
 const VISUAL_REVIEW_INTENT_RE =
-  /\u89c6\u89c9\u590d\u76d8|\u81ea\u52a8\u590d\u76d8|\u5ba1\u56fe|\u5c01\u9762\u8bca\u65ad|\u5b89\u5168\u533a\u68c0\u67e5|\u906e\u6321\u68c0\u67e5|visual\s+review|ui\s+audit/i;
+  /(?:\u5e2e\u6211|\u8bf7|\u505a|\u8fdb\u884c|\u6267\u884c|\u5f00\u59cb)[\u4e00-\u9fff\s]{0,6}(?:\u89c6\u89c9\u590d\u76d8|\u81ea\u52a8\u590d\u76d8|\u5ba1\u56fe|\u5c01\u9762\u8bca\u65ad|\u5b89\u5168\u533a\u68c0\u67e5|\u906e\u6321\u68c0\u67e5)|\b(?:run|do|perform)\s+(?:a\s+)?(?:visual\s+review|ui\s+audit)\b/i;
+const VISUAL_REVIEW_SKILL_OR_CHIP_RE =
+  /\u89c6\u89c9\u590d\u76d8|\u81ea\u52a8\u590d\u76d8|\u5ba1\u56fe|\u5c01\u9762\u8bca\u65ad|\u5b89\u5168\u533a\u68c0\u67e5|\u906e\u6321\u68c0\u67e5|\bvisual\s+review\b|\bui\s+audit\b/i;
 const IMAGE_INTENT_RE =
-  /hero-card\.svg|\u751f\u56fe|\u751f\u6210\u56fe\u7247|\u751f\u6210\u4e3b\u56fe|\u751f\u6210\u5c01\u9762|3:4\s*\u7ad6\u7248\u5c01\u9762|\u767d\u5e95\u56fe|\u573a\u666f\u56fe|\u6d77\u62a5\u56fe|\u9996\u5c4f\u56fe\u5361|generate\s+image|generate\s+illustration/i;
+  /\b(?:generate|create|draw|render)\s+(?:an?\s+)?(?:image|illustration|poster|cover|banner|infographic)\b|(?:\u751f\u6210|\u753b|\u7ed8\u5236|\u5236\u4f5c|\u505a(?:\u4e00?\u5f20|\u4e2a|\u5957|\u51e0\u5f20|\u51fa)?|\u8bbe\u8ba1|\u6e32\u67d3|\u4ea7\u51fa|\u91cd\u7ed8|\u51fa(?:\u4e00?\u5f20|\u5f20|\u4e2a|\u5957|\u51e0\u5f20))[\u4e00-\u9fff0-9:：\s]{0,12}(?:\u56fe\u7247|\u4e3b\u56fe|\u5c01\u9762|\u767d\u5e95\u56fe|\u573a\u666f\u56fe|\u6d77\u62a5\u56fe|\u6d77\u62a5|\u9996\u5c4f\u56fe\u5361|\u56fe\u5361|\u914d\u56fe|\u63d2\u753b)|(?:^|[\s\uff0c\u3002\uff01\uff1f,.;:])(?:\u5e2e\u6211|\u8bf7|\u53bb|\u6765)?\u751f\u56fe(?=$|[\s\uff0c\u3002\uff01\uff1f,.;:\uff1a\u5427\u5417\u4e00\u4e0b])/i;
+const IMAGE_SKILL_OR_CHIP_RE =
+  /hero-card\.svg|\u751f\u56fe|\u751f\u6210\u56fe\u7247|\u751f\u6210\u4e3b\u56fe|\u751f\u6210\u5c01\u9762|3:4\s*\u7ad6\u7248\u5c01\u9762|\u767d\u5e95\u56fe|\u573a\u666f\u56fe|\u6d77\u62a5\u56fe|\u9996\u5c4f\u56fe\u5361/i;
 const AUDIO_INTENT_RE =
-  /\u914d\u97f3|\u53e3\u64ad\u97f3\u9891|\u8bed\u97f3\u5408\u6210|\u751f\u6210\u97f3\u9891|elevenlabs|fishaudio|tts|voiceover/i;
+  /\b(?:generate|create|synthesize|record|make)\s+(?:a\s+|an\s+)?(?:[\w-]+\s+){0,2}(?:voiceover|tts|audio|speech)\b|(?:\u751f\u6210|\u5408\u6210|\u5236\u4f5c|\u5f55\u5236|\u505a(?:\u4e00?\u6bb5|\u4e00?\u4e2a|\u51fa)?|\u5e2e\u6211|\u8bf7\u7ed9)[\u4e00-\u9fff0-9\s]{0,8}(?:\u914d\u97f3|\u53e3\u64ad\u97f3\u9891|\u8bed\u97f3\u5408\u6210|\u97f3\u9891|\u65c1\u767d)/i;
+const AUDIO_SKILL_OR_CHIP_RE =
+  /\u914d\u97f3|\u53e3\u64ad\u97f3\u9891|\u8bed\u97f3\u5408\u6210|\u751f\u6210\u97f3\u9891|\b(?:elevenlabs|fishaudio|tts|voiceover)\b/i;
 const VERTICAL_ASPECT_RE = /\bportrait\b|3:4|\u7ad6\u7248/i;
 
 type PromptIntentOptions = {
@@ -496,9 +504,10 @@ export function evaluatePromptModalityIntent(promptText: string, opts?: PromptIn
 
 function evaluatePromptModalityIntentUntagged(promptText: string, opts?: PromptIntentOptions): PromptIntentEvaluation {
   const raw = (promptText || "").trim();
-  const combined = `${raw} ${opts?.skillName || ""} ${opts?.categoryId || ""} ${opts?.chipId || ""}`;
+  const explicitMeta = `${opts?.skillName || ""} ${opts?.categoryId || ""} ${opts?.chipId || ""}`.trim();
+  const combined = explicitMeta ? `${raw} ${explicitMeta}` : raw;
 
-  if (VIDEO_INTENT_RE.test(combined)) {
+  if (VIDEO_INTENT_RE.test(combined) || (explicitMeta !== "" && VIDEO_SKILL_OR_CHIP_RE.test(explicitMeta))) {
     const hasLocalVideo = hasConfiguredVideoGenerationModel();
     return {
       kind: "video_gen",
@@ -508,12 +517,12 @@ function evaluatePromptModalityIntentUntagged(promptText: string, opts?: PromptI
       mediaModality: "video",
       defaultAspectRatio: "9:16",
       mediaRoutingDirective: hasLocalVideo
-        ? "[Modality Router: Video & Storyboard Generation]\n- Keep the session orchestrator on a tool-calling Vision chat model.\n- Invoke `hoxi_video` (checks the active model's native video capability first, then configured local video models) to render and save video to disk; fall back to `hoxi_tools` only if local rendering is unavailable."
-        : "[Modality Router: Video & Storyboard Generation]\n- Keep the session orchestrator on a tool-calling Vision chat model.\n- Structure shot lists and `.srt` captions in the workspace; invoke `hoxi_video` if a local video model is configured, otherwise invoke `hoxi_tools` video synthesis endpoints when external video rendering is requested.",
+        ? "[Modality Router: Video & Storyboard Generation]\n- Keep the session orchestrator on a tool-calling Vision chat model.\n- When the user is requesting video rendering (not merely auditing code or reviewing a report): Invoke `hoxi_video` (checks the active model's native video capability first, then configured local video models) to render and save video to disk; fall back to `hoxi_tools` only if local rendering is unavailable."
+        : "[Modality Router: Video & Storyboard Generation]\n- Keep the session orchestrator on a tool-calling Vision chat model.\n- When the user is requesting video creation, structure shot lists and `.srt` captions in the workspace; invoke `hoxi_video` if a local video model is configured, otherwise invoke `hoxi_tools` video synthesis endpoints when external video rendering is requested.",
     };
   }
 
-  if (VISUAL_REVIEW_INTENT_RE.test(combined)) {
+  if (VISUAL_REVIEW_INTENT_RE.test(combined) || (explicitMeta !== "" && VISUAL_REVIEW_SKILL_OR_CHIP_RE.test(explicitMeta))) {
     return {
       kind: "visual_review",
       requiresVisionBrain: true,
@@ -526,7 +535,7 @@ function evaluatePromptModalityIntentUntagged(promptText: string, opts?: PromptI
     };
   }
 
-  if (IMAGE_INTENT_RE.test(combined)) {
+  if (IMAGE_INTENT_RE.test(combined) || (explicitMeta !== "" && IMAGE_SKILL_OR_CHIP_RE.test(explicitMeta))) {
     const isVertical = VERTICAL_ASPECT_RE.test(combined);
     const ratio = isVertical ? "3:4" : "1:1";
     const hasLocalImage = hasConfiguredImageGenerationModel();
@@ -538,12 +547,12 @@ function evaluatePromptModalityIntentUntagged(promptText: string, opts?: PromptI
       mediaModality: "image",
       defaultAspectRatio: ratio,
       mediaRoutingDirective: hasLocalImage
-        ? "[Modality Router: Image & Visual Asset Generation]\n- Do NOT treat a text-only chat response as the final visual deliverable.\n- Invoke `hoxi_image` (checks the active model's native capability first, then configured local image models) to save the visual output to disk."
-        : "[Modality Router: Image & Visual Asset Generation]\n- Do NOT treat a text-only chat response as the final visual deliverable.\n- Invoke `hoxi_image` (or generate deterministic SVG assets in the workspace, or fall back to `hoxi_tools` when no local raster image model is configured) to save the visual output to disk.",
+        ? "[Modality Router: Image & Visual Asset Generation]\n- When the user is asking to create or edit a visual deliverable (not merely auditing code or reviewing a pasted report), do NOT stop at a text-only description — invoke `hoxi_image` (checks the active model's native capability first, then configured local image models) to save the visual output to disk."
+        : "[Modality Router: Image & Visual Asset Generation]\n- When the user is asking to create or edit a visual deliverable (not merely auditing code or reviewing a pasted report), do NOT stop at a text-only description — invoke `hoxi_image` (or generate deterministic SVG assets in the workspace, or fall back to `hoxi_tools` when no local raster image model is configured) to save the visual output to disk.",
     };
   }
 
-  if (AUDIO_INTENT_RE.test(combined)) {
+  if (AUDIO_INTENT_RE.test(combined) || (explicitMeta !== "" && AUDIO_SKILL_OR_CHIP_RE.test(explicitMeta))) {
     const hasLocalSpeech = hasConfiguredSpeechModel();
     return {
       kind: "audio_tts",
@@ -553,8 +562,8 @@ function evaluatePromptModalityIntentUntagged(promptText: string, opts?: PromptI
       mediaModality: "audio",
       defaultAspectRatio: "9:16",
       mediaRoutingDirective: hasLocalSpeech
-        ? "[Modality Router: Voiceover & Subtitle Alignment]\n- Generate time-aligned `.srt` subtitles in the workspace and invoke `hoxi_speech` (checks the active model's native audio capability first, then configured local TTS models) to save spoken audio to disk; fall back to `hoxi_tools` only if unavailable."
-        : "[Modality Router: Voiceover & Subtitle Alignment]\n- Generate time-aligned `.srt` subtitles in the workspace; invoke `hoxi_speech` if a local TTS model is configured, otherwise invoke `hoxi_tools` (`elevenlabs` / `fishaudio`) when audio synthesis is requested.",
+        ? "[Modality Router: Voiceover & Subtitle Alignment]\n- When the user is requesting spoken audio output (not merely auditing code or reviewing a report), generate time-aligned `.srt` subtitles in the workspace and invoke `hoxi_speech` (checks the active model's native audio capability first, then configured local TTS models) to save spoken audio to disk; fall back to `hoxi_tools` only if unavailable."
+        : "[Modality Router: Voiceover & Subtitle Alignment]\n- When the user is requesting spoken audio output, generate time-aligned `.srt` subtitles in the workspace; invoke `hoxi_speech` if a local TTS model is configured, otherwise invoke `hoxi_tools` (`elevenlabs` / `fishaudio`) when audio synthesis is requested.",
     };
   }
 

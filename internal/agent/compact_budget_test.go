@@ -510,3 +510,68 @@ func TestCompactBudgetUTF8NoDoubleCountAndHysteresisHeadroom(t *testing.T) {
 		t.Fatal("hysteresis pruning must remain strictly idempotent")
 	}
 }
+
+func TestPruneStaleGeneratedImagesHysteresisAndIsolation(t *testing.T) {
+	makeGenImgStep := func(id, filename, data string) []agent.Message {
+		return []agent.Message{
+			{
+				Role: agent.RoleAssistant,
+				Content: []agent.ContentBlock{{
+					Type:  agent.ContentToolUse,
+					ID:    id,
+					Name:  "hoxi_image",
+					Input: json.RawMessage(`{"prompt":"product photo"}`),
+				}},
+			},
+			{
+				Role: agent.RoleUser,
+				Content: []agent.ContentBlock{
+					{Type: agent.ContentToolResult, ToolUseID: id, Text: `{"path":"` + filename + `"}`},
+					{Type: agent.ContentMedia, MimeType: "image/png", Data: data, Filename: filename},
+				},
+			},
+		}
+	}
+
+	msgs := []agent.Message{{
+		Role: agent.RoleUser,
+		Content: []agent.ContentBlock{
+			{Type: agent.ContentText, Text: "reference image"},
+			{Type: agent.ContentMedia, MimeType: "image/png", Data: "USER_REF", Filename: "ref.png"},
+		},
+	}}
+	for i := 1; i <= 4; i++ {
+		msgs = append(msgs, makeGenImgStep(fmt.Sprintf("g%d", i), fmt.Sprintf("gen_%d.png", i), fmt.Sprintf("GEN_%d", i))...)
+	}
+	// Up to 4 generated images must remain byte-identical for KV-cache stability.
+	atFour := agent.PruneOldToolResults(msgs, "sys", 200000)
+	bOrig, _ := json.Marshal(msgs)
+	bFour, _ := json.Marshal(atFour)
+	if string(bOrig) != string(bFour) {
+		t.Fatal("expected <= 4 live generated images to stay untouched")
+	}
+
+	// 5th generated image triggers hysteresis down to latest 2 without touching user media.
+	msgs5 := append(append([]agent.Message(nil), msgs...), makeGenImgStep("g5", "gen_5.png", "GEN_5")...)
+	pruned5 := agent.PruneOldToolResults(msgs5, "sys", 200000)
+	var liveGen []string
+	var omittedGen int
+	var hasUserRef bool
+	for _, m := range pruned5 {
+		for _, b := range m.Content {
+			if b.Type == agent.ContentMedia {
+				if b.Data == "USER_REF" {
+					hasUserRef = true
+				} else {
+					liveGen = append(liveGen, b.Data)
+				}
+			}
+			if b.Type == agent.ContentText && strings.Contains(b.Text, "[omitted earlier generated image:") {
+				omittedGen++
+			}
+		}
+	}
+	if !hasUserRef || omittedGen != 3 || strings.Join(liveGen, ",") != "GEN_4,GEN_5" {
+		t.Fatalf("expected userRef=true omitted=3 live=[GEN_4,GEN_5], got userRef=%v omitted=%d live=%v", hasUserRef, omittedGen, liveGen)
+	}
+}

@@ -3,8 +3,9 @@ package runner
 import "strings"
 
 const (
-	turnDirectiveOpen  = "<hoxi_turn_directive>"
-	turnDirectiveClose = "</hoxi_turn_directive>"
+	turnDirectiveOpen      = "<hoxi_turn_directive>"
+	turnDirectiveClose     = "</hoxi_turn_directive>"
+	nativeModelTextMetaKey = "nativeModelText"
 )
 
 // splitTurnDirective removes per-turn <hoxi_turn_directive> sections (such as
@@ -46,6 +47,35 @@ func withTurnDirective(directive, prompt string) string {
 		return prompt
 	}
 	return turnDirectiveOpen + "\n" + directive + "\n" + turnDirectiveClose + "\n\n" + prompt
+}
+
+// attachNativeModelText stores the exact model-facing user text in hidden part
+// metadata whenever it differs from the concise user-visible text (for example
+// <hoxi_turn_directive>, inline skill instructions, slash-command expansion, or
+// attachment annotations). Canonical history replay prefers this field so later
+// turns stay byte-identical to the live turn and preserve upstream prompt caches.
+func attachNativeModelText(storedParts []MessagePart, modelText string) {
+	if strings.TrimSpace(modelText) == "" || len(storedParts) == 0 {
+		return
+	}
+	targetIdx := -1
+	for i := range storedParts {
+		if storedParts[i].Type == "text" {
+			targetIdx = i
+			break
+		}
+	}
+	if targetIdx >= 0 {
+		if storedParts[targetIdx].Text == modelText {
+			return
+		}
+	} else {
+		targetIdx = 0
+	}
+	if storedParts[targetIdx].Metadata == nil {
+		storedParts[targetIdx].Metadata = make(map[string]interface{})
+	}
+	storedParts[targetIdx].Metadata[nativeModelTextMetaKey] = modelText
 }
 
 func joinPromptSections(base, extra string) string {
