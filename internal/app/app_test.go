@@ -96,8 +96,8 @@ func TestDesktopAppLifecycleMethods(t *testing.T) {
 	dapp.killChild()
 	dapp.childStopped = false
 
-	// Start a dummy long-running sleep process and register via setChild
-	cmd := startChild(t, "sleep", "30")
+	// Start a long-running fixture process and register via setChild.
+	cmd := startChild(t, childFixtureLive)
 	dapp.setChild(cmd)
 	if dapp.child != cmd {
 		t.Fatal("expected dapp.child to be set")
@@ -111,7 +111,7 @@ func TestDesktopAppLifecycleMethods(t *testing.T) {
 	<-dapp.childDone
 
 	// Start another dummy process to verify shutdown cleans up both wsServer and child
-	cmd2 := startChild(t, "sleep", "30")
+	cmd2 := startChild(t, childFixtureLive)
 	dapp.childStopped = false
 	dapp.setChild(cmd2)
 

@@ -195,7 +195,8 @@ test("opencode.lock pins every platform while release workflows ship lean sideca
   assert.match(nsisProject, /File "\/oname=sqlite3\.exe"/);
   assert.match(nsisProject, /Delete "\$INSTDIR\\sqlite3\.exe"/);
   assert.match(nsisProject, /!insertmacro wails\.webview2runtime/);
-  assert.match(nsisProject, /!insertmacro wails\.associateCustomProtocols/);
+  assert.match(nsisProject, /WriteRegStr SHCTX "Software\\Classes\\hoxi" "URL Protocol" ""/);
+  assert.match(nsisProject, /DeleteRegKey SHCTX "Software\\Classes\\hoxi"/);
   for (const bmp of ["banner.bmp", "header.bmp", "wizard.bmp"]) {
     const bmpPath = path.join(scripts, "../build/windows/installer", bmp);
     assert.equal(fs.existsSync(bmpPath), true, `Missing Windows installer asset: ${bmp}`);
@@ -1156,6 +1157,9 @@ test("Windows NSIS installer uses valid ASCII ${U+XXXX} escapes and compiles wit
   // Keep project.nsi pure ASCII so Windows makensis under CP1252 cannot corrupt strings.
   assert.match(src, /^[\x00-\x7F]*$/, "project.nsi must remain pure ASCII");
   assert.doesNotMatch(src, /\$\\\{U\+/, "project.nsi must not backslash-escape NSIS ${U+XXXX} codepoints");
+  assert.ok(src.includes('WriteRegStr SHCTX "Software\\Classes\\hoxi\\shell\\open\\command" "" \'"$INSTDIR\\${PRODUCT_EXECUTABLE}" "%1"\''),
+    "hoxi:// must register the executable and URI as separate quoted arguments");
+  assert.doesNotMatch(src, /!insertmacro wails\.associateCustomProtocols/);
 
   const decodeNsisUnicode = (raw) => raw.replace(/\$\{U\+([0-9A-Fa-f]{4,6})\}/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)));
   const langStrings = new Map();
@@ -1214,10 +1218,8 @@ test("Windows NSIS installer uses valid ASCII ${U+XXXX} escapes and compiles wit
         "!macro wails.webview2runtime", "!macroend",
         "!macro wails.files", "!macroend",
         "!macro wails.associateFiles", "!macroend",
-        "!macro wails.associateCustomProtocols", "!macroend",
         "!macro wails.writeUninstaller", 'WriteUninstaller "$INSTDIR\\uninstall.exe"', "!macroend",
         "!macro wails.unassociateFiles", "!macroend",
-        "!macro wails.unassociateCustomProtocols", "!macroend",
         "!macro wails.deleteUninstaller", "!macroend",
       ].join("\n") + "\n",
     );
@@ -1231,6 +1233,7 @@ test("Windows NSIS installer uses valid ASCII ${U+XXXX} escapes and compiles wit
     assert.doesNotMatch(compile.stdout + compile.stderr, /warning 6000/i);
 
     const exeBytes = fs.readFileSync(path.join(dir, "build/bin/Hoxi-amd64-installer.exe"));
+    assert.ok(exeBytes.includes(Buffer.from('\\Hoxi.exe" "%1"', "utf16le")), "compiled registry command lost its quotes");
     for (const expected of ["极速、轻量的原生 AI 工程指挥中心", "立即安装", "自定义选项 ▾", "Custom Options ▾", "立即体验"]) {
       assert.ok(
         exeBytes.includes(Buffer.from(expected, "utf16le")),

@@ -305,6 +305,11 @@ try {
   }
   }
 
+  # Sign any bundled sidecar before either NSIS or the portable ZIP consumes it.
+  if ($env:HOXI_WINDOWS_SIGN_THUMBPRINT -and (Test-Path "build/windows/installer/tmp/opencode.exe")) {
+    & "$PSScriptRoot/sign-windows.ps1" "build/windows/installer/tmp/opencode.exe"
+  }
+
   # Ensure NSIS (makensis) is on PATH when building the installer
   $WailsArgs = @(
     "build", "-platform", $Platform, "-s", "-m", "-nosyncgomod",
@@ -363,6 +368,9 @@ try {
       throw "Expected NSIS installer at $RawInstaller was not generated"
     }
     Move-Item -Path $RawInstaller -Destination $SetupPath -Force
+    if ($env:HOXI_WINDOWS_SIGN_THUMBPRINT) {
+      & "$PSScriptRoot/sign-windows.ps1" $SetupPath
+    }
     $SetupSha = (Get-FileHash -Path $SetupPath -Algorithm SHA256).Hash.ToLowerInvariant()
     Set-Content -Path "$SetupPath.sha256" -Value "$SetupSha  Hoxi-$Version-windows-$Arch-setup.exe`n" -NoNewline
     Write-Host "==> Built Windows Setup Installer: $SetupPath" -ForegroundColor Green

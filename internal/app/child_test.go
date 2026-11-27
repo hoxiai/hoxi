@@ -1,18 +1,52 @@
 package app
 
 import (
+	"os"
 	"os/exec"
 	"testing"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/opencode"
 	"github.com/hoxiai/hoxi/internal/statusbar"
+	"github.com/hoxiai/hoxi/internal/subproc"
 )
 
-// startChild starts a stand-in for a supervised daemon.
-func startChild(t *testing.T, name string, args ...string) *opencode.Daemon {
+const (
+	childFixtureLive    = "live"
+	childFixtureSuccess = "success"
+	childFixtureCrash   = "crash"
+)
+
+func appTestExecutable(t *testing.T) string {
 	t.Helper()
-	cmd := exec.Command(name, args...)
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return exe
+}
+
+func appChildFixtureCommand(exe, mode string) *exec.Cmd {
+	return subproc.Command(exe, "hoxi-test-child", mode)
+}
+
+func runAppChildFixture(mode string) int {
+	switch mode {
+	case childFixtureLive:
+		time.Sleep(30 * time.Second)
+	case childFixtureCrash:
+		return 1
+	case childFixtureSuccess:
+	default:
+		return 2
+	}
+	return 0
+}
+
+// startChild starts a stand-in for a supervised daemon.
+func startChild(t *testing.T, mode string) *opencode.Daemon {
+	t.Helper()
+	cmd := appChildFixtureCommand(appTestExecutable(t), mode)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -21,7 +55,7 @@ func startChild(t *testing.T, name string, args ...string) *opencode.Daemon {
 
 func TestChildReapedOnExitAndAfterShutdown(t *testing.T) {
 	a := &DesktopApp{}
-	child := startChild(t, "sh", "-c", "exit 0")
+	child := startChild(t, childFixtureSuccess)
 	a.setChild(child)
 	select {
 	case <-a.childDone:
@@ -32,7 +66,7 @@ func TestChildReapedOnExitAndAfterShutdown(t *testing.T) {
 		t.Fatal("exited child was not reaped promptly")
 	}
 	a.killChild()
-	late := startChild(t, "sleep", "30")
+	late := startChild(t, childFixtureLive)
 	a.setChild(late)
 	if late.ProcessState == nil {
 		t.Fatal("late child was not reaped after shutdown")
@@ -47,7 +81,7 @@ func TestChildAvailabilityFollowsLifecycle(t *testing.T) {
 	a := &DesktopApp{status: tracker}
 	defer a.killChild()
 	for i := 0; i < 20; i++ {
-		child := startChild(t, "sh", "-c", "exit 0")
+		child := startChild(t, childFixtureSuccess)
 		a.setChild(child)
 		select {
 		case <-a.childDone:
@@ -58,7 +92,7 @@ func TestChildAvailabilityFollowsLifecycle(t *testing.T) {
 			t.Fatal("exited child left service available")
 		}
 	}
-	live := startChild(t, "sleep", "30")
+	live := startChild(t, childFixtureLive)
 	a.setChild(live)
 	if !tracker.Snapshot().Available {
 		t.Fatal("running child did not mark service available")
@@ -67,7 +101,7 @@ func TestChildAvailabilityFollowsLifecycle(t *testing.T) {
 	if tracker.Snapshot().Available {
 		t.Fatal("shutdown left service available")
 	}
-	late := startChild(t, "sleep", "30")
+	late := startChild(t, childFixtureLive)
 	a.setChild(late)
 	if tracker.Snapshot().Available {
 		t.Fatal("late startup restored availability after shutdown")
@@ -79,8 +113,9 @@ func TestUnexpectedExitRespawnsDaemon(t *testing.T) {
 	a := &DesktopApp{status: tracker}
 	defer a.killChild()
 	restarted := make(chan *opencode.Daemon, 1)
+	exe := appTestExecutable(t)
 	a.respawn = &respawner{start: func() (*opencode.Daemon, error) {
-		cmd := exec.Command("sleep", "30")
+		cmd := appChildFixtureCommand(exe, childFixtureLive)
 		if err := cmd.Start(); err != nil {
 			return nil, err
 		}
@@ -88,7 +123,7 @@ func TestUnexpectedExitRespawnsDaemon(t *testing.T) {
 		restarted <- child
 		return child, nil
 	}}
-	crash := startChild(t, "sh", "-c", "exit 1")
+	crash := startChild(t, childFixtureCrash)
 	a.setChild(crash)
 	var next *opencode.Daemon
 	select {
@@ -121,7 +156,7 @@ func TestShutdownDoesNotRespawnDaemon(t *testing.T) {
 		called <- struct{}{}
 		return nil, nil
 	}}
-	child := startChild(t, "sleep", "30")
+	child := startChild(t, childFixtureLive)
 	a.setChild(child)
 	a.killChild()
 	select {

@@ -20,11 +20,11 @@ func TestSetChildStopsPreviousDaemon(t *testing.T) {
 		respawned <- struct{}{}
 		return nil, context.Canceled
 	}}
-	first := startChild(t, "sleep", "30")
+	first := startChild(t, childFixtureLive)
 	a.setChild(first)
 	firstDone := a.childDone
 
-	second := startChild(t, "sleep", "30")
+	second := startChild(t, childFixtureLive)
 	a.setChild(second)
 	select {
 	case <-firstDone:
@@ -52,7 +52,7 @@ func TestSetChildStopsPreviousDaemon(t *testing.T) {
 func TestBootstrapSkipsWhenDaemonRunningAndHoldsEngineMutex(t *testing.T) {
 	a := &DesktopApp{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	defer a.killChild()
-	live := startChild(t, "sleep", "30")
+	live := startChild(t, childFixtureLive)
 	a.setChild(live)
 
 	a.engineMu.Lock()

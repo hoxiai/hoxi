@@ -71,6 +71,14 @@ jobs:
       - name: Build frontend production bundle
         run: npm --prefix web run build
 
+      - name: Share production assets with Windows desktop builds
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-production
+          path: web/dist/
+          if-no-files-found: error
+          retention-days: 1
+
   backend-linux:
     name: "Go Backend: Linux Build & Fast Tests"
     runs-on: ubuntu-latest
@@ -114,8 +122,19 @@ jobs:
           GOOS=windows GOARCH=amd64 go build -v . ./cmd/hoxi
 
   windows-native:
-    name: "Windows Native: Go Build & Core Tests"
-    runs-on: windows-latest
+    name: "Windows Native (${{ matrix.arch }}): Desktop Build & Core Tests"
+    needs: frontend-build
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            arch: amd64
+            go-architecture: x64
+          - runner: windows-11-arm
+            arch: arm64
+            go-architecture: arm64
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -124,20 +143,28 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          architecture: ${{ matrix.go-architecture }}
           cache: true
 
-      - name: Prepare embedded asset placeholder
-        shell: bash
-        run: mkdir -p web/dist && touch web/dist/placeholder
+      - name: Use production frontend assets
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-production
+          path: web/dist/
+
+      - name: Confirm native architecture
+        run: |
+          if ((go env GOHOSTARCH).Trim() -ne '${{ matrix.arch }}') { throw 'Unexpected Go host architecture' }
+          if (!(Test-Path 'web/dist/index.html')) { throw 'Production frontend missing' }
 
       - name: Run Windows Go vet
         run: go vet ./...
 
       - name: Run Windows core unit tests
-        run: go test -v ./internal/agentcli ./internal/attachment ./internal/cloudflared ./internal/computer ./internal/diagnostics ./internal/hoxipaths ./internal/notify ./internal/osopen ./internal/pairing ./internal/reclaim ./internal/runner ./internal/sandbox ./internal/statusbar ./internal/subproc ./internal/updater ./internal/worktree
+        run: go test -v -tags desktop,production -timeout 10m ./internal/agentcli ./internal/app ./internal/attachment ./internal/cloudflared ./internal/computer ./internal/diagnostics ./internal/gateway ./internal/hoxipaths ./internal/notify ./internal/osopen ./internal/pairing ./internal/reclaim ./internal/runner ./internal/sandbox ./internal/statusbar ./internal/subproc ./internal/termhost ./internal/updater ./internal/worktree
 
       - name: Build Windows desktop and CLI entrypoints
-        run: go build -v . ./cmd/hoxi
+        run: go build -v -tags desktop,production . ./cmd/hoxi
 
   macos-native:
     name: "macOS Native: Darwin CGo & Desktop Host"

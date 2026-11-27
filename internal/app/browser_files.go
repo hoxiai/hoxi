@@ -18,9 +18,8 @@ func (a *DesktopApp) configureBrowserFiles(gw *gateway.Gateway) {
 		if ctx == nil {
 			return "", errors.New("desktop window context not ready")
 		}
-		home, _ := os.UserHomeDir()
 		return wailsruntime.SaveFileDialog(ctx, wailsruntime.SaveDialogOptions{
-			Title: title, DefaultFilename: name, DefaultDirectory: filepath.Join(home, "Downloads"),
+			Title: title, DefaultFilename: name, DefaultDirectory: defaultDownloadDirectory(),
 		})
 	}, func(path string, reveal bool) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -35,9 +34,7 @@ func (a *DesktopApp) configureBrowserFiles(gw *gateway.Gateway) {
 		}
 		defaultDir := opts.DefaultDirectory
 		if defaultDir == "" {
-			if home, err := os.UserHomeDir(); err == nil && home != "" {
-				defaultDir = filepath.Join(home, "Downloads")
-			}
+			defaultDir = defaultDownloadDirectory()
 		}
 		saveOpts := wailsruntime.SaveDialogOptions{
 			Title:                opts.Title,
@@ -57,4 +54,14 @@ func (a *DesktopApp) configureBrowserFiles(gw *gateway.Gateway) {
 		}
 		return wailsruntime.SaveFileDialog(ctx, saveOpts)
 	})
+}
+
+func defaultDownloadDirectory() string {
+	if dir := platformDownloadDirectory(); dir != "" {
+		return dir
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, "Downloads")
+	}
+	return ""
 }

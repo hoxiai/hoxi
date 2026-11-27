@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,7 +21,14 @@ import (
 
 func TestNativeHostOfflineRoutesAndSkillTool(t *testing.T) {
 	t.Setenv("HOXI_HOME", t.TempDir())
-	wsDir := t.TempDir()
+	baseDir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wsDir := filepath.Join(baseDir, "workspace with spaces")
+	if err := os.Mkdir(wsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(wsDir, "hello_native.go"), []byte("package main\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -62,29 +70,31 @@ func TestNativeHostOfflineRoutesAndSkillTool(t *testing.T) {
 		return rec.Body.Bytes()
 	}
 
-	if raw := checkGET("/agent?directory=" + wsDir); !strings.Contains(string(raw), `"build"`) || !strings.Contains(string(raw), `"explore"`) || !strings.Contains(string(raw), `"qa-bot"`) {
+	dirQuery := "?" + url.Values{"directory": {wsDir}}.Encode()
+	if raw := checkGET("/agent" + dirQuery); !strings.Contains(string(raw), `"build"`) || !strings.Contains(string(raw), `"explore"`) || !strings.Contains(string(raw), `"qa-bot"`) {
 		t.Fatalf("unexpected /agent payload: %s", string(raw))
 	}
-	if raw := checkGET("/command?directory=" + wsDir); !strings.Contains(string(raw), `"compact"`) || !strings.Contains(string(raw), `"review"`) || !strings.Contains(string(raw), `"ship-check"`) {
+	if raw := checkGET("/command" + dirQuery); !strings.Contains(string(raw), `"compact"`) || !strings.Contains(string(raw), `"review"`) || !strings.Contains(string(raw), `"ship-check"`) {
 		t.Fatalf("unexpected /command payload: %s", string(raw))
 	}
 	if raw := checkGET("/lsp"); strings.TrimSpace(string(raw)) != "[]" {
 		t.Fatalf("unexpected /lsp payload: %s", string(raw))
 	}
-	if raw := checkGET("/project/current"); !strings.Contains(string(raw), wsDir) {
-		t.Fatalf("unexpected /project/current payload: %s", string(raw))
+	type projectResult struct {
+		Worktree string `json:"worktree"`
 	}
-	if raw := checkGET("/api/hoxi/projects"); !strings.Contains(string(raw), wsDir) {
-		t.Fatalf("unexpected /api/hoxi/projects payload: %s", string(raw))
+	for _, path := range []string{"/project/current", "/api/hoxi/projects/current", "/path"} {
+		var got projectResult
+		if raw := checkGET(path); json.Unmarshal(raw, &got) != nil || got.Worktree != wsDir {
+			t.Fatalf("unexpected %s payload: %s", path, raw)
+		}
 	}
-	if raw := checkGET("/api/hoxi/projects/current"); !strings.Contains(string(raw), wsDir) {
-		t.Fatalf("unexpected /api/hoxi/projects/current payload: %s", string(raw))
+	var projects []projectResult
+	if raw := checkGET("/api/hoxi/projects"); json.Unmarshal(raw, &projects) != nil || len(projects) != 1 || projects[0].Worktree != wsDir {
+		t.Fatalf("unexpected /api/hoxi/projects payload: %s", raw)
 	}
 	if raw := checkGET("/find/file?query=hello_native"); !strings.Contains(string(raw), "hello_native.go") {
 		t.Fatalf("unexpected /find/file payload: %s", string(raw))
-	}
-	if raw := checkGET("/path"); !strings.Contains(string(raw), wsDir) {
-		t.Fatalf("unexpected /path payload: %s", string(raw))
 	}
 	if raw := checkGET("/provider"); !strings.Contains(string(raw), `"all"`) {
 		t.Fatalf("unexpected /provider payload: %s", string(raw))
@@ -110,7 +120,7 @@ func TestNativeHostOfflineRoutesAndSkillTool(t *testing.T) {
 
 	// Workspace skill catalog without sessionID must default to runtime="native" when OpenCode is absent,
 	// so its skl_* key matches a newly created native session.
-	rawSkillList := checkGET("/api/hoxi/skills/list?directory=" + wsDir)
+	rawSkillList := checkGET("/api/hoxi/skills/list" + dirQuery)
 	var listResp struct {
 		Runtime string `json:"runtime"`
 		Skills  []struct {
@@ -138,7 +148,8 @@ func TestNativeHostOfflineRoutesAndSkillTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create native conversation: %v", err)
 	}
-	rawSkillDetail := checkGET("/api/hoxi/skills/detail?directory=" + wsDir + "&sessionID=" + natSess.ID + "&key=" + demoKey)
+	skillQuery := url.Values{"directory": {wsDir}, "sessionID": {natSess.ID}, "key": {demoKey}}
+	rawSkillDetail := checkGET("/api/hoxi/skills/detail?" + skillQuery.Encode())
 	if !strings.Contains(string(rawSkillDetail), "Always run unit tests.") {
 		t.Fatalf("expected workspace skill key %s to resolve under native session %s: %s", demoKey, natSess.ID, string(rawSkillDetail))
 	}
@@ -152,13 +163,13 @@ func TestNativeHostOfflineRoutesAndSkillTool(t *testing.T) {
 	if raw := checkGET("/pty"); strings.TrimSpace(string(raw)) != "[]" {
 		t.Fatalf("expected out-of-the-box native /pty list [], got: %s", string(raw))
 	}
-	if raw := checkGET("/api/hoxi/agents?directory=" + wsDir); !strings.Contains(string(raw), `"build"`) {
+	if raw := checkGET("/api/hoxi/agents" + dirQuery); !strings.Contains(string(raw), `"build"`) {
 		t.Fatalf("expected out-of-the-box /api/hoxi/agents, got: %s", string(raw))
 	}
-	if raw := checkGET("/api/hoxi/commands?directory=" + wsDir); !strings.Contains(string(raw), `"plan"`) {
+	if raw := checkGET("/api/hoxi/commands" + dirQuery); !strings.Contains(string(raw), `"plan"`) {
 		t.Fatalf("expected out-of-the-box /api/hoxi/commands, got: %s", string(raw))
 	}
-	if raw := checkGET("/api/hoxi/lsp?directory=" + wsDir); !json.Valid(raw) {
+	if raw := checkGET("/api/hoxi/lsp" + dirQuery); !json.Valid(raw) {
 		t.Fatalf("expected valid JSON from /api/hoxi/lsp, got: %s", string(raw))
 	}
 	if raw := checkGET("/api/hoxi/provider/catalog"); !strings.Contains(string(raw), `"all"`) {

@@ -213,6 +213,9 @@ if ($SetupAsset -and -not $Portable) {
       Set-ItemProperty -Path $ProtoKey -Name "URL Protocol" -Value ""
       Set-ItemProperty -Path "$ProtoKey\DefaultIcon" -Name "(Default)" -Value "`"$ExePath`",0"
       Set-ItemProperty -Path "$ProtoKey\shell\open\command" -Name "(Default)" -Value "`"$ExePath`" `"%1`""
+      $ToastAppId = "HKCU:\Software\Classes\AppUserModelId\Hoxi"
+      New-Item -Path $ToastAppId -Force | Out-Null
+      Set-ItemProperty -Path $ToastAppId -Name "DisplayName" -Value "Hoxi"
     }
   } finally {
     Remove-Item -Recurse -Force $Downloaded.TempDir -ErrorAction SilentlyContinue

@@ -12,6 +12,9 @@
   "assetdir": "web/dist",
   "build:dir": "build",
   "build:tags": "desktop",
+  "postBuildHooks": {
+    "windows/*": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ../../scripts/sign-windows.ps1 ${bin}"
+  },
   "author": {
     "name": "Hoxi",
     "email": "support@hoxi.ai"

@@ -40,6 +40,47 @@ sidecars by default, and packages both the NSIS installer
 (`Hoxi-<version>-windows-<arch>-setup.exe`) and the portable self-update archive
 (`Hoxi-<version>-windows-<arch>.zip`) along with SHA-256 checksums.
 
+To produce Windows candidates eligible for in-app updates, provision the
+Windows code-signing key through the release signer, configure `signtool.exe`
+on PATH and set `HOXI_WINDOWS_SIGN_THUMBPRINT` to its certificate thumbprint
+in the current user's certificate store. The Wails Windows post-build hook
+signs `Hoxi.exe` **before** NSIS embeds it. The build script signs a bundled
+sidecar, if present, and the final setup executable before checksums are made.
+An unset thumbprint produces unsigned development artifacts; do not publish
+them as update candidates. Existing unsigned installations (and changes of
+signing key) must bootstrap via a manually installed signed release.
+
+### Windows interactive acceptance
+
+Use clean Windows 11 x64 and ARM64 desktops and the real signed candidates.
+CI builds with the production frontend and runs native Go tests on both
+architectures, but does not prove the interactive desktop path.
+
+- Install with NSIS; validate the signer on both the installer and the
+  installed executable. Run the prior signed build, update in app, and check
+  that the new process has the expected version and restores task state.
+  Verify unsigned and different-key packages are rejected before launch, and
+  exercise a locked executable and a locked optional sidecar separately.
+- Background a workspace with a pending approval or task completion. Click
+  the notification from the banner and from Notification Center; it should
+  focus the correct session without approving anything. Include an NSIS
+  install path with spaces, then repeat with the app closed and a saved
+  session. A portable copy without its own registered
+  `hoxi://` handler must not send a session link to another installation.
+- On an unlocked desktop, run the WebView2 download probe, complete the
+  dialogs as directed by the test, and check cancellation and same-name
+  behavior. Confirm the separate native Save As flow uses the Windows
+  Downloads known folder, including when that folder is redirected.
+  ```powershell
+  $env:HOXI_WINDOWS_INTERACTIVE_TEST = '1'
+  go test -tags desktop,production ./internal/app -run '^TestWindowsWebView2DownloadsInteractive$' -v -timeout 5m
+  go test ./internal/computer -run '^TestWindowsInteractiveWindowInspection$' -v -timeout 2m
+  ```
+- Exercise non-elevated input and capture across mixed-DPI monitors, saving
+  and terminal output under non-ASCII paths, and the native Agent with and
+  without Git Bash installed. The interactive computer probe does not cover
+  real Windows applications or mixed-DPI input by itself.
+
 ## Public distribution
 
 Configure the Developer ID signing identity (`HOXI_SIGN_IDENTITY`), a Keychain

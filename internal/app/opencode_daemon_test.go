@@ -24,6 +24,9 @@ const fakeEnginePassword = "fake-engine-password"
 // symlinking it gives EnsureEngine a real process to start without touching
 // ~/.hoxi or the network.
 func TestMain(m *testing.M) {
+	if len(os.Args) == 3 && os.Args[1] == "hoxi-test-child" {
+		os.Exit(runAppChildFixture(os.Args[2]))
+	}
 	if len(os.Args) > 1 && os.Args[1] == "serve" {
 		os.Exit(runFakeOpenCodeDaemon(os.Args[2:]))
 	}

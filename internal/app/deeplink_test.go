@@ -110,14 +110,15 @@ func TestOnURLOpenOnlyRevealsWindowForValidDeepLink(t *testing.T) {
 }
 
 func TestHandleStatusBarMenuActionQueuesDesktopIntents(t *testing.T) {
-	t.Setenv("HOXI_KEEP_AWAKE_CONFIG", t.TempDir()+"/keep-awake.json")
+	t.Setenv("HOXI_KEEP_AWAKE_CONFIG", filepath.Join(t.TempDir(), "keep-awake.json"))
+	deployDir, releaseDir := t.TempDir(), t.TempDir()
 	tracker := statusbar.NewTracker()
 	tracker.SetSessionResolver(func(sessionID string) (string, string, string) {
 		switch sessionID {
 		case "ses_pending":
-			return "ses_pending", "Approve deploy", "/repo/deploy"
+			return "ses_pending", "Approve deploy", deployDir
 		case "ses_running":
-			return "ses_running", "Build release", "/repo/release"
+			return "ses_running", "Build release", releaseDir
 		default:
 			return sessionID, "", ""
 		}
@@ -139,14 +140,14 @@ func TestHandleStatusBarMenuActionQueuesDesktopIntents(t *testing.T) {
 		t.Fatal("expected attention menu action to reveal window")
 	}
 	intent, ok := gw.ConsumeDesktopIntent()
-	if !ok || intent.Action != gateway.DesktopIntentActionAttention || intent.SessionID != "ses_pending" || intent.Directory != "/repo/deploy" {
+	if !ok || intent.Action != gateway.DesktopIntentActionAttention || intent.SessionID != "ses_pending" || intent.Directory != deployDir {
 		t.Fatalf("unexpected attention intent: %+v (ok=%v)", intent, ok)
 	}
 
 	// 2. Running menu click with explicit session resolves target directory
 	app.handleStatusBarMenuAction(statusbar.MenuAction{Kind: statusbar.MenuActionRunning, SessionID: "ses_running"})
 	intent, ok = gw.ConsumeDesktopIntent()
-	if !ok || intent.Action != gateway.DesktopIntentActionRunning || intent.SessionID != "ses_running" || intent.Directory != "/repo/release" {
+	if !ok || intent.Action != gateway.DesktopIntentActionRunning || intent.SessionID != "ses_running" || intent.Directory != releaseDir {
 		t.Fatalf("unexpected running intent: %+v (ok=%v)", intent, ok)
 	}
 

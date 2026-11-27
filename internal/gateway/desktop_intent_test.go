@@ -3,6 +3,7 @@ package gateway
 import (
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -26,14 +27,15 @@ func consumeIntentInTest(t *testing.T, gw *Gateway) (DesktopIntent, bool) {
 }
 
 func TestDesktopIntentRoundTrip(t *testing.T) {
-	gw := New(0, "test", t.TempDir(), nil, nil)
+	dir := t.TempDir()
+	gw := New(0, "test", dir, nil, nil)
 	notified := 0
 	gw.SetDesktopIntentNotifier(func() { notified++ })
 
 	gw.QueueDesktopIntent(DesktopIntent{
 		SessionID: " ses_abc ",
 		MessageID: " msg_a_1 ",
-		Directory: "  /repo/project/  ",
+		Directory: "  " + dir + string(filepath.Separator) + "  ",
 	})
 	if notified != 1 {
 		t.Fatalf("notifier calls = %d, want 1", notified)
@@ -43,7 +45,7 @@ func TestDesktopIntentRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatal("expected a pending intent")
 	}
-	if intent.SessionID != "ses_abc" || intent.MessageID != "msg_a_1" || intent.Directory != "/repo/project" {
+	if intent.SessionID != "ses_abc" || intent.MessageID != "msg_a_1" || intent.Directory != dir {
 		t.Fatalf("unexpected intent: %+v", intent)
 	}
 
@@ -53,7 +55,8 @@ func TestDesktopIntentRoundTrip(t *testing.T) {
 }
 
 func TestDesktopIntentIgnoresEmptyOrInvalidInputs(t *testing.T) {
-	gw := New(0, "test", t.TempDir(), nil, nil)
+	dir := t.TempDir()
+	gw := New(0, "test", dir, nil, nil)
 	notified := 0
 	gw.SetDesktopIntentNotifier(func() { notified++ })
 
@@ -69,8 +72,8 @@ func TestDesktopIntentIgnoresEmptyOrInvalidInputs(t *testing.T) {
 		{SessionID: "ses_valid", MessageID: "msg_bad.dot"},
 		{SessionID: "ses_valid", MessageID: "msg_" + strings.Repeat("a", 96)},
 		{SessionID: "ses_valid", Directory: "relative/path"},
-		{SessionID: "ses_valid", Directory: "/repo/with\nnewline"},
-		{SessionID: "ses_valid", Directory: "/repo/with\x00null"},
+		{SessionID: "ses_valid", Directory: filepath.Join(dir, "with\nnewline")},
+		{SessionID: "ses_valid", Directory: filepath.Join(dir, "with\x00null")},
 		{Action: "unknown-action"},
 		{Action: "unknown-action", SessionID: "ses_valid"},
 	}
@@ -105,11 +108,12 @@ func TestDesktopIntentActionWithoutSession(t *testing.T) {
 }
 
 func TestDesktopFocusQueuesIntent(t *testing.T) {
-	gw := New(0, "test", t.TempDir(), nil, nil)
+	dir := t.TempDir()
+	gw := New(0, "test", dir, nil, nil)
 	focused := 0
 	gw.SetDesktopFocusHandler(func(directory, sessionID string) { focused++ })
 
-	res := serve(gw, http.MethodPost, "/api/hoxi/desktop/focus", `{"directory":"/repo","sessionID":"ses_1"}`)
+	res := serve(gw, http.MethodPost, "/api/hoxi/desktop/focus", `{"directory":`+jsonString(dir)+`,"sessionID":"ses_1"}`)
 	if res.Code != http.StatusOK {
 		t.Fatalf("focus status = %d, want 200", res.Code)
 	}
@@ -117,7 +121,7 @@ func TestDesktopFocusQueuesIntent(t *testing.T) {
 		t.Fatalf("focus handler calls = %d, want 1", focused)
 	}
 	intent, ok := gw.ConsumeDesktopIntent()
-	if !ok || intent.SessionID != "ses_1" || intent.Directory != "/repo" {
+	if !ok || intent.SessionID != "ses_1" || intent.Directory != dir {
 		t.Fatalf("unexpected intent: %+v (ok=%v)", intent, ok)
 	}
 }

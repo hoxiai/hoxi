@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/subproc"
+	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 )
 
 const windowsToastScript = `
@@ -18,11 +20,8 @@ $body  = [string]$env:HOXI_NOTIFY_BODY
 try {
   [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
   [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
-  $template = [Windows.UI.Notifications.ToastTemplateType]::ToastText02
-  $xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent($template)
-  $nodes = $xml.GetElementsByTagName('text')
-  if ($nodes.Count -ge 1) { [void]$nodes.Item(0).AppendChild($xml.CreateTextNode($title)) }
-  if ($nodes.Count -ge 2) { [void]$nodes.Item(1).AppendChild($xml.CreateTextNode($body)) }
+  $xml = [Windows.Data.Xml.Dom.XmlDocument]::new()
+  $xml.LoadXml($env:HOXI_NOTIFY_XML)
   $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
   $notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Hoxi')
   $notifier.Show($toast)
@@ -56,6 +55,35 @@ func platformRequestPermission() PermissionStatus {
 	return platformStatus()
 }
 
+// A session link must not send a portable build's session to a differently
+// installed Hoxi (or launch an unrelated stale protocol handler).
+func windowsToastCanOpenSession() bool {
+	key, err := registry.OpenKey(registry.CLASSES_ROOT, `hoxi\shell\open\command`, registry.QUERY_VALUE)
+	if err != nil {
+		return false
+	}
+	defer key.Close()
+	command, _, err := key.GetStringValue("")
+	if err != nil {
+		return false
+	}
+	exe, err := os.Executable()
+	return err == nil && windowsToastProtocolTargetsExecutable(command, exe)
+}
+
+func windowsToastProtocolTargetsExecutable(command, exe string) bool {
+	args, err := windows.DecomposeCommandLine(command)
+	if err != nil || len(args) != 2 || args[1] != "%1" {
+		return false
+	}
+	self, err := os.Stat(exe)
+	if err != nil {
+		return false
+	}
+	handler, err := os.Stat(args[0])
+	return err == nil && os.SameFile(self, handler)
+}
+
 func platformShow(req Request) error {
 	psBin, err := exec.LookPath("powershell.exe")
 	if err != nil {
@@ -64,12 +92,17 @@ func platformShow(req Request) error {
 			return ErrUnavailable
 		}
 	}
+	payload, err := windowsToastXML(req, windowsToastCanOpenSession())
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
 	cmd := subproc.CommandContext(ctx, psBin, "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", windowsToastScript)
 	cmd.Env = append(os.Environ(),
 		"HOXI_NOTIFY_TITLE="+req.Title,
 		"HOXI_NOTIFY_BODY="+req.Body,
+		"HOXI_NOTIFY_XML="+payload,
 	)
 	if err := cmd.Run(); err != nil {
 		return ErrUnavailable

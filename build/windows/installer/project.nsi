@@ -469,7 +469,12 @@ Section
     ${EndIf}
 
     !insertmacro wails.associateFiles
-    !insertmacro wails.associateCustomProtocols
+    # Wails v2's protocol macro quotes %1 but not the executable path.
+    WriteRegStr SHCTX "Software\Classes\hoxi" "" "URL:Hoxi Protocol"
+    WriteRegStr SHCTX "Software\Classes\hoxi" "URL Protocol" ""
+    WriteRegStr SHCTX "Software\Classes\hoxi\DefaultIcon" "" '"$INSTDIR\${PRODUCT_EXECUTABLE}",0'
+    WriteRegStr SHCTX "Software\Classes\hoxi\shell\open\command" "" '"$INSTDIR\${PRODUCT_EXECUTABLE}" "%1"'
+    WriteRegStr SHCTX "Software\Classes\AppUserModelId\Hoxi" "DisplayName" "${INFO_PRODUCTNAME}"
 
     !insertmacro wails.writeUninstaller
 SectionEnd
@@ -488,7 +493,8 @@ Section "uninstall"
     Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"
 
     !insertmacro wails.unassociateFiles
-    !insertmacro wails.unassociateCustomProtocols
+    DeleteRegKey SHCTX "Software\Classes\hoxi"
+    DeleteRegKey SHCTX "Software\Classes\AppUserModelId\Hoxi"
 
     !insertmacro wails.deleteUninstaller
 SectionEnd

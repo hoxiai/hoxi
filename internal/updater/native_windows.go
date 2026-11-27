@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -100,6 +99,9 @@ func StartNative(canInstall func(force bool) bool, release func()) error {
 	if real, err := filepath.EvalSymlinks(exe); err == nil && real != "" {
 		exe = real
 	}
+	if !windowsExecutableHasEmbeddedSignature(exe) {
+		return errors.New("in-app updates require an Authenticode-signed Hoxi installation; download the official signed installer manually")
+	}
 	winNativeMu.Lock()
 	winCanInstall = canInstall
 	winRelease = release
@@ -180,6 +182,17 @@ func CheckNativeWithOptions(opts InstallOptions) (installErr error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
+	psBin, err := windowsUpdatePowerShell()
+	if err != nil {
+		cleanupAbort()
+		return fmt.Errorf("locate Windows PowerShell: %w", err)
+	}
+	verifyPublisher := func(path string) (string, error) { return verifiedWindowsPublisherKey(ctx, psBin, path) }
+	publisherKey, err := verifyPublisher(exePath)
+	if err != nil {
+		cleanupAbort()
+		return fmt.Errorf("this installation has no trusted Authenticode signature; download the official signed installer manually: %w", err)
+	}
 
 	targetDir := filepath.Dir(exePath)
 	stageDir, err := os.MkdirTemp(targetDir, ".hoxi-update-staging-*")
@@ -197,6 +210,17 @@ func CheckNativeWithOptions(opts InstallOptions) (installErr error) {
 	}
 
 	stagedExe := filepath.Join(stageDir, "Hoxi.exe")
+	setInstallPhase("verifying")
+	if err := verifyWindowsStagePublisher(stageDir, publisherKey, verifyPublisher); err != nil {
+		_ = os.RemoveAll(stageDir)
+		cleanupAbort()
+		return err
+	}
+	if err := verifyWindowsUpdateArchitecture(stagedExe); err != nil {
+		_ = os.RemoveAll(stageDir)
+		cleanupAbort()
+		return err
+	}
 	verCtx, verCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	out, err := subproc.CommandContext(verCtx, stagedExe, "--version").Output()
 	verCancel()
@@ -209,10 +233,6 @@ func CheckNativeWithOptions(opts InstallOptions) (installErr error) {
 	setInstallPhase("restarting")
 	runBeforeRestart()
 
-	psBin, err := exec.LookPath("powershell.exe")
-	if err != nil {
-		psBin = "powershell.exe"
-	}
 	cmd := subproc.Command(psBin, "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", windowsSwapAndRestartPS)
 	cmd.Env = append(os.Environ(),
 		"HOXI_UPD_PID="+strconv.Itoa(os.Getpid()),
