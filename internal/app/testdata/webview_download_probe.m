@@ -48,9 +48,14 @@ completionHandler:(void (^)(NSURL * _Nullable destination))completionHandler API
         response != nil ? response.MIMEType : nil
     );
     NSString *fullPath = [self.outDir stringByAppendingPathComponent:clean];
-    [[NSFileManager defaultManager] removeItemAtPath:fullPath error:nil];
-    [self.savedFiles addObject:clean];
-    completionHandler([NSURL fileURLWithPath:fullPath]);
+    NSError *error = nil;
+    NSURL *staged = [self hoxiStageDownload:download targetURL:[NSURL fileURLWithPath:fullPath] error:&error];
+    if (staged == nil) {
+        fprintf(stderr, "staging failed: %s\n", [[error localizedDescription] UTF8String]);
+    } else {
+        [self.savedFiles addObject:clean];
+    }
+    completionHandler(staged);
 }
 
 - (void)downloadDidFinish:(WKDownload *)download API_AVAILABLE(macos(11.3)) {
@@ -68,8 +73,8 @@ completionHandler:(void (^)(NSURL * _Nullable destination))completionHandler API
 
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
-        if (argc < 3) {
-            fprintf(stderr, "usage: probe <url> <outDir>\n");
+        if (argc < 4) {
+            fprintf(stderr, "usage: probe <url> <outDir> <interruptedURL>\n");
             return 2;
         }
         NSString *urlStr = [NSString stringWithUTF8String:argv[1]];
@@ -95,9 +100,16 @@ int main(int argc, const char *argv[]) {
         [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:urlStr]]];
 
         NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:12.0];
+        BOOL startedInterruptedDownload = NO;
         while ([[NSDate date] compare:deadline] == NSOrderedAscending) {
             [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
-            if (proxy.completedCount >= 4 || proxy.failedCount > 0) {
+            if (proxy.completedCount == 4 && !startedInterruptedDownload) {
+                startedInterruptedDownload = YES;
+                NSURL *interruptedURL = [NSURL URLWithString:[NSString stringWithUTF8String:argv[3]]];
+                [webView startDownloadUsingRequest:[NSURLRequest requestWithURL:interruptedURL]
+                                 completionHandler:^(WKDownload *download) { [proxy hoxiAttachDownload:download]; }];
+            }
+            if (proxy.completedCount + proxy.failedCount >= 5) {
                 break;
             }
         }
@@ -106,8 +118,8 @@ int main(int argc, const char *argv[]) {
             fprintf(stderr, "original delegate didFinishNavigation was not forwarded (finishCount=%ld)\n", (long)orig.finishCount);
             return 4;
         }
-        if (proxy.failedCount > 0 || proxy.completedCount < 4) {
-            fprintf(stderr, "expected 4 completed downloads, got completed=%ld failed=%ld files=%s\n",
+        if (proxy.failedCount != 1 || proxy.completedCount != 4 || ![proxy.savedFiles containsObject:@"interrupted.txt"]) {
+            fprintf(stderr, "expected 4 completed downloads and 1 interrupted download, got completed=%ld failed=%ld files=%s\n",
                     (long)proxy.completedCount,
                     (long)proxy.failedCount,
                     [[proxy.savedFiles componentsJoinedByString:@","] UTF8String]);

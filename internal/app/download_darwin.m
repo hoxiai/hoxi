@@ -2,6 +2,9 @@
 
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
+#include <errno.h>
+#include <stdio.h>
+#include <sys/stat.h>
 
 static NSString *hoxi_mime_extension(NSString *mimeType) {
     if (mimeType == nil || [mimeType length] == 0) {
@@ -103,12 +106,84 @@ static NSURL *hoxi_default_downloads_directory(void) {
     return nil;
 }
 
+// WKDownload requires a nonexistent destination. Stage on the same volume
+// as the user's choice so completing the download is a single atomic rename.
+@interface HoxiDownloadDestination : NSObject {
+    NSURL *_targetURL;
+    NSURL *_stageDirectory;
+    NSURL *_stageURL;
+    BOOL _replaceExisting;
+}
+@property (nonatomic, readonly) NSURL *stageURL;
+- (instancetype)initWithTargetURL:(NSURL *)targetURL error:(NSError **)error;
+- (BOOL)commit:(NSError **)error;
+@end
+
+@implementation HoxiDownloadDestination
+@synthesize stageURL = _stageURL;
+
+- (instancetype)initWithTargetURL:(NSURL *)targetURL error:(NSError **)error {
+    self = [super init];
+    if (self == nil) return nil;
+
+    struct stat existing;
+    int statResult = lstat(targetURL.fileSystemRepresentation, &existing);
+    int statError = statResult == 0 ? (S_ISDIR(existing.st_mode) ? EISDIR : 0) : errno;
+    if (statError != 0 && statError != ENOENT) {
+        if (error != NULL) *error = [NSError errorWithDomain:NSPOSIXErrorDomain code:statError userInfo:nil];
+        [self release];
+        return nil;
+    }
+    _targetURL = [targetURL copy];
+    _replaceExisting = statResult == 0;
+    NSString *stageName = [@".hoxi-download-" stringByAppendingString:[NSUUID UUID].UUIDString];
+    NSURL *directory = [[targetURL URLByDeletingLastPathComponent] URLByAppendingPathComponent:stageName isDirectory:YES];
+    if (![[NSFileManager defaultManager] createDirectoryAtURL:directory
+                                  withIntermediateDirectories:NO
+                                                   attributes:@{NSFilePosixPermissions: @0700}
+                                                        error:error]) {
+        [self release];
+        return nil;
+    }
+    _stageDirectory = [directory copy];
+    _stageURL = [[directory URLByAppendingPathComponent:targetURL.lastPathComponent isDirectory:NO] copy];
+    return self;
+}
+
+- (BOOL)commit:(NSError **)error {
+    // Without overwrite confirmation, don't clobber a file created during download.
+    const char *source = _stageURL.fileSystemRepresentation;
+    const char *target = _targetURL.fileSystemRepresentation;
+    int result = _replaceExisting ? rename(source, target) : renamex_np(source, target, RENAME_EXCL);
+    if (result == 0) return YES;
+    int renameError = errno;
+    if (error != NULL) {
+        *error = [NSError errorWithDomain:NSPOSIXErrorDomain code:renameError
+                                 userInfo:@{NSFilePathErrorKey: _targetURL.path}];
+    }
+    return NO;
+}
+
+- (void)dealloc {
+    if (_stageDirectory != nil) [[NSFileManager defaultManager] removeItemAtURL:_stageDirectory error:NULL];
+    [_stageDirectory release];
+    [_stageURL release];
+    [_targetURL release];
+    [super dealloc];
+}
+@end
+
 @interface HoxiWebViewDownloadDelegate : NSObject <WKNavigationDelegate, WKDownloadDelegate> {
     id<WKNavigationDelegate> _originalDelegate;
     WKWebView *_webView;
     NSMutableSet *_activeDownloads;
+    NSMapTable *_downloadDestinations;
 }
 - (instancetype)initWithWebView:(WKWebView *)webView originalDelegate:(id<WKNavigationDelegate>)originalDelegate;
+#if defined(__MAC_11_3) && MAC_OS_X_VERSION_MAX_ALLOWED >= 110300
+- (void)hoxiAttachDownload:(WKDownload *)download API_AVAILABLE(macos(11.3));
+- (NSURL *)hoxiStageDownload:(WKDownload *)download targetURL:(NSURL *)targetURL error:(NSError **)error API_AVAILABLE(macos(11.3));
+#endif
 @end
 
 @implementation HoxiWebViewDownloadDelegate
@@ -119,11 +194,14 @@ static NSURL *hoxi_default_downloads_directory(void) {
         _webView = webView;
         _originalDelegate = originalDelegate;
         _activeDownloads = [[NSMutableSet alloc] init];
+        _downloadDestinations = [[NSMapTable alloc] initWithKeyOptions:NSPointerFunctionsStrongMemory | NSPointerFunctionsObjectPointerPersonality
+                                                         valueOptions:NSPointerFunctionsStrongMemory capacity:0];
     }
     return self;
 }
 
 - (void)dealloc {
+    [_downloadDestinations release];
     [_activeDownloads release];
     _activeDownloads = nil;
     _webView = nil;
@@ -190,6 +268,26 @@ decisionHandler:(void (^)(WKNavigationResponsePolicy))decisionHandler {
 }
 
 #if defined(__MAC_11_3) && MAC_OS_X_VERSION_MAX_ALLOWED >= 110300
+- (void)hoxiPresentDownloadError:(NSError *)error {
+    if (error == nil) return;
+    NSAlert *alert = [NSAlert alertWithError:error];
+    NSWindow *window = _webView.window;
+    if (window != nil) {
+        [alert beginSheetModalForWindow:window completionHandler:nil];
+    } else {
+        NSLog(@"Hoxi download: %@", error);
+    }
+}
+
+- (NSURL *)hoxiStageDownload:(WKDownload *)download targetURL:(NSURL *)targetURL error:(NSError **)error API_AVAILABLE(macos(11.3)) {
+    HoxiDownloadDestination *destination = [[HoxiDownloadDestination alloc] initWithTargetURL:targetURL error:error];
+    if (destination == nil) return nil;
+    [_downloadDestinations setObject:destination forKey:download];
+    NSURL *stageURL = destination.stageURL;
+    [destination release];
+    return stageURL;
+}
+
 - (void)hoxiAttachDownload:(WKDownload *)download API_AVAILABLE(macos(11.3)) {
     if (download == nil) {
         return;
@@ -235,26 +333,14 @@ completionHandler:(void (^)(NSURL * _Nullable destination))completionHandler API
             [filename release];
 
             void (^handlePanelResult)(NSModalResponse) = ^(NSModalResponse result) {
-                NSURL *targetURL = nil;
+                NSURL *stageURL = nil;
+                NSError *error = nil;
                 if (result == NSModalResponseOK && panel.URL != nil && panel.URL.isFileURL) {
-                    targetURL = panel.URL;
-                    BOOL isDir = NO;
-                    NSFileManager *fm = [NSFileManager defaultManager];
-                    if ([fm fileExistsAtPath:targetURL.path isDirectory:&isDir]) {
-                        if (isDir) {
-                            targetURL = nil;
-                        } else {
-                            // WKDownload fails with NSFileWriteFileExistsError if the target exists;
-                            // NSSavePanel already prompted the user to confirm replacement.
-                            [fm removeItemAtURL:targetURL error:nil];
-                        }
-                    } else if ([fm attributesOfItemAtPath:targetURL.path error:nil] != nil) {
-                        // Remove dangling symlink at destination so WKDownload does not hit EEXIST.
-                        [fm removeItemAtURL:targetURL error:nil];
-                    }
+                    stageURL = [self hoxiStageDownload:download targetURL:panel.URL error:&error];
                 }
-                retainedCompletion(targetURL);
+                retainedCompletion(stageURL);
                 [retainedCompletion release];
+                [self hoxiPresentDownloadError:error];
             };
 
             NSWindow *hostWindow = _webView != nil ? _webView.window : nil;
@@ -278,7 +364,12 @@ completionHandler:(void (^)(NSURL * _Nullable destination))completionHandler API
 
 - (void)downloadDidFinish:(WKDownload *)download API_AVAILABLE(macos(11.3)) {
     if (download != nil) {
+        HoxiDownloadDestination *destination = [_downloadDestinations objectForKey:download];
+        NSError *error = nil;
+        [destination commit:&error];
+        [_downloadDestinations removeObjectForKey:download];
         [_activeDownloads removeObject:download];
+        [self hoxiPresentDownloadError:error];
     }
 }
 
@@ -286,6 +377,7 @@ completionHandler:(void (^)(NSURL * _Nullable destination))completionHandler API
 didFailWithError:(NSError *)error
 resumeData:(NSData *)resumeData API_AVAILABLE(macos(11.3)) {
     if (download != nil) {
+        [_downloadDestinations removeObjectForKey:download];
         [_activeDownloads removeObject:download];
     }
 }

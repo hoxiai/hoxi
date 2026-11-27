@@ -9,7 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestSanitizeNativeDownloadFilename(t *testing.T) {
@@ -119,8 +121,35 @@ func TestNativeWKWebViewDownloadsAcrossIframes(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping live WKWebView probe in -short mode")
 	}
+	outDir := t.TempDir()
+	for _, name := range []string{"project-demo.qp", "interrupted.txt"} {
+		if err := os.WriteFile(filepath.Join(outDir, name), []byte("original file"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	// Cross-origin iframe server simulating an embedded image editor inside WKWebView.
 	studioSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/interrupted" {
+			w.Header().Set("Content-Type", "application/octet-stream")
+			w.Header().Set("Content-Disposition", `attachment; filename="interrupted.txt"`)
+			w.Header().Set("Content-Length", "4096")
+			_, _ = w.Write([]byte("incomplete replacement"))
+			w.(http.Flusher).Flush()
+			// Truncate the response after WebKit starts writing to the staged file.
+			for deadline := time.Now().Add(4 * time.Second); time.Now().Before(deadline); {
+				entries, _ := os.ReadDir(outDir)
+				for _, entry := range entries {
+					if strings.HasPrefix(entry.Name(), ".hoxi-download-") {
+						if _, err := os.Stat(filepath.Join(outDir, entry.Name(), "interrupted.txt")); err == nil {
+							return
+						}
+					}
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			t.Error("WebKit never started writing the interrupted replacement")
+			return
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(`<!doctype html><html><body><script>
 			function triggerBlob(text, mime, name) {
@@ -152,7 +181,7 @@ func TestNativeWKWebViewDownloadsAcrossIframes(t *testing.T) {
 	defer studioSrv.Close()
 
 	// Sandboxed iframe server simulating a web tab with allow-downloads.
-	workAppSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	sandboxSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(`<!doctype html><html><body><script>
 			window.addEventListener('load', () => {
@@ -170,24 +199,23 @@ func TestNativeWKWebViewDownloadsAcrossIframes(t *testing.T) {
 			});
 		</script></body></html>`))
 	}))
-	defer workAppSrv.Close()
+	defer sandboxSrv.Close()
 
 	hostSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = fmt.Fprintf(w, `<!doctype html><html><body>
 			<iframe src="%s"></iframe>
 			<iframe sandbox="allow-scripts allow-forms allow-downloads" src="%s"></iframe>
-		</body></html>`, studioSrv.URL, workAppSrv.URL)
+		</body></html>`, studioSrv.URL, sandboxSrv.URL)
 	}))
 	defer hostSrv.Close()
 
-	outDir := t.TempDir()
 	binary := filepath.Join(t.TempDir(), "webview-download-probe")
 	compile := exec.Command("clang", "-fblocks", "-framework", "Cocoa", "-framework", "WebKit", "testdata/webview_download_probe.m", "-o", binary)
 	if out, err := compile.CombinedOutput(); err != nil {
 		t.Fatalf("compile WKWebView download probe: %v\n%s", err, out)
 	}
-	if out, err := exec.Command(binary, hostSrv.URL, outDir).CombinedOutput(); err != nil {
+	if out, err := exec.Command(binary, hostSrv.URL, outDir, studioSrv.URL+"/interrupted").CombinedOutput(); err != nil {
 		t.Fatalf("WKWebView download probe failed: %v\n%s", err, out)
 	}
 
@@ -196,6 +224,7 @@ func TestNativeWKWebViewDownloadsAcrossIframes(t *testing.T) {
 		"retouched-demo.png": "PNG_BYTES_DEMO",
 		"legacy-data.png":    "LEGACY_DATA_DEMO",
 		"sandbox-demo.png":   "SANDBOX_IMAGE_DEMO",
+		"interrupted.txt":    "original file",
 	}
 	for name, want := range expected {
 		data, err := os.ReadFile(filepath.Join(outDir, name))
@@ -204,6 +233,15 @@ func TestNativeWKWebViewDownloadsAcrossIframes(t *testing.T) {
 		}
 		if string(data) != want {
 			t.Fatalf("downloaded file %q = %q, want %q", name, string(data), want)
+		}
+	}
+	entries, err := os.ReadDir(outDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".hoxi-download-") {
+			t.Errorf("staged download was not cleaned up: %s", entry.Name())
 		}
 	}
 }
