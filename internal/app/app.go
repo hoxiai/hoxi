@@ -601,6 +601,7 @@ func (a *DesktopApp) startup(ctx context.Context) {
 		a.notifier.Start()
 	}
 	installNativeAbout(a.identity.Title, buildinfo.Version)
+	installNativeWebViewDownloads()
 	for _, link := range launchURLs(os.Args[1:]) {
 		a.onURLOpen(link) // Windows: Hoxi was started by opening a hoxi:// link
 	}
