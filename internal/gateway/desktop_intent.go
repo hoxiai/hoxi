@@ -22,11 +22,21 @@ type OpenDirectoryOptions struct {
 	DefaultDirectory string
 }
 
-// desktopBridgeState groups host window callbacks (directory picker, window
-// focus, native notifications, and one-shot navigation intents).
+// SaveFileOptions carries optional UI hints for the native desktop save file dialog.
+type SaveFileOptions struct {
+	Title            string
+	DefaultFilename  string
+	DefaultDirectory string
+	FilterName       string
+	FilterPattern    string
+}
+
+// desktopBridgeState groups host window callbacks (directory picker, save file
+// dialog, window focus, native notifications, and one-shot navigation intents).
 type desktopBridgeState struct {
 	dialogMu              sync.RWMutex
 	onOpenDirectoryDialog func(OpenDirectoryOptions) (string, error)
+	onSaveFileDialog      func(SaveFileOptions) (string, error)
 	dialogPicking         atomic.Bool
 	onFocusDesktop        func(directory, sessionID string)
 	onAppConnectRedirect  func(context.Context, string) error

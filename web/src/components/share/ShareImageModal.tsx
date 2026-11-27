@@ -1,6 +1,6 @@
 // web/src/components/share/ShareImageModal.tsx
 // Local-only session share image preview & export modal.
-import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, Show, untrack } from "solid-js";
 import { Portal } from "solid-js/web";
 import {
   Check,
@@ -8,10 +8,9 @@ import {
   ChevronRight,
   Copy,
   Download,
-  Image as ImageIcon,
+  FolderOpen,
   ImageDown,
   LoaderCircle,
-  ShieldCheck,
   X,
 } from "lucide-solid";
 import { Presence } from "../motion/Presence";
@@ -19,17 +18,20 @@ import { t, locale } from "../../i18n";
 import {
   appSettings,
   closeShareImageModal,
+  copyShareImageBlob,
   fetchSessionExportTurns,
+  formatSavedDisplayPath,
   resolveEffectiveTheme,
+  revealSavedShareImage,
+  saveShareImagePages,
   sessionDirectory,
   shareImageModal,
   shareImagePrefs,
   updateShareImagePrefs,
   workspace,
-  type ShareImageLayoutOption,
-  type ShareImageThemeOption,
-  type ShareImageWidthOption,
+  type ShareSaveResult,
 } from "../../store/workspace";
+import ShareImageControls from "./ShareImageControls";
 import {
   buildShareDocument,
   groupTurnsIntoExchanges,
@@ -38,8 +40,6 @@ import {
   type ShareTurnInput,
 } from "./share-image-model";
 import {
-  copyPngBlobToClipboard,
-  downloadSharePages,
   renderShareDocumentToImages,
   type RenderedShareResult,
 } from "./share-image-renderer";
@@ -59,6 +59,11 @@ function formatShareDate(ts?: number): string {
   return `${y}-${m}-${d}`;
 }
 
+function isMacOSClient(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /Mac/i.test(navigator.platform || navigator.userAgent || "");
+}
+
 export default function ShareImageModal() {
   const [turns, setTurns] = createSignal<ShareTurnInput[]>([]);
   const [loadingTurns, setLoadingTurns] = createSignal(false);
@@ -70,13 +75,15 @@ export default function ShareImageModal() {
   const [renderError, setRenderError] = createSignal("");
   const [activePage, setActivePage] = createSignal(0);
   const [copyState, setCopyState] = createSignal<"idle" | "copied" | "failed">("idle");
-  const [savedToast, setSavedToast] = createSignal(false);
+  const [saving, setSaving] = createSignal(false);
+  const [saveOutcome, setSaveOutcome] = createSignal<ShareSaveResult | null>(null);
+  const [revealFailed, setRevealFailed] = createSignal(false);
 
   let loadGeneration = 0;
   let renderGeneration = 0;
   let activeAbort: AbortController | null = null;
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
-  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  let revealTimer: ReturnType<typeof setTimeout> | undefined;
 
   const disposeRendered = (next: RenderedShareResult | null = null) => {
     const prev = untrack(rendered);
@@ -89,11 +96,10 @@ export default function ShareImageModal() {
     activeAbort?.abort();
     activeAbort = null;
     if (copyTimer !== undefined) clearTimeout(copyTimer);
-    if (saveTimer !== undefined) clearTimeout(saveTimer);
+    if (revealTimer !== undefined) clearTimeout(revealTimer);
     disposeRendered(null);
   });
 
-  // Escape closes modal cleanly before SettingsModal sees it.
   const onKeyDown = (ev: KeyboardEvent) => {
     if (!shareImageModal()) return;
     if (ev.key === "Escape") {
@@ -117,8 +123,6 @@ export default function ShareImageModal() {
     return req.session?.directory || sessionDirectory(req.sessionID) || currentSession()?.directory || workspace.rootDir || "";
   });
 
-  // Fetch full turns ONLY when the modal request changes (open/close/session switch).
-  // Untrack prefs/messages so toggling checkboxes or streaming SSE never resets selections.
   createEffect(() => {
     const req = shareImageModal();
     loadGeneration++;
@@ -126,7 +130,9 @@ export default function ShareImageModal() {
     activeAbort?.abort();
     activeAbort = null;
     setCopyState("idle");
-    setSavedToast(false);
+    setSaving(false);
+    setSaveOutcome(null);
+    setRevealFailed(false);
     setRenderError("");
     setLoadError("");
     setActivePage(0);
@@ -198,20 +204,21 @@ export default function ShareImageModal() {
     return resolveEffectiveTheme(appSettings.themeMode);
   });
 
-  // Re-render preview whenever doc or options change (debounced slightly for rapid checkbox clicks).
   createEffect(() => {
     const req = shareImageModal();
     const doc = shareDoc();
     const p = shareImagePrefs();
     const theme = effectiveTheme();
     const workDir = currentWorkDir();
-    void locale(); // re-render labels when UI language toggles
+    void locale();
 
     if (!req || !doc || doc.exchanges.length === 0) {
       activeAbort?.abort();
       activeAbort = null;
       setRendering(false);
       setRenderError("");
+      setSaveOutcome(null);
+      setRevealFailed(false);
       disposeRendered(null);
       return;
     }
@@ -222,6 +229,8 @@ export default function ShareImageModal() {
     const controller = new AbortController();
     activeAbort = controller;
     disposeRendered(null);
+    setSaveOutcome(null);
+    setRevealFailed(false);
     setRendering(true);
     setRenderError("");
 
@@ -240,6 +249,14 @@ export default function ShareImageModal() {
           you: t("share.roleYou"),
           assistant: t("share.roleAssistant"),
           thinking: t("share.thinkingLabel"),
+          quoted: t("share.quotedLabel"),
+          referencedItems: (count) => t("share.referencedItems", { count }),
+          referencedSingle: t("share.referencedSingle"),
+          moreItems: (count) => t("share.moreItems", { count }),
+          omittedLines: (count) => t("share.omittedLines", { count }),
+          collabRolePM: t("share.collabRolePM"),
+          collabRoleQA: t("share.collabRoleQA"),
+          collabRoleOP: t("share.collabRoleOP"),
           moreTools: (count) => t("share.moreTools", { count }),
           truncatedCodeLines: (count) => t("share.truncatedCodeLines", { count }),
           imageUnavailable: (label) => t("share.imageUnavailable", { label }),
@@ -331,28 +348,43 @@ export default function ShareImageModal() {
   const handleCopy = async () => {
     const page = currentPageObj();
     if (!page) return;
-    const ok = await copyPngBlobToClipboard(page.blob);
+    const ok = await copyShareImageBlob(page.blob);
     setCopyState(ok ? "copied" : "failed");
     if (copyTimer !== undefined) clearTimeout(copyTimer);
     copyTimer = setTimeout(() => setCopyState("idle"), ok ? 2000 : 3500);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const res = rendered();
     const doc = shareDoc();
-    if (!res || res.pages.length === 0 || !doc) return;
-    downloadSharePages(res.pages, doc.title || doc.sessionID);
-    setSavedToast(true);
-    if (saveTimer !== undefined) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => setSavedToast(false), 2000);
+    if (!res || res.pages.length === 0 || !doc || saving()) return;
+    const startLoadGen = loadGeneration;
+    const startRenderGen = renderGeneration;
+    setSaving(true);
+    setRevealFailed(false);
+    const dialogTitle =
+      res.pages.length > 1
+        ? t("share.saveAllDialogTitle", { count: res.pages.length })
+        : t("share.saveDialogTitle");
+    try {
+      const outcome = await saveShareImagePages(res.pages, doc.title || doc.sessionID, { dialogTitle });
+      if (loadGeneration !== startLoadGen || renderGeneration !== startRenderGen) return;
+      if (outcome.status === "canceled") return;
+      setSaveOutcome(outcome);
+    } finally {
+      if (loadGeneration === startLoadGen) setSaving(false);
+    }
   };
 
-  const pillClass = (active: boolean) =>
-    `flex-1 rounded-lg px-2.5 py-1.5 text-[11.5px] font-medium transition-colors cursor-pointer ${
-      active
-        ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] border border-[var(--accent-border)]"
-        : "bg-[var(--bg-subtle)] text-[var(--text-secondary)] border border-transparent hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
-    }`;
+  const handleRevealSaved = async (targetPath: string) => {
+    setRevealFailed(false);
+    const ok = await revealSavedShareImage(targetPath);
+    if (!ok) {
+      setRevealFailed(true);
+      if (revealTimer !== undefined) clearTimeout(revealTimer);
+      revealTimer = setTimeout(() => setRevealFailed(false), 3000);
+    }
+  };
 
   return (
     <Presence when={shareImageModal() !== null}>
@@ -504,219 +536,105 @@ export default function ShareImageModal() {
                   </Show>
                 </div>
 
-                {/* Right: Controls Panel */}
-                <aside class="flex w-full shrink-0 flex-col gap-5 overflow-y-auto border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-4 md:w-[320px] md:border-l md:border-t-0">
-                  {/* Scope Selection */}
-                  <section class="space-y-2">
-                    <div class="flex items-center justify-between">
-                      <span class="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
-                        {t("share.sectionScope", {
-                          selected: selectedExchangeIDs().size,
-                          total: allExchanges().length,
-                        })}
-                      </span>
-                    </div>
-                    <div class="flex gap-1.5">
-                      <Show when={shareImageModal()?.focusMessageID}>
-                        <button type="button" onClick={() => applyScopePreset("current")} class={pillClass(isCurrentPreset())}>
-                          {t("share.presetCurrent")}
-                        </button>
-                      </Show>
-                      <button type="button" onClick={() => applyScopePreset("recent")} class={pillClass(isRecentPreset())}>
-                        {t("share.presetRecent")}
-                      </button>
-                      <button type="button" onClick={() => applyScopePreset("all")} class={pillClass(isAllPreset())}>
-                        {t("share.presetAll")}
-                      </button>
-                    </div>
-                    <Show when={allExchanges().length > 0}>
-                      <div class="max-h-[164px] space-y-1 overflow-y-auto rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-1.5">
-                        <For each={allExchanges()}>
-                          {(ex) => (
-                            <label class="flex items-start gap-2 rounded-lg px-2 py-1.5 text-[11.5px] hover:bg-[var(--bg-hover)] cursor-pointer select-none">
-                              <input
-                                type="checkbox"
-                                checked={selectedExchangeIDs().has(ex.id)}
-                                onChange={() => toggleExchange(ex.id)}
-                                class="mt-0.5 accent-[var(--accent-primary)] cursor-pointer"
-                              />
-                              <div class="min-w-0 flex-1">
-                                <div class="truncate font-medium text-[var(--text-primary)]">
-                                  {ex.userPreview || t("share.exchangeLabel", { index: ex.index })}
-                                </div>
-                                <div class="truncate text-[10.5px] text-[var(--text-muted)]">
-                                  {ex.assistantPreview || t("share.exchangeFallback")}
-                                </div>
-                              </div>
-                            </label>
-                          )}
-                        </For>
-                      </div>
-                    </Show>
-                  </section>
-
-                  {/* Style & Layout */}
-                  <section class="space-y-3">
-                    <div class="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
-                      {t("share.sectionStyle")}
-                    </div>
-
-                    <div class="space-y-1.5">
-                      <div class="text-[11.5px] text-[var(--text-muted)]">{t("share.themeLabel")}</div>
-                      <div class="flex gap-1.5">
-                        {(["light", "dark", "system"] as ShareImageThemeOption[]).map((opt) => (
-                          <button
-                            type="button"
-                            onClick={() => updateShareImagePrefs({ theme: opt })}
-                            class={pillClass(shareImagePrefs().theme === opt)}
-                          >
-                            {opt === "light"
-                              ? t("share.themeLight")
-                              : opt === "dark"
-                                ? t("share.themeDark")
-                                : t("share.themeSystem")}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div class="space-y-1.5">
-                      <div class="text-[11.5px] text-[var(--text-muted)]">{t("share.widthLabel")}</div>
-                      <div class="flex gap-1.5">
-                        {(["standard", "wide"] as ShareImageWidthOption[]).map((opt) => (
-                          <button
-                            type="button"
-                            onClick={() => updateShareImagePrefs({ width: opt })}
-                            class={pillClass(shareImagePrefs().width === opt)}
-                          >
-                            {opt === "standard" ? t("share.widthStandard") : t("share.widthWide")}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div class="space-y-1.5">
-                      <div class="text-[11.5px] text-[var(--text-muted)]">{t("share.layoutLabel")}</div>
-                      <div class="flex gap-1.5">
-                        {(["single", "paged"] as ShareImageLayoutOption[]).map((opt) => (
-                          <button
-                            type="button"
-                            onClick={() => updateShareImagePrefs({ layout: opt })}
-                            class={pillClass(shareImagePrefs().layout === opt)}
-                          >
-                            {opt === "single" ? t("share.layoutSingle") : t("share.layoutPaged")}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </section>
-
-                  {/* Content & Privacy Toggles */}
-                  <section class="space-y-2">
-                    <div class="flex items-center justify-between gap-2">
-                      <span class="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
-                        {t("share.sectionContent")}
-                      </span>
-                      <Show when={shareImagePrefs().redactSecrets && (shareDoc()?.redactionCount ?? 0) > 0}>
-                        <span class="inline-flex items-center gap-1 rounded-full bg-[var(--ok-surface)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--ok-text)]">
-                          <ShieldCheck size={11} />
-                          <span>{t("share.redactedBadge", { count: shareDoc()?.redactionCount ?? 0 })}</span>
-                        </span>
-                      </Show>
-                    </div>
-
-                    <div class="space-y-1">
-                      <ToggleRow
-                        label={t("share.toggleTools")}
-                        checked={shareImagePrefs().includeTools}
-                        onChange={(v) => updateShareImagePrefs({ includeTools: v })}
-                      />
-                      <ToggleRow
-                        label={t("share.toggleThinking")}
-                        checked={shareImagePrefs().includeThinking}
-                        onChange={(v) => updateShareImagePrefs({ includeThinking: v })}
-                      />
-                      <ToggleRow
-                        label={t("share.toggleImages")}
-                        checked={shareImagePrefs().includeImages}
-                        onChange={(v) => updateShareImagePrefs({ includeImages: v })}
-                      />
-                      <ToggleRow
-                        label={t("share.toggleHidePaths")}
-                        checked={shareImagePrefs().hideLocalPaths}
-                        onChange={(v) => updateShareImagePrefs({ hideLocalPaths: v })}
-                      />
-                      <ToggleRow
-                        label={t("share.toggleRedactSecrets")}
-                        checked={shareImagePrefs().redactSecrets}
-                        onChange={(v) => updateShareImagePrefs({ redactSecrets: v })}
-                      />
-                      <ToggleRow
-                        label={t("share.toggleBrandFooter")}
-                        checked={shareImagePrefs().showBrandFooter}
-                        onChange={(v) => updateShareImagePrefs({ showBrandFooter: v })}
-                      />
-                    </div>
-                  </section>
-
-                  {/* Per-image privacy picker when embedded images exist */}
-                  <Show when={shareImagePrefs().includeImages && selectedImages().length > 0}>
-                    <section class="space-y-1.5">
-                      <div class="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
-                        {t("share.sectionImages", {
-                          selected: selectedImages().filter((img) => !disabledImageIDs().has(img.id)).length,
-                          total: selectedImages().length,
-                        })}
-                      </div>
-                      <div class="max-h-[112px] space-y-1 overflow-y-auto rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-1.5">
-                        <For each={selectedImages()}>
-                          {(img) => (
-                            <label class="flex items-center gap-2 rounded-lg px-2 py-1 text-[11.5px] hover:bg-[var(--bg-hover)] cursor-pointer select-none">
-                              <input
-                                type="checkbox"
-                                checked={!disabledImageIDs().has(img.id)}
-                                onChange={() => toggleImage(img.id)}
-                                class="accent-[var(--accent-primary)] cursor-pointer"
-                              />
-                              <ImageIcon size={12} class="shrink-0 text-[var(--text-muted)]" />
-                              <span class="min-w-0 flex-1 truncate text-[var(--text-secondary)]">
-                                {img.label}
-                              </span>
-                            </label>
-                          )}
-                        </For>
-                      </div>
-                    </section>
-                  </Show>
-                </aside>
+                <ShareImageControls
+                  allExchanges={allExchanges()}
+                  selectedExchangeIDs={selectedExchangeIDs()}
+                  hasFocusMessage={Boolean(shareImageModal()?.focusMessageID)}
+                  isCurrentPreset={isCurrentPreset()}
+                  isRecentPreset={isRecentPreset()}
+                  isAllPreset={isAllPreset()}
+                  prefs={shareImagePrefs()}
+                  redactionCount={shareDoc()?.redactionCount ?? 0}
+                  selectedImages={selectedImages()}
+                  disabledImageIDs={disabledImageIDs()}
+                  onApplyPreset={applyScopePreset}
+                  onToggleExchange={toggleExchange}
+                  onToggleImage={toggleImage}
+                  onUpdatePrefs={updateShareImagePrefs}
+                />
               </div>
 
               {/* Footer Action Bar */}
               <div class="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[var(--border-subtle)] px-5 py-3">
-                <div class="min-w-0 text-[12px]">
+                <div class="flex min-w-0 flex-1 items-center gap-2 text-[12px]">
                   <Show when={copyState() === "failed"}>
-                    <span class="text-[var(--warn-text)]">{t("share.copyUnavailable")}</span>
+                    <span class="truncate text-[var(--warn-text)]">{t("share.copyUnavailable")}</span>
                   </Show>
                   <Show when={copyState() === "copied"}>
-                    <span class="text-[var(--ok-text)]">{t("share.copiedImage")}</span>
+                    <span class="truncate text-[var(--ok-text)]">{t("share.copiedImage")}</span>
                   </Show>
-                  <Show when={copyState() === "idle" && savedToast()}>
-                    <span class="text-[var(--ok-text)]">{t("share.savedPng")}</span>
+                  <Show when={copyState() === "idle" ? saveOutcome() : null} keyed>
+                    {(res) => {
+                      if (res.status === "error") {
+                        return (
+                          <span class="truncate text-[var(--danger-text)]" title={res.error}>
+                            {t("share.saveFailed", { error: res.error })}
+                          </span>
+                        );
+                      }
+                      if (res.status === "saved" && res.mode === "native") {
+                        const primaryPath = res.paths[0];
+                        const fullHint = res.paths.length > 1 ? res.directory || primaryPath : primaryPath;
+                        const summaryText =
+                          res.paths.length > 1
+                            ? t("share.savedBatchToDir", {
+                                count: res.paths.length,
+                                dir: formatSavedDisplayPath(res.directory || primaryPath),
+                              })
+                            : t("share.savedToPath", {
+                                path: formatSavedDisplayPath(primaryPath),
+                              });
+                        return (
+                          <div class="flex min-w-0 items-center gap-2">
+                            <span class="truncate text-[var(--ok-text)]" title={fullHint}>
+                              {summaryText}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => void handleRevealSaved(primaryPath)}
+                              class="inline-flex shrink-0 items-center gap-1 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-subtle)] px-2 py-0.5 text-[11.5px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                            >
+                              <FolderOpen size={12} />
+                              <span>{isMacOSClient() ? t("share.revealInFinder") : t("share.revealInFolder")}</span>
+                            </button>
+                            <Show when={revealFailed()}>
+                              <span class="shrink-0 text-[11px] text-[var(--warn-text)]">
+                                {t("share.revealFailed")}
+                              </span>
+                            </Show>
+                          </div>
+                        );
+                      }
+                      if (res.status === "saved" && res.mode === "browser") {
+                        return (
+                          <span class="truncate text-[var(--ok-text)]">
+                            {res.filenames.length > 1
+                              ? t("share.savedBrowserDownloadBatch", { count: res.filenames.length })
+                              : t("share.savedBrowserDownload", { filename: res.filenames[0] || "image.png" })}
+                          </span>
+                        );
+                      }
+                      return null;
+                    }}
                   </Show>
                 </div>
 
-                <div class="flex items-center gap-2">
+                <div class="flex shrink-0 items-center gap-2">
                   <button
                     type="button"
-                    disabled={!rendered() || rendering()}
-                    onClick={handleSave}
+                    disabled={!rendered() || rendering() || saving()}
+                    onClick={() => void handleSave()}
                     class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-subtle)] px-3.5 py-2 text-[12.5px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 transition-colors cursor-pointer disabled:cursor-not-allowed"
                   >
-                    <Download size={14} />
+                    <Show when={saving()} fallback={<Download size={14} />}>
+                      <LoaderCircle size={14} class="animate-spin" />
+                    </Show>
                     <span>
-                      {(rendered()?.pages.length ?? 0) > 1
-                        ? t("share.saveAllPng", { count: rendered()?.pages.length ?? 0 })
-                        : t("share.savePng")}
+                      {saving()
+                        ? t("share.savingPng")
+                        : (rendered()?.pages.length ?? 0) > 1
+                          ? t("share.saveAllPng", { count: rendered()?.pages.length ?? 0 })
+                          : t("share.savePng")}
                     </span>
                   </button>
 
@@ -744,19 +662,5 @@ export default function ShareImageModal() {
         </Portal>
       )}
     </Presence>
-  );
-}
-
-function ToggleRow(props: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
-  return (
-    <label class="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer select-none">
-      <span>{props.label}</span>
-      <input
-        type="checkbox"
-        checked={props.checked}
-        onChange={(ev) => props.onChange(ev.currentTarget.checked)}
-        class="h-3.5 w-3.5 accent-[var(--accent-primary)] cursor-pointer"
-      />
-    </label>
   );
 }

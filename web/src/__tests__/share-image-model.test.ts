@@ -13,12 +13,22 @@ import {
   paginateLayoutBlocks,
 } from "../components/share/share-image-layout";
 import { LIGHT_PALETTE, type LayoutBlock, type LayoutLabels } from "../components/share/share-image-text";
+import { serializeContextEnvelopes } from "../store/context-protocol";
+import { formatSavedDisplayPath, sanitizeShareImageFilename } from "../store/share-image";
 import { assertEqual, assertTrue, describe, it } from "./test-harness";
 
 const TEST_LABELS: LayoutLabels = {
   you: "You",
   assistant: "Hoxi",
   thinking: "Thinking",
+  quoted: "Quoted",
+  referencedItems: (n) => `${n} items referenced`,
+  referencedSingle: "Referenced context",
+  moreItems: (n) => `+${n} more items`,
+  omittedLines: (n) => `${n} lines omitted`,
+  collabRolePM: "Product Manager",
+  collabRoleQA: "QA Report",
+  collabRoleOP: "Operations",
   moreTools: (n) => `+${n} more`,
   truncatedCodeLines: (n) => `${n} omitted`,
   imageUnavailable: (label) => `Unavailable: ${label}`,
@@ -152,11 +162,9 @@ describe("share image model & privacy", () => {
     assertEqual(ex.images[1].sourceKind, "markdown");
     assertEqual(ex.images[1].src, "docs/arch.png");
 
-    // Focus selection locates the exchange containing any message ID in the cycle
     const focusSel = resolveInitialExchangeSelection(grouped.exchanges, "msg_a2");
     assertTrue(focusSel.has(ex.id), "focusMessageID should select its exchange");
 
-    // Building document with thinking off and one image disabled filters cleanly
     const doc = buildShareDocument(
       { id: "ses_1", title: "Fix sk-ant-secretkey123456", time: { created: 1000, updated: 1200 }, directory: "/Users/alice/app" },
       "ses_1",
@@ -176,6 +184,151 @@ describe("share image model & privacy", () => {
     assertEqual(doc.exchanges[0].thinkingText, "");
     assertEqual(doc.exchanges[0].images.length, 1);
     assertEqual(doc.exchanges[0].images[0].src, "docs/arch.png");
+  });
+
+  it("structures hoxi-context quotes, entity cards, collab prompts, and nested blockquotes without raw tags", () => {
+    const quotedPrompt = serializeContextEnvelopes(
+      [
+        {
+          version: 1,
+          source: { appId: "timeline", appName: "Hoxi" },
+          items: [
+            {
+              kind: "quote",
+              title: "Quoted from conversation",
+              content: "### Findings\n- Check `/Users/alice/repo/main.go`\n- Token: `ghp_1234567890abcdef123456`",
+            },
+          ],
+        },
+        {
+          version: 1,
+          source: { appId: "shopark", appName: "Shopark" },
+          items: [
+            {
+              kind: "entity",
+              entityType: "product",
+              title: "Trail Jacket",
+              badge: "In Stock",
+              ref: { id: "SKU-42" },
+              digest: { price: "$129", margin: "44%", api_key: "sk-proj-secretvalue1234" },
+            },
+            {
+              kind: "snapshot",
+              title: "Raw Config",
+              content: JSON.stringify({ nested: { a: 1, b: [2, 3] }, ok: true }),
+            },
+          ],
+        },
+      ],
+      "Please compare these two points."
+    );
+
+    const collabPrompt =
+      `<untrusted_pm_request author="Alice" mode="build" title="Improve checkout">\n` +
+      `### \u95ee\u9898\u63cf\u8ff0\nCart totals lag behind.\n\n` +
+      `### \u590d\u73b0\u6b65\u9aa4\n1. Add two items\n2. Change qty\n</untrusted_pm_request>`;
+
+    const turns: ShareTurnInput[] = [
+      {
+        info: { id: "u1", sessionID: "ses_q", role: "user", time: { created: 1000 } },
+        parts: [{ id: "p1", sessionID: "ses_q", messageID: "u1", type: "text", text: quotedPrompt }],
+      },
+      {
+        info: { id: "a1", sessionID: "ses_q", role: "assistant", time: { created: 1100 } },
+        parts: [
+          {
+            id: "p2",
+            sessionID: "ses_q",
+            messageID: "a1",
+            type: "text",
+            text:
+              "> [!WARNING]\n> ### Key Caveats\n> - First caveat\n> - Second caveat\n\n" +
+              "<details>\n<summary>Extra Notes</summary>\n\n- Detail item A\n- Detail item B\n\n</details>",
+          },
+        ],
+      },
+      {
+        info: { id: "u2", sessionID: "ses_q", role: "user", time: { created: 2000 } },
+        parts: [{ id: "p3", sessionID: "ses_q", messageID: "u2", type: "text", text: collabPrompt }],
+      },
+    ];
+
+    const doc = buildShareDocument(
+      { id: "ses_q", title: "Quoted Session", time: { created: 1000, updated: 2000 }, directory: "/Users/alice/repo" },
+      "ses_q",
+      turns,
+      {
+        includeTools: true,
+        includeThinking: false,
+        includeImages: true,
+        hideLocalPaths: true,
+        redactSecrets: true,
+      }
+    );
+
+    assertEqual(doc.exchanges.length, 2);
+    const ex1 = doc.exchanges[0];
+    assertEqual(ex1.userText, "Please compare these two points.");
+    assertTrue(!ex1.userText.includes("<details>"), "userText must not leak raw <details> tags");
+    assertTrue(!ex1.userPreview.includes("<details>"), "userPreview must not leak raw <details> tags");
+    assertEqual(ex1.userContexts.length, 2);
+    assertEqual(ex1.userContexts[0].isSingleQuote, true);
+    assertTrue(ex1.userContexts[0].items[0].body?.includes("<workspace>/main.go") === true, "local path inside quote should shorten");
+    assertTrue(!ex1.userContexts[0].items[0].body?.includes("ghp_1234567890abcdef123456"), "secret inside quote must be redacted");
+    assertEqual(ex1.userContexts[1].isSingleQuote, false);
+    assertEqual(ex1.userContexts[1].items.length, 2);
+    const kvPairs = ex1.userContexts[1].items[0].kvPairs ?? [];
+    assertEqual(kvPairs.length, 3);
+    assertTrue(kvPairs.every((kv) => !kv.value.includes("sk-proj-secretvalue1234")), "secret inside kv digest must be redacted");
+    assertTrue(doc.redactionCount >= 2, `expected >= 2 redactions across quotes, got ${doc.redactionCount}`);
+
+    const ex2 = doc.exchanges[1];
+    assertEqual(ex2.userCollab?.role, "pm");
+    assertEqual(ex2.userCollab?.author, "Alice");
+    assertEqual(ex2.userCollab?.sections.length, 2);
+
+    const layout = buildPaginatedShareLayout({
+      doc,
+      palette: LIGHT_PALETTE,
+      cardWidth: 680,
+      layoutMode: "single",
+      showBrandFooter: true,
+      measure: fixedMeasure,
+      highlights: new Map(),
+      loadedImages: new Map(),
+      svgImages: new Map(),
+      labels: TEST_LABELS,
+      formattedDate: "2026-11-27",
+    });
+
+    const pageBlocks = layout.pages[0].blocks;
+    const userBoxes = pageBlocks.filter((b): b is Extract<LayoutBlock, { kind: "user-box" }> => b.kind === "user-box");
+    assertEqual(userBoxes.length, 2);
+    assertEqual(userBoxes[0].contextCards.length, 2);
+    assertEqual(userBoxes[0].contextCards[0].variant, "quote");
+    if (userBoxes[0].contextCards[0].variant === "quote") {
+      assertTrue(
+        userBoxes[0].contextCards[0].bodyBlocks.some((b) => b.kind === "heading") &&
+          userBoxes[0].contextCards[0].bodyBlocks.some((b) => b.kind === "list-item"),
+        "quoted markdown should parse into structured heading and list blocks"
+      );
+    }
+    assertEqual(userBoxes[0].contextCards[1].variant, "structured");
+    if (userBoxes[0].contextCards[1].variant === "structured") {
+      assertEqual(userBoxes[0].contextCards[1].rows[0].kvRows.length, 3);
+      assertTrue(userBoxes[0].contextCards[1].rows[1].jsonLines.length > 0, "nested json snapshot should format as mono lines");
+    }
+    assertEqual(userBoxes[1].collabHeader?.role, "pm");
+    assertTrue(userBoxes[1].bodyBlocks.some((b) => b.kind === "heading"), "collab sections should render as structured headings");
+
+    const bqBlock = pageBlocks.find((b): b is Extract<LayoutBlock, { kind: "blockquote" }> => b.kind === "blockquote");
+    assertTrue(Boolean(bqBlock), "expected blockquote block");
+    assertEqual(bqBlock?.alert, "warning");
+    assertTrue(Boolean(bqBlock?.blocks && bqBlock.blocks.some((b) => b.kind === "list-item")), "nested blockquote should keep structured list items");
+
+    const detailsBlock = pageBlocks.find((b): b is Extract<LayoutBlock, { kind: "details" }> => b.kind === "details");
+    assertTrue(Boolean(detailsBlock), "expected dedicated details block");
+    assertTrue(Boolean(detailsBlock?.blocks.some((b) => b.kind === "list-item")), "details block should keep structured inner blocks");
   });
 
   it("extracts parenthesized markdown image filenames, scopes redaction count to selected exchanges, and clamps wide tables", () => {
@@ -223,7 +376,6 @@ describe("share image model & privacy", () => {
         redactSecrets: true,
       }
     );
-    // Unselected exchange u1 contained a token, so selected doc redactionCount must be 0.
     assertEqual(doc.redactionCount, 0);
     assertEqual(doc.exchanges[0].images.length, 1);
     assertEqual(doc.exchanges[0].images[0].src, "docs/image(1).png");
@@ -262,7 +414,6 @@ describe("share image model & privacy", () => {
     assertEqual(pages[1].blocks[0].kind, "heading");
     assertEqual(pages[1].blocks[1].kind, "paragraph");
 
-    // Very tall single-mode document triggers auto-pagination below GPU limit
     const hugeTurns: ShareTurnInput[] = Array.from({ length: 40 }, (_, idx) => ({
       info: { id: `m_${idx}`, sessionID: "ses_big", role: idx % 2 === 0 ? "user" : "assistant", time: { created: 1000 + idx } },
       parts: [
@@ -309,5 +460,12 @@ describe("share image model & privacy", () => {
         `page height ${page.totalHeight} exceeded GPU cap ${MAX_SINGLE_CANVAS_LOGICAL_HEIGHT}`
       );
     }
+  });
+
+  it("formats saved display paths and sanitizes filenames cleanly", () => {
+    assertEqual(formatSavedDisplayPath("/Users/alice/Downloads/card.png"), "~/Downloads/card.png");
+    assertEqual(formatSavedDisplayPath("C:\\Users\\bob\\Downloads\\card.png"), "~\\Downloads\\card.png");
+    assertEqual(sanitizeShareImageFilename("..foo/bar: baz?"), "foo-bar-baz");
+    assertEqual(sanitizeShareImageFilename("   "), "hoxi-session");
   });
 });

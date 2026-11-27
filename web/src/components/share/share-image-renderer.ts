@@ -1,15 +1,18 @@
 // web/src/components/share/share-image-renderer.ts
-// High-DPI Canvas 2D painter, Shiki/image preloader, clipboard image copy,
-// and PNG download helper for local Hoxi session share cards.
+// High-DPI Canvas 2D painter and Shiki/image preloader for local Hoxi session share PNG cards.
 import type { ThemedToken } from "shiki";
 import { loadMarkdownImage, resolveMediaPlaybackURL } from "../../store/workspace";
-import { parseMarkdownBlocks } from "../timeline/markdown/blocks";
+import { parseMarkdownBlocks, parseNestedBlockquote } from "../timeline/markdown/blocks";
 import { createSyntaxHighlightClient } from "../timeline/syntax-highlight-client";
 import { sanitizeSvgMarkup, svgToDataURL } from "../timeline/svg-sanitizer";
+import { drawBlockquoteBlock, drawDetailsBlock, drawUserBoxBlock } from "./share-image-context-paint";
 import { buildPaginatedShareLayout } from "./share-image-layout";
+import type { ShareDocument, ShareImageAsset } from "./share-image-model";
 import {
   DARK_PALETTE,
   drawHoxiMatrixMark,
+  drawWrappedLines,
+  fillRoundRect,
   FONT_MONO,
   FONT_SANS,
   LIGHT_PALETTE,
@@ -17,9 +20,7 @@ import {
   type LayoutLabels,
   type LoadedImageInfo,
   type ShareThemePalette,
-  type WrappedLine,
 } from "./share-image-text";
-import type { ShareDocument, ShareImageAsset } from "./share-image-model";
 
 export interface RenderedSharePage {
   index: number;
@@ -100,7 +101,6 @@ async function resolveAssetImage(
     return loadImageElement(asset.src);
   }
   if (asset.sourceKind === "attachment") {
-    // Prefer same-origin fetch via Wails AssetServer so canvas never taints.
     const sameOrigin = await fetchAsObjectURLImage(asset.src);
     if (sameOrigin) return sameOrigin;
     const loopback = resolveMediaPlaybackURL(asset.src);
@@ -114,23 +114,52 @@ async function resolveAssetImage(
     if (!dataURL) return null;
     return loadImageElement(dataURL);
   }
-  // Remote http(s) images: try CORS-safe fetch first; never taint the canvas.
   return (await fetchAsObjectURLImage(asset.src)) ?? loadImageElement(asset.src, "anonymous");
+}
+
+function collectMarkdownCodeBlocks(
+  markdown: string,
+  seen: Set<string>,
+  out: Array<{ lang: string; code: string }>,
+  depth = 0
+): void {
+  if (!markdown || depth > 2) return;
+  for (const block of parseMarkdownBlocks(markdown)) {
+    if (block.type === "code") {
+      const lang = block.lang.trim().toLowerCase();
+      const key = `${lang}\0${block.code}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        out.push({ lang, code: block.code });
+      }
+    } else if (block.type === "blockquote") {
+      if (parseNestedBlockquote(block.text)) {
+        collectMarkdownCodeBlocks(block.text, seen, out, depth + 1);
+      }
+    } else if (block.type === "details" && block.body) {
+      collectMarkdownCodeBlocks(block.body, seen, out, depth + 1);
+    }
+  }
 }
 
 function collectCodeBlocks(doc: ShareDocument): Array<{ lang: string; code: string }> {
   const seen = new Set<string>();
   const out: Array<{ lang: string; code: string }> = [];
   for (const ex of doc.exchanges) {
-    if (!ex.assistantText) continue;
-    for (const block of parseMarkdownBlocks(ex.assistantText)) {
-      if (block.type !== "code") continue;
-      const lang = block.lang.trim().toLowerCase();
-      const key = `${lang}\0${block.code}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push({ lang, code: block.code });
+    if (ex.userText) collectMarkdownCodeBlocks(ex.userText, seen, out);
+    if (ex.userCollab) {
+      for (const sec of ex.userCollab.sections) {
+        collectMarkdownCodeBlocks(sec.content, seen, out);
+      }
     }
+    for (const ctx of ex.userContexts) {
+      for (const item of ctx.items) {
+        if (item.body && !item.isJson) {
+          collectMarkdownCodeBlocks(item.body, seen, out, 1);
+        }
+      }
+    }
+    if (ex.assistantText) collectMarkdownCodeBlocks(ex.assistantText, seen, out);
   }
   return out;
 }
@@ -176,80 +205,8 @@ async function preloadSvgBlocks(
 }
 
 // ---------------------------------------------------------------------------
-// Canvas 2D drawing primitives
+// Canvas 2D block painting
 // ---------------------------------------------------------------------------
-
-function fillRoundRect(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  r: number
-) {
-  const radius = Math.min(r, w / 2, h / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + radius, y);
-  ctx.arcTo(x + w, y, x + w, y + h, radius);
-  ctx.arcTo(x + w, y + h, x, y + h, radius);
-  ctx.arcTo(x, y + h, x, y, radius);
-  ctx.arcTo(x, y, x + w, y, radius);
-  ctx.closePath();
-}
-
-function drawWrappedLines(
-  ctx: CanvasRenderingContext2D,
-  lines: WrappedLine[],
-  startX: number,
-  startY: number,
-  palette: ShareThemePalette,
-  align: "left" | "center" | "right" = "left",
-  boxWidth = 0
-): number {
-  let y = startY;
-  ctx.textBaseline = "middle";
-  for (const line of lines) {
-    const lineW = line.runs.reduce((s, r) => s + r.width, 0);
-    let x = startX;
-    if (align === "center" && boxWidth > 0) x = startX + Math.max(0, (boxWidth - lineW) / 2);
-    else if (align === "right" && boxWidth > 0) x = startX + Math.max(0, boxWidth - lineW);
-
-    const midY = y + line.height / 2;
-    for (const run of line.runs) {
-      if (run.inlineCode) {
-        ctx.fillStyle = palette.inlineCodeBg;
-        fillRoundRect(ctx, x, midY - 9.5, run.width, 19, 5);
-        ctx.fill();
-        ctx.font = run.font;
-        ctx.fillStyle = run.color;
-        ctx.fillText(run.text, x + 4, midY + 0.5);
-      } else {
-        ctx.font = run.font;
-        ctx.fillStyle = run.color;
-        ctx.fillText(run.text, x, midY);
-        if (run.strike) {
-          ctx.strokeStyle = run.color;
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(x, midY);
-          ctx.lineTo(x + run.width, midY);
-          ctx.stroke();
-        }
-        if (run.underline) {
-          ctx.strokeStyle = run.color;
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(x, midY + 7);
-          ctx.lineTo(x + run.width, midY + 7);
-          ctx.stroke();
-        }
-      }
-      x += run.width;
-    }
-    y += line.height;
-  }
-  return y;
-}
 
 function drawBlock(
   ctx: CanvasRenderingContext2D,
@@ -259,7 +216,15 @@ function drawBlock(
   contentWidth: number,
   palette: ShareThemePalette,
   labels: LayoutLabels
-) {
+): void {
+  const drawNested = (
+    nestedCtx: CanvasRenderingContext2D,
+    nestedBlock: LayoutBlock,
+    nx: number,
+    ny: number,
+    nw: number
+  ) => drawBlock(nestedCtx, nestedBlock, nx, ny, nw, palette, labels);
+
   switch (block.kind) {
     case "spacer":
       return;
@@ -302,55 +267,30 @@ function drawBlock(
       }
       return;
     }
-    case "user-box": {
-      const boxH = block.height - 4;
-      ctx.fillStyle = palette.userBg;
-      fillRoundRect(ctx, x, y, contentWidth, boxH, 14);
-      ctx.fill();
-      ctx.strokeStyle = palette.userBorder;
-      ctx.lineWidth = 1;
-      ctx.stroke();
-
-      ctx.font = `600 11px ${FONT_SANS}`;
-      ctx.fillStyle = palette.accent;
-      ctx.textBaseline = "middle";
-      ctx.fillText(block.roleLabel.toUpperCase(), x + 16, y + 18);
-      drawWrappedLines(ctx, block.lines, x + 16, y + 30, palette);
+    case "user-box":
+      drawUserBoxBlock(ctx, block, x, y, contentWidth, palette, labels, drawNested);
       return;
-    }
     case "heading":
-      drawWrappedLines(ctx, block.lines, x, y + 4, palette);
+      drawWrappedLines(ctx, block.lines, x, y + 2, palette);
       return;
     case "paragraph":
       drawWrappedLines(ctx, block.lines, x + (block.indentX ?? 0), y + 2, palette);
       return;
     case "list-item": {
-      ctx.font = `600 14px ${FONT_SANS}`;
+      const firstLineH = block.lines[0]?.height ?? 22;
+      ctx.font = `600 13.5px ${FONT_SANS}`;
       ctx.fillStyle = palette.textMuted;
       ctx.textBaseline = "middle";
-      ctx.fillText(block.marker, x + block.markerX, y + 12);
+      ctx.fillText(block.marker, x + block.markerX, y + firstLineH / 2);
       drawWrappedLines(ctx, block.lines, x + block.textX, y, palette);
       return;
     }
-    case "blockquote": {
-      const boxH = block.height - 8;
-      ctx.fillStyle = palette.quoteBg;
-      fillRoundRect(ctx, x, y, contentWidth, boxH, 10);
-      ctx.fill();
-      ctx.fillStyle = block.alert === "caution" || block.alert === "warning" ? palette.warnDot : palette.accent;
-      fillRoundRect(ctx, x, y, 3.5, boxH, 2);
-      ctx.fill();
-      let textY = y + 8;
-      if (block.alert) {
-        ctx.font = `700 11px ${FONT_SANS}`;
-        ctx.fillStyle = palette.accent;
-        ctx.textBaseline = "middle";
-        ctx.fillText(block.alert.toUpperCase(), x + 14, textY + 8);
-        textY += 20;
-      }
-      drawWrappedLines(ctx, block.lines, x + 14, textY, palette);
+    case "blockquote":
+      drawBlockquoteBlock(ctx, block, x, y, contentWidth, palette, drawNested);
       return;
-    }
+    case "details":
+      drawDetailsBlock(ctx, block, x, y, contentWidth, palette, drawNested);
+      return;
     case "thinking": {
       const boxH = block.height - 6;
       ctx.fillStyle = palette.thinkingBg;
@@ -379,7 +319,11 @@ function drawBlock(
         ctx.stroke();
 
         const dotColor =
-          pill.status === "error" ? palette.errDot : pill.status === "running" || pill.status === "pending" ? palette.warnDot : palette.okDot;
+          pill.status === "error"
+            ? palette.errDot
+            : pill.status === "running" || pill.status === "pending"
+              ? palette.warnDot
+              : palette.okDot;
         ctx.fillStyle = dotColor;
         ctx.beginPath();
         ctx.arc(px + 10, py + pill.height / 2, 3, 0, Math.PI * 2);
@@ -404,7 +348,6 @@ function drawBlock(
       fillRoundRect(ctx, x, y, contentWidth, boxH, 12);
       ctx.fill();
 
-      // Code header strip
       ctx.save();
       fillRoundRect(ctx, x, y, contentWidth, boxH, 12);
       ctx.clip();
@@ -458,7 +401,7 @@ function drawBlock(
       ctx.fillRect(x, y, totalW, block.headerRow.height);
 
       let ry = y;
-      const drawRow = (row: { height: number; cells: WrappedLine[][] }, isHeader: boolean) => {
+      const drawRow = (row: { height: number; cells: import("./share-image-text").WrappedLine[][] }, isHeader: boolean) => {
         let cx = x;
         for (let ci = 0; ci < block.colWidths.length; ci++) {
           const cw = block.colWidths[ci];
@@ -554,7 +497,6 @@ export async function renderShareDocumentToImages(
   const codeBlocks = collectCodeBlocks(doc);
   const enabledAssets = doc.exchanges.flatMap((ex) => ex.images);
 
-  // Preload Shiki highlights, inline SVG diagrams, and embedded images in parallel
   const [highlights, svgImages, imageEntries] = await Promise.all([
     preloadHighlights(codeBlocks, theme, signal),
     preloadSvgBlocks(codeBlocks, signal),
@@ -575,7 +517,6 @@ export async function renderShareDocumentToImages(
     if (info) loadedImages.set(id, info);
   }
 
-  // Scratch canvas strictly for exact font width measurement
   const measureCanvas = document.createElement("canvas");
   const measureCtx = measureCanvas.getContext("2d");
   if (!measureCtx) throw new Error("Canvas 2D context unavailable");
@@ -616,11 +557,9 @@ export async function renderShareDocumentToImages(
 
       ctx.scale(RENDER_SCALE, RENDER_SCALE);
 
-      // Outer backdrop
       ctx.fillStyle = palette.outerBg;
       ctx.fillRect(0, 0, logicalW, logicalH);
 
-      // Elevated inner card
       const cardX = layout.outerPadding;
       const cardY = layout.outerPadding;
       const cardW = logicalW - layout.outerPadding * 2;
@@ -644,7 +583,6 @@ export async function renderShareDocumentToImages(
       const innerX = cardX + layout.cardPaddingX;
       let cursorY = cardY + layout.cardPaddingY;
 
-      // Page 1 header
       if (pageIdx === 0) {
         cursorY = drawWrappedLines(ctx, layout.header.titleLines, innerX, cursorY, palette);
         if (layout.header.metaChips.length > 0) {
@@ -679,13 +617,11 @@ export async function renderShareDocumentToImages(
         cursorY += 16;
       }
 
-      // Page content blocks
       for (const block of page.blocks) {
         drawBlock(ctx, block, innerX, cursorY, layout.contentWidth, palette, labels);
         cursorY += block.height;
       }
 
-      // Brand footer / page counter
       if (showBrandFooter || totalPages > 1) {
         const footerTop = cardY + cardH - layout.cardPaddingY - layout.footerHeight + 16;
         ctx.strokeStyle = palette.divider;
@@ -735,44 +671,4 @@ export async function renderShareDocumentToImages(
       for (const page of renderedPages) URL.revokeObjectURL(page.objectURL);
     },
   };
-}
-
-export async function copyPngBlobToClipboard(blob: Blob): Promise<boolean> {
-  if (
-    typeof navigator === "undefined" ||
-    !navigator.clipboard?.write ||
-    typeof ClipboardItem === "undefined"
-  ) {
-    return false;
-  }
-  try {
-    await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export function safeShareFilename(title: string): string {
-  const cleaned = title.trim().replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, "-");
-  return cleaned.slice(0, 72) || "hoxi-session";
-}
-
-export function downloadSharePages(pages: RenderedSharePage[], baseName: string): void {
-  const stem = safeShareFilename(baseName);
-  pages.forEach((page, idx) => {
-    const filename = pages.length > 1 ? `${stem}-${idx + 1}.png` : `${stem}.png`;
-    const trigger = () => {
-      const url = URL.createObjectURL(page.blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    };
-    if (idx === 0) trigger();
-    else setTimeout(trigger, idx * 150);
-  });
 }

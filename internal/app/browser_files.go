@@ -27,4 +27,34 @@ func (a *DesktopApp) configureBrowserFiles(gw *gateway.Gateway) {
 		defer cancel()
 		return osopen.Open(ctx, path, reveal)
 	})
+
+	gw.SetSaveFileDialog(func(opts gateway.SaveFileOptions) (string, error) {
+		ctx := a.desktopContext()
+		if ctx == nil {
+			return "", errors.New("desktop window context not ready")
+		}
+		defaultDir := opts.DefaultDirectory
+		if defaultDir == "" {
+			if home, err := os.UserHomeDir(); err == nil && home != "" {
+				defaultDir = filepath.Join(home, "Downloads")
+			}
+		}
+		saveOpts := wailsruntime.SaveDialogOptions{
+			Title:                opts.Title,
+			DefaultFilename:      opts.DefaultFilename,
+			DefaultDirectory:     defaultDir,
+			CanCreateDirectories: true,
+		}
+		if opts.FilterPattern != "" {
+			displayName := opts.FilterName
+			if displayName == "" {
+				displayName = opts.FilterPattern
+			}
+			saveOpts.Filters = []wailsruntime.FileFilter{{
+				DisplayName: displayName,
+				Pattern:     opts.FilterPattern,
+			}}
+		}
+		return wailsruntime.SaveFileDialog(ctx, saveOpts)
+	})
 }

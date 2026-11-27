@@ -1,10 +1,11 @@
 // web/src/components/share/share-image-layout.ts
-// Block-level Markdown/tool/image layout assembly and GPU-safe pagination
+// Block-level Markdown/quote/tool/image layout assembly and GPU-safe pagination
 // for local session share PNG cards.
 import type { ThemedToken } from "shiki";
-import { parseMarkdownBlocks } from "../timeline/markdown/blocks";
+import { parseMarkdownBlocks, parseNestedBlockquote } from "../timeline/markdown/blocks";
 import { parseInline } from "../timeline/markdown/inline";
 import type { BlockToken, InlineSpan } from "../timeline/markdown/types";
+import { buildContextCardLayout, buildUserCollabHeader } from "./share-image-context-layout";
 import type { ShareDocument, ShareExchange, ShareImageAsset, ShareToolPill } from "./share-image-model";
 import {
   inlineSpansToSegments,
@@ -17,6 +18,7 @@ import {
   type LoadedImageInfo,
   type PaginatedShareLayout,
   type PositionedPill,
+  type ShareContextCardLayout,
   type ShareThemePalette,
   type TextMeasureFn,
 } from "./share-image-text";
@@ -26,6 +28,7 @@ export const PAGED_TARGET_LOGICAL_HEIGHT = 2200;
 const MAX_VISIBLE_TOOL_PILLS = 12;
 const MAX_THINKING_CHARS = 1600;
 const MAX_EMBEDDED_IMAGE_HEIGHT = 400;
+const MAX_NESTED_BLOCK_DEPTH = 2;
 
 function buildImageBlock(
   caption: string,
@@ -133,9 +136,23 @@ function computeTableColWidths(
   const scaled = ideals.map((w) => Math.max(minCol, Math.floor((w / total) * maxWidth)));
   const scaledSum = scaled.reduce((a, b) => a + b, 0);
   if (scaledSum <= maxWidth) return scaled;
-  // Guarantee table width never overflows the card even for many-column tables.
   const ratio = maxWidth / scaledSum;
   return scaled.map((w) => Math.max(16, Math.floor(w * ratio)));
+}
+
+interface MarkdownBlockStyle {
+  bodySize: number;
+  bodyLineH: number;
+  textColor: string;
+  compact: boolean;
+  depth: number;
+}
+
+function trimTrailingSpacers(blocks: LayoutBlock[]): number {
+  while (blocks.length > 0 && blocks[blocks.length - 1].kind === "spacer") {
+    blocks.pop();
+  }
+  return blocks.reduce((sum, b) => sum + b.height, 0);
 }
 
 function appendMarkdownBlocks(
@@ -149,11 +166,17 @@ function appendMarkdownBlocks(
   renderedImageIDs: Set<string>,
   svgImages: ReadonlyMap<string, LoadedImageInfo>,
   labels: LayoutLabels,
-  out: LayoutBlock[]
+  out: LayoutBlock[],
+  style?: Partial<MarkdownBlockStyle>
 ): void {
   const blocks: BlockToken[] = parseMarkdownBlocks(rawMarkdown);
-  const bodySize = 14.5;
-  const bodyLineH = 23.5;
+  const bodySize = style?.bodySize ?? 14.5;
+  const bodyLineH = style?.bodyLineH ?? 23.5;
+  const textColor = style?.textColor ?? palette.textSecondary;
+  const compact = Boolean(style?.compact);
+  const depth = style?.depth ?? 0;
+  const paraGap = compact ? 5 : 10;
+  const listGap = compact ? 3 : 6;
 
   const findEnabledMarkdownImage = (src: string): ShareImageAsset | undefined =>
     enabledImages.find((img) => img.src === src || img.displaySrc === src);
@@ -163,15 +186,25 @@ function appendMarkdownBlocks(
       case "frontmatter":
         break;
       case "hr":
-        out.push({ kind: "divider", height: 17, marginTop: 8 });
+        out.push({ kind: "divider", height: compact ? 13 : 17, marginTop: compact ? 6 : 8 });
         break;
       case "heading": {
-        const sizes: Record<1 | 2 | 3 | 4, number> = { 1: 19, 2: 17, 3: 15.5, 4: 14.5 };
-        const lineHs: Record<1 | 2 | 3 | 4, number> = { 1: 27, 2: 25, 3: 23, 4: 22 };
+        const sizes: Record<1 | 2 | 3 | 4, number> = compact
+          ? { 1: 15, 2: 14, 3: 13.5, 4: 13 }
+          : { 1: 19, 2: 17, 3: 15.5, 4: 14.5 };
+        const lineHs: Record<1 | 2 | 3 | 4, number> = compact
+          ? { 1: 21, 2: 20, 3: 19.5, 4: 19 }
+          : { 1: 27, 2: 25, 3: 23, 4: 22 };
         const sz = sizes[block.level];
         const lh = lineHs[block.level];
         const lines = wrapMarkdownInline(block.text, maxWidth, sz, lh, 700, palette.textPrimary, palette, measure);
-        out.push({ kind: "heading", level: block.level, lines, height: lines.length * lh + 10, keepWithNext: true });
+        out.push({
+          kind: "heading",
+          level: block.level,
+          lines,
+          height: lines.length * lh + (compact ? 6 : 10),
+          keepWithNext: true,
+        });
         break;
       }
       case "paragraph": {
@@ -189,14 +222,14 @@ function appendMarkdownBlocks(
               spans.filter((s) => s.type !== "image"),
               bodySize,
               400,
-              palette.textSecondary,
+              textColor,
               palette
             ),
             maxWidth,
             bodyLineH,
             measure
           );
-          out.push({ kind: "paragraph", lines, height: lines.length * bodyLineH + 10 });
+          out.push({ kind: "paragraph", lines, height: lines.length * bodyLineH + paraGap });
         }
         for (const imgSpan of imageSpans) {
           const asset = findEnabledMarkdownImage(imgSpan.src);
@@ -208,41 +241,127 @@ function appendMarkdownBlocks(
       }
       case "list": {
         for (const item of block.items) {
-          const indentPx = Math.min(3, Math.floor(item.indent / 2)) * 18;
+          const indentPx = Math.min(3, Math.floor(item.indent / 2)) * 16;
           const marker = item.kind === "ordered" ? `${item.orderNumber ?? 1}.` : "•";
           const markerX = indentPx + 4;
           const textX = indentPx + (item.kind === "ordered" ? 24 : 18);
-          const avail = Math.max(120, maxWidth - textX);
-          const lines = wrapMarkdownInline(item.text, avail, bodySize, bodyLineH, 400, palette.textSecondary, palette, measure);
+          const avail = Math.max(100, maxWidth - textX);
+          const lines = wrapMarkdownInline(item.text, avail, bodySize, bodyLineH, 400, textColor, palette, measure);
           out.push({
             kind: "list-item",
             marker,
             markerX,
             textX,
             lines,
-            height: lines.length * bodyLineH + 6,
+            height: lines.length * bodyLineH + listGap,
           });
         }
-        out.push({ kind: "spacer", height: 4 });
+        out.push({ kind: "spacer", height: compact ? 3 : 4 });
         break;
       }
       case "blockquote": {
-        const innerW = Math.max(120, maxWidth - 28);
-        const lines = wrapMarkdownInline(block.text, innerW, 13.5, 22, 400, palette.textSecondary, palette, measure);
-        const alertExtra = block.alert ? 22 : 0;
-        out.push({
-          kind: "blockquote",
-          alert: block.alert,
-          lines,
-          height: lines.length * 22 + alertExtra + 26,
-        });
+        const innerW = Math.max(100, maxWidth - 28);
+        const alertExtra = block.alert ? 25 : 0;
+        const nestedTokens = depth < MAX_NESTED_BLOCK_DEPTH ? parseNestedBlockquote(block.text) : null;
+        if (nestedTokens && nestedTokens.length > 0) {
+          const nestedBlocks: LayoutBlock[] = [];
+          appendMarkdownBlocks(
+            block.text,
+            innerW,
+            palette,
+            measure,
+            highlights,
+            loadedImages,
+            enabledImages,
+            renderedImageIDs,
+            svgImages,
+            labels,
+            nestedBlocks,
+            {
+              bodySize: Math.min(bodySize, 13.5),
+              bodyLineH: Math.min(bodyLineH, 21),
+              textColor: palette.textSecondary,
+              compact: true,
+              depth: depth + 1,
+            }
+          );
+          const nestedH = trimTrailingSpacers(nestedBlocks);
+          out.push({
+            kind: "blockquote",
+            alert: block.alert,
+            lines: [],
+            blocks: nestedBlocks,
+            height: Math.max(20, nestedH) + alertExtra + 30,
+          });
+        } else {
+          const quoteSize = Math.min(bodySize, 13.5);
+          const quoteLH = Math.min(bodyLineH, 21.5);
+          const lines = wrapMarkdownInline(block.text, innerW, quoteSize, quoteLH, 400, palette.textSecondary, palette, measure);
+          out.push({
+            kind: "blockquote",
+            alert: block.alert,
+            lines,
+            height: lines.length * quoteLH + alertExtra + 30,
+          });
+        }
         break;
       }
       case "details": {
-        const innerW = Math.max(120, maxWidth - 28);
-        const combined = block.summary ? `**${block.summary}**\n${block.body}` : block.body;
-        const lines = wrapMarkdownInline(combined, innerW, 13.5, 22, 400, palette.textSecondary, palette, measure);
-        out.push({ kind: "blockquote", lines, height: lines.length * 22 + 26 });
+        const summaryW = Math.max(100, maxWidth - 38);
+        const summaryText = block.summary || labels.referencedSingle;
+        const summaryLines = wrapMarkdownInline(
+          summaryText,
+          summaryW,
+          13,
+          19,
+          600,
+          palette.textPrimary,
+          palette,
+          measure
+        );
+        const headerH = Math.max(30, summaryLines.length * 19 + 14);
+        const innerBlocks: LayoutBlock[] = [];
+        if (block.body && depth < MAX_NESTED_BLOCK_DEPTH) {
+          appendMarkdownBlocks(
+            block.body,
+            Math.max(100, maxWidth - 24),
+            palette,
+            measure,
+            highlights,
+            loadedImages,
+            enabledImages,
+            renderedImageIDs,
+            svgImages,
+            labels,
+            innerBlocks,
+            {
+              bodySize: Math.min(bodySize, 13),
+              bodyLineH: Math.min(bodyLineH, 20.5),
+              textColor: palette.textSecondary,
+              compact: true,
+              depth: depth + 1,
+            }
+          );
+        } else if (block.body) {
+          const lines = wrapMarkdownInline(
+            block.body,
+            Math.max(100, maxWidth - 24),
+            13,
+            20.5,
+            400,
+            palette.textSecondary,
+            palette,
+            measure
+          );
+          innerBlocks.push({ kind: "paragraph", lines, height: lines.length * 20.5 + 4 });
+        }
+        const innerH = trimTrailingSpacers(innerBlocks);
+        out.push({
+          kind: "details",
+          summaryLines,
+          blocks: innerBlocks,
+          height: headerH + (innerH > 0 ? innerH + 18 : 0) + 10,
+        });
         break;
       }
       case "code": {
@@ -254,7 +373,7 @@ function appendMarkdownBlocks(
           }
         }
         const key = `${block.lang.toLowerCase()}\0${block.code}`;
-        const wrapped = wrapCodeTokens(block.code, highlights.get(key), maxWidth - 28, palette, measure);
+        const wrapped = wrapCodeTokens(block.code, highlights.get(key), Math.max(80, maxWidth - 28), palette, measure);
         const headerH = 28;
         const footerH = wrapped.truncatedLines > 0 ? 22 : 0;
         const codeH = Math.max(1, wrapped.lines.length) * 19.5;
@@ -385,27 +504,119 @@ export function buildPaginatedShareLayout(params: {
       blocks.push({ kind: "divider", height: 28, marginTop: 14 });
     }
 
-    if (ex.userText) {
-      const userLines = wrapMarkdownInline(
-        ex.userText,
-        contentWidth - 32,
-        14.5,
-        23,
-        400,
-        palette.textPrimary,
-        palette,
-        measure
+    const hasUserContent = Boolean(ex.userText || ex.userContexts.length > 0 || ex.userCollab);
+    if (hasUserContent) {
+      const userInnerW = Math.max(120, contentWidth - 32);
+      const buildNested = (
+        md: string,
+        width: number,
+        st: { bodySize: number; bodyLineH: number; textColor: string; compact: boolean }
+      ): LayoutBlock[] => {
+        const nested: LayoutBlock[] = [];
+        appendMarkdownBlocks(
+          md,
+          width,
+          palette,
+          measure,
+          highlights,
+          loadedImages,
+          [],
+          renderedImageIDs,
+          svgImages,
+          labels,
+          nested,
+          { ...st, depth: 1 }
+        );
+        return nested;
+      };
+
+      const collabHeader = ex.userCollab
+        ? buildUserCollabHeader(ex.userCollab, userInnerW, palette, measure, labels)
+        : undefined;
+
+      const contextCards: ShareContextCardLayout[] = ex.userContexts.map((ctxBlock) =>
+        buildContextCardLayout(ctxBlock, userInnerW, palette, measure, labels, buildNested)
       );
+
+      const userBodyBlocks: LayoutBlock[] = [];
+      if (ex.userCollab && ex.userCollab.sections.length > 0) {
+        for (const sec of ex.userCollab.sections) {
+          const headingLines = wrapStyledSegments(
+            [{ text: sec.heading, font: makeFont(12, 600), color: palette.textMuted }],
+            userInnerW,
+            18,
+            measure
+          );
+          userBodyBlocks.push({
+            kind: "heading",
+            level: 4,
+            lines: headingLines,
+            height: headingLines.length * 18 + 3,
+            keepWithNext: true,
+          });
+          appendMarkdownBlocks(
+            sec.content,
+            userInnerW,
+            palette,
+            measure,
+            highlights,
+            loadedImages,
+            ex.images,
+            renderedImageIDs,
+            svgImages,
+            labels,
+            userBodyBlocks,
+            { bodySize: 14.5, bodyLineH: 23, textColor: palette.textPrimary, compact: true, depth: 0 }
+          );
+        }
+      } else if (ex.userText) {
+        appendMarkdownBlocks(
+          ex.userText,
+          userInnerW,
+          palette,
+          measure,
+          highlights,
+          loadedImages,
+          ex.images,
+          renderedImageIDs,
+          svgImages,
+          labels,
+          userBodyBlocks,
+          { bodySize: 14.5, bodyLineH: 23, textColor: palette.textPrimary, compact: true, depth: 0 }
+        );
+      }
+      const userBodyH = trimTrailingSpacers(userBodyBlocks);
+
+      let userBoxH = 12; // top pad
+      if (collabHeader) {
+        userBoxH += 22;
+        if (collabHeader.titleLines.length > 0) {
+          userBoxH += 4 + collabHeader.titleLines.length * 20.5;
+        }
+      } else {
+        userBoxH += 18;
+      }
+      if (contextCards.length > 0) {
+        userBoxH += 6 + contextCards.reduce((sum, c) => sum + c.height, 0) + (contextCards.length - 1) * 8;
+      }
+      if (userBodyH > 0) {
+        userBoxH += (contextCards.length > 0 ? 10 : 4) + userBodyH;
+      }
+      userBoxH += 12 + 4; // bottom pad + outer margin
+
       blocks.push({
         kind: "user-box",
         roleLabel: labels.you,
-        lines: userLines,
-        height: 24 + userLines.length * 23 + 26,
+        collabHeader,
+        contextCards,
+        bodyBlocks: userBodyBlocks,
+        lines: [],
+        height: userBoxH,
       });
       blocks.push({ kind: "spacer", height: 10 });
     }
 
-    for (const img of ex.images.filter((item) => item.role === "user")) {
+    for (const img of ex.images.filter((item) => item.role === "user" && !renderedImageIDs.has(item.id))) {
       renderedImageIDs.add(img.id);
       blocks.push(buildImageBlock(img.label, contentWidth, loadedImages.get(img.id), labels));
     }

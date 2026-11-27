@@ -21,7 +21,7 @@ import type {
   WorktreeVerifyConfig,
   WorktreeVerifyState,
 } from "./api-types";
-import { requestJSON, withDir } from "./http";
+import { requestJSON, resolveDesktopLoopbackURL, withDir } from "./http";
 import { commitWorktreeWithRecovery, inspectHoxiRequest } from "./request-ledger";
 
 export const fileAndPtyAPI = {
@@ -94,6 +94,23 @@ export const fileAndPtyAPI = {
         ...(opts?.action ? { action: opts.action } : {}),
         ...(opts?.locale ? { locale: opts.locale } : {}),
       }),
+    });
+  },
+  saveImages(input: {
+    title?: string;
+    defaultDir?: string;
+    images: Array<{ filename: string; dataUrl: string }>;
+  }): Promise<{
+    supported: boolean;
+    saved?: boolean;
+    canceled?: boolean;
+    paths?: string[];
+    directory?: string;
+    error?: string;
+  }> {
+    return requestJSON(resolveDesktopLoopbackURL("/api/hoxi/file/save-images"), {
+      method: "POST",
+      body: JSON.stringify(input),
     });
   },
   saveMemory(input: {

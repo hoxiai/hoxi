@@ -185,6 +185,7 @@ func isTokenProtectedHoxiHostPath(requestPath string) bool {
 		"/api/hoxi/clipboard/image",
 		"/api/hoxi/clipboard/images",
 		"/api/hoxi/file/open",
+		"/api/hoxi/file/save-images",
 		"/api/hoxi/provider/catalog",
 		"/api/hoxi/provider/auth-methods",
 		"/api/hoxi/provider/config",

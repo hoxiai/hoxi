@@ -1,6 +1,6 @@
 // web/src/components/share/share-image-text.ts
-// Theme palettes, Canvas 2D layout types, CJK/Latin rich text wrapping, and
-// Shiki-aware code line wrapping for local session share PNG cards.
+// Theme palettes, Canvas 2D layout types, CJK/Latin rich text wrapping,
+// Shiki-aware code line wrapping, and shared Canvas 2D text/shape primitives.
 import type { ThemedToken } from "shiki";
 import {
   HOXI_MATRIX_BODY_DOTS,
@@ -11,7 +11,7 @@ import {
 } from "../icons/hoxi-brand-mark";
 import { parseInline } from "../timeline/markdown/inline";
 import type { AlertKind, InlineSpan, TableAlign } from "../timeline/markdown/types";
-import type { ShareToolPill } from "./share-image-model";
+import type { ShareCollabRole, ShareToolPill } from "./share-image-model";
 
 export interface ShareThemePalette {
   mode: "light" | "dark";
@@ -37,6 +37,9 @@ export interface ShareThemePalette {
   inlineCodeText: string;
   quoteBg: string;
   quoteBorder: string;
+  quoteCardBg: string;
+  quoteCardBorder: string;
+  quoteHeaderBg: string;
   thinkingBg: string;
   thinkingBorder: string;
   pillBg: string;
@@ -46,6 +49,12 @@ export interface ShareThemePalette {
   okDot: string;
   errDot: string;
   warnDot: string;
+  importantDot: string;
+  alertNoteBg: string;
+  alertTipBg: string;
+  alertImportantBg: string;
+  alertWarnBg: string;
+  alertCautionBg: string;
   linkText: string;
 }
 
@@ -73,6 +82,9 @@ export const LIGHT_PALETTE: ShareThemePalette = {
   inlineCodeText: "#0f172a",
   quoteBg: "#f8fafc",
   quoteBorder: "#cbd5e1",
+  quoteCardBg: "#ffffff",
+  quoteCardBorder: "#dbe4f0",
+  quoteHeaderBg: "#f1f5f9",
   thinkingBg: "#f8fafc",
   thinkingBorder: "#cbd5e1",
   pillBg: "#f8fafc",
@@ -81,7 +93,13 @@ export const LIGHT_PALETTE: ShareThemePalette = {
   tableBorder: "#e2e8f0",
   okDot: "#10b981",
   errDot: "#ef4444",
-  warnDot: "#f59e0b",
+  warnDot: "#d97706",
+  importantDot: "#7c3aed",
+  alertNoteBg: "#eff6ff",
+  alertTipBg: "#ecfdf5",
+  alertImportantBg: "#f5f3ff",
+  alertWarnBg: "#fffbeb",
+  alertCautionBg: "#fef2f2",
   linkText: "#2563eb",
 };
 
@@ -109,6 +127,9 @@ export const DARK_PALETTE: ShareThemePalette = {
   inlineCodeText: "#e2e8f0",
   quoteBg: "#171d29",
   quoteBorder: "#3b475e",
+  quoteCardBg: "#131822",
+  quoteCardBorder: "#2c374c",
+  quoteHeaderBg: "#18202f",
   thinkingBg: "#161c27",
   thinkingBorder: "#334155",
   pillBg: "#1a2130",
@@ -118,6 +139,12 @@ export const DARK_PALETTE: ShareThemePalette = {
   okDot: "#34d399",
   errDot: "#f87171",
   warnDot: "#fbbf24",
+  importantDot: "#a78bfa",
+  alertNoteBg: "#13203b",
+  alertTipBg: "#102822",
+  alertImportantBg: "#211738",
+  alertWarnBg: "#2a2112",
+  alertCautionBg: "#2c161b",
   linkText: "#60a5fa",
 };
 
@@ -127,6 +154,78 @@ export const FONT_MONO =
   '"JetBrains Mono", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace';
 
 export { HOXI_MATRIX_BODY_DOTS, HOXI_MATRIX_SPARK_DOTS };
+
+export function fillRoundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number
+): void {
+  const radius = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + w, y, x + w, y + h, radius);
+  ctx.arcTo(x + w, y + h, x, y + h, radius);
+  ctx.arcTo(x, y + h, x, y, radius);
+  ctx.arcTo(x, y, x + w, y, radius);
+  ctx.closePath();
+}
+
+export function drawWrappedLines(
+  ctx: CanvasRenderingContext2D,
+  lines: WrappedLine[],
+  startX: number,
+  startY: number,
+  palette: ShareThemePalette,
+  align: "left" | "center" | "right" = "left",
+  boxWidth = 0
+): number {
+  let y = startY;
+  ctx.textBaseline = "middle";
+  for (const line of lines) {
+    const lineW = line.runs.reduce((s, r) => s + r.width, 0);
+    let x = startX;
+    if (align === "center" && boxWidth > 0) x = startX + Math.max(0, (boxWidth - lineW) / 2);
+    else if (align === "right" && boxWidth > 0) x = startX + Math.max(0, boxWidth - lineW);
+
+    const midY = y + line.height / 2;
+    for (const run of line.runs) {
+      if (run.inlineCode) {
+        ctx.fillStyle = palette.inlineCodeBg;
+        fillRoundRect(ctx, x, midY - 9, run.width, 18, 5);
+        ctx.fill();
+        ctx.font = run.font;
+        ctx.fillStyle = run.color;
+        ctx.fillText(run.text, x + 4, midY + 0.5);
+      } else {
+        ctx.font = run.font;
+        ctx.fillStyle = run.color;
+        ctx.fillText(run.text, x, midY);
+        if (run.strike) {
+          ctx.strokeStyle = run.color;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(x, midY);
+          ctx.lineTo(x + run.width, midY);
+          ctx.stroke();
+        }
+        if (run.underline) {
+          ctx.strokeStyle = run.color;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(x, midY + 7);
+          ctx.lineTo(x + run.width, midY + 7);
+          ctx.stroke();
+        }
+      }
+      x += run.width;
+    }
+    y += line.height;
+  }
+  return y;
+}
 
 export function drawHoxiMatrixMark(
   ctx: CanvasRenderingContext2D,
@@ -189,15 +288,84 @@ export interface PositionedPill {
   status: ShareToolPill["status"];
 }
 
+export interface SharePillLayout {
+  text: string;
+  width: number;
+  mono?: boolean;
+  tone?: "neutral" | "accent" | "pm" | "qa" | "op";
+}
+
+export interface ShareContextKvRowLayout {
+  key: string;
+  valueLines: WrappedLine[];
+  height: number;
+}
+
+export interface ShareContextRowLayout {
+  height: number;
+  indexLabel?: string;
+  titleLines: WrappedLine[];
+  titlePillsInline: boolean;
+  titleLineWidth: number;
+  pills: SharePillLayout[];
+  subtitleLines: WrappedLine[];
+  kvKeyWidth: number;
+  kvRows: ShareContextKvRowLayout[];
+  kvBoxHeight: number;
+  jsonLines: string[];
+  jsonBoxHeight: number;
+  bodyBlocks: LayoutBlock[];
+  bodyBlocksHeight: number;
+  omittedLines: number;
+}
+
+export type ShareContextCardLayout =
+  | {
+      variant: "quote";
+      height: number;
+      sourcePill?: SharePillLayout;
+      titleText: string;
+      pills: SharePillLayout[];
+      bodyBlocks: LayoutBlock[];
+      bodyHeight: number;
+      omittedLines: number;
+    }
+  | {
+      variant: "structured";
+      height: number;
+      kindIcon: "entity" | "snapshot" | "record" | "batch";
+      sourcePill?: SharePillLayout;
+      headlineText: string;
+      headerBadge?: SharePillLayout;
+      rows: ShareContextRowLayout[];
+      extraItemsCount: number;
+    };
+
+export interface ShareUserCollabHeader {
+  role: ShareCollabRole;
+  roleBadge: SharePillLayout;
+  modeBadge?: SharePillLayout;
+  titleLines: WrappedLine[];
+}
+
 export type LayoutBlock =
   | { kind: "spacer"; height: number }
   | { kind: "divider"; height: number; marginTop: number }
   | { kind: "role-header"; height: number; role: "user" | "assistant"; label: string; modelID?: string; keepWithNext: true }
-  | { kind: "user-box"; height: number; lines: WrappedLine[]; roleLabel: string }
+  | {
+      kind: "user-box";
+      height: number;
+      roleLabel: string;
+      collabHeader?: ShareUserCollabHeader;
+      contextCards: ShareContextCardLayout[];
+      bodyBlocks: LayoutBlock[];
+      lines: WrappedLine[];
+    }
   | { kind: "heading"; height: number; level: 1 | 2 | 3 | 4; lines: WrappedLine[]; keepWithNext: true }
   | { kind: "paragraph"; height: number; lines: WrappedLine[]; indentX?: number }
   | { kind: "list-item"; height: number; marker: string; markerX: number; textX: number; lines: WrappedLine[] }
-  | { kind: "blockquote"; height: number; lines: WrappedLine[]; alert?: AlertKind }
+  | { kind: "blockquote"; height: number; lines: WrappedLine[]; blocks?: LayoutBlock[]; alert?: AlertKind }
+  | { kind: "details"; height: number; summaryLines: WrappedLine[]; blocks: LayoutBlock[] }
   | { kind: "thinking"; height: number; label: string; lines: WrappedLine[] }
   | { kind: "tool-pills"; height: number; pills: PositionedPill[] }
   | {
@@ -247,6 +415,14 @@ export interface LayoutLabels {
   you: string;
   assistant: string;
   thinking: string;
+  quoted: string;
+  referencedItems: (count: number) => string;
+  referencedSingle: string;
+  moreItems: (count: number) => string;
+  omittedLines: (count: number) => string;
+  collabRolePM: string;
+  collabRoleQA: string;
+  collabRoleOP: string;
   moreTools: (count: number) => string;
   truncatedCodeLines: (count: number) => string;
   imageUnavailable: (label: string) => string;
@@ -267,6 +443,24 @@ export interface StyledSegment {
 export function makeFont(size: number, weight = 400, mono = false, italic = false): string {
   const style = italic ? "italic " : "";
   return `${style}${weight} ${size}px ${mono ? FONT_MONO : FONT_SANS}`;
+}
+
+export function truncateTextToWidth(
+  text: string,
+  font: string,
+  maxWidth: number,
+  measure: TextMeasureFn
+): string {
+  const single = text.replace(/\s+/g, " ").trim();
+  if (!single || maxWidth <= 8) return "";
+  if (measure(single, font) <= maxWidth) return single;
+  const chars = Array.from(single);
+  let out = "";
+  for (const ch of chars) {
+    if (measure(`${out}${ch}…`, font) > maxWidth) break;
+    out += ch;
+  }
+  return out ? `${out}…` : "…";
 }
 
 function isWideCodePoint(code: number): boolean {
@@ -430,7 +624,7 @@ export function inlineSpansToSegments(
       case "code":
         out.push({
           text: span.text,
-          font: makeFont(Math.max(11.5, baseSize - 1.5), 500, true),
+          font: makeFont(Math.max(11, baseSize - 1.5), 500, true),
           color: palette.inlineCodeText,
           inlineCode: true,
         });

@@ -1,9 +1,17 @@
 // web/src/components/share/share-image-model.ts
 // Pure, DOM-free session data preparation for shareable PNG image cards:
-// exchange grouping, privacy redaction, local path shortening, tool pill
-// summarization, and embeddable image collection.
+// exchange grouping, structured context/quote & collab parsing, privacy
+// redaction, local path shortening, tool pill summarization, and image collection.
 import type { MessageInfo, MessagePart, SessionInfo, ToolPart } from "../../services/sse-types";
-import { formatContextPromptForExport } from "../../store/workspace";
+import {
+  getContextItemBodyText,
+  parseCollabPrompt,
+  parseHoxiContextPrompt,
+  prettyFormatContextBody,
+  type CollabPromptRole,
+  type ContextEnvelope,
+  type ContextItem,
+} from "../../store/workspace";
 import { expandInlineThinkingParts, extractVisibleAssistantText } from "../timeline/context-activity-parts";
 import { replaceRichFencesForReadableExport } from "../timeline/rich-view-spec";
 import { normalizeReasoningText } from "../timeline/ThoughtBox";
@@ -33,6 +41,39 @@ export interface ShareImageAsset {
   mime?: string;
 }
 
+export interface ShareContextKeyValue {
+  key: string;
+  value: string;
+}
+
+export interface ShareContextItem {
+  kind: ContextItem["kind"];
+  title?: string;
+  subtitle?: string;
+  badge?: string;
+  refLabel?: string;
+  body?: string;
+  isJson?: boolean;
+  kvPairs?: ShareContextKeyValue[];
+}
+
+export interface ShareContextBlock {
+  sourceLabel?: string;
+  tabTitle?: string;
+  isSingleQuote: boolean;
+  items: ShareContextItem[];
+}
+
+export type ShareCollabRole = CollabPromptRole | "op";
+
+export interface ShareCollabInfo {
+  role: ShareCollabRole;
+  author?: string;
+  mode?: "plan" | "build";
+  title?: string;
+  sections: Array<{ heading: string; content: string }>;
+}
+
 export interface ShareExchange {
   id: string;
   index: number;
@@ -41,6 +82,8 @@ export interface ShareExchange {
   modelID?: string;
   userText: string;
   userPreview: string;
+  userContexts: ShareContextBlock[];
+  userCollab?: ShareCollabInfo;
   assistantText: string;
   assistantPreview: string;
   thinkingText: string;
@@ -175,7 +218,6 @@ export function shortenLocalPaths(input: string, workspaceDir?: string): string 
     const winDir = cleanDir.replace(/\//g, "\\");
     const variants = new Set<string>([cleanDir, posixDir]);
     if (winDir !== posixDir) variants.add(winDir);
-    // If running inside a Hoxi worktree, also strip the base repo root
     const wtIdx = posixDir.indexOf("/.hoxi/worktrees/");
     if (wtIdx > 0) {
       const repoRoot = posixDir.slice(0, wtIdx);
@@ -193,7 +235,6 @@ export function shortenLocalPaths(input: string, workspaceDir?: string): string 
     }
   }
 
-  // Collapse remaining home directory paths without exposing OS username
   out = out.replace(/\/Users\/[^/\s"'`<>|:,;)\]]+(?=\/|$)/g, "~");
   out = out.replace(/\/home\/[^/\s"'`<>|:,;)\]]+(?=\/|$)/g, "~");
   out = out.replace(/[A-Za-z]:\\Users\\[^\\\s"'`<>|:,;)\]]+(?=\\|$)/g, "~");
@@ -201,7 +242,7 @@ export function shortenLocalPaths(input: string, workspaceDir?: string): string 
 }
 
 // ---------------------------------------------------------------------------
-// Tool summary extraction & image extraction
+// Tool summary extraction, context normalization & image extraction
 // ---------------------------------------------------------------------------
 
 function basenameOf(raw: string): string {
@@ -215,6 +256,96 @@ function truncateInline(value: string, max: number): string {
   const single = value.replace(/\s+/g, " ").trim();
   if (single.length <= max) return single;
   return `${single.slice(0, Math.max(1, max - 1))}…`;
+}
+
+function extractFlatJsonKeyValues(raw: string): ShareContextKeyValue[] | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    const entries = Object.entries(parsed as Record<string, unknown>);
+    if (entries.length === 0 || entries.length > 8) return undefined;
+    const out: ShareContextKeyValue[] = [];
+    for (const [k, v] of entries) {
+      if (!k || k.length > 36) return undefined;
+      if (v === null || v === undefined) continue;
+      if (typeof v === "object") return undefined;
+      const str = String(v).trim();
+      if (!str || str.length > 180 || str.includes("\n")) return undefined;
+      out.push({ key: k, value: str });
+    }
+    return out.length > 0 ? out : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function buildShareContextBlock(
+  env: ContextEnvelope,
+  cleanText: (raw: string) => string
+): ShareContextBlock | null {
+  const items: ShareContextItem[] = [];
+  for (const item of env.items) {
+    const title = item.title ? cleanText(item.title) : undefined;
+    const subtitle = item.subtitle ? cleanText(item.subtitle) : undefined;
+    const badge = item.badge ? cleanText(item.badge) : undefined;
+    const rawRef = item.ref?.id ? (item.entityType ? `${item.entityType}:${item.ref.id}` : `#${item.ref.id}`) : undefined;
+    const refLabel = rawRef ? cleanText(rawRef) : undefined;
+    const rawBody = getContextItemBodyText(item).trim();
+
+    let body: string | undefined;
+    let isJson = false;
+    let kvPairs: ShareContextKeyValue[] | undefined;
+
+    if (rawBody) {
+      const formatted = prettyFormatContextBody(rawBody);
+      isJson = formatted.isJson;
+      if (formatted.isJson) {
+        const rawKv = extractFlatJsonKeyValues(rawBody);
+        if (rawKv) {
+          // Run cleanText on key: value pairs so secret-key redaction catches sensitive keys too.
+          kvPairs = rawKv.map((entry) => {
+            const cleanedPair = cleanText(`${entry.key}: ${entry.value}`);
+            const sepIdx = cleanedPair.indexOf(": ");
+            if (sepIdx > 0) {
+              return {
+                key: cleanedPair.slice(0, sepIdx).trim(),
+                value: cleanedPair.slice(sepIdx + 2).trim(),
+              };
+            }
+            return { key: cleanText(entry.key), value: cleanText(entry.value) };
+          });
+        } else {
+          body = cleanText(formatted.text);
+        }
+      } else {
+        body = cleanText(formatted.text);
+      }
+    }
+
+    if (!title && !subtitle && !badge && !refLabel && !body && !kvPairs?.length) continue;
+    items.push({
+      kind: item.kind,
+      ...(title ? { title } : {}),
+      ...(subtitle ? { subtitle } : {}),
+      ...(badge ? { badge } : {}),
+      ...(refLabel ? { refLabel } : {}),
+      ...(body ? { body } : {}),
+      ...(isJson ? { isJson: true } : {}),
+      ...(kvPairs ? { kvPairs } : {}),
+    });
+  }
+  if (items.length === 0) return null;
+  const rawSource = env.source?.appName || env.source?.appId;
+  const sourceLabel = rawSource ? cleanText(rawSource) : undefined;
+  const tabTitle = env.source?.tabTitle ? cleanText(env.source.tabTitle) : undefined;
+  return {
+    ...(sourceLabel ? { sourceLabel } : {}),
+    ...(tabTitle ? { tabTitle } : {}),
+    isSingleQuote: items.length === 1 && items[0].kind === "quote",
+    items,
+  };
 }
 
 function extractToolDetail(part: ToolPart): string {
@@ -276,7 +407,6 @@ const MARKDOWN_IMAGE_RE =
 function extractMarkdownImages(text: string): Array<{ alt: string; src: string }> {
   const results: Array<{ alt: string; src: string }> = [];
   if (!text || !text.includes("![")) return results;
-  // Ignore images inside fenced code blocks
   const stripped = text.replace(/```[\s\S]*?```/g, "");
   MARKDOWN_IMAGE_RE.lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -297,6 +427,19 @@ function makePreviewLine(text: string, fallback: string): string {
     .trim();
   if (!cleaned) return fallback;
   return truncateInline(cleaned, 72);
+}
+
+function summarizeContextPreview(blocks: ShareContextBlock[]): string {
+  const first = blocks[0]?.items[0];
+  if (!first) return "";
+  const candidate =
+    first.title ||
+    first.subtitle ||
+    first.body ||
+    (first.kvPairs?.map((kv) => `${kv.key}: ${kv.value}`).join(" · ") ?? "") ||
+    first.refLabel ||
+    "";
+  return makePreviewLine(candidate, "");
 }
 
 // ---------------------------------------------------------------------------
@@ -352,6 +495,8 @@ export function groupTurnsIntoExchanges(
     const group = groups[idx];
     const messageIDs: string[] = [];
     const userChunks: string[] = [];
+    const userContexts: ShareContextBlock[] = [];
+    let userCollab: ShareCollabInfo | undefined;
     const assistantChunks: string[] = [];
     const thinkingChunks: string[] = [];
     const tools: ShareToolPill[] = [];
@@ -393,10 +538,56 @@ export function groupTurnsIntoExchanges(
       if (!createdAt && uTurn.info.time?.created) createdAt = uTurn.info.time.created;
       for (const part of uTurn.parts) {
         if (part.type === "text") {
-          const exported = formatContextPromptForExport(part.text).trim();
-          if (exported) {
-            userChunks.push(cleanText(exported));
-            for (const img of extractMarkdownImages(exported)) {
+          const rawText = part.text || "";
+          const collab = parseCollabPrompt(rawText);
+          if (collab) {
+            const cleanSections = collab.sections.map((sec) => {
+              for (const img of extractMarkdownImages(sec.content)) {
+                pushImage("user", img.src, img.alt);
+              }
+              return {
+                heading: cleanText(sec.heading),
+                content: cleanText(sec.content),
+              };
+            });
+            const cleanBody = cleanText(collab.bodyText.trim());
+            const cleanTitle = collab.title ? cleanText(collab.title) : undefined;
+            userCollab = {
+              role: collab.role,
+              ...(collab.author ? { author: cleanText(collab.author) } : {}),
+              ...(collab.mode ? { mode: collab.mode } : {}),
+              ...(cleanTitle && cleanTitle !== cleanBody ? { title: cleanTitle } : {}),
+              sections: cleanSections,
+            };
+            if (cleanSections.length === 0 && cleanBody) {
+              userChunks.push(cleanBody);
+              for (const img of extractMarkdownImages(collab.bodyText)) {
+                pushImage("user", img.src, img.alt);
+              }
+            }
+            continue;
+          }
+
+          const parsed = parseHoxiContextPrompt(rawText);
+          if (parsed.hasContext) {
+            for (const env of parsed.envelopes) {
+              const block = buildShareContextBlock(env, cleanText);
+              if (block) userContexts.push(block);
+            }
+            const body = parsed.bodyText.trim();
+            if (body) {
+              userChunks.push(cleanText(body));
+              for (const img of extractMarkdownImages(body)) {
+                pushImage("user", img.src, img.alt);
+              }
+            }
+            continue;
+          }
+
+          const plain = rawText.trim();
+          if (plain) {
+            userChunks.push(cleanText(plain));
+            for (const img of extractMarkdownImages(plain)) {
               pushImage("user", img.src, img.alt);
             }
           }
@@ -446,9 +637,22 @@ export function groupTurnsIntoExchanges(
     const userText = userChunks.join("\n\n").trim();
     const assistantText = assistantChunks.join("\n\n").trim();
     const thinkingText = thinkingChunks.join("\n\n").trim();
-    if (!userText && !assistantText && !thinkingText && tools.length === 0 && exchangeImages.length === 0) {
+    if (
+      !userText &&
+      userContexts.length === 0 &&
+      !userCollab &&
+      !assistantText &&
+      !thinkingText &&
+      tools.length === 0 &&
+      exchangeImages.length === 0
+    ) {
       continue;
     }
+
+    const fallbackUserPreview =
+      userCollab?.title ||
+      userCollab?.sections[0]?.content ||
+      summarizeContextPreview(userContexts);
 
     exchanges.push({
       id: exchangeID,
@@ -457,7 +661,9 @@ export function groupTurnsIntoExchanges(
       createdAt,
       modelID: modelID || undefined,
       userText,
-      userPreview: makePreviewLine(userText, ""),
+      userPreview: makePreviewLine(userText, makePreviewLine(fallbackUserPreview, "")),
+      userContexts,
+      ...(userCollab ? { userCollab } : {}),
       assistantText,
       assistantPreview: makePreviewLine(assistantText, thinkingText ? makePreviewLine(thinkingText, "") : ""),
       thinkingText,
@@ -479,8 +685,6 @@ export function resolveInitialExchangeSelection(
     const matched = exchanges.find((ex) => ex.messageIDs.includes(focusMessageID));
     if (matched) return new Set([matched.id]);
   }
-  // Session-level share selects the full conversation by default; ultra-long
-  // sessions are safely split into multi-page cards by the layout engine.
   return new Set(exchanges.map((ex) => ex.id));
 }
 
