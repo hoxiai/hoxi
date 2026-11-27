@@ -380,6 +380,7 @@ func isRemoteSessionRuntimeRoute(method, path string) bool {
 		return false
 	}
 	return path == "/api/hoxi/sessions" ||
+		tunnelPatternMatch(workPackageSessionsPattern, path) ||
 		tunnelPatternMatch("/api/hoxi/sessions/*/runtime", path) ||
 		tunnelPatternMatch("/api/hoxi/sessions/*/prompt", path) ||
 		tunnelPatternMatch("/api/hoxi/sessions/*/prompt_async", path)

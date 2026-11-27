@@ -574,4 +574,13 @@ func TestNormalizeRemoteLegacyCoreRuntimeWhenDaemonless(t *testing.T) {
 	if err := json.Unmarshal(gotDaemon, &normalizedBody); err != nil || normalizedBody.Runtime != "opencode" {
 		t.Fatalf("daemon-enabled prompt_async normalize = %s (err=%v), want runtime=opencode", string(gotDaemon), err)
 	}
+
+	// 6. Remote Work App session creation also normalizes legacy runtime:"opencode" -> "native" when daemonless.
+	workRaw := []byte(`{"title":"Work Task","runtime":"opencode"}`)
+	workReq := localRequest(http.MethodPost, "/api/hoxi/work/app-sessions/demo", bytes.NewReader(workRaw))
+	g.normalizeRemoteLegacyCoreRuntime(workReq)
+	gotWork, _ := io.ReadAll(workReq.Body)
+	if err := json.Unmarshal(gotWork, &normalizedBody); err != nil || normalizedBody.Runtime != "native" {
+		t.Fatalf("daemonless work app-sessions normalize = %s (err=%v), want runtime=native", string(gotWork), err)
+	}
 }

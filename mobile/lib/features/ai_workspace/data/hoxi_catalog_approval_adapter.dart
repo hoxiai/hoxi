@@ -18,7 +18,7 @@ class HoxiCatalogApprovalAdapter {
   final ApiClient _apiClient;
   final int Function(String raw) _stableId;
   List<CodeExecutor> _cachedExecutors = const [];
-  String _defaultCoreRuntime = 'opencode';
+  String _defaultCoreRuntime = 'native';
   bool _openCodeDaemonReady = false;
   final Map<String, String> _attachmentDataUrls = {};
 
@@ -427,8 +427,12 @@ class HoxiCatalogApprovalAdapter {
     final sysMap = results[0] as Map<String, dynamic>?;
     final openCodeVer = (sysMap?['openCodeVersion'] ?? '').toString().trim();
     final appVersion = (sysMap?['appVersion'] ?? '').toString().trim();
-    final nativeEngineReady = sysMap?['nativeEngineReady'] == true;
-    final openCodeReady = sysMap?['openCodeReady'] == true;
+    final nativeEngineReady = sysMap == null
+        ? _defaultCoreRuntime != 'opencode'
+        : sysMap['nativeEngineReady'] == true;
+    final openCodeReady = sysMap == null
+        ? _openCodeDaemonReady
+        : sysMap['openCodeReady'] == true;
     final coreRuntimeId = nativeEngineReady ? 'native' : 'opencode';
     _defaultCoreRuntime = coreRuntimeId;
     _openCodeDaemonReady = nativeEngineReady ? openCodeReady : true;

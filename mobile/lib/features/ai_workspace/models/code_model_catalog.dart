@@ -444,7 +444,12 @@ class CodeModelCatalog {
         ? null
         : usableExecutors.cast<CodeExecutor?>().firstWhere(
             (e) => e?.id == cleanExecId,
-            orElse: () => null,
+            orElse: () => cleanExecId == 'opencode'
+                ? usableExecutors.cast<CodeExecutor?>().firstWhere(
+                    (e) => e?.id == 'native',
+                    orElse: () => null,
+                  )
+                : null,
           );
     final selectedExec = matchedUsableExec ??
         (preferredExecutor != null &&
@@ -509,10 +514,19 @@ class CodeModelCatalog {
     bool openCodeDaemonReady = false,
   }) {
     final trimmedModel = model.trim();
-    final explicit = (explicitExecutorId ?? '').trim();
-    final cleanFallback = fallbackRuntime.trim().isEmpty
+    final healLegacyOpenCode = !openCodeDaemonReady &&
+        executors.any((e) => e.id == 'native') &&
+        !executors.any((e) => e.id == 'opencode');
+    final rawExplicit = (explicitExecutorId ?? '').trim();
+    final explicit = healLegacyOpenCode && rawExplicit.toLowerCase() == 'opencode'
+        ? 'native'
+        : rawExplicit;
+    final rawFallback = fallbackRuntime.trim().isEmpty
         ? preferredCoreRuntime(executors)
         : fallbackRuntime.trim();
+    final cleanFallback = healLegacyOpenCode && rawFallback.toLowerCase() == 'opencode'
+        ? 'native'
+        : rawFallback;
 
     if (trimmedModel.isNotEmpty) {
       final slashIdx = trimmedModel.indexOf('/');
@@ -535,17 +549,7 @@ class CodeModelCatalog {
           return _canonicalRunnerId(explicit);
         }
         if (isCoreEngine(explicit) && hasSlash && !_isRunnerExecutor(slashPrefix)) {
-          final canonicalExplicit = _canonicalRunnerId(explicit);
-          final hasExplicitExec = executors.any((e) => e.id == canonicalExplicit);
-          final hasOtherCoreExec = executors.any(
-            (e) => isCoreEngine(e.id) && e.id != canonicalExplicit,
-          );
-          if (canonicalExplicit == 'native' ||
-              hasExplicitExec ||
-              !hasOtherCoreExec ||
-              (canonicalExplicit == 'opencode' && openCodeDaemonReady)) {
-            return canonicalExplicit;
-          }
+          return _canonicalRunnerId(explicit);
         }
       }
       final fallbackMatch = executors.any(

@@ -200,18 +200,18 @@ class HoxiWorkspaceAdapter {
       if (defModel != null) {
         trimmedModel = defModel.value;
         runtime = defModel.executorId;
+      } else {
+        runtime = CodeModelCatalog.resolveRuntimeForModel(
+          model: '', explicitExecutorId: runtime, executors: execs,
+          fallbackRuntime: _catalogAdapter.defaultCoreRuntime, openCodeDaemonReady: _catalogAdapter.openCodeDaemonReady,
+        );
       }
     } else if (trimmedModel.isNotEmpty) {
       runtime = CodeModelCatalog.resolveRuntimeForModel(
         model: trimmedModel, explicitExecutorId: executorId, executors: execs,
         fallbackRuntime: runtime, openCodeDaemonReady: _catalogAdapter.openCodeDaemonReady,
       );
-      unawaited(
-        CodeModelCatalog.saveLastSelection(
-          model: trimmedModel,
-          executorId: runtime,
-        ),
-      );
+      unawaited(CodeModelCatalog.saveLastSelection(model: trimmedModel, executorId: runtime));
     }
     final reqId = clientRequestId?.trim() ?? '';
     final modelPayload = _buildPromptModelPayload(runtime, trimmedModel);

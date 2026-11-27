@@ -544,5 +544,103 @@ void main() {
         expect(postCalls.last.data['modelID'], 'openai-codex-gpt-6.2-sol');
       },
     );
+
+    test(
+      'system-info timeout/error does not downgrade native host to opencode and heals bare/auto corrupted opencode sessions',
+      () async {
+        final postCalls = <({String path, Map<String, dynamic> data})>[];
+        final client = _NativeStubApiClient(
+          onGet: (path, query) async {
+            if (path == '/api/hoxi/workspaces') {
+              return const {
+                'workspaces': [
+                  {'name': 'hoxi', 'path': '/Users/me/hoxi'},
+                ],
+              };
+            }
+            if (path == '/api/hoxi/system-info') {
+              throw Exception('system-info timeout');
+            }
+            if (path == '/api/hoxi/provider/models') {
+              return const {
+                'providers': {
+                  'subapi': {
+                    'name': 'SubAPI',
+                    'models': {
+                      'openai-codex-gpt-6.2-sol': {
+                        'name': 'openai-codex-gpt-6.2-sol',
+                      },
+                    },
+                  },
+                },
+              };
+            }
+            if (path == '/api/hoxi/sessions') {
+              return const [
+                {
+                  'id': 'ses_nat_bare_corrupted',
+                  'title': 'Corrupted Bare Model Session',
+                  'directory': '/Users/me/hoxi',
+                  'runtime': 'opencode',
+                  'providerID': '',
+                  'modelID': 'auto',
+                },
+              ];
+            }
+            return const <String, dynamic>{};
+          },
+          onPost: (path, data) async {
+            postCalls.add((path: path, data: data));
+            if (path == '/api/hoxi/sessions') {
+              return {
+                'id': 'ses_nat_created_1',
+                'title': data['title'] ?? 'New Session',
+                'directory': data['directory'] ?? '/Users/me/hoxi',
+                'runtime': data['runtime'] ?? 'native',
+                'providerID': data['providerID'] ?? '',
+                'modelID': data['modelID'] ?? '',
+              };
+            }
+            return const {'ok': true, 'instructionId': 15};
+          },
+        );
+
+        final adapter = HoxiWorkspaceAdapter(client);
+        final executors = await adapter.getExecutors();
+        expect(executors.any((e) => e.id == 'native'), isTrue);
+        expect(executors.any((e) => e.id == 'opencode'), isFalse);
+
+        final sessions = await adapter.getSessions();
+        expect(sessions.single.agentName, 'native');
+        await adapter.sendAiCommand(
+          sessionId: sessions.single.id,
+          command: 'Continue bare model session',
+        );
+        expect(postCalls.last.data['runtime'], 'native');
+
+        // Also verifies bare non-runner models on stale opencode heal to native.
+        expect(
+          CodeModelCatalog.resolveRuntimeForModel(
+            model: 'openai-codex-gpt-6.2-sol',
+            explicitExecutorId: 'opencode',
+            executors: executors,
+            fallbackRuntime: 'opencode',
+            openCodeDaemonReady: false,
+          ),
+          'native',
+        );
+
+        // Creating a session with legacy executorId='opencode' on a daemonless native host uses native.
+        final created = await adapter.createSession(
+          projectId: sessions.single.projectId,
+          executorId: 'opencode',
+          approvalPolicy: 'safe_auto',
+          title: 'Stale Pref Create',
+        );
+        expect(created.agentName, 'native');
+        final createCall = postCalls.lastWhere((c) => c.path == '/api/hoxi/sessions');
+        expect(createCall.data['runtime'], 'native');
+      },
+    );
   });
 }
