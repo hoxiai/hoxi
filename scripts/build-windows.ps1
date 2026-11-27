@@ -4,7 +4,7 @@
   Builds Hoxi for Windows (lean single-binary Hoxi.exe + NSIS setup.exe + portable .zip; optional opencode.exe via -BundleOpenCode or HOXI_BUNDLE_OPENCODE=1).
 .EXAMPLE
   .\scripts\build-windows.ps1
-  .\scripts\build-windows.ps1 -Version 0.7.7
+  .\scripts\build-windows.ps1 -Version 0.7.8
   .\scripts\build-windows.ps1 -Arch arm64
   .\scripts\build-windows.ps1 -BundleOpenCode
 #>

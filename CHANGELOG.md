@@ -2,6 +2,12 @@
 
 All notable releases of **Hoxi Desktop** are documented below. Full per-version release notes are archived under [`docs/release-notes/`](docs/release-notes/) and consumed directly by `.github/workflows/release.yml` and `scripts/ai-release.sh`.
 
+## [v0.7.8](docs/release-notes/v0.7.8.md) — 2026-11-27
+
+- **Native Prompt Cache Preservation & Telemetry**: Eliminated native GPT prompt-cache misses and false modality triggers, rebuilt diverged Gemini caches with hardened host proxy and retention matching, trimmed native coding context, surfaced omitted-zero cache drops and partial cache telemetry in the UI, and updated agent evals to report measured cache usage against original test suites.
+- **Collaborative Operations, Approval Isolation & Cross-Surface Deep Links**: Added generic OP session tool guards, state protection, and UI hooks with tab authorization and remote image-editor collaboration; isolated pending approval queues across surfaces and added cross-surface deep links with automatic pending scope re-resolution after session index updates.
+- **Native Downloads, Share Cards & Path Guard Hardening**: Handled macOS `WKWebView` downloads via the native save panel with atomic staging before rename, unified native file save feedback with reveal support, structured quoted content in share cards with batched multi-page PNG saves and partial-save reporting, stripped quoted context XML from previews/search, and hardened session path-scope guards.
+
 ## [v0.7.7](docs/release-notes/v0.7.7.md) — 2026-11-26
 
 - **One-Click CLI Onboarding & Runtime Discovery**: Added one-click free OpenCode setup, WorkBuddy CLI discovery, and Qoder authentication detection, and moved media routing directives onto per-turn delivery instead of the system prompt.
