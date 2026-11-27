@@ -470,3 +470,108 @@ func TestExtensionTunnelRelayPolicyIsEmptyInOSSAndSuppliedByExtension(t *testing
 		t.Fatalf("pairing.Code().ShortCodeRelayURL with extension = %q (err=%v), want https://relay.example.test", code.ShortCodeRelayURL, err)
 	}
 }
+
+func TestNormalizeRemoteLegacyCoreRuntimeWhenDaemonless(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("HOXI_HOME", filepath.Join(home, ".hoxi"))
+	ws := t.TempDir()
+	g := New(0, "test", ws, nil, nil)
+	defer g.CloseBrowser()
+
+	// 1. Daemonless remote POST /api/hoxi/sessions with legacy runtime:"opencode"
+	//    normalizes to "native" and creates a native session.
+	createBody, _ := json.Marshal(map[string]interface{}{
+		"title":       "Legacy Mobile Chat",
+		"directory":   ws,
+		"runtime":     "opencode",
+		"sandboxMode": "local",
+		"providerID":  "subapi",
+		"modelID":     "openai-codex-gpt-6.2-sol",
+	})
+	createRec := httptest.NewRecorder()
+	g.serveTunnelRequest(createRec, localRequest(http.MethodPost, "/api/hoxi/sessions", bytes.NewReader(createBody)))
+	if createRec.Code != http.StatusOK {
+		t.Fatalf("remote create session = %d %s", createRec.Code, createRec.Body.String())
+	}
+	var created struct {
+		ID      string `json:"id"`
+		Runtime string `json:"runtime"`
+	}
+	if err := json.Unmarshal(createRec.Body.Bytes(), &created); err != nil || created.ID == "" {
+		t.Fatalf("invalid create response: %s (%v)", createRec.Body.String(), err)
+	}
+	if created.Runtime != "native" {
+		t.Fatalf("remote create runtime = %q, want native", created.Runtime)
+	}
+
+	// 2. Daemonless remote POST /api/hoxi/sessions/{id}/runtime with legacy
+	//    runtime:"opencode" keeps the session on "native" instead of switching to OpenCode CLI.
+	switchBody, _ := json.Marshal(map[string]interface{}{
+		"runtime":    "opencode",
+		"providerID": "subapi",
+		"modelID":    "openai-codex-gpt-6.2-sol",
+	})
+	switchRec := httptest.NewRecorder()
+	g.serveTunnelRequest(switchRec, localRequest(http.MethodPost, "/api/hoxi/sessions/"+created.ID+"/runtime?directory="+ws, bytes.NewReader(switchBody)))
+	if switchRec.Code != http.StatusOK {
+		t.Fatalf("remote runtime switch = %d %s", switchRec.Code, switchRec.Body.String())
+	}
+	var switched struct {
+		Runtime string `json:"runtime"`
+	}
+	if err := json.Unmarshal(switchRec.Body.Bytes(), &switched); err != nil || switched.Runtime != "native" {
+		t.Fatalf("remote runtime switch result = %s (err=%v), want runtime=native", switchRec.Body.String(), err)
+	}
+
+	// 3. Explicit CLI runtimes (e.g. claude-code) over remote tunnel are NOT rewritten.
+	claudeBody, _ := json.Marshal(map[string]interface{}{
+		"runtime":    "claude-code",
+		"providerID": "claude-code",
+		"modelID":    "claude-sonnet-4-6",
+	})
+	claudeRec := httptest.NewRecorder()
+	g.serveTunnelRequest(claudeRec, localRequest(http.MethodPost, "/api/hoxi/sessions/"+created.ID+"/runtime?directory="+ws, bytes.NewReader(claudeBody)))
+	if claudeRec.Code != http.StatusOK {
+		t.Fatalf("remote claude-code switch = %d %s", claudeRec.Code, claudeRec.Body.String())
+	}
+	if err := json.Unmarshal(claudeRec.Body.Bytes(), &switched); err != nil || switched.Runtime != "claude-code" {
+		t.Fatalf("remote claude-code switch result = %s (err=%v), want runtime=claude-code", claudeRec.Body.String(), err)
+	}
+
+	// 4. Local desktop POST /api/hoxi/sessions with explicit runtime:"opencode" stays "opencode".
+	localRec := httptest.NewRecorder()
+	localReq := localRequest(http.MethodPost, "/api/hoxi/sessions", bytes.NewReader(createBody))
+	g.ServeHTTP(localRec, localReq)
+	if localRec.Code != http.StatusOK {
+		t.Fatalf("local create session = %d %s", localRec.Code, localRec.Body.String())
+	}
+	var localCreated struct {
+		Runtime string `json:"runtime"`
+	}
+	if err := json.Unmarshal(localRec.Body.Bytes(), &localCreated); err != nil || localCreated.Runtime != "opencode" {
+		t.Fatalf("local explicit opencode create = %s (err=%v), want runtime=opencode", localRec.Body.String(), err)
+	}
+
+	// 5. Daemonless prompt_async normalizes legacy runtime:"opencode" -> "native",
+	//    while an OpenCode-daemon host preserves runtime:"opencode".
+	promptRaw := []byte(`{"text":"continue","runtime":"opencode","model":{"providerID":"subapi","modelID":"openai-codex-gpt-6.2-sol"}}`)
+	promptReq := localRequest(http.MethodPost, "/api/hoxi/sessions/"+created.ID+"/prompt_async", bytes.NewReader(promptRaw))
+	g.normalizeRemoteLegacyCoreRuntime(promptReq)
+	gotNormalized, _ := io.ReadAll(promptReq.Body)
+	var normalizedBody struct {
+		Runtime string `json:"runtime"`
+	}
+	if err := json.Unmarshal(gotNormalized, &normalizedBody); err != nil || normalizedBody.Runtime != "native" {
+		t.Fatalf("daemonless prompt_async normalize = %s (err=%v), want runtime=native", string(gotNormalized), err)
+	}
+
+	gDaemon := New(4096, "pass", ws, nil, nil)
+	defer gDaemon.CloseBrowser()
+	daemonReq := localRequest(http.MethodPost, "/api/hoxi/sessions/"+created.ID+"/prompt_async", bytes.NewReader(promptRaw))
+	gDaemon.normalizeRemoteLegacyCoreRuntime(daemonReq)
+	gotDaemon, _ := io.ReadAll(daemonReq.Body)
+	if err := json.Unmarshal(gotDaemon, &normalizedBody); err != nil || normalizedBody.Runtime != "opencode" {
+		t.Fatalf("daemon-enabled prompt_async normalize = %s (err=%v), want runtime=opencode", string(gotDaemon), err)
+	}
+}

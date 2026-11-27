@@ -369,9 +369,57 @@ func (g *Gateway) serveRemoteRequest(w http.ResponseWriter, r *http.Request, sou
 		writeJSONError(w, http.StatusForbidden, "path is outside the workspace")
 		return
 	}
+	g.normalizeRemoteLegacyCoreRuntime(r)
 	bootW, finalizeBoot := g.wrapRemoteBootstrap(w, r)
 	defer finalizeBoot()
 	g.ServeHTTP(bootW, r)
+}
+
+func isRemoteSessionRuntimeRoute(method, path string) bool {
+	if method != http.MethodPost {
+		return false
+	}
+	return path == "/api/hoxi/sessions" ||
+		tunnelPatternMatch("/api/hoxi/sessions/*/runtime", path) ||
+		tunnelPatternMatch("/api/hoxi/sessions/*/prompt", path) ||
+		tunnelPatternMatch("/api/hoxi/sessions/*/prompt_async", path)
+}
+
+// normalizeRemoteLegacyCoreRuntime maps legacy mobile requests that still send
+// runtime:"opencode" onto Hoxi's in-process "native" engine whenever this host
+// runs without an OpenCode daemon. Standalone OpenCode CLI is not exposed in
+// tunnelRoutes, so older mobile builds (<= v0.7.5) continuing a native session
+// would otherwise switch it to external `opencode run` and fail with OpenCodeCLIError.
+func (g *Gateway) normalizeRemoteLegacyCoreRuntime(r *http.Request) {
+	if g == nil || (g.openCode != nil && g.openCode.Available()) {
+		return
+	}
+	if !isRemoteSessionRuntimeRoute(r.Method, r.URL.Path) || r.Body == nil || r.Body == http.NoBody {
+		return
+	}
+	raw, ok := readTunnelRequestBody(r)
+	if !ok || len(bytes.TrimSpace(raw)) == 0 {
+		return
+	}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(raw, &obj) != nil || obj == nil {
+		return
+	}
+	rawRT, exists := obj["runtime"]
+	if !exists {
+		return
+	}
+	var rt string
+	if json.Unmarshal(rawRT, &rt) != nil || strings.TrimSpace(rt) != "opencode" {
+		return
+	}
+	obj["runtime"] = json.RawMessage(`"native"`)
+	updated, err := json.Marshal(obj)
+	if err != nil {
+		return
+	}
+	r.Body = &bufferedTunnelBody{Reader: bytes.NewReader(updated), raw: updated}
+	r.ContentLength = int64(len(updated))
 }
 
 func worktreeParentRepo(dir string) string {
