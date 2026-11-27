@@ -697,18 +697,29 @@ func (t *contextTokenTracker) ObservePrefixCacheStability(
 	if t == nil {
 		return nil
 	}
+	totalInput := u.Input + u.CacheRead + u.CacheWrite
 	cur := computePrefixFingerprint(cacheKey, fullSystem, toolSpecs, sentMsgs, u.CacheRead)
 	prev := t.lastFingerprint
 	t.lastFingerprint = cur
 	if u.ReportedCacheInput == 0 {
 		// History replay and token calibration still need this fingerprint.
 		t.lastFingerprint.cacheRead = 0
-		return nil
+		// Providers using proto3 (Gemini) or omitempty JSON (OpenAI-compatible
+		// gateways) omit zero-valued cache fields on misses. Only suppress drop
+		// detection when the step carried no prompt input at all; otherwise, if
+		// the preceding step had a warm cache, surface the drop explicitly tagged
+		// with cache_telemetry_omitted instead of silently swallowing it.
+		if totalInput == 0 {
+			return nil
+		}
 	}
 	if !prev.valid || prev.cacheRead < minCacheDropBaselineTokens || cur.cacheRead >= prev.cacheRead/2 {
 		return nil
 	}
 	cause, shared := classifyPrefixCacheChange(prev, cur)
+	if u.ReportedCacheInput == 0 {
+		cause += "+cache_telemetry_omitted"
+	}
 	recordCacheDiagnostic(diagnostics.Entry{
 		Kind:       "cache",
 		Level:      "warn",

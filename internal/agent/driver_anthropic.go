@@ -262,7 +262,7 @@ func (d *anthropicDriver) ParseSSE(ctx context.Context, body io.Reader, emit fun
 					usage.Input += intFromAny(u["input_tokens"])
 					usage.CacheRead += intFromAny(u["cache_read_input_tokens"])
 					usage.CacheWrite += intFromAny(u["cache_creation_input_tokens"])
-					recordCacheCoverage(&usage, u["cache_read_input_tokens"])
+					recordCacheCoverageFromMap(&usage, u, "cache_read_input_tokens", "cache_creation_input_tokens")
 					if tier := normalizeFastServiceTier(u["speed"]); tier != "" {
 						usage.ServiceTier = tier
 					} else if tier := normalizeFastServiceTier(u["service_tier"]); tier != "" {

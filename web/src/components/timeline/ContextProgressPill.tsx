@@ -30,6 +30,7 @@ function cacheDropDescription(cause: string): string {
   if (reasons.includes("media_pruned")) labels.push(t("timeline.cacheMediaPruned"));
   else if (reasons.some((r) => r.startsWith("history_mutated_at="))) labels.push(t("timeline.cacheHistoryChanged"));
   if (reasons.includes("local_prefix_unchanged")) labels.push(t("timeline.cacheStablePrefix"));
+  if (reasons.includes("cache_telemetry_omitted")) labels.push(t("timeline.cacheTelemetryOmitted"));
   return labels.join(" · ");
 }
 
@@ -287,7 +288,16 @@ export default function ContextProgressPill() {
                   </div>
                   <div class="flex items-baseline justify-between gap-2">
                     <dt class="text-[var(--text-muted)]">{t("timeline.cacheInputShare")}</dt>
-                    <dd class="font-mono tabular-nums">{s().cacheHitPercent === null ? t("timeline.cacheUnreported") : `${s().cacheHitPercent}%`}</dd>
+                    <dd
+                      class="font-mono tabular-nums"
+                      title={s().cacheHitPartial ? t("timeline.cachePartialHint") : undefined}
+                    >
+                      {s().cacheHitPercent === null
+                        ? t("timeline.cacheUnreported")
+                        : s().cacheHitPartial
+                          ? `~${s().cacheHitPercent}%`
+                          : `${s().cacheHitPercent}%`}
+                    </dd>
                   </div>
                 </dl>
                 <Show when={s().lastCacheDrop}>

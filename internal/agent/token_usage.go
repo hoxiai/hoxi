@@ -17,8 +17,41 @@ func pricedUsage(target llm.StreamTarget, u TokenUsage) TokenUsage {
 // cache fields must not be interpreted as a measured zero.
 func recordCacheCoverage(u *TokenUsage, value any) {
 	total := u.Input + u.CacheRead + u.CacheWrite
-	if n, ok := value.(float64); ok && n >= 0 && math.Trunc(n) == n && n == float64(u.CacheRead) && n <= float64(total) {
+	if validCacheTokenField(value, u.CacheRead, total) {
 		u.ReportedCacheInput = total
+	}
+}
+
+func validCacheTokenField(value any, expected, total int) bool {
+	n, ok := value.(float64)
+	return ok && n >= 0 && math.Trunc(n) == n && n == float64(expected) && n <= float64(total)
+}
+
+// recordCacheCoverageFromMap checks primaryKey first and falls back to explicit
+// sibling cache fields only when primaryKey is absent (e.g. omitempty on a zero
+// cache read). A present-but-malformed primaryKey is never overridden.
+func recordCacheCoverageFromMap(u *TokenUsage, m map[string]any, primaryKey string, siblingKeys ...string) {
+	if m == nil {
+		return
+	}
+	if primaryVal, exists := m[primaryKey]; exists {
+		recordCacheCoverage(u, primaryVal)
+		return
+	}
+	total := u.Input + u.CacheRead + u.CacheWrite
+	for _, k := range siblingKeys {
+		val, exists := m[k]
+		if !exists {
+			continue
+		}
+		expected := u.CacheWrite
+		if k == "prompt_cache_miss_tokens" {
+			expected = u.Input
+		}
+		if validCacheTokenField(val, expected, total) {
+			u.ReportedCacheInput = total
+			return
+		}
 	}
 }
 

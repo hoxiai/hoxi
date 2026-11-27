@@ -6,7 +6,8 @@ function makeAssistantTurn(
   id: string,
   tokens: NonNullable<MessageTurn["info"]["tokens"]>,
   reasoningPartCount = 1,
-  cost = 0
+  cost = 0,
+  model?: { providerID?: string; modelID?: string }
 ): MessageTurn {
   const parts: MessageTurn["parts"] = [];
   for (let i = 0; i < reasoningPartCount; i++) {
@@ -24,6 +25,8 @@ function makeAssistantTurn(
       id,
       sessionID: "ses_ctx",
       role: "assistant",
+      providerID: model?.providerID,
+      modelID: model?.modelID,
       time: { created: 1, completed: 2 },
       cost,
       tokens,
@@ -106,18 +109,63 @@ describe("Session context watermark calculation", () => {
 });
 
 describe("cache feedback on the latest metered turn", () => {
-  it("uses disjoint input buckets, distinguishes zero from unavailable, and retains the last observed drop", () => {
+  it("uses disjoint input buckets, distinguishes zero from unavailable, and surfaces partial zero-omitting telemetry", () => {
     const drop = { cause: "local_prefix_unchanged", before: 3000, after: 0 };
     const measured = { input: 100, output: 800, reasoning: 10, cache: { read: 200, write: 100 }, reportedCacheInput: 400 };
-    const turn = makeAssistantTurn("first", { ...measured, cacheDrop: drop });
-    assertEqual(computeSessionContextWatermark([turn], 8000).cacheHitPercent, 50);
-    const cold = makeAssistantTurn("next", { ...measured, cache: { read: 0, write: 0 }, reportedCacheInput: 100 });
+    const turn = makeAssistantTurn("first", { ...measured, cacheDrop: drop }, 1, 0, {
+      providerID: "subapi",
+      modelID: "openai-codex-gpt-6.2-sol",
+    });
+    const firstStats = computeSessionContextWatermark([turn], 8000);
+    assertEqual(firstStats.cacheHitPercent, 50);
+    assertEqual(firstStats.cacheHitPartial, false);
+
+    const cold = makeAssistantTurn("next", { ...measured, cache: { read: 0, write: 0 }, reportedCacheInput: 100 }, 1, 0, {
+      providerID: "subapi",
+      modelID: "openai-codex-gpt-6.2-sol",
+    });
     const next = computeSessionContextWatermark([turn, cold], 8000);
     assertEqual(next.cacheHitPercent, 0);
+    assertEqual(next.cacheHitPartial, false);
     assertEqual(next.lastCacheDrop?.cause, drop.cause);
+
+    // Partial coverage (e.g. omitempty/proto3 gateways that omit cached_tokens on misses)
+    // and non-native turns with cache reads remain visible as partial estimates instead of "Unknown".
     for (const reportedCacheInput of [undefined, 200]) {
-      const unknown = makeAssistantTurn("partial", { ...measured, reportedCacheInput });
-      assertEqual(computeSessionContextWatermark([unknown], 8000).cacheHitPercent, null);
+      const partial = makeAssistantTurn("partial", { ...measured, reportedCacheInput });
+      const stats = computeSessionContextWatermark([partial], 8000);
+      assertEqual(stats.cacheHitPercent, 50);
+      assertEqual(stats.cacheHitPartial, true);
     }
+
+    // Same model omitting cache telemetry on a follow-up all-miss turn reports ~0% instead of hiding it.
+    const omittedMissSameModel = makeAssistantTurn(
+      "miss_same",
+      { input: 90_000, output: 400, reasoning: 0, cache: { read: 0, write: 0 }, reportedCacheInput: 0 },
+      1,
+      0,
+      { providerID: "subapi", modelID: "openai-codex-gpt-6.2-sol" }
+    );
+    const sameModelStats = computeSessionContextWatermark([turn, omittedMissSameModel], 200_000);
+    assertEqual(sameModelStats.cacheHitPercent, 0);
+    assertEqual(sameModelStats.cacheHitPartial, true);
+
+    // Switching to a different model that never reports cache telemetry stays Unknown (null).
+    const otherModel = makeAssistantTurn(
+      "other_model",
+      { input: 10_000, output: 200, reasoning: 0, cache: { read: 0, write: 0 } },
+      1,
+      0,
+      { providerID: "ollama", modelID: "qwen3" }
+    );
+    const otherModelStats = computeSessionContextWatermark([turn, otherModel], 200_000);
+    assertEqual(otherModelStats.cacheHitPercent, null);
+    assertEqual(otherModelStats.cacheHitPartial, false);
+
+    // Corrupted reportedCacheInput > inputPool is rejected as Unknown.
+    const corrupted = makeAssistantTurn("corrupt", { ...measured, reportedCacheInput: 9999 });
+    const corruptStats = computeSessionContextWatermark([corrupted], 8000);
+    assertEqual(corruptStats.cacheHitPercent, null);
+    assertEqual(corruptStats.cacheHitPartial, false);
   });
 });

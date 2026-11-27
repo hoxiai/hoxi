@@ -458,7 +458,7 @@ func parseOpenAIResponsesSSE(ctx context.Context, body io.Reader, emit func(Stre
 					}
 					normalizeInclusiveUsage(tu)
 					if details, ok := u["input_tokens_details"].(map[string]any); ok {
-						recordCacheCoverage(tu, details["cached_tokens"])
+						recordCacheCoverageFromMap(tu, details, "cached_tokens", "cache_write_tokens", "cache_creation_input_tokens")
 					}
 					emit(StreamEvent{Kind: EventUsage, Usage: tu})
 				}

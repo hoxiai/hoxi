@@ -21,6 +21,7 @@ export interface SessionContextWatermarkStats {
   cacheWrite: number;
   totalCost: number;
   cacheHitPercent: number | null;
+  cacheHitPartial: boolean;
   lastCacheDrop?: MessageTokens["cacheDrop"];
 }
 
@@ -43,7 +44,9 @@ export function computeSessionContextWatermark(
   let latestReasoningPartCount = 0;
   let totalCost = 0;
   let cacheHitPercent: number | null = null;
+  let cacheHitPartial = false;
   let lastCacheDrop: MessageTokens["cacheDrop"];
+  const cacheTelemetryModels = new Set<string>();
 
   for (const turn of turns) {
     if (typeof turn.info.cost === "number") {
@@ -65,8 +68,29 @@ export function computeSessionContextWatermark(
       latestCacheRead = t.cache?.read || 0;
       latestCacheWrite = t.cache?.write || 0;
       const inputPool = latestInput + latestCacheRead + latestCacheWrite;
-      cacheHitPercent = inputPool > 0 && t.reportedCacheInput === inputPool
-        ? Math.round(100 * latestCacheRead / inputPool) : null;
+      const reported = t.reportedCacheInput ?? 0;
+      const modelKey = `${turn.info.providerID ?? ""}\0${turn.info.modelID ?? ""}`;
+      const hasValidReported = reported > 0 && reported <= inputPool;
+      const turnHasCacheSignal =
+        latestCacheRead > 0 || latestCacheWrite > 0 || hasValidReported;
+      if (turnHasCacheSignal) {
+        cacheTelemetryModels.add(modelKey);
+      }
+      if (inputPool > 0 && reported === inputPool) {
+        cacheHitPercent = Math.round((100 * latestCacheRead) / inputPool);
+        cacheHitPartial = false;
+      } else if (
+        inputPool > 0 &&
+        reported >= 0 &&
+        reported <= inputPool &&
+        (turnHasCacheSignal || cacheTelemetryModels.has(modelKey))
+      ) {
+        cacheHitPercent = Math.round((100 * latestCacheRead) / inputPool);
+        cacheHitPartial = true;
+      } else {
+        cacheHitPercent = null;
+        cacheHitPartial = false;
+      }
       latestTotal = t.total || 0;
       latestContext = t.context || 0;
       latestReasoningPartCount = turn.parts.filter((p) => p.type === "reasoning").length;
@@ -111,6 +135,7 @@ export function computeSessionContextWatermark(
     cacheWrite: latestCacheWrite,
     totalCost,
     cacheHitPercent,
+    cacheHitPartial,
     lastCacheDrop,
   };
 }

@@ -390,9 +390,11 @@ func parseOpenAIChatSSE(ctx context.Context, body io.Reader, emit func(StreamEve
 			}
 			normalizeInclusiveUsage(tu)
 			if details, ok := u["prompt_tokens_details"].(map[string]any); ok {
-				recordCacheCoverage(tu, details["cached_tokens"])
+				recordCacheCoverageFromMap(tu, details, "cached_tokens", "cache_write_tokens", "cache_creation_input_tokens")
 			}
-			recordCacheCoverage(tu, u["prompt_cache_hit_tokens"])
+			if tu.ReportedCacheInput == 0 {
+				recordCacheCoverageFromMap(tu, u, "prompt_cache_hit_tokens", "prompt_cache_miss_tokens")
+			}
 			usage = tu
 		}
 		choices, _ := chunk["choices"].([]any)
