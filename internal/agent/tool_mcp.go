@@ -122,7 +122,7 @@ func (t *mcpCallTool) Execute(ctx context.Context, tc ToolContext, input json.Ra
 		return ToolOutput{Title: srvName + ":" + toolName, Output: target.OAuthError, IsError: true}, fmt.Errorf("%s", target.OAuthError)
 	}
 
-	callCtx, cancel := context.WithTimeout(ctx, mcpCallTimeout)
+	callCtx, cancel := context.WithTimeout(ctx, workPublishMCPTimeout(target.URL, args.Arguments))
 	defer cancel()
 	rawRes, err := invokeMCPMethod(callCtx, tc.WorktreeDir, *target, "tools/call", map[string]any{
 		"name":      toolName,
@@ -566,7 +566,8 @@ func sendRemoteMCPRaw(
 		req.Header.Set(k, v)
 	}
 
-	client := newSafeMCPHTTPClient(mcpCallTimeout, parsedURL, srv.Headers)
+	toolArgs, _ := params["arguments"].(map[string]any)
+	client := newSafeMCPHTTPClient(workPublishMCPTimeout(srv.URL, toolArgs), parsedURL, srv.Headers)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, 0, nil, err
