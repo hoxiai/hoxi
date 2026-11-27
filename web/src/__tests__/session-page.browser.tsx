@@ -9,9 +9,11 @@ import SandboxMergePromptCard from "../components/timeline/SandboxMergePromptCar
 import { downloadSessionExport } from "../components/timeline/session-export";
 import { t } from "../i18n";
 import { hoxiAPI } from "../services/api";
-import { clearPendingDeepLink, openSessionDeepLink, startDeepLinkNavigation } from "../store/deep-link";
+import { clearPendingDeepLink, openSessionDeepLink, pendingDeepLink, startDeepLinkNavigation } from "../store/deep-link";
 import { setCommitModelSpec } from "../store/git-commit";
+import { setSurfaceMode, surfaceMode } from "../store/layout";
 import { noteSessionHistoryTail } from "../store/session-history";
+import { indexSessionFromEvent } from "../store/workspace-sessions";
 import { hydratedSessionIDs } from "../store/session-transcripts";
 import { setWorkspace, workspace, type MessageTurn } from "../store/workspace-state";
 import { assertEqual, assertTrue } from "./test-harness";
@@ -262,6 +264,41 @@ async function testNavigation() {
   } finally { dispose(); root.remove(); HTMLElement.prototype.scrollIntoView = originalScrollIntoView; }
 }
 
+async function testDeepLinkWithLateSessionIndex() {
+  fixture();
+  const target = {
+    id: "ses_late_deep_link", title: "Background session", surface: "work" as const,
+    directory: "/deep-link-workspace", time: { created: 1, updated: 1 },
+  };
+  const originalAPI = { ...hoxiAPI };
+  const previousSurface = surfaceMode();
+  setSurfaceMode("code");
+  hoxiAPI.consumeDesktopIntent = async () => ({ sessionID: target.id });
+  hoxiAPI.listSessions = async (dir) => dir === target.directory ? [target] : [];
+  hoxiAPI.resolveProject = async (dir) => ({ projectID: dir, directory: dir, roots: [dir] });
+  hoxiAPI.getSessionStatuses = async () => ({});
+  hoxiAPI.listAgents = async () => [];
+  hoxiAPI.listProjects = async () => [];
+  hoxiAPI.listWorkspaces = async () => ({ workspaces: [] });
+  const stop = startDeepLinkNavigation();
+  try {
+    await frame();
+    assertEqual(pendingDeepLink()?.sessionID, target.id);
+    assertEqual(workspace.rootDir, "/probe");
+    // A foreign-project session becomes known, without entering the active list.
+    indexSessionFromEvent(target, target.directory);
+    for (let i = 0; i < 50 && pendingDeepLink(); i++) await frame();
+    assertEqual(pendingDeepLink(), null);
+    assertEqual(surfaceMode(), "work");
+    assertEqual(workspace.rootDir, target.directory);
+    assertEqual(workspace.activeSessionID, target.id);
+  } finally {
+    stop();
+    setSurfaceMode(previousSurface);
+    Object.assign(hoxiAPI, originalAPI);
+  }
+}
+
 async function testStreamedTableRowsAppearWhole() {
   const rows = ["| `ToolCard.tsx` | renders tool steps |", "| `ThoughtBox.tsx` | shows reasoning |", "| `tail-hold.ts` | keeps height |"];
   const doc = `Files:\n\n| File | Role |\n|---|---|\n${rows.join("\n")}\n\nDone.\n`;
@@ -353,6 +390,7 @@ export async function runBrowserTest(): Promise<string[]> {
     ["enhancement stays bound to the session and unchanged draft", testEnhancement],
     ["export errors never save partial files; retry saves full JSON and Markdown", testExport],
     ["message focus cancels stale work and preserves valid navigation", testNavigation],
+    ["cross-surface deep link resolves after the target is indexed", testDeepLinkWithLateSessionIndex],
     ["a streamed table shows only whole rows", testStreamedTableRowsAppearWhole],
     ["scrolling up reveals earlier turns across folded tool runs and compensates scrollTop", testScrollUpRevealsEarlierTurnsWithoutBlankTop],
   ] as const) { await run(); results.push(name); }

@@ -72,11 +72,8 @@ interface PendingDeepLink {
   link: SessionDeepLink;
   /** Project root the link is bound to; empty until the first root is known. */
   rootDir: string;
-  /** Project root targeted by the link's directory, if any. */
-  targetRoot: string;
-  /** Target surface when the link crosses between Code and Work. */
-  targetSurface?: SurfaceMode;
-  switching: boolean;
+  /** In-flight destination; empty when the surface has to pick its default root. */
+  switchingTo?: string;
   expiresAt: number;
 }
 
@@ -149,11 +146,7 @@ function findPendingApprovalForSession(sessionID: string) {
   return workspace.pendingQuestions.find((q) => matches(q?.sessionID, q?.subagentSessionID));
 }
 
-function resolveDeepLinkScope(link: SessionDeepLink): {
-  directory?: string;
-  targetRoot: string;
-  targetSurface?: SurfaceMode;
-} {
+function resolveDeepLinkScope(link: SessionDeepLink): { targetRoot: string; targetSurface?: SurfaceMode } {
   const sid = link.sessionID.trim();
   const rootID = resolveRootSessionID(sid) || sid;
   const pendingReq = findPendingApprovalForSession(sid);
@@ -201,7 +194,7 @@ function resolveDeepLinkScope(link: SessionDeepLink): {
       getRememberedCodeSurface().rootDir || resolveDefaultProjectDir("")
     );
   }
-  return { directory: explicitDir, targetRoot, targetSurface };
+  return { targetRoot, targetSurface };
 }
 
 function focusSessionLink(link: SessionDeepLink) {
@@ -246,18 +239,9 @@ export function openSessionDeepLink(
   if (!link || !sessionID) return;
   clearPendingDeepLink();
   const ttlMs = options.ttlMs ?? DEEP_LINK_TTL_MS;
-  const scope = resolveDeepLinkScope({ ...link, sessionID });
   const entry: PendingDeepLink = {
-    link: {
-      ...link,
-      sessionID,
-      directory: scope.directory ?? link.directory,
-      surface: scope.targetSurface ?? link.surface,
-    },
+    link: { ...link, sessionID },
     rootDir: normalizeFolderPath(workspace.rootDir),
-    targetRoot: scope.targetRoot,
-    targetSurface: scope.targetSurface,
-    switching: false,
     expiresAt: Date.now() + ttlMs,
   };
   setPending(entry);
@@ -272,6 +256,13 @@ export function openSessionDeepLink(
 export function resolvePendingDeepLink(): void {
   const entry = pending();
   if (!entry) return;
+  resolvePendingDeepLinkWithScope(entry, resolveDeepLinkScope(entry.link));
+}
+
+function resolvePendingDeepLinkWithScope(
+  entry: PendingDeepLink,
+  { targetRoot, targetSurface }: ReturnType<typeof resolveDeepLinkScope>
+): void {
   if (Date.now() > entry.expiresAt) {
     clearPendingDeepLink();
     return;
@@ -279,7 +270,7 @@ export function resolvePendingDeepLink(): void {
   const bootstrapping = workspace.bootstrappingSessions;
   const root = normalizeFolderPath(workspace.rootDir);
   const loaded = workspace.sessions.some((session) => session.id === entry.link.sessionID);
-  const needsSurfaceSwitch = Boolean(entry.targetSurface && entry.targetSurface !== surfaceMode());
+  const needsSurfaceSwitch = Boolean(targetSurface && targetSurface !== surfaceMode());
   if (bootstrapping) return;
   if (loaded && !needsSurfaceSwitch) {
     clearPendingDeepLink();
@@ -289,27 +280,25 @@ export function resolvePendingDeepLink(): void {
   // The startup restore picks the first root; the link adopts it once.
   if (!entry.rootDir) entry.rootDir = root;
   if (root !== entry.rootDir) {
-    if (!(entry.switching && (!entry.targetRoot || root === entry.targetRoot))) {
+    if (entry.switchingTo === undefined || (entry.switchingTo && root !== entry.switchingTo)) {
       clearPendingDeepLink();
       return;
     }
     entry.rootDir = root;
   }
-  if (entry.switching) return;
-  if (!needsSurfaceSwitch && (!entry.targetRoot || entry.targetRoot === root)) return;
-  entry.switching = true;
-  const targetRoot = entry.targetRoot;
-  if (targetRoot) entry.rootDir = targetRoot;
+  if (entry.switchingTo !== undefined) return;
+  if (!needsSurfaceSwitch && (!targetRoot || targetRoot === root)) return;
+  entry.switchingTo = targetRoot;
   const switchTask =
-    needsSurfaceSwitch && entry.targetSurface
-      ? activateSurfaceMode(entry.targetSurface, {
+    needsSurfaceSwitch && targetSurface
+      ? activateSurfaceMode(targetSurface, {
           targetDir: targetRoot || undefined,
           targetSessionID: entry.link.sessionID,
         })
       : switchWorkspace(targetRoot, { targetSessionID: entry.link.sessionID });
   void switchTask.finally(() => {
     if (pending() !== entry) return;
-    entry.switching = false;
+    entry.switchingTo = undefined;
     const landedRoot = normalizeFolderPath(workspace.rootDir);
     if (landedRoot) entry.rootDir = landedRoot;
     if (workspace.sessions.some((session) => session.id === entry.link.sessionID)) {
@@ -604,12 +593,15 @@ export function startDeepLinkNavigation(openApp?: OpenAppIntent): () => void {
     // Track only the inputs the link depends on; navigation side effects
     // (selectSession / switchWorkspace) run untracked.
     createEffect(() => {
-      if (!pending()) return;
+      const entry = pending();
+      if (!entry) return;
+      // Read the current session index and approval metadata here: a link
+      // received before bootstrap may learn its owning project later.
+      const scope = resolveDeepLinkScope(entry.link);
       void surfaceMode();
       void workspace.bootstrappingSessions;
       void workspace.rootDir;
-      for (const session of workspace.sessions) void session.id;
-      untrack(resolvePendingDeepLink);
+      untrack(() => resolvePendingDeepLinkWithScope(entry, scope));
     });
     return dispose;
   });
